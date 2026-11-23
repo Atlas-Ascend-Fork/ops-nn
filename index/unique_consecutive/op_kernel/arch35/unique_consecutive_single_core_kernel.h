@@ -44,7 +44,7 @@ public:
         if constexpr (sizeof(DTYPE_COUNT) == (sizeof(int64_t))) {
             countQueueSize_ = CEIL_DIV(totalLength_ * sizeof(int64_t), blockSize_ * ALIGNMENT_SCALE_FACTOR) *
                               blockSize_ * ALIGNMENT_SCALE_FACTOR;
-            pipe_->InitBuffer(countQueue_, BUFFER_NUM, totalLength_ * sizeof(int64_t));
+            pipe_->InitBuffer(countQueue_, BUFFER_NUM, countQueueSize_);
         } else {
             countQueueSize_ = CEIL_DIV(totalLength_ * sizeof(int32_t), blockSize_) * blockSize_;
             pipe_->InitBuffer(countQueue_, BUFFER_NUM, totalLength_ * sizeof(int32_t));
@@ -94,26 +94,23 @@ public:
         CollectPostUniqueValue<T, T1, true>(outTensor, xLocal, totalLength_, reduceCntValue);
 
         if constexpr (COUNT_OUT) {
-            CollectPostUniqueIdx<T, T1, true>(idxTensor, xLocal, 1, totalLength_, totalLength_, reduceCntIdx,
+            CollectPostUniqueIdx<T, T1, true>(idxTensor, xLocal, 0, totalLength_ - 1, totalLength_, reduceCntIdx,
                                               START_POSITION);
-        }
-
-        xQueue_.FreeTensor(xLocal);
-
-        if constexpr (COUNT_OUT) {
             if constexpr (sizeof(DTYPE_COUNT) == sizeof(int64_t)) {
                 LocalTensor<int32_t> countLocal = countQueue_.template AllocTensor<int32_t>();
                 uint64_t alignPosition = countQueueSize_ / DOUBLE_OFFSET / sizeof(int32_t);
-                PostAdjDiff<int32_t>(countLocal, idxTensor, idxTensor.GetValue(0), reduceCntIdx, alignPosition);
+                PostAdjDiff<int32_t>(countLocal, idxTensor, idxTensor.GetValue(0) + 1, reduceCntIdx, alignPosition);
                 LocalTensor<int64_t> outCount = countLocal.template ReinterpretCast<int64_t>();
                 Cast(outCount, countLocal[alignPosition], RoundMode::CAST_NONE, reduceCntIdx);
                 countQueue_.EnQue(outCount);
             } else {
                 LocalTensor<int32_t> outCount = countQueue_.template AllocTensor<int32_t>();
-                PostAdjDiff<int32_t>(outCount, idxTensor, idxTensor.GetValue(0), reduceCntIdx, START_POSITION);
+                PostAdjDiff<int32_t>(outCount, idxTensor, idxTensor.GetValue(0) + 1, reduceCntIdx, START_POSITION);
                 countQueue_.EnQue(outCount);
             }
         }
+
+        xQueue_.FreeTensor(xLocal);
 
         yQueue_.EnQue(outTensor);
 

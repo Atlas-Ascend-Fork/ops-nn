@@ -34,7 +34,6 @@ public:
 
         coreTileLength_ = (isFinalCore_) ? tilingData->tileLengthTailCore : tilingData->tileLengthPerCore;
         totalSize_ = tilingData->totalSize;
-        baseCount_ = 1 + coreIdx_ * tilingData->tileLengthPerCore;
         tileLengthPerCore_ = tilingData->tileLengthPerCore;
         idxQueueSize_ = tilingData->idxQueueSize;
         adjUbTileLength_ = tilingData->adjUbTileLength;
@@ -73,21 +72,23 @@ public:
         }
 
         int64_t coreCollectNums = 0;
-        int64_t lastUniqueIdx = 0;
-        ProcessCollecting(coreCollectNums, lastUniqueIdx);
+        int64_t firstUniqueIdx = (coreIdx_ == 0) ? 0 : -1;
+        ProcessCollecting(coreCollectNums, firstUniqueIdx);
 
         PipeBarrier<PIPE_ALL>();
         SyncAll();
 
-        if (coreCollectNums == 0) {
+        if (coreCollectNums == 0 && !isFinalCore_) {
             return;
         }
 
         int64_t yOffset = 0;
-        int64_t prevTailCount = 0;
-        FindOffset(yOffset, prevTailCount);
+        int64_t nextUniqueIdx = totalSize_;
+        FindOffset(yOffset, nextUniqueIdx);
 
-        ProcessMerging(yOffset, prevTailCount);
+        if (coreCollectNums > 0) {
+            ProcessMerging(yOffset, nextUniqueIdx, coreCollectNums);
+        }
 
         if (isFinalCore_) {
             coreCollectNums += yOffset;
@@ -95,96 +96,102 @@ public:
         }
     }
 
-    __aicore__ inline void ProcessMerging(int64_t copyOutOffset, int64_t prevTailCount)
+    __aicore__ inline void ProcessMerging(int64_t copyOutOffset, int64_t nextUniqueIdx, int64_t coreCollectNums)
     {
         int64_t ubLoops = CEIL_DIV(coreTileLength_, ubTileLength_) - 1;
-        int64_t ubMainLength = ubTileLength_ + 1;
         int64_t ubTailLength = coreTileLength_ - ubTileLength_ * ubLoops;
-        ubTailLength = (isFinalCore_) ? ubTailLength : ubTailLength + 1;
 
         int64_t offsetXGm = 0;
         int64_t gatherCnt = 0;
-        int64_t innerBaseCount = baseCount_;
+        int64_t prevBoundary = -1;
+        int64_t lastHeadIdx = (coreIdx_ == 0) ? 0 : -1;
+        int64_t remainingCandidates = coreCollectNums - ((coreIdx_ == 0) ? 1 : 0);
 
-        for (int64_t i = 0; i < ubLoops; ++i) {
-            CopyInX(offsetXGm, ubMainLength);
-            CollectUniqueAndCount<false>(innerBaseCount, ubMainLength, gatherCnt, i, prevTailCount, copyOutOffset);
+        for (int64_t i = 0; i <= ubLoops; ++i) {
+            bool addFirst = (coreIdx_ == 0 && i == 0);
+            int64_t sourceStart = 0;
+            int64_t actualLen = (i == ubLoops) ? ubTailLength : ubTileLength_;
+            int64_t windowLen = CopyInWindow(offsetXGm, actualLen, !addFirst, sourceStart);
+            if (addFirst) {
+                CollectUniqueAndCount<true>(sourceStart, windowLen, gatherCnt, prevBoundary, lastHeadIdx, copyOutOffset,
+                                            nextUniqueIdx, remainingCandidates);
+            } else {
+                CollectUniqueAndCount<false>(sourceStart, windowLen, gatherCnt, prevBoundary, lastHeadIdx,
+                                             copyOutOffset, nextUniqueIdx, remainingCandidates);
+            }
             offsetXGm += ubTileLength_;
             copyOutOffset += gatherCnt;
-            innerBaseCount += ubTileLength_;
         }
-
-        CopyInX(offsetXGm, ubTailLength);
-        if (isFinalCore_) {
-            CollectUniqueAndCount<true>(innerBaseCount, ubTailLength, gatherCnt, ubLoops, prevTailCount, copyOutOffset);
-        } else {
-            CollectUniqueAndCount<false>(innerBaseCount, ubTailLength, gatherCnt, ubLoops, prevTailCount,
-                                         copyOutOffset);
+        if constexpr (COUNT_OUT) {
+            if (coreIdx_ == 0 && coreCollectNums == 1) {
+                CopyOutLastCount(copyOutOffset - 1, nextUniqueIdx - lastHeadIdx);
+            }
         }
     }
 
-    __aicore__ inline void ProcessCollecting(int64_t& coreCollectNums, int64_t& lastUniqueIdx)
+    __aicore__ inline void ProcessCollecting(int64_t& coreCollectNums, int64_t& firstUniqueIdx)
     {
         int64_t ubLoops = CEIL_DIV(coreTileLength_, ubTileLength_) - 1;
-        int64_t ubMainLength = ubTileLength_ + 1;
         int64_t ubTailLength = coreTileLength_ - ubTileLength_ * ubLoops;
-        ubTailLength = (isFinalCore_) ? ubTailLength : ubTailLength + 1;
 
         int64_t offsetXGm = 0;
         int64_t gatherCnt = 0;
-        int64_t innerBaseCount = baseCount_;
 
-        for (int64_t i = 0; i < ubLoops; ++i) {
-            CopyInX(offsetXGm, ubMainLength);
-            CollectNumsAndLastIdx<false>(innerBaseCount, ubMainLength, gatherCnt, lastUniqueIdx, i);
+        for (int64_t i = 0; i <= ubLoops; ++i) {
+            bool addFirst = (coreIdx_ == 0 && i == 0);
+            int64_t sourceStart = 0;
+            int64_t actualLen = (i == ubLoops) ? ubTailLength : ubTileLength_;
+            int64_t windowLen = CopyInWindow(offsetXGm, actualLen, !addFirst, sourceStart);
+            if (addFirst) {
+                CollectNumsAndFirstIdx<true>(sourceStart, windowLen, gatherCnt, firstUniqueIdx);
+            } else {
+                CollectNumsAndFirstIdx<false>(sourceStart, windowLen, gatherCnt, firstUniqueIdx);
+            }
             offsetXGm += ubTileLength_;
             coreCollectNums += gatherCnt;
-            innerBaseCount += ubTileLength_;
         }
 
-        CopyInX(offsetXGm, ubTailLength);
-        if (isFinalCore_) {
-            CollectNumsAndLastIdx<true>(innerBaseCount, ubTailLength, gatherCnt, lastUniqueIdx, ubLoops);
-        } else {
-            CollectNumsAndLastIdx<false>(innerBaseCount, ubTailLength, gatherCnt, lastUniqueIdx, ubLoops);
-        }
-        coreCollectNums += gatherCnt;
-
-        CopyOutCnt2Workspace(coreCollectNums, lastUniqueIdx);
+        CopyOutCnt2Workspace(coreCollectNums, firstUniqueIdx);
     }
 
-    template <bool TAIL_LOOP>
-    __aicore__ inline void CollectNumsAndLastIdx(int64_t innerBaseCount, int64_t nums, int64_t& gatherCnt,
-                                                 int64_t& lastUniqueIdx, int64_t i)
+    template <bool ADD_FIRST>
+    __aicore__ inline void CollectNumsAndFirstIdx(int64_t sourceStart, int64_t nums, int64_t& gatherCnt,
+                                                  int64_t& firstUniqueIdx)
     {
         LocalTensor<T> xLocal = xQueue_.template DeQue<T>();
         LocalTensor<int32_t> outTensor = yQueue_.template AllocTensor<int32_t>();
         uint64_t reduceCntValue = -1;
-        CountAdjacentNe<T, T1, TAIL_LOOP>(outTensor, xLocal, nums, reduceCntValue);
+        CountAdjacentNe<T, T1, ADD_FIRST>(outTensor, xLocal, nums, reduceCntValue);
         gatherCnt = reduceCntValue;
         yQueue_.FreeTensor(outTensor);
 
         if constexpr (COUNT_OUT) {
             if (gatherCnt > 0) {
                 if constexpr (ISINT64) {
-                    int64_t offset = coreIdx_ * tileLengthPerCore_ + i * ubTileLength_;
                     LocalTensor<int32_t> idxLocal = idxQueue_.template AllocTensor<int32_t>();
-                    uint64_t reduceCntIdx = -1;
+                    uint64_t candidateCount = -1;
                     uint64_t alignPosition = idxQueueSize_ / MIDPOINT_DIVIDER / sizeof(int32_t);
-                    CollectPostUniqueIdx<T, T1, TAIL_LOOP>(idxLocal, xLocal, 1, nums, nums, reduceCntIdx,
-                                                           alignPosition);
-                    LocalTensor<int64_t> idxLocalInt64 = idxLocal.template ReinterpretCast<int64_t>();
-                    CastAndAddsOffsets(idxLocalInt64, idxLocal, reduceCntIdx, alignPosition, offset);
-                    SimpleNativePipeSync<HardEvent::V_S>();
-                    lastUniqueIdx = idxLocalInt64.GetValue(gatherCnt - 1);
+                    CollectPostUniqueIdx<T, T1>(idxLocal, xLocal, 0, nums, nums, candidateCount, alignPosition);
+                    if (candidateCount > 0) {
+                        LocalTensor<int64_t> idxLocalInt64 = idxLocal.template ReinterpretCast<int64_t>();
+                        CastAndAddsOffsets(idxLocalInt64, idxLocal, candidateCount, alignPosition, sourceStart);
+                        SimpleNativePipeSync<HardEvent::V_S>();
+                        if (firstUniqueIdx < 0) {
+                            firstUniqueIdx = idxLocalInt64.GetValue(0) + 1;
+                        }
+                    }
                     idxQueue_.FreeTensor(idxLocal);
                 } else {
                     LocalTensor<int32_t> idxLocal = idxQueue_.template AllocTensor<int32_t>();
-                    uint64_t reduceCntIdx = -1;
-                    CollectPostUniqueIdx<T, T1, TAIL_LOOP>(idxLocal, xLocal, innerBaseCount, totalSize_, nums,
-                                                           reduceCntIdx, START_POSITION);
-                    SimpleNativePipeSync<HardEvent::V_S>();
-                    lastUniqueIdx = static_cast<int64_t>(idxLocal.GetValue(gatherCnt - 1));
+                    uint64_t candidateCount = -1;
+                    CollectPostUniqueIdx<T, T1>(idxLocal, xLocal, static_cast<int32_t>(sourceStart), totalSize_, nums,
+                                                candidateCount, START_POSITION);
+                    if (candidateCount > 0) {
+                        SimpleNativePipeSync<HardEvent::V_S>();
+                        if (firstUniqueIdx < 0) {
+                            firstUniqueIdx = static_cast<int64_t>(idxLocal.GetValue(0)) + 1;
+                        }
+                    }
                     idxQueue_.FreeTensor(idxLocal);
                 }
             }
@@ -202,13 +209,22 @@ public:
         xQueue_.EnQue(xLocal);
     }
 
-    __aicore__ inline void CopyOutCnt2Workspace(int64_t coreCollectNums, int64_t lastUniqueIdx)
+    __aicore__ inline int64_t CopyInWindow(int64_t offset, int64_t actualLen, bool hasPrev, int64_t& sourceStart)
+    {
+        int64_t sourceOffset = offset - (hasPrev ? 1 : 0);
+        int64_t windowLen = actualLen + (hasPrev ? 1 : 0);
+        sourceStart = coreIdx_ * tileLengthPerCore_ + sourceOffset;
+        CopyInX(sourceOffset, windowLen);
+        return windowLen;
+    }
+
+    __aicore__ inline void CopyOutCnt2Workspace(int64_t coreCollectNums, int64_t firstUniqueIdx)
     {
         LocalTensor<int64_t> countLocal = collectingCntBuf_.Get<int64_t>();
         countLocal.SetValue(0, coreCollectNums);
         int64_t copyNums = 1;
         if constexpr (COUNT_OUT) {
-            countLocal.SetValue(1, lastUniqueIdx);
+            countLocal.SetValue(1, firstUniqueIdx);
             copyNums = 2;
         }
         SimpleNativePipeSync<HardEvent::S_MTE3>();
@@ -219,7 +235,7 @@ public:
     {
         DataCopyPadExtParams<int64_t> padParams{false, 0, 0, 0};
         DataCopyExtParams dataCopyParams;
-        dataCopyParams.blockCount = coreIdx_ + 1;
+        dataCopyParams.blockCount = GetBlockNum();
         dataCopyParams.blockLen = sizeof(int64_t);
         dataCopyParams.srcStride = MAGIC_GM_PAGE_SIZE - sizeof(int64_t);
         dataCopyParams.dstStride = 0;
@@ -227,7 +243,7 @@ public:
         DataCopyPad<int64_t, PaddingMode::Compact>(countLocal, coreCollectWorkspaceGm_, dataCopyParams, padParams);
     }
 
-    __aicore__ inline void FindOffset(int64_t& yOffset, int64_t& prevTail)
+    __aicore__ inline void FindOffset(int64_t& yOffset, int64_t& nextUniqueIdx)
     {
         LocalTensor<int64_t> countLocal = collectingCntBuf_.Get<int64_t>();
         LocalTensor<int64_t> offsetLocal = offsetCntBuf_.Get<int64_t>();
@@ -237,46 +253,86 @@ public:
         SimpleNativePipeSync<HardEvent::V_S>();
         yOffset = offsetLocal.GetValue(0);
         if constexpr (COUNT_OUT) {
-            bool first = true;
-            for (int i = coreIdx_ - 1; i >= 0; i--) {
+            nextUniqueIdx = totalSize_;
+            for (int64_t i = coreIdx_ + 1; i < GetBlockNum(); ++i) {
                 int64_t coreCount = countLocal.GetValue(i);
                 if (coreCount != 0) {
-                    first = false;
-                    CopyInCoreFinal(i, prevTail);
+                    CopyInCoreFirst(i, nextUniqueIdx);
                     break;
                 }
-            }
-            if (first) {
-                prevTail = 0;
             }
         }
         PipeBarrier<PIPE_ALL>();
     }
 
-    __aicore__ inline void CopyInCoreFinal(int64_t prevCoreIdx, int64_t& prevTail)
+    __aicore__ inline void CopyInCoreFirst(int64_t nextCoreIdx, int64_t& nextUniqueIdx)
     {
-        LocalTensor<int64_t> prevIdxLocal = prevIdxBuf_.Get<int64_t>();
+        LocalTensor<int64_t> nextIdxLocal = prevIdxBuf_.Get<int64_t>();
         DataCopyPadExtParams<int64_t> padParams{false, 0, 0, 0};
         DataCopyExtParams dataCopyParams;
         dataCopyParams.blockCount = 1;
         dataCopyParams.blockLen = sizeof(int64_t);
         dataCopyParams.srcStride = 0;
         dataCopyParams.dstStride = 0;
-        DataCopyPad(prevIdxLocal,
-                    coreCollectWorkspaceGm_[CORE_COLLECT_NUM_OFFSET * prevCoreIdx + CORE_LAST_UNIQUE_IDX_OFFSET],
+        DataCopyPad(nextIdxLocal,
+                    coreCollectWorkspaceGm_[CORE_COLLECT_NUM_OFFSET * nextCoreIdx + CORE_FIRST_UNIQUE_IDX_OFFSET],
                     dataCopyParams, padParams);
         SimpleNativePipeSync<HardEvent::MTE2_S>();
-        prevTail = prevIdxLocal.GetValue(0);
+        nextUniqueIdx = nextIdxLocal.GetValue(0);
     }
 
-    template <bool TAIL_LOOP>
-    __aicore__ inline void CollectUniqueAndCount(int64_t innerBaseCount, int64_t nums, int64_t& gatherCnt, int64_t i,
-                                                 int64_t& prevTailCount, int64_t copyOutOffset)
+    template <typename COUNT_TYPE>
+    __aicore__ inline void ProcessCount(LocalTensor<COUNT_TYPE>& idxLocal, uint64_t candidateCount,
+                                        int64_t copyOutOffset, int64_t& prevBoundary, int64_t& lastHeadIdx,
+                                        int64_t nextUniqueIdx, int64_t& remainingCandidates)
+    {
+        if (candidateCount == 0) {
+            return;
+        }
+
+        remainingCandidates -= candidateCount;
+        bool writeLast = (remainingCandidates == 0);
+        COUNT_TYPE lastBoundary = idxLocal.GetValue(candidateCount - 1);
+        lastHeadIdx = static_cast<int64_t>(lastBoundary) + 1;
+        if (coreIdx_ == 0 || prevBoundary >= 0) {
+            COUNT_TYPE firstValue = idxLocal.GetValue(0) - static_cast<COUNT_TYPE>(prevBoundary);
+            LocalTensor<COUNT_TYPE> outCount = countQueue_.template AllocTensor<COUNT_TYPE>();
+            PostAdjDiff<COUNT_TYPE>(outCount, idxLocal, firstValue, candidateCount, START_POSITION);
+            int64_t copyNums = candidateCount;
+            if (writeLast) {
+                outCount.SetValue(copyNums, static_cast<COUNT_TYPE>(nextUniqueIdx - lastHeadIdx));
+                copyNums += 1;
+            }
+            countQueue_.EnQue(outCount);
+            CopyOutCount((copyOutOffset == 0) ? 0 : copyOutOffset - 1, copyNums);
+        } else {
+            if (candidateCount > 1 || writeLast) {
+                LocalTensor<COUNT_TYPE> outCount = countQueue_.template AllocTensor<COUNT_TYPE>();
+                if (candidateCount > 1) {
+                    COUNT_TYPE firstValue = idxLocal.GetValue(1) - idxLocal.GetValue(0);
+                    PostAdjDiff<COUNT_TYPE, true>(outCount, idxLocal, firstValue, candidateCount, START_POSITION);
+                }
+                int64_t copyNums = candidateCount - 1;
+                if (writeLast) {
+                    outCount.SetValue(copyNums, static_cast<COUNT_TYPE>(nextUniqueIdx - lastHeadIdx));
+                    copyNums += 1;
+                }
+                countQueue_.EnQue(outCount);
+                CopyOutCount(copyOutOffset, copyNums);
+            }
+        }
+        prevBoundary = static_cast<int64_t>(lastBoundary);
+    }
+
+    template <bool ADD_FIRST>
+    __aicore__ inline void CollectUniqueAndCount(int64_t sourceStart, int64_t nums, int64_t& gatherCnt,
+                                                 int64_t& prevBoundary, int64_t& lastHeadIdx, int64_t copyOutOffset,
+                                                 int64_t nextUniqueIdx, int64_t& remainingCandidates)
     {
         LocalTensor<T> xLocal = xQueue_.template DeQue<T>();
         LocalTensor<T> outTensor = yQueue_.template AllocTensor<T>();
         uint64_t reduceCntValue = -1;
-        CollectPostUniqueValue<T, T1, TAIL_LOOP>(outTensor, xLocal, nums, reduceCntValue);
+        CollectPostUniqueValue<T, T1, ADD_FIRST>(outTensor, xLocal, nums, reduceCntValue);
         gatherCnt = reduceCntValue;
         SimpleNativePipeSync<HardEvent::S_MTE3>();
         Copy2GmEx<T>(yGm_[copyOutOffset], outTensor, 1, gatherCnt, 0, 0);
@@ -285,40 +341,41 @@ public:
         if constexpr (COUNT_OUT) {
             if (gatherCnt > 0) {
                 if constexpr (sizeof(DTYPE_COUNT) == sizeof(int64_t)) {
-                    int64_t offset = coreIdx_ * tileLengthPerCore_ + i * ubTileLength_;
                     LocalTensor<int32_t> idxLocal = idxQueue_.template AllocTensor<int32_t>();
-                    uint64_t reduceCntIdx = -1;
+                    uint64_t candidateCount = -1;
                     uint64_t alignPosition = idxQueueSize_ / MIDPOINT_DIVIDER / sizeof(int32_t);
-                    CollectPostUniqueIdx<T, T1, TAIL_LOOP>(idxLocal, xLocal, 1, nums, nums, reduceCntIdx,
-                                                           alignPosition);
-                    LocalTensor<int64_t> idxLocalInt64 = idxLocal.template ReinterpretCast<int64_t>();
-                    CastAndAddsOffsets(idxLocalInt64, idxLocal, reduceCntIdx, alignPosition, offset);
-                    SimpleNativePipeSync<HardEvent::V_S>();
-                    int64_t firstValue = idxLocalInt64.GetValue(0) - prevTailCount;
-                    prevTailCount = idxLocalInt64.GetValue(gatherCnt - 1);
-                    LocalTensor<int64_t> outCount = countQueue_.template AllocTensor<int64_t>();
-                    PostAdjDiff<int64_t>(outCount, idxLocalInt64, firstValue, gatherCnt, START_POSITION);
-                    countQueue_.EnQue(outCount);
+                    CollectPostUniqueIdx<T, T1>(idxLocal, xLocal, 0, nums, nums, candidateCount, alignPosition);
+                    if (candidateCount > 0) {
+                        LocalTensor<int64_t> idxLocalInt64 = idxLocal.template ReinterpretCast<int64_t>();
+                        CastAndAddsOffsets(idxLocalInt64, idxLocal, candidateCount, alignPosition, sourceStart);
+                        SimpleNativePipeSync<HardEvent::V_S>();
+                        ProcessCount<int64_t>(idxLocalInt64, candidateCount, copyOutOffset, prevBoundary, lastHeadIdx,
+                                              nextUniqueIdx, remainingCandidates);
+                    }
                     idxQueue_.FreeTensor(idxLocal);
-                    CopyOutCount(copyOutOffset, gatherCnt);
                 } else {
                     LocalTensor<int32_t> idxLocal = idxQueue_.template AllocTensor<int32_t>();
-                    uint64_t reduceCntIdx = -1;
-                    CollectPostUniqueIdx<T, T1, TAIL_LOOP>(idxLocal, xLocal, innerBaseCount, totalSize_, nums,
-                                                           reduceCntIdx, START_POSITION);
-                    SimpleNativePipeSync<HardEvent::V_S>();
-                    int32_t prevTailIdx = static_cast<int32_t>(prevTailCount);
-                    int32_t firstValue = idxLocal.GetValue(0) - prevTailIdx;
-                    prevTailCount = idxLocal.GetValue(gatherCnt - 1);
-                    LocalTensor<int32_t> outCount = countQueue_.template AllocTensor<int32_t>();
-                    PostAdjDiff<int32_t>(outCount, idxLocal, firstValue, gatherCnt, START_POSITION);
-                    countQueue_.EnQue(outCount);
+                    uint64_t candidateCount = -1;
+                    CollectPostUniqueIdx<T, T1>(idxLocal, xLocal, static_cast<int32_t>(sourceStart), totalSize_, nums,
+                                                candidateCount, START_POSITION);
+                    if (candidateCount > 0) {
+                        SimpleNativePipeSync<HardEvent::V_S>();
+                        ProcessCount<int32_t>(idxLocal, candidateCount, copyOutOffset, prevBoundary, lastHeadIdx,
+                                              nextUniqueIdx, remainingCandidates);
+                    }
                     idxQueue_.FreeTensor(idxLocal);
-                    CopyOutCount(copyOutOffset, gatherCnt);
                 }
             }
         }
         xQueue_.FreeTensor(xLocal);
+    }
+
+    __aicore__ inline void CopyOutLastCount(int64_t offset, int64_t countValue)
+    {
+        LocalTensor<DTYPE_COUNT> outCount = countQueue_.template AllocTensor<DTYPE_COUNT>();
+        outCount.SetValue(0, static_cast<DTYPE_COUNT>(countValue));
+        countQueue_.EnQue(outCount);
+        CopyOutCount(offset, 1);
     }
 
     __aicore__ inline void CopyOutCount(int64_t offset, int64_t copyLen)
@@ -387,7 +444,6 @@ private:
     bool isFinalCore_;
     int64_t coreTileLength_;
     int64_t totalSize_;
-    int64_t baseCount_;
 
     int64_t tileLengthPerCore_;
     int64_t idxQueueSize_;

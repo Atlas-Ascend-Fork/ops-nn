@@ -85,7 +85,7 @@ static __aicore__ inline void VFCollectPostUniqueIdx(__ubuf__ int32_t* dstIdxAdd
                                                      int32_t startCount, uint32_t repeatTimes, uint32_t totalNums)
 {
     Reg::RegTensor<T> xPrev;
-    Reg::RegTensor<T> xNext;
+    Reg::RegTensor<T> xCur;
 
     Reg::RegTensor<int32_t> out;
     Reg::RegTensor<int32_t> idx;
@@ -107,9 +107,9 @@ static __aicore__ inline void VFCollectPostUniqueIdx(__ubuf__ int32_t* dstIdxAdd
 
         LoadAlign(xPrev, srcValueAddr + REP_LENGTH * i);
         Reg::LoadUnAlignPre(uregIn, curtSrcAddr);
-        Reg::LoadUnAlign(xNext, uregIn, curtSrcAddr);
+        Reg::LoadUnAlign(xCur, uregIn, curtSrcAddr);
 
-        Reg::Compare<T1, CMPMODE::NE>(cmpRet, (Reg::RegTensor<T1>&)xPrev, (Reg::RegTensor<T1>&)xNext, pregLoop);
+        Reg::Compare<T1, CMPMODE::NE>(cmpRet, (Reg::RegTensor<T1>&)xPrev, (Reg::RegTensor<T1>&)xCur, pregLoop);
 
         if constexpr (sizeof(T) == 1) {
             Reg::MaskReg maskQ1;
@@ -156,7 +156,7 @@ static __aicore__ inline void VFCollectPostUniqueValue(__ubuf__ T* dstValueAddr,
                                                        uint32_t repeatTimes, uint32_t totalNums)
 {
     Reg::RegTensor<T> xPrev;
-    Reg::RegTensor<T> xNext;
+    Reg::RegTensor<T> xCur;
     Reg::RegTensor<T> out;
 
     Reg::UnalignRegForLoad uregIn;
@@ -175,11 +175,11 @@ static __aicore__ inline void VFCollectPostUniqueValue(__ubuf__ T* dstValueAddr,
 
         LoadAlign(xPrev, srcValueAddr + REP_LENGTH * i);
         Reg::LoadUnAlignPre(uregIn, curtSrcAddr);
-        Reg::LoadUnAlign(xNext, uregIn, curtSrcAddr);
+        Reg::LoadUnAlign(xCur, uregIn, curtSrcAddr);
 
-        Reg::Compare<T1, CMPMODE::NE>(cmpRet, (Reg::RegTensor<T1>&)xPrev, (Reg::RegTensor<T1>&)xNext, pregLoop);
+        Reg::Compare<T1, CMPMODE::NE>(cmpRet, (Reg::RegTensor<T1>&)xPrev, (Reg::RegTensor<T1>&)xCur, pregLoop);
 
-        CollectAndCopy2Ub<T>(dstValueAddr, xPrev, out, cmpRet, uregOut);
+        CollectAndCopy2Ub<T>(dstValueAddr, xCur, out, cmpRet, uregOut);
     }
     Reg::StoreUnAlignPost(dstValueAddr, uregOut);
 }
@@ -190,7 +190,7 @@ static __aicore__ inline void VFCollectPostUniqueValueB64(__ubuf__ int32_t* dstV
                                                           uint32_t totalNums)
 {
     Reg::RegTensor<int32_t> xPrev;
-    Reg::RegTensor<int32_t> xNext;
+    Reg::RegTensor<int32_t> xCur;
     Reg::RegTensor<int32_t> out;
 
     Reg::UnalignRegForLoad uregIn;
@@ -211,23 +211,23 @@ static __aicore__ inline void VFCollectPostUniqueValueB64(__ubuf__ int32_t* dstV
         auto curtSrcAddr = srcValueAddr + REP_LENGTH * i + 2;
         LoadAlign(xPrev, srcValueAddr + REP_LENGTH * i);
         Reg::LoadUnAlignPre(uregIn, curtSrcAddr);
-        Reg::LoadUnAlign(xNext, uregIn, curtSrcAddr);
-        Reg::Compare<int32_t, CMPMODE::NE>(cmpRet, xPrev, xNext, pregLoop);
+        Reg::LoadUnAlign(xCur, uregIn, curtSrcAddr);
+        Reg::Compare<int32_t, CMPMODE::NE>(cmpRet, xPrev, xCur, pregLoop);
 
         Reg::MaskDeInterleave<int32_t>(maskEven, maskOdd, cmpRet, cmpRet);
         Reg::Or(cmpRet, maskEven, maskOdd, pregLoop);
         Reg::MaskInterleave<int32_t>(maskEven, maskOdd, cmpRet, cmpRet);
-        CollectAndCopy2Ub<int32_t>(dstValueAddr, xPrev, out, maskEven, uregOut);
+        CollectAndCopy2Ub<int32_t>(dstValueAddr, xCur, out, maskEven, uregOut);
     }
     Reg::StoreUnAlignPost(dstValueAddr, uregOut);
 }
 
 /*
     x: tensor, length = num
-    mask[i] = x[i] != x[i+1], i < num - 1
-    ret = mask.nonzero()
+    mask[i] = x[i] != x[i-1], i > 0
+    ret = mask.nonzero() - 1
 */
-template <typename VALUE_TYPE, typename INPUT_TYPE, bool IS_TAIL>
+template <typename VALUE_TYPE, typename INPUT_TYPE, bool APPEND_END = false>
 __aicore__ inline void CollectPostUniqueIdx(LocalTensor<int32_t>& dstIdx, LocalTensor<VALUE_TYPE>& srcValue,
                                             int32_t startCount, int32_t endCount, uint32_t nums, uint64_t& rsvdCnt,
                                             uint64_t position)
@@ -244,7 +244,7 @@ __aicore__ inline void CollectPostUniqueIdx(LocalTensor<int32_t>& dstIdx, LocalT
     AscendC::VF_CALL<VFCollectPostUniqueIdx<VALUE_TYPE, INPUT_TYPE, repNums>>(dstIdxAddr, srcValueAddr, startCount,
                                                                               repTimes, totalNums);
     rsvdCnt = GetSpr<SpecialPurposeReg::AR>() / sizeof(int32_t);
-    if constexpr (IS_TAIL) {
+    if constexpr (APPEND_END) {
         dstIdx.SetValue(position + rsvdCnt, endCount);
         rsvdCnt += 1;
     }
@@ -252,19 +252,20 @@ __aicore__ inline void CollectPostUniqueIdx(LocalTensor<int32_t>& dstIdx, LocalT
 
 /*
     x: tensor, length = num
-    mask[i] = x[i] != x[i+1], i < num - 1
+    mask[i] = x[i] != x[i-1], i > 0
     ret = x[mask.nonzero()]
 */
-template <typename VALUE_TYPE, typename INPUT_TYPE, bool IS_TAIL>
+template <typename VALUE_TYPE, typename INPUT_TYPE, bool ADD_FIRST = false>
 __aicore__ inline void CollectPostUniqueValue(LocalTensor<VALUE_TYPE>& dstValue, LocalTensor<VALUE_TYPE>& srcValue,
                                               uint32_t nums, uint64_t& rsvdCnt)
 {
+    constexpr uint64_t dstOffset = ADD_FIRST ? 1 : 0;
     if constexpr (is_same<VALUE_TYPE, int64_t>::value) {
         // Set phy addr
         __ubuf__ int32_t*
             srcValueAddr = (__ubuf__ int32_t*)srcValue[0].template ReinterpretCast<int32_t>().GetPhyAddr();
         __ubuf__ int32_t*
-            dstValueAddr = (__ubuf__ int32_t*)dstValue[0].template ReinterpretCast<int32_t>().GetPhyAddr();
+            dstValueAddr = (__ubuf__ int32_t*)dstValue[dstOffset].template ReinterpretCast<int32_t>().GetPhyAddr();
 
         // Compute VF params
         constexpr uint32_t repNums = GetVLEleNums<int32_t>();
@@ -274,7 +275,7 @@ __aicore__ inline void CollectPostUniqueValue(LocalTensor<VALUE_TYPE>& dstValue,
     } else {
         // Set phy addr
         __ubuf__ VALUE_TYPE* srcValueAddr = (__ubuf__ VALUE_TYPE*)srcValue[0].GetPhyAddr();
-        __ubuf__ VALUE_TYPE* dstValueAddr = (__ubuf__ VALUE_TYPE*)dstValue[0].GetPhyAddr();
+        __ubuf__ VALUE_TYPE* dstValueAddr = (__ubuf__ VALUE_TYPE*)dstValue[dstOffset].GetPhyAddr();
 
         // Compute VF params
         constexpr uint32_t repNums = GetVLEleNums<VALUE_TYPE>();
@@ -284,18 +285,18 @@ __aicore__ inline void CollectPostUniqueValue(LocalTensor<VALUE_TYPE>& dstValue,
                                                                                     repTimes, totalNums);
     }
     rsvdCnt = GetSpr<SpecialPurposeReg::AR>() / sizeof(VALUE_TYPE);
-    if constexpr (IS_TAIL) {
-        dstValue.SetValue(rsvdCnt, srcValue.GetValue(nums - 1));
+    if constexpr (ADD_FIRST) {
+        dstValue.SetValue(0, srcValue.GetValue(0));
         rsvdCnt += 1;
     }
 }
 
 template <int REP_LENGTH, typename T>
 static __aicore__ inline void VFPostAdjDiff(__ubuf__ T* dstIdxAddr, __ubuf__ T* srcIdxAddr, uint32_t repeatTimes,
-                                            uint32_t totalNums, uint16_t hasTail)
+                                            uint32_t totalNums, uint16_t hasTail, uint16_t dstOffset)
 {
     Reg::RegTensor<T> idxPrev;
-    Reg::RegTensor<T> idxNext;
+    Reg::RegTensor<T> idxCur;
     Reg::RegTensor<T> out;
 
     Reg::UnalignRegForLoad uregIn;
@@ -306,7 +307,7 @@ static __aicore__ inline void VFPostAdjDiff(__ubuf__ T* dstIdxAddr, __ubuf__ T* 
     uint32_t sreg0 = totalNums;
     uint32_t tailLen = totalNums % REP_LENGTH;
 
-    auto curtDstAddr = dstIdxAddr + 1;
+    auto curtDstAddr = dstIdxAddr + dstOffset;
 
     // main block
     for (uint16_t i = 0; i < (uint16_t)repeatTimes; ++i) {
@@ -314,8 +315,8 @@ static __aicore__ inline void VFPostAdjDiff(__ubuf__ T* dstIdxAddr, __ubuf__ T* 
         auto curtSrcAddr = srcIdxAddr + REP_LENGTH * i + 1;
         LoadAlign(idxPrev, srcIdxAddr + REP_LENGTH * i);
         Reg::LoadUnAlignPre(uregIn, curtSrcAddr);
-        Reg::LoadUnAlign(idxNext, uregIn, curtSrcAddr);
-        Reg::Sub(out, idxNext, idxPrev, pregLoop);
+        Reg::LoadUnAlign(idxCur, uregIn, curtSrcAddr);
+        Reg::Sub(out, idxCur, idxPrev, pregLoop);
         Reg::StoreUnAlign<T, Reg::PostLiteral::POST_MODE_UPDATE>(curtDstAddr, out, uregOut, REP_LENGTH);
     }
 
@@ -325,20 +326,20 @@ static __aicore__ inline void VFPostAdjDiff(__ubuf__ T* dstIdxAddr, __ubuf__ T* 
         auto curtSrcAddr = srcIdxAddr + REP_LENGTH * repeatTimes + 1;
         LoadAlign(idxPrev, srcIdxAddr + REP_LENGTH * repeatTimes);
         Reg::LoadUnAlignPre(uregIn, curtSrcAddr);
-        Reg::LoadUnAlign(idxNext, uregIn, curtSrcAddr);
-        Reg::Sub(out, idxNext, idxPrev, pregLoop);
+        Reg::LoadUnAlign(idxCur, uregIn, curtSrcAddr);
+        Reg::Sub(out, idxCur, idxPrev, pregLoop);
         Reg::StoreUnAlign<T, Reg::PostLiteral::POST_MODE_UPDATE>(curtDstAddr, out, uregOut, tailLen);
     }
     Reg::StoreUnAlignPost(curtDstAddr, uregOut, 0);
 }
 
 /*
-    srcIdx: idx tensor which start with 1, length = num
+    srcIdx: idx tensor which start with 0, length = num
     dstIdx[0] = firstValue
     dstIdx[i] = dstIdx[i] - dstIdx[i - 1], for i > 0
     consider compute dstIdx[0] in VF......
 */
-template <typename T>
+template <typename T, bool SKIP_FIRST = false>
 __aicore__ inline void PostAdjDiff(LocalTensor<T>& dstIdx, LocalTensor<T>& srcIdx, T firstValue, uint32_t nums,
                                    uint64_t position)
 {
@@ -352,8 +353,11 @@ __aicore__ inline void PostAdjDiff(LocalTensor<T>& dstIdx, LocalTensor<T>& srcId
     uint32_t repTimes = totalNums / repNums;
     uint16_t hasTail = (totalNums % repNums == 0) ? 0 : 1;
 
-    AscendC::VF_CALL<VFPostAdjDiff<repNums, T>>(dstIdxAddr, srcIdxAddr, repTimes, totalNums, hasTail);
-    dstIdx.SetValue(position, firstValue);
+    AscendC::VF_CALL<VFPostAdjDiff<repNums, T>>(dstIdxAddr, srcIdxAddr, repTimes, totalNums, hasTail,
+                                                SKIP_FIRST ? 0 : 1);
+    if constexpr (!SKIP_FIRST) {
+        dstIdx.SetValue(position, firstValue);
+    }
 }
 
 template <int REP_LENGTH>
@@ -395,7 +399,7 @@ static __aicore__ inline void VFCountAdjacentNe(__ubuf__ int32_t* dstCountAddr, 
                                                 uint32_t repeatTimes, uint32_t totalNums)
 {
     Reg::RegTensor<T> xPrev;
-    Reg::RegTensor<T> xNext;
+    Reg::RegTensor<T> xCur;
     Reg::UnalignRegForLoad uregIn;
     Reg::UnalignRegForStore uregOut;
     Reg::MaskReg cmpRet;
@@ -418,9 +422,9 @@ static __aicore__ inline void VFCountAdjacentNe(__ubuf__ int32_t* dstCountAddr, 
 
         LoadAlign(xPrev, srcValueAddr + REP_LENGTH * i);
         Reg::LoadUnAlignPre(uregIn, curtSrcAddr);
-        Reg::LoadUnAlign(xNext, uregIn, curtSrcAddr);
+        Reg::LoadUnAlign(xCur, uregIn, curtSrcAddr);
 
-        Reg::Compare<T1, CMPMODE::NE>(cmpRet, (Reg::RegTensor<T1>&)xPrev, (Reg::RegTensor<T1>&)xNext, pregLoop);
+        Reg::Compare<T1, CMPMODE::NE>(cmpRet, (Reg::RegTensor<T1>&)xPrev, (Reg::RegTensor<T1>&)xCur, pregLoop);
 
         if constexpr (sizeof(T) == 1) {
             Reg::MaskReg maskQ1, maskQ2, maskQ3, maskQ4, maskTmp;
@@ -464,7 +468,7 @@ static __aicore__ inline void VFCountAdjacentNeB64(__ubuf__ int32_t* dstCountAdd
                                                    uint32_t repeatTimes, uint32_t totalNums)
 {
     Reg::RegTensor<int64_t> xPrev;
-    Reg::RegTensor<int64_t> xNext;
+    Reg::RegTensor<int64_t> xCur;
     Reg::UnalignRegForLoad uregIn;
     Reg::UnalignRegForStore uregOut;
     Reg::MaskReg cmpRet;
@@ -487,9 +491,9 @@ static __aicore__ inline void VFCountAdjacentNeB64(__ubuf__ int32_t* dstCountAdd
 
         LoadAlign(xPrev, srcValueAddr + REP_LENGTH * i);
         Reg::LoadUnAlignPre(uregIn, curtSrcAddr);
-        Reg::LoadUnAlign(xNext, uregIn, curtSrcAddr);
+        Reg::LoadUnAlign(xCur, uregIn, curtSrcAddr);
 
-        Reg::Compare<int64_t, CMPMODE::NE>(cmpRet, xPrev, xNext, pregLoop);
+        Reg::Compare<int64_t, CMPMODE::NE>(cmpRet, xPrev, xCur, pregLoop);
         Reg::Select<int64_t>(selectReg, oneReg, zeroReg, cmpRet);
         Reg::Add(addReg, addReg, selectReg, addComReg);
     }
@@ -500,7 +504,7 @@ static __aicore__ inline void VFCountAdjacentNeB64(__ubuf__ int32_t* dstCountAdd
     Reg::StoreUnAlignPost(dstCountAddr, uregOut, 0);
 }
 
-template <typename VALUE_TYPE, typename INPUT_TYPE, bool IS_TAIL>
+template <typename VALUE_TYPE, typename INPUT_TYPE, bool ADD_FIRST = false>
 __aicore__ inline void CountAdjacentNe(LocalTensor<int32_t>& dstNums, LocalTensor<VALUE_TYPE>& srcValue, uint32_t nums,
                                        uint64_t& rsvdCnt)
 {
@@ -520,7 +524,7 @@ __aicore__ inline void CountAdjacentNe(LocalTensor<int32_t>& dstNums, LocalTenso
 
     SimpleNativePipeSync<HardEvent::V_S>();
     rsvdCnt = static_cast<uint64_t>(dstNums.GetValue(0));
-    if constexpr (IS_TAIL) {
+    if constexpr (ADD_FIRST) {
         rsvdCnt += 1;
     }
 }
