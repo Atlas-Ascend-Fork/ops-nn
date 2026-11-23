@@ -547,15 +547,33 @@ private:
         PipeBarrier<PIPE_V>();
         Adds(acc, temp, 0.0f, n);
         PipeBarrier<PIPE_V>();
-        // Kahan's correction becomes NaN for an infinite running sum. Clear only
-        // that correction so Inf remains Inf while a NaN running sum still propagates.
+        // A NaN or ±Inf compensation must not survive into the next tile: a ±Inf
+        // compensation appears when the running sum overflows in one step
+        // (t = ±Inf while acc is finite, so (t-acc)-y = ±Inf); kept, it turns the
+        // next y = value - compensation into ∓Inf and the running sum into
+        // Inf + (-Inf) = NaN, losing the plain-sum ±Inf overflow result that
+        // torch reports for same-sign saturation. Clearing the compensation
+        // degrades the accumulation to plain summation once saturated, which
+        // keeps ±Inf. A NaN running sum (±Inf terms of opposite sign meeting)
+        // still propagates: only the compensation is cleared, never acc.
         // Applies to every fp32 accumulation path (float and upcast 2-byte dtypes):
         // value/temp hold >= ceil64(n) floats (COMPUTE_CHUNK-sized for 2-byte dtypes,
         // d_size-sized for float), and compensation is ceil256(d_size*4) >= ceil64(n).
+        // Finite compensations (including ±0 and ±FLT_MAX) compare false in every
+        // clear below, so normal-range accumulation is bit-identical.
         uint32_t alignedN = (n + 63u) & ~63u;
         LocalTensor<uint8_t> nanMask = value.template ReinterpretCast<uint8_t>();
         Duplicate(temp, 0.0f, alignedN);
         Compare(nanMask, compensation, compensation, CMPMODE::NE, alignedN);
+        PipeBarrier<PIPE_V>();
+        Select(compensation, nanMask, temp, compensation, SELMODE::VSEL_TENSOR_TENSOR_MODE, alignedN);
+        PipeBarrier<PIPE_V>();
+        constexpr float kFp32Max = 3.402823466e+38f; // FLT_MAX
+        Compares(nanMask, compensation, kFp32Max, CMPMODE::GT, alignedN);
+        PipeBarrier<PIPE_V>();
+        Select(compensation, nanMask, temp, compensation, SELMODE::VSEL_TENSOR_TENSOR_MODE, alignedN);
+        PipeBarrier<PIPE_V>();
+        Compares(nanMask, compensation, -kFp32Max, CMPMODE::LT, alignedN);
         PipeBarrier<PIPE_V>();
         Select(compensation, nanMask, temp, compensation, SELMODE::VSEL_TENSOR_TENSOR_MODE, alignedN);
         PipeBarrier<PIPE_V>();

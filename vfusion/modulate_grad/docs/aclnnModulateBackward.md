@@ -282,11 +282,13 @@ aclnnStatus aclnnModulateBackward(
 - scale和shift为可选输入：未提供scale/shift时，对应的grad_scale/grad_shift不输出；未提供scale时，grad_input = grad_output。
 - 支持空Tensor（B/L/D任一为0）：直接返回对应shape的空输出；此时scale和shift必须为空或缺失。
 - 支持动态shape（含-1维度）：tiling在运行期按实际shape计算多核与UB切分，无需重新编译；rank固定为3。
+- 输出tensor的视图stride不允许在非单例维上为0（如broadcast/expand得到的零stride输出视图）：多个逻辑位置映射到同一物理元素时回拷语义未定义，接口以ACLNN_ERR_PARAM_INVALID拒绝；需要写broadcast视图时请先clone出连续输出。
 
 
 - 精度说明：
   - kernel 内部以 fp32 累加归约（grad_scale = Σ input·grad_output, grad_shift = Σ grad_output），结果经 RNE 舍回输出 dtype。
   - 测试参考（golden）以 fp64 计算后同样经 RNE 舍回输出 dtype，与 kernel 舍入路径一致。
+  - fp32 累加饱和行为与普通求和一致：同号上溢输出 ±Inf（与 torch 求和一致）；仅当 ±Inf 项与相反符号项相遇产生 NaN 时输出 NaN。
 
 ## 调用示例
 

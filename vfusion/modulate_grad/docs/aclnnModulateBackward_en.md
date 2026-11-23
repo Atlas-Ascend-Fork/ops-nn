@@ -298,6 +298,7 @@ aclnnStatus aclnnModulateBackward(
 
 - scale and shift are two-dimensional vectors. The first dimension must match the first dimension of input, and the second dimension must match the third dimension of input.
 - The shape of grad_output must be the same as the shape of input.
+- An output tensor's view strides must not be zero on a non-singleton dimension (e.g. broadcast/expanded output views): writing through such an aliased view is undefined, and the API rejects it with ACLNN_ERR_PARAM_INVALID. Clone a contiguous output before writing a broadcast view.
 
 ## Example
 

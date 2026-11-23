@@ -201,6 +201,33 @@ static bool CheckShape(const aclTensor* grad_output, const aclTensor* input, con
     return true;
 }
 
+static bool CheckOutputViewNotAliased(const aclTensor* grad_input, const aclTensor* grad_scale,
+                                      const aclTensor* grad_shift)
+{
+    // 零 stride 广播输出视图（view (B,D) 而 storage (1,)、strides (0,0) 一类）会把 B*D 个
+    // 逻辑位置的写回坍缩到同一物理元素：kernel 先写满量连续临时张量，ViewCopy 再按视图回拷，
+    // 最终可见值取决于回拷执行序，语义未定义。torch 对此类 aliased 输出写入直接报错
+    // ("more than one element of the written-to tensor refers to a single memory location")。
+    // 此处对齐 torch 语义：非空输出在非单例维上 view stride 为 0 时拒绝。
+    for (const aclTensor* out : {grad_input, grad_scale, grad_shift}) {
+        if (out == nullptr || out->IsEmpty()) {
+            continue; // 缺席 optional 输出与零元素输出不发生写回，维持既有语义
+        }
+        const auto& viewShape = out->GetViewShape();
+        const auto& viewStrides = out->GetViewStrides();
+        const int64_t dimNum = static_cast<int64_t>(viewShape.GetDimNum());
+        const int64_t strideNum = static_cast<int64_t>(viewStrides.size());
+        for (int64_t i = 0; i < dimNum && i < strideNum; i++) {
+            if (viewShape.GetDim(i) > 1 && viewStrides[i] == 0) {
+                OP_LOGE(ACLNN_ERR_PARAM_INVALID, "output tensor has a zero-stride view on a non-singleton dim; "
+                                                 "such an aliased output is unsupported, clone it before calling");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 static aclnnStatus CheckParams(const aclTensor* grad_output, const aclTensor* input, const aclTensor* scale,
                                const aclTensor* shift, const aclTensor* grad_input, const aclTensor* grad_scale,
                                const aclTensor* grad_shift)
@@ -219,6 +246,8 @@ static aclnnStatus CheckParams(const aclTensor* grad_output, const aclTensor* in
     // 5.检查shape及可选输入输出关系
     CHECK_RET(CheckShape(grad_output, input, scale, shift, grad_input, grad_scale, grad_shift),
               ACLNN_ERR_PARAM_INVALID);
+    // 6.检查输出视图别名（零 stride 广播输出语义未定义，按 torch 语义拒绝）
+    CHECK_RET(CheckOutputViewNotAliased(grad_input, grad_scale, grad_shift), ACLNN_ERR_PARAM_INVALID);
 
     return ACLNN_SUCCESS;
 }
