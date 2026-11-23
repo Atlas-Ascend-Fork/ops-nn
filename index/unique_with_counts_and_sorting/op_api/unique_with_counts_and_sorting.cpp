@@ -21,6 +21,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/op_executor.h"
 #include "opdev/op_log.h"
+#include "opdev/small_vector.h"
 
 using namespace op;
 namespace {
@@ -47,8 +48,8 @@ bool CanUseValuesOnlyAicore(const aclTensor* self, const aclTensor* valueOut)
         self->GetStorageShape().GetShapeSize() != elements || valueOut->GetStorageShape().GetShapeSize() < elements) {
         return false;
     }
-    auto input = reinterpret_cast<uintptr_t>(self->GetData());
-    auto output = reinterpret_cast<uintptr_t>(valueOut->GetData());
+    const auto input = op::internal::PtrToValue(self->GetData());
+    const auto output = op::internal::PtrToValue(valueOut->GetData());
     const auto elementBytes = op::TypeSize(dtype);
     if (elementBytes <= 0 ||
         static_cast<uint64_t>(elements) > std::numeric_limits<uint64_t>::max() / static_cast<uint64_t>(elementBytes)) {
