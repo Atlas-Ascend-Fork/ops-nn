@@ -361,8 +361,14 @@ __aicore__ inline void SparseSoftmaxCrossEntropyWithLogitsFullLoad<T1, T2, schId
         for (uint16_t i = 0; i < aTimes; i++) {
             AscendC::Reg::Duplicate(featuresReg, minVal);
             AscendC::Reg::LoadAlign(featuresReg1, featuresAddr + i * rAlign + repeatTimes * vfLen);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+            // Merge Mode：激活位取 max，未激活位保留 featuresReg 的 minVal，
+            // 把原来的 Max + Move 两条指令合并为一条
+            AscendC::Reg::Max<T1, AscendC::Reg::MaskMergeMode::MERGING>(featuresReg, featuresReg, featuresReg1, preg);
+#else
             AscendC::Reg::Max(featuresReg1, featuresReg, featuresReg1, preg);
             AscendC::Reg::Move<T1, AscendC::Reg::MaskMergeMode::MERGING>(featuresReg, featuresReg1, preg);
+#endif
             for (uint16_t j = 0; j < repeatTimes; j++) {
                 AscendC::Reg::AddrReg offset = AscendC::Reg::CreateAddrReg<T1>(i, rAlign, j, vfLen);
                 AscendC::Reg::LoadAlign(featuresReg1, featuresAddr1, offset);

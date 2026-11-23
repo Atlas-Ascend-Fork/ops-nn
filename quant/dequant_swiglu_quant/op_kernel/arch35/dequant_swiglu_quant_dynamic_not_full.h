@@ -269,13 +269,11 @@ __aicore__ inline void DSQDynamicNotFull<ActiScaleType, QuantScaleType, GroupTyp
     DataCopyPadParams padParams{false, 0, 0, 0};
     // copy_in: x(xDimPerLoop, H)
     LocalTensor<XType> xLocal = xQueue_.AllocTensor<XType>();
-    DataCopyParams dataCopyXParams;
-    dataCopyXParams.blockCount = 1;
-    dataCopyXParams.blockLen = tileData * sizeof(XType);
-    dataCopyXParams.srcStride = 0;
-    dataCopyXParams.dstStride = 0;
-    DataCopyPad(xLocal[0], xGm_[xGmOffset + actOffset], dataCopyXParams, padParams);              // 激活部分
-    DataCopyPad(xLocal[xAlignLength_], xGm_[xGmOffset + gateOffset], dataCopyXParams, padParams); // 门控部分
+    // x 搬入目的 buffer（xQueue_）为双缓冲、源地址由 tiling 静态确定，可开启 Pre-Allocation
+    DataCopyPadExtParams<XType> xPadParams{false, 0, 0, 0};
+    DataCopyExtParams dataCopyXParams{1, static_cast<uint32_t>(tileData * sizeof(XType)), 0, 0, 0};
+    DataCopyPadPreRead(xLocal[0], xGm_[xGmOffset + actOffset], dataCopyXParams, xPadParams); // 激活部分
+    DataCopyPadPreRead(xLocal[xAlignLength_], xGm_[xGmOffset + gateOffset], dataCopyXParams, xPadParams); // 门控部分
     xQueue_.EnQue(xLocal);
     // copy_in: weight_scale(G, H)
     if constexpr (ifXIntIndex_) {
@@ -363,13 +361,11 @@ DSQDynamicNotFull<ActiScaleType, QuantScaleType, GroupType, BiasType, XType, YTy
     // activation_scale按行只搬一次（索引为rowIndex，与group无关），整行loop间复用；MTE2->V同步由本次EnQue/DeQue承接
     if constexpr (hasActScale_) {
         activationScaleLocal_ = activationScaleQueue_.AllocTensor<float>();
-        DataCopyPadParams actScalePadParams{false, 0, 0, 0};
-        DataCopyParams dataCopyActScaleParams;
-        dataCopyActScaleParams.blockCount = 1;
-        dataCopyActScaleParams.blockLen = sizeof(float);
-        dataCopyActScaleParams.srcStride = 0;
-        dataCopyActScaleParams.dstStride = 0;
-        DataCopyPad(activationScaleLocal_[0], activationScaleGm_[rowIndex], dataCopyActScaleParams, actScalePadParams);
+        // activation_scale 目的 buffer（activationScaleQueue_）为双缓冲、源为纯输入 GM，可开启 Pre-Allocation
+        DataCopyPadExtParams<float> actScalePadParams{false, 0, 0, 0};
+        DataCopyExtParams dataCopyActScaleParams{1, static_cast<uint32_t>(sizeof(float)), 0, 0, 0};
+        DataCopyPadPreRead(activationScaleLocal_[0], activationScaleGm_[rowIndex], dataCopyActScaleParams,
+                           actScalePadParams);
         activationScaleQueue_.EnQue(activationScaleLocal_);
         activationScaleLocal_ = activationScaleQueue_.DeQue<float>();
     }
@@ -670,12 +666,9 @@ __aicore__ inline void DSQDynamicNotFull<ActiScaleType, QuantScaleType, GroupTyp
     DataCopyPadParams padParams{false, 0, 0, 0};
     // copy_in: x(xDimPerLoop, H)
     LocalTensor<XType> xLocal = xQueue_.AllocTensor<XType>();
-    DataCopyParams dataCopyXParams;
-    dataCopyXParams.blockCount = 1;
-    dataCopyXParams.blockLen = 2 * tileData * sizeof(XType);
-    dataCopyXParams.srcStride = 0;
-    dataCopyXParams.dstStride = 0;
-    DataCopyPad(xLocal[0], xGm_[xGmOffset + ubOffset], dataCopyXParams, padParams); // 激活部分
+    DataCopyPadExtParams<XType> xPadParams{false, 0, 0, 0};
+    DataCopyExtParams dataCopyXParams{1, static_cast<uint32_t>(2 * tileData * sizeof(XType)), 0, 0, 0};
+    DataCopyPadPreRead(xLocal[0], xGm_[xGmOffset + ubOffset], dataCopyXParams, xPadParams); // 激活部分
     xQueue_.EnQue(xLocal);
     // copy_in: weight_scale(G, H)
     if constexpr (ifXIntIndex_) {

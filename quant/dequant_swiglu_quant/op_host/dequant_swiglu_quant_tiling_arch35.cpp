@@ -51,6 +51,7 @@ constexpr uint64_t WORKSPACE_SIZE = 32;
 constexpr int64_t UB_REVERSE = 1024;
 constexpr int64_t SWI_FACTOR = 2;
 constexpr int64_t Y_LAST_DIM_FULL_LOAD_MAX_VALUE = 5120; // 能够命中UB全载模板的输出尾轴最大值
+constexpr int64_t DSQ_MIN_ELEMS_PER_CORE = 8192; // 核数优先分核时，单核最少处理的输入元素数，防小shape过并行
 constexpr int64_t QUANT_MODE_DYNAMIC = 1;
 constexpr int64_t QUANT_MODE_INDEX = 1;
 constexpr int64_t ACTIVATE_DIM_FACTOR = 100000;
@@ -114,6 +115,7 @@ ge::graphStatus DequantSwigluQuantV35DskTiling::GetPlatformInfo()
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
         ubSize_ = ubSizePlatForm;
         socVersion = ascendcPlatform.GetSocVersion();
+        arch = ascendcPlatform.GetCurNpuArch();
     }
 
     maxPreCore_ = static_cast<int64_t>(coreNum_);
@@ -1121,7 +1123,16 @@ ge::graphStatus DequantSwigluQuantV35DskTiling::DoOpTiling()
     ubFactorDimx = std::min(ubFactorDimx, inDimx_);
     OP_CHECK_IF(ubFactorDimx < 1, OP_LOGE(context_->GetNodeName(), "x last dim:%ld is too large to full load", inDimy_),
                 return ge::GRAPH_FAILED);
-    maxPreCore_ = std::min(maxPreCore_, (inDimx_ + ubFactorDimx - 1) / ubFactorDimx);
+    // 分核策略芯片隔离：仅A6(DAV_9201/9202)启用核数优先分核，其余芯片(如A5)保持原"块数决定核数"逻辑。
+    if (arch == NpuArch::DAV_9201 || arch == NpuArch::DAV_9202) {
+        int64_t tiles = (inDimx_ + ubFactorDimx - 1) / ubFactorDimx;
+        int64_t coreCap = std::min(static_cast<int64_t>(coreNum_), inDimx_);
+        int64_t minRows = std::max<int64_t>(1, Ops::Base::CeilDiv(DSQ_MIN_ELEMS_PER_CORE, inDimy_));
+        int64_t byWork = (inDimx_ + minRows - 1) / minRows;
+        maxPreCore_ = std::min(maxPreCore_, std::max(tiles, std::min(coreCap, byWork)));
+    } else {
+        maxPreCore_ = std::min(maxPreCore_, (inDimx_ + ubFactorDimx - 1) / ubFactorDimx);
+    }
     OP_LOGI(context_->GetNodeName(), "start maxPreCore_ is %ld ", maxPreCore_);
     if (isSpecialCoreCut_ == static_cast<int64_t>(1)) {
         maxPreCore_ = std::min(static_cast<int64_t>(coreNum_), static_cast<int64_t>(inDimx_));

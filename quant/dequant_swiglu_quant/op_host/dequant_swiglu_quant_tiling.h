@@ -420,6 +420,7 @@ private:
     int64_t inDimy_ = 0;
     int64_t outDimy_ = 0;
     platform_ascendc::SocVersion socVersion = platform_ascendc::SocVersion::ASCEND910B;
+    NpuArch arch = NpuArch::DAV_3510;
 };
 
 class DequantSwigluQuantV35NlastTiling : public TilingBaseClass {

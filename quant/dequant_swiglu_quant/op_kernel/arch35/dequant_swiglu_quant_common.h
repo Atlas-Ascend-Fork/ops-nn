@@ -41,6 +41,30 @@ constexpr static uint32_t FLOAT4E1M2SYMBOL = 41; // dstType:float4e1m2
 constexpr static int64_t SWI_FACTOR = 2;
 constexpr static int64_t FP4_WEIGHT = 2;
 
+// 搬运指令提前发射（Pre-Allocation）：使能后 MTE2 可提前发起搬入，提升与 Vector 计算的流水重叠度。
+template <typename T>
+__aicore__ inline void DataCopyPadPreRead(const LocalTensor<T>& dst, const GlobalTensor<T>& src,
+                                          const DataCopyExtParams& copyParams, const DataCopyPadExtParams<T>& padParams)
+{
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+    DataCopyPad(dst, src, copyParams, padParams, true);
+#else
+    DataCopyPad(dst, src, copyParams, padParams);
+#endif
+}
+
+// A6 上合并为一条 FMA 指令（MulDstAdd：dst = dst * scale + bias），其余架构保持 Mul + Add 两条指令。
+__aicore__ inline void DequantScaleAddBias(AscendC::Reg::RegTensor<float>& dst, AscendC::Reg::RegTensor<float>& scale,
+                                           AscendC::Reg::RegTensor<float>& bias, AscendC::Reg::MaskReg& mask)
+{
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+    AscendC::Reg::MulDstAdd(dst, scale, bias, mask);
+#else
+    AscendC::Reg::Mul(dst, dst, scale, mask);
+    AscendC::Reg::Add(dst, dst, bias, mask);
+#endif
+}
+
 static constexpr AscendC::Reg::CastTrait CAST_FP32_TO_FP8 = {AscendC::Reg::RegLayout::ZERO, AscendC::Reg::SatMode::SAT,
                                                              AscendC::Reg::MaskMergeMode::ZEROING,
                                                              AscendC::RoundMode::CAST_RINT};
@@ -168,11 +192,13 @@ __aicore__ inline void Int32Dequant(__ubuf__ TXtype* xPtr, __ubuf__ float* dstPt
         AscendC::Reg::Cast<float, TXtype, CAST_INT32_TO_FP32>(vreg1, vreg0, mask);
         // x * weight
         AscendC::Reg::Mul(vreg3, vreg1, vreg2, mask);
-        // x * activation_scale
+        // x * activation_scale（若同时存在浮点 bias，则延后到 bias 加载后与加法合并成 FMA）
         if constexpr (hasActScale_) {
             auto aScaleAddr = aScalePtr;
             AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vreg4, aScaleAddr);
-            AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
+            if constexpr (!(hasBiasIndex_ && !IsSameType<TBias, int32_t>::value)) {
+                AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
+            }
         }
         if constexpr (hasBiasIndex_ && !IsSameType<TBias, int32_t>::value) {
             auto biasAddr = biasPtr + j * sizePerRepeat;
@@ -188,7 +214,11 @@ __aicore__ inline void Int32Dequant(__ubuf__ TXtype* xPtr, __ubuf__ float* dstPt
                 AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vreg20, vreg26, mask);
             }
             // 将dequant后的结果加上bias
-            AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
+            if constexpr (hasActScale_) {
+                DequantScaleAddBias(vreg3, vreg4, vreg20, mask);
+            } else {
+                AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
+            }
         }
         // store: reg->ub
         AscendC::Reg::StoreAlign(dstAddr, vreg3, mask);
@@ -777,12 +807,13 @@ __aicore__ inline void DequantSwigluV2(__ubuf__ TXtype* xPtr, __ubuf__ float* ds
                 AscendC::Reg::Cast<float, TXtype, CAST_BF16_FP16_TO_FP32>(vreg13, vreg10, mask);
             }
 
-            // x * activation_scale
             if constexpr (hasActScale_) {
                 auto aScaleAddr = aScalePtr + j * aScaleUbAlignB32;
                 AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vreg4, aScaleAddr);
-                AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
-                AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+                if constexpr (!(ifBiasFloatIndex_ || ifBiasFloat16Index_ || ifBiasBfloat16Index_)) {
+                    AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
+                    AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+                }
             }
 
             // 如果bias有值，且x!=int32 && bias!=int32，则先将dequant后的结果加上bias
@@ -807,8 +838,13 @@ __aicore__ inline void DequantSwigluV2(__ubuf__ TXtype* xPtr, __ubuf__ float* ds
                     AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vreg21, vreg27, mask);
                 }
                 // 将dequant后的结果加上bias
-                AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
-                AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+                if constexpr (hasActScale_) {
+                    DequantScaleAddBias(vreg3, vreg4, vreg20, mask);
+                    DequantScaleAddBias(vreg13, vreg4, vreg21, mask);
+                } else {
+                    AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
+                    AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+                }
             }
 
             // 解交织，分别取出下标为奇/偶的数
@@ -888,12 +924,13 @@ __aicore__ inline void DequantSwigluV2(__ubuf__ TXtype* xPtr, __ubuf__ float* ds
             AscendC::Reg::Cast<float, TXtype, CAST_BF16_FP16_TO_FP32>(vreg13, vreg10, mask);
         }
 
-        // x * activation_scale
         if constexpr (hasActScale_) {
             auto aScaleAddr = aScalePtr + j * aScaleUbAlignB32;
             AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vreg4, aScaleAddr);
-            AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
-            AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+            if constexpr (!(ifBiasFloatIndex_ || ifBiasFloat16Index_ || ifBiasBfloat16Index_)) {
+                AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
+                AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+            }
         }
 
         // 如果bias有值，且x!=int32 && bias!=int32，则先将dequant后的结果加上bias
@@ -918,8 +955,13 @@ __aicore__ inline void DequantSwigluV2(__ubuf__ TXtype* xPtr, __ubuf__ float* ds
                 AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vreg21, vreg27, mask);
             }
             // 将dequant后的结果加上bias
-            AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
-            AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+            if constexpr (hasActScale_) {
+                DequantScaleAddBias(vreg3, vreg4, vreg20, mask);
+                DequantScaleAddBias(vreg13, vreg4, vreg21, mask);
+            } else {
+                AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
+                AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+            }
         }
 
         // 解交织，分别取出下标为奇/偶的数
@@ -1030,12 +1072,13 @@ __aicore__ inline void DequantSwigluV1(__ubuf__ TXtype* x1Ptr, __ubuf__ TXtype* 
                 AscendC::Reg::Cast<float, TXtype, CAST_BF16_FP16_TO_FP32>(vreg13, vreg10, mask);
             }
 
-            // x * activation_scale
             if constexpr (hasActScale_) {
                 auto aScaleAddr = aScalePtr + i * aScaleUbAlignB32;
                 AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vreg4, aScaleAddr);
-                AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
-                AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+                if constexpr (!(ifBiasFloatIndex_ || ifBiasFloat16Index_ || ifBiasBfloat16Index_)) {
+                    AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
+                    AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+                }
             }
 
             // 如果bias有值，且x!=int32 && bias!=int32，则先将dequant后的结果加上bias
@@ -1060,8 +1103,13 @@ __aicore__ inline void DequantSwigluV1(__ubuf__ TXtype* x1Ptr, __ubuf__ TXtype* 
                     AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vreg21, vreg27, mask);
                 }
                 // 将dequant后的结果加上bias
-                AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
-                AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+                if constexpr (hasActScale_) {
+                    DequantScaleAddBias(vreg3, vreg4, vreg20, mask);
+                    DequantScaleAddBias(vreg13, vreg4, vreg21, mask);
+                } else {
+                    AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
+                    AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+                }
             }
 
             if constexpr (SwigluMode_ == 0) {

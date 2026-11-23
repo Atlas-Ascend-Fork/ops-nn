@@ -337,6 +337,7 @@ __aicore__ inline void DequantSwigluQuantBaseStatic<TActScale, TQuantScale, TGro
                                                                                        int64_t coreDimxOffset)
 {
     DataCopyPadParams padParams{false, 0, 0, 0};
+    DataCopyPadExtParams<TXtype> xPadParams{false, 0, 0, 0};
 
     // 激活左/右部分偏移，actRight是表示是否激活右半部分
     // 交织(V2)仅 mode1；mode0/2/3 均走前后半，使用 actRight 偏移
@@ -433,36 +434,31 @@ __aicore__ inline void DequantSwigluQuantBaseStatic<TActScale, TQuantScale, TGro
         // copy_in: x(xDimPerLoop, H) 激活部分
         LocalTensor<TXtype> xActLocal = xActQueue_.AllocTensor<TXtype>();
         if (tl_->swiGluMode != 1) {
-            DataCopyParams dataCopyXParams;
-            dataCopyXParams.blockCount = xDimPerLoop;
-            dataCopyXParams.blockLen = tl_->UbFactorDimy * sizeof(TXtype);
-            dataCopyXParams.srcStride = tl_->UbFactorDimy * sizeof(TXtype);
-            dataCopyXParams.dstStride = 0;
-            DataCopyPad(xActLocal[0], xGm_[xDimOffsetPerLoop * tl_->inDimy + actOffset], dataCopyXParams, padParams);
+            // blockLen/srcStride 均为 Byte：srcStride 为相邻行的间隔 (inDimy - H) * sizeof(TXtype)
+            DataCopyExtParams dataCopyXParams{static_cast<uint16_t>(xDimPerLoop),
+                                              static_cast<uint32_t>(tl_->UbFactorDimy * sizeof(TXtype)),
+                                              static_cast<uint32_t>(tl_->UbFactorDimy * sizeof(TXtype)), 0, 0};
+            DataCopyPadPreRead(xActLocal[0], xGm_[xDimOffsetPerLoop * tl_->inDimy + actOffset], dataCopyXParams,
+                               xPadParams);
 
             // copy_in: x(xDimPerLoop, H) 门控部分
-            DataCopyPad(xActLocal[xTypeUbAlignB32_ * xDimPerLoop], xGm_[xDimOffsetPerLoop * tl_->inDimy + gateOffset],
-                        dataCopyXParams, padParams);
+            DataCopyPadPreRead(xActLocal[xTypeUbAlignB32_ * xDimPerLoop],
+                               xGm_[xDimOffsetPerLoop * tl_->inDimy + gateOffset], dataCopyXParams, xPadParams);
         } else {
             // 奇偶搬运，连续搬运左右字块，actOffset和gateOffset不生效
-            DataCopyParams dataCopyXParams;
-            dataCopyXParams.blockCount = xDimPerLoop;
-            dataCopyXParams.blockLen = tl_->UbFactorDimy * 2 * sizeof(TXtype);
-            dataCopyXParams.srcStride = 0;
-            dataCopyXParams.dstStride = 0;
-            DataCopyPad(xActLocal[0], xGm_[xDimOffsetPerLoop * tl_->inDimy], dataCopyXParams, padParams);
+            DataCopyExtParams dataCopyXParams{static_cast<uint16_t>(xDimPerLoop),
+                                              static_cast<uint32_t>(tl_->UbFactorDimy * 2 * sizeof(TXtype)), 0, 0, 0};
+            DataCopyPadPreRead(xActLocal[0], xGm_[xDimOffsetPerLoop * tl_->inDimy], dataCopyXParams, xPadParams);
         }
 
         // copy_in: activation_scale(BS,)
         LocalTensor<float> xActLocalFp32 = xActLocal.template ReinterpretCast<float>();
         if constexpr (hasActScale_) {
-            DataCopyParams dataCopyActScaleParams;
-            dataCopyActScaleParams.blockCount = xDimPerLoop;
-            dataCopyActScaleParams.blockLen = sizeof(float);
-            dataCopyActScaleParams.srcStride = 0;
-            dataCopyActScaleParams.dstStride = 0;
-            DataCopyPad(xActLocalFp32[xTypeUbAlignB32_ * xDimPerLoop * 2], activationScaleGm_[xDimOffsetPerLoop],
-                        dataCopyActScaleParams, padParams);
+            DataCopyExtParams dataCopyActScaleParams{static_cast<uint16_t>(xDimPerLoop),
+                                                     static_cast<uint32_t>(sizeof(float)), 0, 0, 0};
+            DataCopyPadExtParams<float> actScalePadParams{false, 0, 0, 0};
+            DataCopyPadPreRead(xActLocalFp32[xTypeUbAlignB32_ * xDimPerLoop * 2], activationScaleGm_[xDimOffsetPerLoop],
+                               dataCopyActScaleParams, actScalePadParams);
         }
         xActQueue_.EnQue(xActLocal);
         xActLocal = xActQueue_.DeQue<TXtype>();

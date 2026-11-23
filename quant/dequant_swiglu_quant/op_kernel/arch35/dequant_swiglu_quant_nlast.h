@@ -391,14 +391,16 @@ __aicore__ inline void DequantSwigluQuantNlast<TActScale, TQuantScale, TGroup, T
                     AscendC::Reg::Cast<float, TXtype, CAST_BF16_FP16_TO_FP32>(vreg13, vreg10, mask);
                 }
 
-                // x * activation_scale
+                // x * activation_scale（若同时存在浮点 bias，则延后到 bias 加载后与加法合并成 FMA）
                 if constexpr (hasActScale_) {
                     auto aScale1Addr = aScale1Ptr + i * aScaleAlignB32_;
                     AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vreg4, aScale1Addr);
-                    AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
                     auto aScale2Addr = aScale2Ptr + i * aScaleAlignB32_;
                     AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vreg12, aScale2Addr);
-                    AscendC::Reg::Mul(vreg13, vreg13, vreg12, mask);
+                    if constexpr (!(ifBiasFloatIndex_ || ifBiasFloat16Index_ || ifBiasBfloat16Index_)) {
+                        AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
+                        AscendC::Reg::Mul(vreg13, vreg13, vreg12, mask);
+                    }
                 }
 
                 // 如果bias有值，且x!=int32 && bias!=int32，则先将dequant后的结果加上biasl
@@ -422,8 +424,13 @@ __aicore__ inline void DequantSwigluQuantNlast<TActScale, TQuantScale, TGroup, T
                         AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vreg21, vreg27, mask);
                     }
                     // 将dequant后的结果加上bias
-                    AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
-                    AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+                    if constexpr (hasActScale_) {
+                        DequantScaleAddBias(vreg3, vreg4, vreg20, mask);
+                        DequantScaleAddBias(vreg13, vreg12, vreg21, mask);
+                    } else {
+                        AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
+                        AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+                    }
                 }
                 // Swish
                 AscendC::Reg::Muls(vreg6, vreg3, -(scalarOne), mask);

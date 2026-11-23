@@ -282,18 +282,17 @@ DequantSwigluQuantStaticNotFull<TXtype, TActScale, TBias, TQuantScale, TQuantOff
     int64_t rowOffsetFor2H = rowIdx * tl_->inDimy;
     int64_t actOffset = tl_->actRight * tl_->outDimy;
     int64_t gateOffset = tl_->outDimy - actOffset;
-    DataCopyParams dataCopyPerRowForSwiGluV1Params;
-    DataCopyPadParams padParams{false, 0, 0, 0};
-    dataCopyPerRowForSwiGluV1Params.blockCount = 1;
-    dataCopyPerRowForSwiGluV1Params.blockLen = processNum * sizeof(copyDtype);
-    dataCopyPerRowForSwiGluV1Params.srcStride = 0;
-    dataCopyPerRowForSwiGluV1Params.dstStride = 0;
+    // 仅用于 x 搬入（目的 buffer xQueue_ 为双缓冲），可开启 Pre-Allocation
+    DataCopyExtParams dataCopyPerRowForSwiGluV1Params{1, static_cast<uint32_t>(processNum * sizeof(copyDtype)), 0, 0,
+                                                      0};
+    DataCopyPadExtParams<copyDtype> padParams{false, 0, 0, 0};
     // copy_in: (BS, H) 激活部分
-    DataCopyPad(dstTensor[0], srcTensor[rowOffsetFor2H + ubloop * tl_->UbFactorDimy + actOffset],
-                dataCopyPerRowForSwiGluV1Params, padParams);
+    DataCopyPadPreRead(dstTensor[0], srcTensor[rowOffsetFor2H + ubloop * tl_->UbFactorDimy + actOffset],
+                       dataCopyPerRowForSwiGluV1Params, padParams);
     // copy_in: (BS, H) 门控部分
-    DataCopyPad(dstTensor[tl_->UbFactorDimy], srcTensor[rowOffsetFor2H + ubloop * tl_->UbFactorDimy + gateOffset],
-                dataCopyPerRowForSwiGluV1Params, padParams);
+    DataCopyPadPreRead(dstTensor[tl_->UbFactorDimy],
+                       srcTensor[rowOffsetFor2H + ubloop * tl_->UbFactorDimy + gateOffset],
+                       dataCopyPerRowForSwiGluV1Params, padParams);
 }
 
 template <typename TXtype, typename TActScale, typename TBias, typename TQuantScale, typename TQuantOffset,
@@ -306,15 +305,12 @@ DequantSwigluQuantStaticNotFull<TXtype, TActScale, TBias, TQuantScale, TQuantOff
                                                                    int64_t ubloop, int64_t processNum)
 {
     int64_t rowOffsetFor2H = rowIdx * tl_->inDimy;
-    DataCopyParams dataCopy2HPerRowForSwiGluV2Params;
-    DataCopyPadParams padParams{false, 0, 0, 0};
-    dataCopy2HPerRowForSwiGluV2Params.blockCount = 1;
-    dataCopy2HPerRowForSwiGluV2Params.blockLen = 2 * processNum * sizeof(copyDtype);
-    dataCopy2HPerRowForSwiGluV2Params.srcStride = 0;
-    dataCopy2HPerRowForSwiGluV2Params.dstStride = 0;
+    DataCopyExtParams dataCopy2HPerRowForSwiGluV2Params{1, static_cast<uint32_t>(2 * processNum * sizeof(copyDtype)), 0,
+                                                        0, 0};
+    DataCopyPadExtParams<copyDtype> padParams{false, 0, 0, 0};
     // copy_in: (BS, 2H)
-    DataCopyPad(dstTensor[0], srcTensor[rowOffsetFor2H + ubloop * 2 * tl_->UbFactorDimy],
-                dataCopy2HPerRowForSwiGluV2Params, padParams);
+    DataCopyPadPreRead(dstTensor[0], srcTensor[rowOffsetFor2H + ubloop * 2 * tl_->UbFactorDimy],
+                       dataCopy2HPerRowForSwiGluV2Params, padParams);
 }
 
 template <typename TXtype, typename TActScale, typename TBias, typename TQuantScale, typename TQuantOffset,
@@ -331,18 +327,17 @@ DequantSwigluQuantStaticNotFull<TXtype, TActScale, TBias, TQuantScale, TQuantOff
     int64_t actOffset = tl_->actRight * tl_->outDimy;
     int64_t gateOffset = tl_->outDimy - actOffset;
 
-    DataCopyParams dataCopy2HPerGroupForSwiGluV1Params;
-    DataCopyPadParams padParams{false, 0, 0, 0};
-    dataCopy2HPerGroupForSwiGluV1Params.blockCount = 1;
-    dataCopy2HPerGroupForSwiGluV1Params.blockLen = processNum * sizeof(copyDtype);
-    dataCopy2HPerGroupForSwiGluV1Params.srcStride = 0;
-    dataCopy2HPerGroupForSwiGluV1Params.dstStride = 0;
+    // 调用方目的 buffer（weightScaleQueue_/biasQueue_）均为双缓冲、源为纯输入 GM，可开启 Pre-Allocation
+    DataCopyExtParams dataCopy2HPerGroupForSwiGluV1Params{1, static_cast<uint32_t>(processNum * sizeof(copyDtype)), 0,
+                                                          0, 0};
+    DataCopyPadExtParams<copyDtype> padParams{false, 0, 0, 0};
     // copy_in: (G, H) 激活部分
-    DataCopyPad(dstTensor[0], srcTensor[groupOffsetFor2H + ubloop * tl_->UbFactorDimy + actOffset],
-                dataCopy2HPerGroupForSwiGluV1Params, padParams);
+    DataCopyPadPreRead(dstTensor[0], srcTensor[groupOffsetFor2H + ubloop * tl_->UbFactorDimy + actOffset],
+                       dataCopy2HPerGroupForSwiGluV1Params, padParams);
     // copy_in: (G, H) 门控部分
-    DataCopyPad(dstTensor[tl_->UbFactorDimy], srcTensor[groupOffsetFor2H + ubloop * tl_->UbFactorDimy + gateOffset],
-                dataCopy2HPerGroupForSwiGluV1Params, padParams);
+    DataCopyPadPreRead(dstTensor[tl_->UbFactorDimy],
+                       srcTensor[groupOffsetFor2H + ubloop * tl_->UbFactorDimy + gateOffset],
+                       dataCopy2HPerGroupForSwiGluV1Params, padParams);
 }
 
 template <typename TXtype, typename TActScale, typename TBias, typename TQuantScale, typename TQuantOffset,
@@ -357,15 +352,12 @@ DequantSwigluQuantStaticNotFull<TXtype, TActScale, TBias, TQuantScale, TQuantOff
 {
     int64_t groupOffsetFor2H = groupIdx * tl_->inDimy;
 
-    DataCopyParams dataCopy2HPerGroupForSwiGluV2Params;
-    DataCopyPadParams padParams{false, 0, 0, 0};
-    dataCopy2HPerGroupForSwiGluV2Params.blockCount = 1;
-    dataCopy2HPerGroupForSwiGluV2Params.blockLen = 2 * processNum * sizeof(copyDtype);
-    dataCopy2HPerGroupForSwiGluV2Params.srcStride = 0;
-    dataCopy2HPerGroupForSwiGluV2Params.dstStride = 0;
+    DataCopyExtParams dataCopy2HPerGroupForSwiGluV2Params{1, static_cast<uint32_t>(2 * processNum * sizeof(copyDtype)),
+                                                          0, 0, 0};
+    DataCopyPadExtParams<copyDtype> padParams{false, 0, 0, 0};
     // copy_in: (BS, 2H)
-    DataCopyPad(dstTensor[0], srcTensor[groupOffsetFor2H + ubloop * 2 * tl_->UbFactorDimy],
-                dataCopy2HPerGroupForSwiGluV2Params, padParams);
+    DataCopyPadPreRead(dstTensor[0], srcTensor[groupOffsetFor2H + ubloop * 2 * tl_->UbFactorDimy],
+                       dataCopy2HPerGroupForSwiGluV2Params, padParams);
 }
 
 template <typename TXtype, typename TActScale, typename TBias, typename TQuantScale, typename TQuantOffset,
@@ -379,14 +371,12 @@ __aicore__ inline void DequantSwigluQuantStaticNotFull<TXtype, TActScale, TBias,
 {
     int64_t groupOffsetForH = groupIdx * tl_->outDimy;
 
-    DataCopyParams dataCopyHPerGroup;
-    DataCopyPadParams padParams{false, 0, 0, 0};
-    dataCopyHPerGroup.blockCount = 1;
-    dataCopyHPerGroup.blockLen = processNum * sizeof(copyDtype);
-    dataCopyHPerGroup.srcStride = 0;
-    dataCopyHPerGroup.dstStride = 0;
+    // 调用方目的 buffer（quantScaleQueue_/quantOffsetQueue_）均为双缓冲、源为纯输入 GM，可开启 Pre-Allocation
+    DataCopyExtParams dataCopyHPerGroup{1, static_cast<uint32_t>(processNum * sizeof(copyDtype)), 0, 0, 0};
+    DataCopyPadExtParams<copyDtype> padParams{false, 0, 0, 0};
     // copy_in: (G, H)
-    DataCopyPad(dstTensor[0], srcTensor[groupOffsetForH + ubloop * tl_->UbFactorDimy], dataCopyHPerGroup, padParams);
+    DataCopyPadPreRead(dstTensor[0], srcTensor[groupOffsetForH + ubloop * tl_->UbFactorDimy], dataCopyHPerGroup,
+                       padParams);
 }
 
 template <typename TXtype, typename TActScale, typename TBias, typename TQuantScale, typename TQuantOffset,
@@ -398,14 +388,10 @@ __aicore__ inline void DequantSwigluQuantStaticNotFull<TXtype, TActScale, TBias,
                                                                                   int64_t groupIdx, int64_t ubloop,
                                                                                   int64_t processNum)
 {
-    DataCopyParams dataCopyOnePerGroup;
-    DataCopyPadParams padParams{false, 0, 0, 0};
-    dataCopyOnePerGroup.blockCount = 1;
-    dataCopyOnePerGroup.blockLen = 1 * sizeof(copyDtype);
-    dataCopyOnePerGroup.srcStride = 0;
-    dataCopyOnePerGroup.dstStride = 0;
+    DataCopyExtParams dataCopyOnePerGroup{1, static_cast<uint32_t>(1 * sizeof(copyDtype)), 0, 0, 0};
+    DataCopyPadExtParams<copyDtype> padParams{false, 0, 0, 0};
     // copy_in: (G, 1)
-    DataCopyPad(dstTensor[0], srcTensor[groupIdx], dataCopyOnePerGroup, padParams);
+    DataCopyPadPreRead(dstTensor[0], srcTensor[groupIdx], dataCopyOnePerGroup, padParams);
 }
 
 template <typename TXtype, typename TActScale, typename TBias, typename TQuantScale, typename TQuantOffset,
@@ -443,12 +429,10 @@ __aicore__ inline void DequantSwigluQuantStaticNotFull<TXtype, TActScale, TBias,
         // copy_in: activation_scale(BS,)
         if constexpr (hasActScale_) {
             actScaleLocal = actScaleQueue_.AllocTensor<TActScale>();
-            DataCopyParams dataCopyActScaleParams;
-            dataCopyActScaleParams.blockCount = 1;
-            dataCopyActScaleParams.blockLen = 1 * sizeof(TActScale);
-            dataCopyActScaleParams.srcStride = 0;
-            dataCopyActScaleParams.dstStride = 0;
-            DataCopyPad(actScaleLocal[0], activationScaleGm_[rowIdx], dataCopyActScaleParams, padParams);
+            // activation_scale 目的 buffer（actScaleQueue_）为双缓冲，可开启 Pre-Allocation
+            DataCopyExtParams dataCopyActScaleParams{1, static_cast<uint32_t>(1 * sizeof(TActScale)), 0, 0, 0};
+            DataCopyPadExtParams<TActScale> actScalePadParams{false, 0, 0, 0};
+            DataCopyPadPreRead(actScaleLocal[0], activationScaleGm_[rowIdx], dataCopyActScaleParams, actScalePadParams);
             actScaleQueue_.EnQue(actScaleLocal);
         }
         // copy_in: bias(G, 2H)->(G, H), (G, H)

@@ -317,6 +317,7 @@ __aicore__ inline void DequantSwigluQuantBase<TActScale, TQuantScale, TGroup, TB
                                                                                  int64_t coreDimxOffset)
 {
     DataCopyPadParams padParams{false, 0, 0, 0};
+    DataCopyPadExtParams<TXtype> xPadParams{false, 0, 0, 0};
 
     // 激活左/右部分偏移，actRight是表示是否激活右半部分
     int64_t actOffset = tl_->actRight * tl_->UbFactorDimy;
@@ -407,35 +408,30 @@ __aicore__ inline void DequantSwigluQuantBase<TActScale, TQuantScale, TGroup, TB
         // copy_in: x(xDimPerLoop, H) 激活部分
         LocalTensor<TXtype> xActLocal = xActQueue_.AllocTensor<TXtype>();
         if (tl_->swiGluMode != 1) {
-            DataCopyParams dataCopyXParams;
-            dataCopyXParams.blockCount = xDimPerLoop;
-            dataCopyXParams.blockLen = tl_->UbFactorDimy * sizeof(TXtype);
-            dataCopyXParams.srcStride = tl_->UbFactorDimy * sizeof(TXtype);
-            dataCopyXParams.dstStride = 0;
-            DataCopyPad(xActLocal[0], xGm_[xDimOffsetPerLoop * tl_->inDimy + actOffset], dataCopyXParams, padParams);
+            // blockLen/srcStride 均为 Byte：srcStride 为相邻行的间隔 (inDimy - H) * sizeof(TXtype)
+            DataCopyExtParams dataCopyXParams{static_cast<uint16_t>(xDimPerLoop),
+                                              static_cast<uint32_t>(tl_->UbFactorDimy * sizeof(TXtype)),
+                                              static_cast<uint32_t>(tl_->UbFactorDimy * sizeof(TXtype)), 0, 0};
+            DataCopyPadPreRead(xActLocal[0], xGm_[xDimOffsetPerLoop * tl_->inDimy + actOffset], dataCopyXParams,
+                               xPadParams);
 
             // copy_in: x(xDimPerLoop, H) 门控部分
-            DataCopyPad(xActLocal[xTypeUbAlignB32_ * xDimPerLoop], xGm_[xDimOffsetPerLoop * tl_->inDimy + gateOffset],
-                        dataCopyXParams, padParams);
+            DataCopyPadPreRead(xActLocal[xTypeUbAlignB32_ * xDimPerLoop],
+                               xGm_[xDimOffsetPerLoop * tl_->inDimy + gateOffset], dataCopyXParams, xPadParams);
         } else {
-            DataCopyParams dataCopyXParams;
-            dataCopyXParams.blockCount = xDimPerLoop;
-            dataCopyXParams.blockLen = tl_->UbFactorDimy * 2 * sizeof(TXtype);
-            dataCopyXParams.srcStride = 0;
-            dataCopyXParams.dstStride = 0;
-            DataCopyPad(xActLocal[0], xGm_[xDimOffsetPerLoop * tl_->inDimy], dataCopyXParams, padParams);
+            DataCopyExtParams dataCopyXParams{static_cast<uint16_t>(xDimPerLoop),
+                                              static_cast<uint32_t>(tl_->UbFactorDimy * 2 * sizeof(TXtype)), 0, 0, 0};
+            DataCopyPadPreRead(xActLocal[0], xGm_[xDimOffsetPerLoop * tl_->inDimy], dataCopyXParams, xPadParams);
         }
 
         // copy_in: activation_scale(BS,)
         LocalTensor<float> xActLocalFp32 = xActLocal.template ReinterpretCast<float>();
         if constexpr (hasActScale_) {
-            DataCopyParams dataCopyActScaleParams;
-            dataCopyActScaleParams.blockCount = xDimPerLoop;
-            dataCopyActScaleParams.blockLen = sizeof(float);
-            dataCopyActScaleParams.srcStride = 0;
-            dataCopyActScaleParams.dstStride = 0;
-            DataCopyPad(xActLocalFp32[xTypeUbAlignB32_ * xDimPerLoop * 2], activationScaleGm_[xDimOffsetPerLoop],
-                        dataCopyActScaleParams, padParams);
+            DataCopyExtParams dataCopyActScaleParams{static_cast<uint16_t>(xDimPerLoop),
+                                                     static_cast<uint32_t>(sizeof(float)), 0, 0, 0};
+            DataCopyPadExtParams<float> actScalePadParams{false, 0, 0, 0};
+            DataCopyPadPreRead(xActLocalFp32[xTypeUbAlignB32_ * xDimPerLoop * 2], activationScaleGm_[xDimOffsetPerLoop],
+                               dataCopyActScaleParams, actScalePadParams);
         }
         xActQueue_.EnQue(xActLocal);
         xActLocal = xActQueue_.DeQue<TXtype>();
@@ -550,12 +546,14 @@ __aicore__ inline void DequantSwigluQuantBase<TActScale, TQuantScale, TGroup, TB
                             AscendC::Reg::Cast<float, TXtype, CAST_BF16_FP16_TO_FP32>(vreg13, vreg10, mask);
                         }
 
-                        // x * activation_scale
+                        // x * activation_scale（若同时存在浮点 bias，则延后到 bias 加载后与加法合并成 FMA）
                         if constexpr (hasActScale_) {
                             auto aScaleAddr = aScalePtr + i * aScaleUbAlignB32_;
                             AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vreg4, aScaleAddr);
-                            AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
-                            AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+                            if constexpr (!(ifBiasFloatIndex_ || ifBiasFloat16Index_ || ifBiasBfloat16Index_)) {
+                                AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
+                                AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+                            }
                         }
 
                         // 如果bias有值，且x!=int32 && bias!=int32，则先将dequant后的结果加上bias
@@ -584,8 +582,13 @@ __aicore__ inline void DequantSwigluQuantBase<TActScale, TQuantScale, TGroup, TB
                                 AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vreg21, vreg27, mask);
                             }
                             // 将dequant后的结果加上bias
-                            AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
-                            AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+                            if constexpr (hasActScale_) {
+                                DequantScaleAddBias(vreg3, vreg4, vreg20, mask);
+                                DequantScaleAddBias(vreg13, vreg4, vreg21, mask);
+                            } else {
+                                AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
+                                AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+                            }
                         }
 
                         // Swish

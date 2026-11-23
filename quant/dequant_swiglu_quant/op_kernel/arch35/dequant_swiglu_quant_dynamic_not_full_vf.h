@@ -104,12 +104,14 @@ __aicore__ inline void DequantAndSwiGluV2(__ubuf__ XType* xPtr, __ubuf__ float* 
             AscendC::Reg::Cast<float, XType, CAST_BF16_FP16_TO_FP32>(vregD1, vregX1, mask);
             AscendC::Reg::Cast<float, XType, CAST_BF16_FP16_TO_FP32>(vregD2, vregX2, mask);
         }
-        // x * activation_scale
+        // x * activation_scale（若同时存在浮点 bias，则延后到 bias 加载后与加法合并成 FMA）
         if constexpr (HasActiScale) {
             auto aScaleAddr = aScalePtr;
             AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vregA, aScaleAddr);
-            AscendC::Reg::Mul(vregD1, vregD1, vregA, mask);
-            AscendC::Reg::Mul(vregD2, vregD2, vregA, mask);
+            if constexpr (!(IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16)) {
+                AscendC::Reg::Mul(vregD1, vregD1, vregA, mask);
+                AscendC::Reg::Mul(vregD2, vregD2, vregA, mask);
+            }
         }
         // 如果bias有值，且x!=int32 && bias!=int32，则先将dequant后的结果加上bias
         if constexpr (IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16) {
@@ -133,8 +135,13 @@ __aicore__ inline void DequantAndSwiGluV2(__ubuf__ XType* xPtr, __ubuf__ float* 
                 AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vregBiasFloat2, vregBiasBF2, mask);
             }
             // 将dequant后的结果加上bias
-            AscendC::Reg::Add(vregD1, vregD1, vregBiasFloat1, mask);
-            AscendC::Reg::Add(vregD2, vregD2, vregBiasFloat2, mask);
+            if constexpr (HasActiScale) {
+                DequantScaleAddBias(vregD1, vregA, vregBiasFloat1, mask);
+                DequantScaleAddBias(vregD2, vregA, vregBiasFloat2, mask);
+            } else {
+                AscendC::Reg::Add(vregD1, vregD1, vregBiasFloat1, mask);
+                AscendC::Reg::Add(vregD2, vregD2, vregBiasFloat2, mask);
+            }
         }
 
         // Swish
@@ -209,11 +216,13 @@ __aicore__ inline void DequantAndSwiGluV2(__ubuf__ XType* xPtr, __ubuf__ float* 
     if constexpr (IsXBfloat16 || IsXFloat16) {
         AscendC::Reg::Cast<float, XType, CAST_BF16_FP16_TO_FP32>(vregD1, vregX1, mask);
     }
-    // x * activation_scale
+    // x * activation_scale（若同时存在浮点 bias，则延后到 bias 加载后与加法合并成 FMA）
     if constexpr (HasActiScale) {
         aScaleAddr = aScalePtr;
         AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vregA, aScaleAddr);
-        AscendC::Reg::Mul(vregD1, vregD1, vregA, mask);
+        if constexpr (!(IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16)) {
+            AscendC::Reg::Mul(vregD1, vregD1, vregA, mask);
+        }
     }
     // 如果bias有值，且x!=int32 && bias!=int32，则先将dequant后的结果加上bias
     if constexpr (IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16) {
@@ -231,7 +240,11 @@ __aicore__ inline void DequantAndSwiGluV2(__ubuf__ XType* xPtr, __ubuf__ float* 
             AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vregBiasFloat1, vregBiasBF1, mask);
         }
         // 将dequant后的结果加上bias
-        AscendC::Reg::Add(vregD1, vregD1, vregBiasFloat1, mask);
+        if constexpr (HasActiScale) {
+            DequantScaleAddBias(vregD1, vregA, vregBiasFloat1, mask);
+        } else {
+            AscendC::Reg::Add(vregD1, vregD1, vregBiasFloat1, mask);
+        }
     }
     if (ifEven) {
         auto x2Addr = x1Addr + sizePerRepeat;
@@ -269,10 +282,12 @@ __aicore__ inline void DequantAndSwiGluV2(__ubuf__ XType* xPtr, __ubuf__ float* 
         if constexpr (IsXBfloat16 || IsXFloat16) {
             AscendC::Reg::Cast<float, XType, CAST_BF16_FP16_TO_FP32>(vregD2, vregX2, mask);
         }
-        // x * activation_scale
+        // x * activation_scale（若同时存在浮点 bias，则延后到 bias 加载后与加法合并成 FMA）
         if constexpr (HasActiScale) {
             AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vregA, aScaleAddr);
-            AscendC::Reg::Mul(vregD2, vregD2, vregA, mask);
+            if constexpr (!(IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16)) {
+                AscendC::Reg::Mul(vregD2, vregD2, vregA, mask);
+            }
         }
         // 如果bias有值，且x!=int32 && bias!=int32，则先将dequant后的结果加上bias
         if constexpr (IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16) {
@@ -290,7 +305,11 @@ __aicore__ inline void DequantAndSwiGluV2(__ubuf__ XType* xPtr, __ubuf__ float* 
                 AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vregBiasFloat2, vregBiasBF2, mask);
             }
             // 将dequant后的结果加上bias
-            AscendC::Reg::Add(vregD2, vregD2, vregBiasFloat2, mask);
+            if constexpr (HasActiScale) {
+                DequantScaleAddBias(vregD2, vregA, vregBiasFloat2, mask);
+            } else {
+                AscendC::Reg::Add(vregD2, vregD2, vregBiasFloat2, mask);
+            }
         }
         AscendC::Reg::DeInterleave(vregS0, vregS1, vregD1, vregD2);
     } else {
@@ -390,12 +409,14 @@ __aicore__ inline void DequantAndSwiGlu(__ubuf__ XType* x1Ptr, __ubuf__ XType* x
             AscendC::Reg::Cast<float, XType, CAST_BF16_FP16_TO_FP32>(vreg3, vreg0, mask);
             AscendC::Reg::Cast<float, XType, CAST_BF16_FP16_TO_FP32>(vreg13, vreg10, mask);
         }
-        // x * activation_scale
+        // x * activation_scale（若同时存在浮点 bias，则延后到 bias 加载后与加法合并成 FMA）
         if constexpr (HasActiScale) {
             auto aScaleAddr = aScalePtr;
             AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vreg4, aScaleAddr);
-            AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
-            AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+            if constexpr (!(IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16)) {
+                AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
+                AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+            }
         }
         // 如果bias有值，且x!=int32 && bias!=int32，则先将dequant后的结果加上bias
         if constexpr (IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16) {
@@ -419,8 +440,13 @@ __aicore__ inline void DequantAndSwiGlu(__ubuf__ XType* x1Ptr, __ubuf__ XType* x
                 AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vreg21, vreg27, mask);
             }
             // 将dequant后的结果加上bias
-            AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
-            AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+            if constexpr (HasActiScale) {
+                DequantScaleAddBias(vreg3, vreg4, vreg20, mask);
+                DequantScaleAddBias(vreg13, vreg4, vreg21, mask);
+            } else {
+                AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
+                AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+            }
         }
         if constexpr (SwigluMode_ == 0) {
             // mode0: SiLU 前后半，逐指令保持不变
@@ -525,11 +551,14 @@ __aicore__ inline void DequantAndSwiGluV3(__ubuf__ XType* x1Ptr, __ubuf__ XType*
             AscendC::Reg::Cast<float, XType, CAST_BF16_FP16_TO_FP32>(vreg3, vreg0, mask);
             AscendC::Reg::Cast<float, XType, CAST_BF16_FP16_TO_FP32>(vreg13, vreg10, mask);
         }
+        // x * activation_scale（若同时存在浮点 bias，则延后到 bias 加载后与加法合并成 FMA）
         if constexpr (HasActiScale) {
             auto aScaleAddr = aScalePtr;
             AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vreg4, aScaleAddr);
-            AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
-            AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+            if constexpr (!(IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16)) {
+                AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
+                AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+            }
         }
         if constexpr (IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16) {
             auto bias1Addr = bias1Ptr + j * sizePerRepeat;
@@ -550,8 +579,14 @@ __aicore__ inline void DequantAndSwiGluV3(__ubuf__ XType* x1Ptr, __ubuf__ XType*
                 AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vreg20, vreg26, mask);
                 AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vreg21, vreg27, mask);
             }
-            AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
-            AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+            // 将dequant后的结果加上bias
+            if constexpr (HasActiScale) {
+                DequantScaleAddBias(vreg3, vreg4, vreg20, mask);
+                DequantScaleAddBias(vreg13, vreg4, vreg21, mask);
+            } else {
+                AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
+                AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+            }
         }
         // SwiGlu mode=2: clamp(x_glu, max) -> swish(alpha) -> clamp(x_linear) -> x_linear+bias -> y
         AscendC::Reg::Mins(vreg3, vreg3, clampLit, mask);
@@ -633,11 +668,14 @@ __aicore__ inline void DequantAndSwiGluV4(__ubuf__ XType* x1Ptr, __ubuf__ XType*
             AscendC::Reg::Cast<float, XType, CAST_BF16_FP16_TO_FP32>(vreg3, vreg0, mask);
             AscendC::Reg::Cast<float, XType, CAST_BF16_FP16_TO_FP32>(vreg13, vreg10, mask);
         }
+        // x * activation_scale（若同时存在浮点 bias，则延后到 bias 加载后与加法合并成 FMA）
         if constexpr (HasActiScale) {
             auto aScaleAddr = aScalePtr;
             AscendC::Reg::LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(vreg4, aScaleAddr);
-            AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
-            AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+            if constexpr (!(IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16)) {
+                AscendC::Reg::Mul(vreg3, vreg3, vreg4, mask);
+                AscendC::Reg::Mul(vreg13, vreg13, vreg4, mask);
+            }
         }
         if constexpr (IsBiasFloat || IsBiasFloat16 || IsBiasBfloat16) {
             auto bias1Addr = bias1Ptr + j * sizePerRepeat;
@@ -658,8 +696,14 @@ __aicore__ inline void DequantAndSwiGluV4(__ubuf__ XType* x1Ptr, __ubuf__ XType*
                 AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vreg20, vreg26, mask);
                 AscendC::Reg::Cast<float, bfloat16_t, CAST_BF16_FP16_TO_FP32>(vreg21, vreg27, mask);
             }
-            AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
-            AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+            // 将dequant后的结果加上bias
+            if constexpr (HasActiScale) {
+                DequantScaleAddBias(vreg3, vreg4, vreg20, mask);
+                DequantScaleAddBias(vreg13, vreg4, vreg21, mask);
+            } else {
+                AscendC::Reg::Add(vreg3, vreg3, vreg20, mask);
+                AscendC::Reg::Add(vreg13, vreg13, vreg21, mask);
+            }
         }
         // SwiGlu mode=3: swish(alpha=1) -> clamp(x_glu) -> clamp(x_linear) -> y=x_glu*x_linear
         AscendC::Reg::Muls(vreg6, vreg3, -(scalarOne), mask);
