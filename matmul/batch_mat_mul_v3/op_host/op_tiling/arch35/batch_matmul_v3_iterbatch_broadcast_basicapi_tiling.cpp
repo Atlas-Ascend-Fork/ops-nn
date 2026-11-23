@@ -23,6 +23,10 @@ constexpr uint64_t THIRD_BATCH_IDX = 2UL;
 using namespace strategy;
 MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3IterBatchBroadcastBasicApiTiling, DAV_3510,
                             ITER_BATCH_BROADCAST_BASICAPI);
+MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3IterBatchBroadcastBasicApiTiling, DAV_9201,
+                            ITER_BATCH_BROADCAST_BASICAPI);
+MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3IterBatchBroadcastBasicApiTiling, DAV_9202,
+                            ITER_BATCH_BROADCAST_BASICAPI);
 
 bool BatchMatMulV3IterBatchBroadcastBasicApiTiling::IsContiguousStride(StrideIndexPairs& strideIndexPairs) const
 {
