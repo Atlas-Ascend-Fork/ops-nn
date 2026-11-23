@@ -1012,4 +1012,151 @@ TEST_F(convolution_backward_cov_test, cov_checker_8bit_dw_null_gradbias_950)
         &workspaceSize, &executor);
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
+
+// cover convolution_backward_checker.cpp CheckOutputPadding追加校验:
+// 2D transposed, outputPadding为全维[n,c,pH,pW](Size==4)且pH不小于stride[0]和dilation[0]时,
+// 修复前min(Size)循环仅比较占位元素[0][1]漏检pH/pW, 修复后追加段按i-CONV2D_ATTR_DIM映射
+// 比较op[2]/op[3]对stride[0]/stride[1], 必须返回ACLNN_ERR_PARAM_INVALID
+TEST_F(convolution_backward_cov_test, cov_checker_output_padding_full_dim_invalid_950)
+{
+    op::NpuArchManager archManager(NpuArch::DAV_3510);
+    auto input_tensor_desc = TensorDesc({1, 16, 8, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({16, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({1, 16, 8, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{16});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = true;
+    // 全维约定[n,c,pH,pW]: 占位[0][1]合法, pH=2 >= stride[0]=1且>= dilation[0]=1, 为漏检场景的非法值
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0, 2, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({1, 16, 8, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({16, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({16}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// cover convolution_backward_checker.cpp CheckOutputPadding追加校验:
+// 2D transposed, outputPadding全维(Size==4)且pH/pW均小于stride/dilation对应空间维元素时合法,
+// 与上一用例互为对照, 确认追加校验不误伤合法全维入参。
+// 采用空tensor(参照既有ascend950_test_ConvBackward_transposed_empty模式): checker阶段
+// CheckOutputPadding在CheckConvParams内先于空tensor短路执行, 走到SUCCESS不进l0算子
+TEST_F(convolution_backward_cov_test, cov_checker_output_padding_full_dim_valid_950)
+{
+    op::NpuArchManager archManager(NpuArch::DAV_3510);
+    auto input_tensor_desc = TensorDesc({0, 16, 15, 15}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({16, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({0, 16, 7, 7}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{16});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{2, 2});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{2, 2});
+    bool transposed = true;
+    // 全维约定[n,c,pH,pW]: pH=1 < stride[0]=2, pW=1 < dilation[1]=2, 合法
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0, 1, 1});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({0, 16, 15, 15}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({16, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({16}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
+
+// cover convolution_backward_checker.cpp CheckOutputPadding既有min(Size)循环(回归保护):
+// 2D transposed, stride/dilation/outputPadding均为空间维(Size==2)时, op[0]>=stride[0]且
+// op[0]>=dilation[0]必须被既有正向循环拦截, 确认原min(Size)同位循环行为不变
+TEST_F(convolution_backward_cov_test, cov_checker_output_padding_spatial_dim_invalid_950)
+{
+    op::NpuArchManager archManager(NpuArch::DAV_3510);
+    auto input_tensor_desc = TensorDesc({1, 16, 8, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({16, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({1, 16, 8, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{16});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = true;
+    // 空间维约定[sH,sW]: op[0]=2 >= stride[0]=1且>= dilation[0]=1, 既有循环必须拦截
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{2, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({1, 16, 8, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({16, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({16}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// cover convolution_backward_checker.cpp CheckOutputPadding 4维分支越界防护:
+// 2D transposed, outputPadding为4维而stride/dilation仅为1维(非法入参)时, checkDim截断到
+// min(opSize, 2*strideSize, 2*dilationSize)=2, 仅比较op[0][1]对stride[0], 不产生越界读;
+// 该非法入参最终由后续CheckConvShape的stride size校验拦截(GetWorkspaceSize返回PARAM_INVALID)
+TEST_F(convolution_backward_cov_test, cov_checker_output_padding_4d_short_stride_950)
+{
+    op::NpuArchManager archManager(NpuArch::DAV_3510);
+    auto input_tensor_desc = TensorDesc({0, 16, 8, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({16, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({0, 16, 8, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{16});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{1});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1});
+    bool transposed = true;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0, 2, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({0, 16, 8, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({16, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({16}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
 } // namespace

@@ -73,6 +73,7 @@ const int kPadding4DownIdx = 1;
 const int kPadding4LeftIdx = 2;
 const int kPadding4RightIdx = 3;
 const int32_t CONV2D_ATTR_DIM = 2;
+const int32_t CONV2D_OUTPUT_PADDING_SPATIAL_GROUP = 2;
 const int32_t CONV3D_ATTR_DIM = 3;
 const int32_t CONV3D_PAD_DIM = 6;
 const int32_t CONV3D_ATTR_D_IDX = 0;

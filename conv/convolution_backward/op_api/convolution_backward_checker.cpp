@@ -10,6 +10,8 @@
 #include "convolution_backward_checker.h"
 #include "matmul/common/op_host/log_format_util.h"
 
+#include <algorithm>
+
 using namespace op;
 using namespace l0op;
 using namespace Ops::NN;
@@ -530,15 +532,26 @@ static bool CheckOutputPadding(const ConvolutionBackwardParams& params, size_t i
                          "the shape dim of [stride], [dilation] and [outputPadding] must be 2 less than the shape dim "
                          "of input"),
                      return false);
-            for (uint64_t i = 0; i < params.outputPadding->Size(); ++i) {
-                OP_CHECK((*params.outputPadding)[i] < (*params.stride)[i] ||
-                             (*params.outputPadding)[i] < (*params.dilation)[i],
-                         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                             ACLNN_CONVOLUTION_BACKWARD_NAME, "outputPadding",
-                             AclarrayToString(params.outputPadding).c_str(),
-                             "when transposed=true, the value of outputPadding must be less than stride or dilation"),
-                         return false);
-            }
+        }
+        // 2D的outputPadding可为4维[padH0,padH1,padW0,padW1], 按i/2映射到空间维[sH,sW];
+        // checkDim取min(opSize, 2*strideSize, 2*dilationSize)截断, 保证spatialIdx不越界
+        const bool isFullDimOutputPadding = inputDim == CONV2DINPUTDIM &&
+                                            params.outputPadding->Size() == CONV2DINPUTDIM;
+        const uint64_t checkDim = isFullDimOutputPadding ?
+                                      std::min({params.outputPadding->Size(),
+                                                params.stride->Size() * CONV2D_OUTPUT_PADDING_SPATIAL_GROUP,
+                                                params.dilation->Size() * CONV2D_OUTPUT_PADDING_SPATIAL_GROUP}) :
+                                      std::min({params.outputPadding->Size(), params.stride->Size(),
+                                                params.dilation->Size()});
+        for (uint64_t i = 0; i < checkDim; ++i) {
+            const uint64_t spatialIdx = isFullDimOutputPadding ? i / CONV2D_OUTPUT_PADDING_SPATIAL_GROUP : i;
+            OP_CHECK(
+                (*params.outputPadding)[i] < (*params.stride)[spatialIdx] ||
+                    (*params.outputPadding)[i] < (*params.dilation)[spatialIdx],
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    ACLNN_CONVOLUTION_BACKWARD_NAME, "outputPadding", AclarrayToString(params.outputPadding).c_str(),
+                    "when transposed=true, the value of outputPadding must be less than stride or dilation"),
+                return false);
         }
     } else if (params.outputPadding != nullptr) { // !transposed, outputPadding value is unneeded
         for (uint64_t i = 0; i < params.outputPadding->Size(); ++i) {
