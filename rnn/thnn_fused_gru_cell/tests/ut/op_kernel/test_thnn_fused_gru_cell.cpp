@@ -257,8 +257,8 @@ void RunAndVerify(const std::string& tag, int64_t batch, int64_t hidden, const D
                   uint32_t blockDim, uint8_t* tiling, KernelInvoker invoker)
 {
     kernel_ut::SetupTestEnvironment(kDataDirRel, kDataLocal);
-    kernel_ut::RunGenData("./thnn_fused_gru_cell_data", {tag, std::to_string(batch), std::to_string(hidden), dt.pyName,
-                                                         hasB1 ? "1" : "0", hasB2 ? "1" : "0"});
+    ASSERT_TRUE(kernel_ut::RunGenData("./thnn_fused_gru_cell_data", {tag, std::to_string(batch), std::to_string(hidden),
+                                                                     dt.pyName, hasB1 ? "1" : "0", hasB2 ? "1" : "0"}));
     std::string path = kernel_ut::GetTestWorkDir();
 
     const size_t gateBytes = static_cast<size_t>(batch * 3 * hidden) * dt.bytes;
