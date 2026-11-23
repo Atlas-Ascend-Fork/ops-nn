@@ -564,3 +564,59 @@ TEST_F(ApplyFusedEmaAdamTiling, apply_fused_ema_adam_tiling_core_num_zero_006)
     tiling_context->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
 }
+
+// 负向场景7：mode 属性非法（仅支持 0 和 1），传入 2 时应报错。
+// 整改点：GetTilingAttr 中对 mode 做取值校验，非法值时上报 param_name="mode" 的
+// OP_LOGE_FOR_INVALID_VALUE_WITH_REASON 并返回 ge::GRAPH_FAILED。
+// 其余输入、平台信息与正向用例一致，保证失败确由 mode 校验触发。
+TEST_F(ApplyFusedEmaAdamTiling, apply_fused_ema_adam_tiling_invalid_mode_007)
+{
+    ApplyFusedEmaAdamTilingNegativeEnv env;
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(env.op_type.c_str()), nullptr);
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(env.op_type.c_str())->tiling;
+
+    gert::StorageShape gradShape = {{300, 4, 2}, {300, 4, 2}};
+    gert::StorageShape varShape = {{300, 4, 2}, {300, 4, 2}};
+    gert::StorageShape mShape = {{300, 4, 2}, {300, 4, 2}};
+    gert::StorageShape vShape = {{300, 4, 2}, {300, 4, 2}};
+    gert::StorageShape sShape = {{300, 4, 2}, {300, 4, 2}};
+    gert::StorageShape stepShape = {{1}, {1}};
+
+    auto param = gert::TilingData::CreateCap(4096);
+    ASSERT_NE(param, nullptr);
+    auto workspace_size_holder = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holder.get());
+    auto holder = gert::TilingContextFaker()
+                      .NodeIoNum(6, 4)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1})
+                      .InputShapes({&gradShape, &varShape, &mShape, &vShape, &sShape, &stepShape})
+                      .OutputShapes({&varShape, &mShape, &vShape, &sShape})
+                      .CompileInfo(&env.compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&env.platform_info))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"lr", Ops::NN::AnyValue::CreateFrom(1e-3f)},
+                                  {"ema_decay", Ops::NN::AnyValue::CreateFrom(0.9999f)},
+                                  {"beta1", Ops::NN::AnyValue::CreateFrom(0.9f)},
+                                  {"beta2", Ops::NN::AnyValue::CreateFrom(0.999f)},
+                                  {"eps", Ops::NN::AnyValue::CreateFrom(1e-8f)},
+                                  {"mode", Ops::NN::AnyValue::CreateFrom<int64_t>(2)},
+                                  {"bias_correction", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"weight_decay", Ops::NN::AnyValue::CreateFrom(0.0001f)}})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tiling_context, nullptr);
+    ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+}

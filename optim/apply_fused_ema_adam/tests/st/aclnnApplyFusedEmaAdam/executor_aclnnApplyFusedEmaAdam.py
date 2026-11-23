@@ -48,19 +48,25 @@ class FunctionApi(BaseApi):
             beta1_correction, beta2_correction = correction_compute(
                 biasCorrection, beta1, beta2, step.reshape(-1)[0]
             )
+            grad_ = grad
             if mode == 0:
                 grad_ = grad + weightDecay * var
             elif mode == 1:
                 grad_ = grad
+            else:
+                raise ValueError(f"mode only supports 0 or 1, but got {mode}")
             m_ = beta1 * m + (1 - beta1) * grad_
             v_ = beta2 * v + (1 - beta2) * grad_ * grad_
             next_m = m_ / beta1_correction
             next_v = v_ / beta2_correction
             denom = torch.sqrt(next_v) + eps
+            update = next_m / denom + weightDecay * var
             if mode == 0:
                 update = next_m / denom
             elif mode == 1:
                 update = next_m / denom + weightDecay * var
+            else:
+                raise ValueError(f"mode only supports 0 or 1, but got {mode}")
             var_ = var - lr * update
             s_ = emaDecay * s + (1 - emaDecay) * var_
             return var_, m_, v_, s_

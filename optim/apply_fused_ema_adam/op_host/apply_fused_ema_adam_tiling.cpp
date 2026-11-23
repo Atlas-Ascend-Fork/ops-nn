@@ -125,6 +125,11 @@ static ge::graphStatus GetTilingAttr(const gert::TilingContext* context)
                 OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "attrMode",
                                                          "failed to get the mode attribute from the tiling context"),
                 return ge::GRAPH_FAILED);
+    const bool isModeValid = (*attrMode == 0 || *attrMode == 1);
+    OP_CHECK_IF(!isModeValid,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "mode", std::to_string(*attrMode).c_str(),
+                                                      "mode only supports 0 or 1"),
+                return ge::GRAPH_FAILED);
     fusedEmaAdamTiling.set_mode(static_cast<uint64_t>(*attrMode));
 
     const bool* attrBiasCorrection = attrs->GetAttrPointer<bool>(ATTR_BIAS_CORRECTION_IDX);
