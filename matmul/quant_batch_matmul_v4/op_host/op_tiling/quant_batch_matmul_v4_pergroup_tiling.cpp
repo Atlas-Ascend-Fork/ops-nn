@@ -30,6 +30,13 @@ constexpr uint64_t DECODEM = 1024;
 constexpr uint64_t L2_REAL_SIZE = 168; // B4真实的L2Size大小
 constexpr uint64_t L2_FAKE_SIZE = 96;  // B4被上层修改后的L2Size大小
 
+ge::graphStatus QuantBatchMatmulV4PergroupTiling::GetShapeAttrsInfo()
+{
+    // The legacy registry tries pergroup last. Return the reported validation failure directly.
+    const auto status = QuantBatchMatmulV3BasicTiling::GetShapeAttrsInfo();
+    return status == ge::GRAPH_PARAM_INVALID ? ge::GRAPH_FAILED : status;
+}
+
 const gert::Shape QuantBatchMatmulV4PergroupTiling::GetShape(const size_t index)
 {
     return context_->GetInputShape(index)->GetStorageShape();
@@ -213,47 +220,51 @@ bool QuantBatchMatmulV4PergroupTiling::AnalyzeDtype()
     inputParams_.cDtype = context_->GetOutputDesc(Y_OUTPUT_IDX)->GetDataType();
     inputParamsPergroup_.x2OffsetDtype = context_->GetOptionalInputDesc(X2_OFFSET_IDX)->GetDataType();
 
-    OP_TILING_CHECK(
-        inputParams_.aDtype != ge::DT_INT4,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input dtype of x1 should be int4, actual dtype is %s",
-                                        ge::TypeUtils::DataTypeToSerialString(inputParams_.aDtype).c_str()),
-        return false);
-    OP_TILING_CHECK(
-        inputParams_.bDtype != ge::DT_INT4,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input dtype of x2 should be int4, actual dtype is %s",
-                                        ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype).c_str()),
-        return false);
-    OP_TILING_CHECK(inputParams_.perTokenScaleDtype != ge::DT_FLOAT,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input dtype of x1Scale should be float32, actual dtype is %s",
-                        ge::TypeUtils::DataTypeToSerialString(inputParams_.perTokenScaleDtype).c_str()),
+    OP_TILING_CHECK(inputParams_.aDtype != ge::DT_INT4,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "x1",
+                                                          ge::TypeUtils::DataTypeToSerialString(inputParams_.aDtype),
+                                                          "Only int4 is supported."),
                     return false);
+    OP_TILING_CHECK(inputParams_.bDtype != ge::DT_INT4,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "x2",
+                                                          ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype),
+                                                          "Only int4 is supported."),
+                    return false);
+    OP_TILING_CHECK(
+        inputParams_.perTokenScaleDtype != ge::DT_FLOAT,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "x1Scale",
+                                              ge::TypeUtils::DataTypeToSerialString(inputParams_.perTokenScaleDtype),
+                                              "Only float32 is supported."),
+        return false);
     OP_TILING_CHECK(inputParams_.scaleDtype != ge::DT_FLOAT,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input dtype of x2Scale should be float32, actual dtype is %s",
-                        ge::TypeUtils::DataTypeToSerialString(inputParams_.scaleDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams_.opName, "x2Scale", ge::TypeUtils::DataTypeToSerialString(inputParams_.scaleDtype),
+                        "Only float32 is supported."),
                     return false);
     OP_TILING_CHECK(!(inputParams_.cDtype == ge::DT_FLOAT16 || inputParams_.cDtype == ge::DT_BF16),
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "Output dtype should be float16 or bfloat16, actual dtype is %s",
-                                                    ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "y",
+                                                          ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype),
+                                                          "Only float16 or bfloat16 is supported."),
                     return false);
-    OP_TILING_CHECK(inputParamsPergroup_.x2OffsetDtype != ge::DT_FLOAT16,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input dtype of x2Offset should be float16, actual dtype is %s",
-                        ge::TypeUtils::DataTypeToSerialString(inputParams_.scaleDtype).c_str()),
-                    return false);
+    OP_TILING_CHECK(
+        inputParamsPergroup_.x2OffsetDtype != ge::DT_FLOAT16,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "x2Offset",
+                                              ge::TypeUtils::DataTypeToSerialString(inputParamsPergroup_.x2OffsetDtype),
+                                              "Only float16 is supported."),
+        return false);
 
     return true;
 }
 
-bool QuantBatchMatmulV4PergroupTiling::CheckInputLen(size_t actualLen, size_t expectedLen, const string& inputParamName)
+bool QuantBatchMatmulV4PergroupTiling::CheckInputLen(const gert::Shape& shape, size_t expectedLen,
+                                                     const string& inputParamName)
 {
-    OP_TILING_CHECK(actualLen != expectedLen,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "Input %s dimension should equal to %zu, but it is %zu actually",
-                                                    inputParamName.c_str(), expectedLen, actualLen),
-                    return false);
+    const auto actualLen = shape.GetDimNum();
+    OP_TILING_CHECK(
+        actualLen != expectedLen,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, inputParamName, Ops::Base::ToString(shape),
+                                              "Expected rank " + std::to_string(expectedLen)),
+        return false);
     return true;
 }
 
@@ -261,32 +272,21 @@ bool QuantBatchMatmulV4PergroupTiling::CheckInputsLen(const gert::Shape& x1Shape
                                                       const gert::Shape& x1ScaleShape, const gert::Shape& x2ScaleShape,
                                                       const gert::Shape& x2OffsetShape)
 {
-    auto x1ShapeLen = x1Shape.GetDimNum();
-    auto x2ShapeLen = x2Shape.GetDimNum();
-    auto x1ScaleShapeLen = x1ScaleShape.GetDimNum();
-    auto x2ScaleShapeLen = x2ScaleShape.GetDimNum();
-    auto x2OffsetShapeLen = x2OffsetShape.GetDimNum();
-
     size_t expectedX1Len = 2;
     size_t expectedX2Len = 2;
     size_t expectedX1ScaleLen = 2;
     size_t expectedX2ScaleLen = 2;
     size_t expectedX2OffsetLen = 2;
-    CheckInputLen(x1ShapeLen, expectedX1Len, "x1");
-    CheckInputLen(x2ShapeLen, expectedX2Len, "x2");
-    CheckInputLen(x1ScaleShapeLen, expectedX1ScaleLen, "x1Scale");
-    CheckInputLen(x2ScaleShapeLen, expectedX2ScaleLen, "x2Scale");
-    CheckInputLen(x2OffsetShapeLen, expectedX2OffsetLen, "x2Offset");
-
-    return true;
+    return CheckInputLen(x1Shape, expectedX1Len, "x1") && CheckInputLen(x2Shape, expectedX2Len, "x2") &&
+           CheckInputLen(x1ScaleShape, expectedX1ScaleLen, "x1Scale") &&
+           CheckInputLen(x2ScaleShape, expectedX2ScaleLen, "x2Scale") &&
+           CheckInputLen(x2OffsetShape, expectedX2OffsetLen, "x2Offset");
 }
 
-bool QuantBatchMatmulV4PergroupTiling::CheckInputsShape(const gert::Shape& x1Shape, const gert::Shape& x2Shape,
-                                                        const gert::Shape& x1ScaleShape,
+bool QuantBatchMatmulV4PergroupTiling::CheckInputsShape(const gert::Shape& x1ScaleShape,
                                                         const gert::Shape& x2ScaleShape,
                                                         const gert::Shape& x2OffsetShape)
 {
-    CheckInputsLen(x1Shape, x2Shape, x1ScaleShape, x2ScaleShape, x2OffsetShape);
     int64_t m = inputParams_.mSize;
     int64_t k = inputParams_.kSize;
     int64_t n = inputParams_.nSize;
@@ -295,28 +295,26 @@ bool QuantBatchMatmulV4PergroupTiling::CheckInputsShape(const gert::Shape& x1Sha
 
     auto x1ScaleInner = x1ScaleShape.GetDim(1);
     auto x1ScaleOuter = x1ScaleShape.GetDim(0);
-    OP_TILING_CHECK(x1ScaleInner != 1 || x1ScaleOuter != m,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input x1Scale's shape should be [%ld, 1], but actual shape is [%ld, %ld]",
-                        m, x1ScaleOuter, x1ScaleInner),
-                    return false);
+    OP_TILING_CHECK(
+        x1ScaleInner != 1 || x1ScaleOuter != m,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x1Scale", Ops::Base::ToString(x1ScaleShape),
+                                              "Expected [" + std::to_string(m) + ", 1]."),
+        return false);
 
     auto x2ScaleInner = x2ScaleShape.GetDim(1);
     auto x2ScaleOuter = x2ScaleShape.GetDim(0);
     OP_TILING_CHECK(
         x2ScaleInner != n || x2ScaleOuter != nkgroup,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                        "Input x1Scale's shape should be [%ld, %ld], but actual shape is [%ld, %ld]",
-                                        nkgroup, n, x2ScaleOuter, x2ScaleInner),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x2Scale", Ops::Base::ToString(x2ScaleShape),
+                                              "Expected [" + std::to_string(nkgroup) + ", " + std::to_string(n) + "]."),
         return false);
 
     auto x2OffsetInner = x2OffsetShape.GetDim(1);
     auto x2OffsetOuter = x2OffsetShape.GetDim(0);
     OP_TILING_CHECK(
         x2OffsetInner != n || x2OffsetOuter != nkgroup,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                        "Input x1Scale's shape should be [%ld, %ld], but actual shape is [%ld, %ld]",
-                                        nkgroup, n, x2OffsetOuter, x2OffsetInner),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x2Offset", Ops::Base::ToString(x2OffsetShape),
+                                              "Expected [" + std::to_string(nkgroup) + ", " + std::to_string(n) + "]."),
         return false);
 
     return true;
@@ -326,24 +324,31 @@ bool QuantBatchMatmulV4PergroupTiling::CheckFormat()
 {
     auto x1Format = static_cast<ge::Format>(ge::GetPrimaryFormat(context_->GetInputDesc(X1_IDX)->GetStorageFormat()));
     OP_TILING_CHECK(x1Format != ge::FORMAT_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "x1Format Only support Nd"), return false);
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(inputParams_.opName, "x1", Ops::Base::ToString(x1Format),
+                                                           "Only ND is supported."),
+                    return false);
     auto x2Format = static_cast<ge::Format>(ge::GetPrimaryFormat(context_->GetInputDesc(X2_IDX)->GetStorageFormat()));
     OP_TILING_CHECK(x2Format != ge::FORMAT_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "x2Format Only support Nd"), return false);
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(inputParams_.opName, "x2", Ops::Base::ToString(x2Format),
+                                                           "Only ND is supported."),
+                    return false);
     auto x1ScaleFormat = static_cast<ge::Format>(
         ge::GetPrimaryFormat(context_->GetOptionalInputDesc(X1_SCALE_IDX)->GetStorageFormat()));
     OP_TILING_CHECK(x1ScaleFormat != ge::FORMAT_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "x1ScaleFormat Only support Nd"),
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(inputParams_.opName, "x1Scale",
+                                                           Ops::Base::ToString(x1ScaleFormat), "Only ND is supported."),
                     return false);
     auto x2ScaleFormat = static_cast<ge::Format>(
         ge::GetPrimaryFormat(context_->GetOptionalInputDesc(X2_SCALE_IDX)->GetStorageFormat()));
     OP_TILING_CHECK(x2ScaleFormat != ge::FORMAT_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "x2ScaleFormat Only support Nd"),
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(inputParams_.opName, "x2Scale",
+                                                           Ops::Base::ToString(x2ScaleFormat), "Only ND is supported."),
                     return false);
     auto x2OffsetFormat = static_cast<ge::Format>(
         ge::GetPrimaryFormat(context_->GetOptionalInputDesc(X2_OFFSET_IDX)->GetStorageFormat()));
     OP_TILING_CHECK(x2OffsetFormat != ge::FORMAT_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "x2OffsetFormat Only support Nd"),
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                        inputParams_.opName, "x2Offset", Ops::Base::ToString(x2OffsetFormat), "Only ND is supported."),
                     return false);
 
     return true;
@@ -356,6 +361,9 @@ bool QuantBatchMatmulV4PergroupTiling::AnalyzeInputs()
     auto x1ScaleShape = GetOptionShape(X1_SCALE_IDX);
     auto x2ScaleShape = GetOptionShape(X2_SCALE_IDX);
     auto x2OffsetShape = GetOptionShape(X2_OFFSET_IDX);
+    if (!CheckInputsLen(x1Shape, x2Shape, x1ScaleShape, x2ScaleShape, x2OffsetShape)) {
+        return false;
+    }
 
     auto biasShapePtr = GetBiasShape(BIAS_IDX);
     inputParams_.hasBias = (biasShapePtr != nullptr);
@@ -389,10 +397,10 @@ bool QuantBatchMatmulV4PergroupTiling::AnalyzeInputs()
         !CheckOutputShapeAvailable(),
         CUBE_INNER_ERR_REPORT(inputParams_.opName, "Multiple of output shape dims should be in boundary of INT64_MAX."),
         return false);
-    OP_TILING_CHECK(!CheckInputsShape(x1Shape, x2Shape, x1ScaleShape, x2ScaleShape, x2OffsetShape),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "There is at least one input with wrong dim."),
+    OP_TILING_CHECK(!CheckInputsShape(x1ScaleShape, x2ScaleShape, x2OffsetShape),
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "There is at least one input with wrong dim."),
                     return false);
-    OP_TILING_CHECK(!CheckFormat(), CUBE_INNER_ERR_REPORT(inputParams_.opName, "There is at least one format wrong."),
+    OP_TILING_CHECK(!CheckFormat(), OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "There is at least one format wrong."),
                     return false);
 
     return true;

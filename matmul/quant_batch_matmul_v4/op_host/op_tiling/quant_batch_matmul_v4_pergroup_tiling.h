@@ -44,17 +44,18 @@ public:
 protected:
     const gert::Shape GetShape(const size_t index);
     const gert::Shape GetOptionShape(const size_t index);
+    ge::graphStatus GetShapeAttrsInfo() override;
     ge::graphStatus DoOpTiling() override;
     uint64_t GetTilingKey() const override;
     ge::graphStatus CheckContext() override;
     bool AnalyzeAttrs() override;
     bool AnalyzeDtype() override;
     bool AnalyzeInputs() override;
-    bool CheckInputLen(size_t actualLen, size_t expectedLen, const string& inputParamName);
+    bool CheckInputLen(const gert::Shape& shape, size_t expectedLen, const string& inputParamName);
     bool CheckInputsLen(const gert::Shape& x1Shape, const gert::Shape& x2Shape, const gert::Shape& x1ScaleShape,
                         const gert::Shape& x2ScaleShape, const gert::Shape& x2OffsetShape);
-    bool CheckInputsShape(const gert::Shape& x1Shape, const gert::Shape& x2Shape, const gert::Shape& x1ScaleShape,
-                          const gert::Shape& x2ScaleShape, const gert::Shape& x2OffsetShape);
+    bool CheckInputsShape(const gert::Shape& x1ScaleShape, const gert::Shape& x2ScaleShape,
+                          const gert::Shape& x2OffsetShape);
     bool CheckFormat();
     ge::graphStatus CalcDequantTiling(uint32_t baseM, uint32_t baseN, uint32_t groupSizeK);
     QuantBatchMatmulPergroupInfo inputParamsPergroup_;

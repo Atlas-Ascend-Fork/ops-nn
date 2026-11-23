@@ -841,12 +841,21 @@ ge::graphStatus QuantBatchMatmulV3Tiling::InitTilingData(matmul_tiling::MatmulAp
     auto aDtype = GetMatmulTilingDtype(inputParams_.aDtype);
     auto bDtype = GetMatmulTilingDtype(inputParams_.bDtype);
     auto cDtype = GetMatmulTilingDtype(inputParams_.cDtype);
-    OP_LOGE_IF(aDtype == matmul_tiling::DataType::DT_UNDEFINED, ge::GRAPH_FAILED, inputParams_.opName,
-               "invalid A dtype %s", DType2Str(inputParams_.aDtype).c_str());
-    OP_LOGE_IF(bDtype == matmul_tiling::DataType::DT_UNDEFINED, ge::GRAPH_FAILED, inputParams_.opName,
-               "invalid B dtype %s", DType2Str(inputParams_.bDtype).c_str());
-    OP_LOGE_IF(cDtype == matmul_tiling::DataType::DT_UNDEFINED, ge::GRAPH_FAILED, inputParams_.opName,
-               "invalid C dtype %s", DType2Str(inputParams_.cDtype).c_str());
+    OP_TILING_CHECK(
+        aDtype == matmul_tiling::DataType::DT_UNDEFINED,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "x1", DType2Str(inputParams_.aDtype),
+                                              "Matmul tiling supports FLOAT16, FLOAT, BF16, INT8, INT4 and INT32."),
+        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        bDtype == matmul_tiling::DataType::DT_UNDEFINED,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "x2", DType2Str(inputParams_.bDtype),
+                                              "Matmul tiling supports FLOAT16, FLOAT, BF16, INT8, INT4 and INT32."),
+        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        cDtype == matmul_tiling::DataType::DT_UNDEFINED,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "y", DType2Str(inputParams_.cDtype),
+                                              "Matmul tiling supports FLOAT16, FLOAT, BF16, INT8, INT4 and INT32."),
+        return ge::GRAPH_FAILED);
     mm.SetAType(matmul_tiling::TPosition::GM, aFormat, aDtype, inputParams_.transA);
     mm.SetBType(matmul_tiling::TPosition::GM, bFormat, bDtype, inputParams_.transB);
     mm.SetCType(matmul_tiling::TPosition::GM, cFormat, cDtype);
@@ -862,13 +871,16 @@ ge::graphStatus QuantBatchMatmulV3Tiling::InitTilingData(matmul_tiling::MatmulAp
     if (inputParams_.hasBias) {
         mm.SetBias(true);
         auto biasDtype = GetMatmulTilingDtype(inputParams_.biasDtype);
-        OP_LOGE_IF(biasDtype == matmul_tiling::DataType::DT_UNDEFINED, ge::GRAPH_FAILED, inputParams_.opName,
-                   "invalid bias dtype %s", DType2Str(inputParams_.biasDtype).c_str());
+        OP_TILING_CHECK(
+            biasDtype == matmul_tiling::DataType::DT_UNDEFINED,
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "bias", DType2Str(inputParams_.biasDtype),
+                                                  "Matmul tiling supports FLOAT16, FLOAT, BF16, INT8, INT4 and INT32."),
+            return ge::GRAPH_FAILED);
         mm.SetBiasType(matmul_tiling::TPosition::GM, matmul_tiling::CubeFormat::ND, biasDtype);
     }
     mm.SetBufferSpace(compileInfo_.l1Size, compileInfo_.l0cSize, compileInfo_.ubSize);
     if (mm.GetTiling(tilingData_.matmulTiling) == -1) {
-        OP_LOGE(inputParams_.opName, "Quant MatmulV3 Get Tiling Failed!");
+        OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Quant MatmulV3 Get Tiling Failed!");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -962,7 +974,7 @@ void QuantBatchMatmulV3Tiling::ModifyCacheParams(BatchmatmulRunParas& runParams)
 ge::graphStatus QuantBatchMatmulV3Tiling::DoLibApiTiling()
 {
     OP_TILING_CHECK(!SetMatmulTilingFromTbeTiling(),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "Failed to get tbe tiling!"), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Failed to get tbe tiling!"), return ge::GRAPH_FAILED);
     PrintTilingData();
     return ge::GRAPH_SUCCESS;
 }
@@ -1182,7 +1194,7 @@ bool QuantBatchMatmulV3Tiling::SetMatmulTilingFromTbeTiling()
 
     bool fallback = false;
     OP_TILING_CHECK(!CalcUsedL1AndUBSize(a1Length * mt.depthA1, b1Length * mt.depthB1, fallback),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "Cache tiling inner error"), return false);
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Cache tiling inner error"), return false);
     if (!fallback) {
         OP_LOGD(inputParams_.opName, "SetMatmulTilingFromTbeTiling !fallback");
         mt.shareL0CSize = c1Length;
@@ -1246,7 +1258,7 @@ bool QuantBatchMatmulV3Tiling::CalcUsedL1AndUBSize(int32_t aL1Size, int32_t bL1S
                 static_cast<uint64_t>(compileInfo_.l0aSize), static_cast<uint64_t>(compileInfo_.l0bSize)};
             matmul_tiling::MatmulApiTiling mm(platformInfo);
             OP_TILING_CHECK(InitTilingData(mm, fallback) != ge::GRAPH_SUCCESS,
-                            CUBE_INNER_ERR_REPORT(inputParams_.opName, "Init tilingdata (fallback) failed."),
+                            OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Init tilingdata (fallback) failed."),
                             return false);
             tilingData_.params.ubSize = ubSize;
             mt.transLength = static_cast<int32_t>(ubSize >> 1);

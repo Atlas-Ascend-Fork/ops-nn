@@ -24,14 +24,18 @@ namespace optiling {
 
 ge::graphStatus QuantBatchMatmulV4PerblockTiling::GetShapeAttrsInfo()
 {
+    if (context_->GetOptionalInputShape(BIAS_IDX) == nullptr) {
+        OP_LOGD(context_->GetNodeName(), "Skip PerBlock tiling: bias shape is missing.");
+        return ge::GRAPH_PARAM_INVALID;
+    }
     inputParams_.opName = context_->GetNodeName();
     OPS_LOG_D(inputParams_.opName, "TilingContext: %s", Ops::NN::DebugTilingContext(context_).c_str());
     OP_TILING_CHECK(CheckContext() != ge::GRAPH_SUCCESS,
                     CUBE_INNER_ERR_REPORT(inputParams_.opName, "The context_ is invalid."),
                     return ge::GRAPH_PARAM_INVALID);
     OP_TILING_CHECK(!AnalyzeAttrs() || !AnalyzeDtype() || !AnalyzeInputs(),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "Fail to analyze context_ info."),
-                    return ge::GRAPH_PARAM_INVALID);
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Fail to analyze context_ info."),
+                    return ge::GRAPH_FAILED);
     OP_LOGD(inputParams_.opName, "Input params: M K N [%ld, %ld, %ld], transposeA[%s], transposeB[%s]",
             inputParams_.mSize, inputParams_.kSize, inputParams_.nSize, inputParams_.transA ? "true" : "false",
             inputParams_.transB ? "true" : "false");
@@ -90,10 +94,16 @@ bool QuantBatchMatmulV4PerblockTiling::AnalyzeAttrs()
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Group size cannot be 0."), return false);
     OP_TILING_CHECK(inputParams_.groupSizeM == 0,
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Group size M cannot be 0."), return false);
-    OP_TILING_CHECK(inputParams_.groupSizeK != 128,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Group size K should be 128."), return false);
-    OP_TILING_CHECK(inputParams_.groupSizeN != 128,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Group size N should be 128."), return false);
+    OP_TILING_CHECK(
+        inputParams_.groupSizeK != 128,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "groupSizeK",
+                                              std::to_string(inputParams_.groupSizeK), "Group K must be 128."),
+        return false);
+    OP_TILING_CHECK(
+        inputParams_.groupSizeN != 128,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "groupSizeN",
+                                              std::to_string(inputParams_.groupSizeN), "Group N must be 128."),
+        return false);
 
     // check transposeX1
     auto transposeX1 = attrs->GetAttrPointer<bool>(TRANSPOSE_X1_IDX);
@@ -101,7 +111,8 @@ bool QuantBatchMatmulV4PerblockTiling::AnalyzeAttrs()
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "TransposeX1 should not be nullptr!"),
                     return false);
     OP_TILING_CHECK(*transposeX1 != false,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Only transposeX1 = false is supported."),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "transposeX1",
+                                                          std::to_string(*transposeX1), "Only false is supported."),
                     return false;);
     inputParams_.transA = transposeX1 != nullptr && *transposeX1;
     // check transposeX2
@@ -110,7 +121,8 @@ bool QuantBatchMatmulV4PerblockTiling::AnalyzeAttrs()
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "TransposeX2 should not be nullptr."),
                     return false);
     OP_TILING_CHECK(*transposeX2 != true,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Only transposeX2 = true is supported."),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "transposeX2",
+                                                          std::to_string(*transposeX2), "Only true is supported."),
                     return false;);
     inputParams_.transB = transposeX2 != nullptr && *transposeX2;
     return true;
@@ -124,36 +136,37 @@ bool QuantBatchMatmulV4PerblockTiling::AnalyzeDtype()
     inputParams_.scaleDtype = context_->GetOptionalInputDesc(X2_SCALE_IDX)->GetDataType();
     inputParams_.biasDtype = context_->GetOptionalInputDesc(BIAS_IDX)->GetDataType();
     inputParams_.cDtype = context_->GetOutputDesc(Y_OUTPUT_IDX)->GetDataType();
-    OP_TILING_CHECK(
-        inputParams_.aDtype != ge::DT_INT8,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input dtype of x1 should be int8, actual dtype is %s",
-                                        ge::TypeUtils::DataTypeToSerialString(inputParams_.aDtype).c_str()),
-        return false);
-    OP_TILING_CHECK(
-        inputParams_.bDtype != ge::DT_INT8,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input dtype of x2 should be int8, actual dtype is %s",
-                                        ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype).c_str()),
-        return false);
-    OP_TILING_CHECK(inputParams_.perTokenScaleDtype != ge::DT_FLOAT,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input dtype of x1Scale should be float32, actual dtype is %s",
-                        ge::TypeUtils::DataTypeToSerialString(inputParams_.perTokenScaleDtype).c_str()),
+    OP_TILING_CHECK(inputParams_.aDtype != ge::DT_INT8,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "x1",
+                                                          ge::TypeUtils::DataTypeToSerialString(inputParams_.aDtype),
+                                                          "Only int8 is supported."),
                     return false);
+    OP_TILING_CHECK(inputParams_.bDtype != ge::DT_INT8,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "x2",
+                                                          ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype),
+                                                          "Only int8 is supported."),
+                    return false);
+    OP_TILING_CHECK(
+        inputParams_.perTokenScaleDtype != ge::DT_FLOAT,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "x1Scale",
+                                              ge::TypeUtils::DataTypeToSerialString(inputParams_.perTokenScaleDtype),
+                                              "Only float32 is supported."),
+        return false);
     OP_TILING_CHECK(inputParams_.scaleDtype != ge::DT_FLOAT,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input dtype of x2Scale should be float32, actual dtype is %s",
-                        ge::TypeUtils::DataTypeToSerialString(inputParams_.scaleDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams_.opName, "x2Scale", ge::TypeUtils::DataTypeToSerialString(inputParams_.scaleDtype),
+                        "Only float32 is supported."),
                     return false);
     OP_TILING_CHECK(inputParams_.biasDtype != ge::DT_FLOAT,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input dtype of bias should be float32, actual dtype is %s",
-                        ge::TypeUtils::DataTypeToSerialString(inputParams_.biasDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "bias",
+                                                          ge::TypeUtils::DataTypeToSerialString(inputParams_.biasDtype),
+                                                          "Only float32 is supported."),
                     return false);
-    OP_TILING_CHECK(
-        inputParams_.cDtype != ge::DT_BF16,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Output dtype should be bfloat16, actual dtype is %s",
-                                        ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype).c_str()),
-        return false);
+    OP_TILING_CHECK(inputParams_.cDtype != ge::DT_BF16,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "y",
+                                                          ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype),
+                                                          "Only bfloat16 is supported."),
+                    return false);
     return true;
 }
 
@@ -165,16 +178,14 @@ bool QuantBatchMatmulV4PerblockTiling::AnalyzeInputs()
     auto x2Shape = GetShape(X2_IDX);
     auto x1ShapeDim = x1Shape.GetDimNum();
     auto x2ShapeDim = x2Shape.GetDimNum();
-    OP_TILING_CHECK(
-        x1ShapeDim != 2,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                        "Input x1 dimension should equal to 2, but x1 dimension: %zu.", x1ShapeDim),
-        return false);
-    OP_TILING_CHECK(
-        x2ShapeDim != 2,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                        "Input x2 dimension should equal to 2, but x2 dimension: %zu.", x2ShapeDim),
-        return false);
+    OP_TILING_CHECK(x1ShapeDim != 2,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x1", Ops::Base::ToString(x1Shape),
+                                                          "Rank must be 2."),
+                    return false);
+    OP_TILING_CHECK(x2ShapeDim != 2,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x2", Ops::Base::ToString(x2Shape),
+                                                          "Rank must be 2."),
+                    return false);
     auto x1Inner = x1Shape.GetDim(0);
     auto x1Outer = x1Shape.GetDim(1);
     auto x2Inner = x2Shape.GetDim(0);
@@ -182,35 +193,34 @@ bool QuantBatchMatmulV4PerblockTiling::AnalyzeInputs()
 
     auto x2kSize = inputParams_.transB ? x2Outer : x2Inner;
     auto x2nSize = inputParams_.transB ? x2Inner : x2Outer;
-    OP_TILING_CHECK(
-        x1Outer != x2kSize,
-        VECTOR_INNER_ERR_REPORT_TILIING(
-            inputParams_.opName,
-            "The size of k dimension in x1[%ld] is not equal to the size of k dimension in x2[%ld].", x1Outer, x2Inner),
-        return false);
-    OP_TILING_CHECK(
-        x2nSize % NAlignedLimit != 0,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "The size of N [%ld] does not align with baseN [%lu].",
-                                        x2Outer, NAlignedLimit),
-        return false);
+    OP_TILING_CHECK(x1Outer != x2kSize,
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(inputParams_.opName, "x1 K", std::to_string(x1Outer),
+                                                              "Expected size " + std::to_string(x2kSize)),
+                    return false);
+    OP_TILING_CHECK(x2nSize % NAlignedLimit != 0,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "N", std::to_string(x2nSize),
+                                                          "N must be divisible by 256."),
+                    return false);
     inputParams_.mSize = x1Inner;
     inputParams_.kSize = x1Outer;
     inputParams_.nSize = inputParams_.transB ? x2Inner : x2Outer;
 
     OP_TILING_CHECK(inputParams_.kSize % KAlignedLimit != 0 ||
                         inputParams_.kSize % (KAlignedLimit * 4) != 0, // k must align BaseK and BaseK * 4
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName,
-                        "G-B Scene: The size of K -> %ld does not align with baseK -> %lu and baseK * 4 -> %lu * 4.",
-                        x2Outer, KAlignedLimit, KAlignedLimit),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "K", std::to_string(inputParams_.kSize),
+                                                          "K must be divisible by 128 and 512."),
                     return false);
 
     auto aFormat = static_cast<ge::Format>(ge::GetPrimaryFormat(context_->GetInputDesc(X1_IDX)->GetStorageFormat()));
     OP_TILING_CHECK(aFormat != ge::FORMAT_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "aFormat Only support Nd"), return false);
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(inputParams_.opName, "x1", Ops::Base::ToString(aFormat),
+                                                           "Only ND is supported."),
+                    return false);
     auto bFormat = static_cast<ge::Format>(ge::GetPrimaryFormat(context_->GetInputDesc(X2_IDX)->GetStorageFormat()));
     OP_TILING_CHECK(bFormat != ge::FORMAT_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "bFormat Only support Nd"), return false);
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(inputParams_.opName, "x2", Ops::Base::ToString(bFormat),
+                                                           "Only ND is supported."),
+                    return false);
     return AnalyzeScaleInputs() && AnalyzeBiasInputs();
 }
 
@@ -220,24 +230,22 @@ bool QuantBatchMatmulV4PerblockTiling::AnalyzeX1ScaleInput()
 {
     auto x1ScaleShape = GetOptionShape(X1_SCALE_IDX);
     auto x1ScaleShapeDim = x1ScaleShape.GetDimNum();
-    OP_TILING_CHECK(
-        x1ScaleShapeDim != 2,
-        VECTOR_INNER_ERR_REPORT_TILIING(
-            inputParams_.opName, "Input x1Scale dimension should be 2, but x1Scale dimension %zu", x1ScaleShapeDim),
-        return false);
+    OP_TILING_CHECK(x1ScaleShapeDim != 2,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x1Scale",
+                                                          Ops::Base::ToString(x1ScaleShape), "Rank must be 2."),
+                    return false);
     auto x1ScaleShapeInner = x1ScaleShape.GetDim(0);
     auto x1ScaleShapeOuter = x1ScaleShape.GetDim(1);
     OP_TILING_CHECK(static_cast<uint64_t>(x1ScaleShapeInner) != inputParams_.mSize,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "x1Scale inner dim should be mSize %zu, but x1Scale inner dim is %ld",
-                        inputParams_.mSize, x1ScaleShapeInner),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(inputParams_.opName, "x1Scale inner dimension",
+                                                              std::to_string(x1ScaleShapeInner),
+                                                              "Expected size " + std::to_string(inputParams_.mSize)),
                     return false);
     OP_TILING_CHECK(
         static_cast<uint64_t>(x1ScaleShapeOuter) != ops::CeilDiv(inputParams_.kSize, inputParams_.groupSizeK),
-        VECTOR_INNER_ERR_REPORT_TILIING(
-            inputParams_.opName,
-            "x1Scale outer dim should be CeilDiv(kSize %zu / groupSizeK %zu), but x1Scale outer dim is %ld",
-            inputParams_.kSize, inputParams_.groupSizeK, x1ScaleShapeOuter),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            inputParams_.opName, "x1Scale outer dimension", std::to_string(x1ScaleShapeOuter),
+            "Expected size " + std::to_string(ops::CeilDiv(inputParams_.kSize, inputParams_.groupSizeK))),
         return false);
     return true;
 }
@@ -246,27 +254,24 @@ bool QuantBatchMatmulV4PerblockTiling::AnalyzeX2ScaleInput()
 {
     auto x2ScaleShape = GetOptionShape(X2_SCALE_IDX);
     auto x2ScaleShapeDim = x2ScaleShape.GetDimNum();
-    OP_TILING_CHECK(
-        x2ScaleShapeDim != 2,
-        VECTOR_INNER_ERR_REPORT_TILIING(
-            inputParams_.opName, "Input x2Scale dimension should be 2, but x2Scale dimension is %zu", x2ScaleShapeDim),
-        return false);
+    OP_TILING_CHECK(x2ScaleShapeDim != 2,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x2Scale",
+                                                          Ops::Base::ToString(x2ScaleShape), "Rank must be 2."),
+                    return false);
     auto x2ScaleShapeInner = x2ScaleShape.GetDim(0);
     auto x2ScaleShapeOuter = x2ScaleShape.GetDim(1);
 
     auto x2ScaleKSize = inputParams_.transB ? x2ScaleShapeOuter : x2ScaleShapeInner;
     auto x2ScaleNSize = inputParams_.transB ? x2ScaleShapeInner : x2ScaleShapeOuter;
     OP_TILING_CHECK(static_cast<uint64_t>(x2ScaleKSize) != ops::CeilDiv(inputParams_.kSize, inputParams_.groupSizeK),
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName,
-                        "x2Scale inner dim should be CeilDiv(kSize %zu / groupSizeK %zu), but x2Scale inner dim is %ld",
-                        inputParams_.kSize, inputParams_.groupSizeK, x2ScaleKSize),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        inputParams_.opName, "x2Scale K dimension", std::to_string(x2ScaleKSize),
+                        "Expected size " + std::to_string(ops::CeilDiv(inputParams_.kSize, inputParams_.groupSizeK))),
                     return false);
     OP_TILING_CHECK(static_cast<uint64_t>(x2ScaleNSize) != ops::CeilDiv(inputParams_.nSize, inputParams_.groupSizeN),
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName,
-                        "x2Scale outer dim should be CeilDiv(nSize %zu / groupSizeN %zu), but x2Scale outer dim is %ld",
-                        inputParams_.nSize, inputParams_.groupSizeN, x2ScaleNSize),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        inputParams_.opName, "x2Scale N dimension", std::to_string(x2ScaleNSize),
+                        "Expected size " + std::to_string(ops::CeilDiv(inputParams_.nSize, inputParams_.groupSizeN))),
                     return false);
     return true;
 }
@@ -275,17 +280,16 @@ bool QuantBatchMatmulV4PerblockTiling::AnalyzeBiasInputs()
 {
     auto biasShape = GetOptionShape(BIAS_IDX);
     auto biasShapeLen = biasShape.GetDimNum();
-    OP_TILING_CHECK(
-        biasShapeLen != 1,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                        "Input bias dimension should equal to 1, but bias dimension %zu", biasShapeLen),
-        return false);
-    auto biasShapeInner = biasShape.GetDim(0);
-    OP_TILING_CHECK(static_cast<uint64_t>(biasShapeInner) != inputParams_.nSize,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "Input bias size should equal to nSize %zu, but bias size is %ld",
-                                                    inputParams_.nSize, biasShapeInner),
+    OP_TILING_CHECK(biasShapeLen != 1,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "bias", Ops::Base::ToString(biasShape),
+                                                          "Rank must be 1."),
                     return false);
+    auto biasShapeInner = biasShape.GetDim(0);
+    OP_TILING_CHECK(
+        static_cast<uint64_t>(biasShapeInner) != inputParams_.nSize,
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(inputParams_.opName, "bias", std::to_string(biasShapeInner),
+                                                  "Expected size " + std::to_string(inputParams_.nSize)),
+        return false);
     return true;
 }
 

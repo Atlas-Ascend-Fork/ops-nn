@@ -10,6 +10,7 @@
 
 add_all_modules_sources(
     ACLNNTYPE aclnn_exclude
+    DEPENDENCIES transpose_batch_mat_mul
 )
 
 add_kernel_sources(

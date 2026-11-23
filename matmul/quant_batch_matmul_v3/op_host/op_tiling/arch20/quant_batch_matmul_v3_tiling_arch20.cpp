@@ -16,6 +16,8 @@
 #include <vector>
 #include <cmath>
 #include "log/log.h"
+#include "graph/utils/type_utils.h"
+#include "matmul/common/op_host/matmul_error_report.h"
 #include "matmul/common/op_host/math_util_nn.h"
 #include "error_util.h"
 #include "quant_batch_matmul_v3_tiling_arch20.h"
@@ -68,17 +70,27 @@ ge::graphStatus QuantBatchMatmulPertokenArch20::GetShapeAttrsInfo()
     size_t bDims = bShape.GetDimNum();
 
     OP_TILING_CHECK((aDims < CONST_TWO || bDims < CONST_TWO),
-                    OP_LOGE(params_.opName, "x1 and x2 must have at least 2 dimensions."), return ge::GRAPH_FAILED;);
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        params_.opName, "x1, x2", Ops::Base::ToString(aShape) + ", " + Ops::Base::ToString(bShape),
+                        "x1 and x2 must have at least 2 dimensions."),
+                    return ge::GRAPH_FAILED;);
     size_t batch_dims_count_x1 = aDims - CONST_TWO;
     size_t batch_dims_count_x2 = bDims - CONST_TWO;
     OP_TILING_CHECK((batch_dims_count_x1 != batch_dims_count_x2),
-                    OP_LOGE(params_.opName, "x1 and x2 must have same batch."), return ge::GRAPH_FAILED;);
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        params_.opName, "x1 and x2 batch dimensions",
+                        std::to_string(batch_dims_count_x1) + ", " + std::to_string(batch_dims_count_x2),
+                        "x1 and x2 must have the same number of batch dimensions."),
+                    return ge::GRAPH_FAILED;);
 
     uint32_t total_batch = 1;
     for (size_t i = 0; i < batch_dims_count_x1; ++i) {
-        OP_TILING_CHECK(((aShape[i] != bShape[i]) || (aShape[i] == 0)),
-                        OP_LOGE(params_.opName, "x1 and x2 must have same batch and batch can't be 0."),
-                        return ge::GRAPH_FAILED;);
+        OP_TILING_CHECK(
+            ((aShape[i] != bShape[i]) || (aShape[i] == 0)),
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(params_.opName, "x1 and x2 batch sizes",
+                                                  std::to_string(aShape[i]) + ", " + std::to_string(bShape[i]),
+                                                  "x1 and x2 must have identical, nonzero batch dimensions."),
+            return ge::GRAPH_FAILED;);
         total_batch *= aShape[i];
     }
 
@@ -95,7 +107,9 @@ ge::graphStatus QuantBatchMatmulPertokenArch20::GetShapeAttrsInfo()
         context_->GetOptionalInputDesc(INDEX_OFFSET) == nullptr) {
         auto biasDtype = context_->GetOptionalInputDesc(INDEX_BIAS)->GetDataType();
         OP_TILING_CHECK(biasDtype != ge::DT_INT32 && biasDtype != ge::DT_FLOAT,
-                        OP_LOGE(params_.opName, "Arch20 Pertoken mode bias dtype only support INT32 or FLOAT."),
+                        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                            params_.opName, "bias", ge::TypeUtils::DataTypeToSerialString(biasDtype),
+                            "Arch20 Pertoken mode bias dtype only supports INT32 or FLOAT."),
                         return ge::GRAPH_FAILED;);
         qbmmTilingDataArch20_.withBias = true;
         qbmmTilingDataArch20_.biasDtype = static_cast<uint32_t>(biasDtype);
@@ -133,7 +147,11 @@ ge::graphStatus QuantBatchMatmulPertokenArch20::PostTiling()
     errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
                            static_cast<void*>(&qbmmTilingDataArch20_), tilingDataSize);
     if (ret != EOK) {
-        OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret=%d", ret);
+        Ops::NN::ReportMatmulTilingError(
+            context_->GetNodeName(), "PostTiling memcpy_s failed, ret=" + std::to_string(ret) +
+                                         ", requiredBytes=" + std::to_string(tilingDataSize) +
+                                         ", capacity=" + std::to_string(context_->GetRawTilingData()->GetCapacity()) +
+                                         ", tilingKey=" + std::to_string(tilingKey_));
         return ge::GRAPH_FAILED;
     }
     context_->GetRawTilingData()->SetDataSize(tilingDataSize);
@@ -154,8 +172,8 @@ ge::graphStatus QuantBatchMatmulPertokenArch20::DoTiling()
     params_.isPertokenArch20 = true;
     params_.isInt8 = true;
     tiling_.GetHardwareInfo();
-    OP_TILING_CHECK(GetShapeAttrsInfo() != ge::GRAPH_SUCCESS, OP_LOGE("Arch20Pertoken: ", "GetShapeAttrsInfo failed."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(GetShapeAttrsInfo() != ge::GRAPH_SUCCESS,
+                    OP_LOGE_WITHOUT_REPORT("Arch20Pertoken: ", "GetShapeAttrsInfo failed."), return ge::GRAPH_FAILED);
     if (!tiling_.GetMatMulTilingData()) {
         return ge::GRAPH_FAILED;
     }

@@ -41,12 +41,17 @@ namespace optiling {
 
 ge::graphStatus QuantBatchMatmulV4MsdTiling::GetShapeAttrsInfo()
 {
+    if (context_->GetOptionalInputShape(Y_OFFSET_IDX) == nullptr ||
+        context_->GetOptionalInputDesc(Y_OFFSET_IDX) == nullptr) {
+        OP_LOGD(context_->GetNodeName(), "Skip MSD tiling: yOffset shape or descriptor is missing.");
+        return ge::GRAPH_PARAM_INVALID;
+    }
     inputParams_.opName = context_->GetNodeName();
     OPS_LOG_D(inputParams_.opName, "TilingContext: %s", Ops::NN::DebugTilingContext(context_).c_str());
     OP_TILING_CHECK(CheckContext() != ge::GRAPH_SUCCESS,
                     CUBE_INNER_ERR_REPORT(inputParams_.opName, "Invalid context_."), return ge::GRAPH_PARAM_INVALID);
     OP_TILING_CHECK(!AnalyzeAttrs() || !AnalyzeDtype() || !AnalyzeInputs(),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "Fail to analyze context_ info."),
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Fail to analyze context_ info."),
                     return ge::GRAPH_FAILED);
     OP_LOGD(inputParams_.opName, "Input params: M K N [%ld, %ld, %ld], transposeA[%s], transposeB[%s]",
             inputParams_.mSize, inputParams_.kSize, inputParams_.nSize, inputParams_.transA ? "true" : "false",
@@ -107,10 +112,8 @@ bool QuantBatchMatmulV4MsdTiling::AnalyzeAttrs()
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "TransposeX1 false can not be nullptr."),
                     return false);
     OP_TILING_CHECK(*transposeX1 != false,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "Unsupported value [%d] for transposeX1, "
-                                                    "Only transposeX1 = false is supported.",
-                                                    *transposeX1),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "transposeX1",
+                                                          std::to_string(*transposeX1), "Only false is supported."),
                     return false;);
     inputParams_.transA = transposeX1 != nullptr && *transposeX1;
     // check transposeX2
@@ -125,17 +128,15 @@ bool QuantBatchMatmulV4MsdTiling::AnalyzeAttrs()
     } else {
         antiQuantType = QuantBatchMatmulV4QuantType::K_G;
         OP_TILING_CHECK(inputParams_.groupSize != 256,
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams_.opName,
-                            "Group size only support group k 256 on the A8W4 scenario, actual group sizeN is [%lu]",
-                            inputParams_.groupSize),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "groupSize",
+                                                              std::to_string(inputParams_.groupSize),
+                                                              "Group K must be 256 for A8W4 pergroup."),
                         return false);
-        OP_TILING_CHECK(*transposeX2 != false,
-                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                        "Unsupported value [%d] for transposeX2, "
-                                                        "Only transposeX2 = false is supported.",
-                                                        *transposeX2),
-                        return false;);
+        OP_TILING_CHECK(
+            *transposeX2 != false,
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "transposeX2", std::to_string(*transposeX2),
+                                                  "Only false is supported for A8W4 pergroup."),
+            return false;);
     }
 
     return true;
@@ -152,33 +153,34 @@ bool QuantBatchMatmulV4MsdTiling::AnalyzeDtype()
     inputParams_.cDtype = context_->GetOutputDesc(Y_OUTPUT_IDX)->GetDataType();
     OP_TILING_CHECK(
         actualADtype != ge::DT_INT8,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input dtype of x1 should be int8, actual dtype is %s",
-                                        ge::TypeUtils::DataTypeToSerialString(actualADtype).c_str()),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            inputParams_.opName, "x1", ge::TypeUtils::DataTypeToSerialString(actualADtype), "Only int8 is supported."),
         return false);
-    OP_TILING_CHECK(
-        inputParams_.bDtype != ge::DT_INT4,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input dtype of x2 should be int4, actual dtype is %s",
-                                        ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype).c_str()),
-        return false);
-    OP_TILING_CHECK(inputParams_.perTokenScaleDtype != ge::DT_FLOAT,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input dtype of x1Scale should be float32, actual dtype is %s",
-                        ge::TypeUtils::DataTypeToSerialString(inputParams_.perTokenScaleDtype).c_str()),
+    OP_TILING_CHECK(inputParams_.bDtype != ge::DT_INT4,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "x2",
+                                                          ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype),
+                                                          "Only int4 is supported."),
                     return false);
+    OP_TILING_CHECK(
+        inputParams_.perTokenScaleDtype != ge::DT_FLOAT,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "x1Scale",
+                                              ge::TypeUtils::DataTypeToSerialString(inputParams_.perTokenScaleDtype),
+                                              "Only float32 is supported."),
+        return false);
     OP_TILING_CHECK(inputParams_.scaleDtype != ge::DT_UINT64,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input dtype of x2Scale should be uint64, actual dtype is %s",
-                        ge::TypeUtils::DataTypeToSerialString(inputParams_.scaleDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams_.opName, "x2Scale", ge::TypeUtils::DataTypeToSerialString(inputParams_.scaleDtype),
+                        "Only uint64 is supported."),
                     return false);
     OP_TILING_CHECK(yOffsetDtype != ge::DT_FLOAT,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "Input dtype of yOffset should be float32, actual dtype is %s",
-                                                    ge::TypeUtils::DataTypeToSerialString(yOffsetDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "yOffset",
+                                                          ge::TypeUtils::DataTypeToSerialString(yOffsetDtype),
+                                                          "Only float32 is supported."),
                     return false);
     OP_TILING_CHECK(!(inputParams_.cDtype == ge::DT_FLOAT16 || inputParams_.cDtype == ge::DT_BF16),
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "Output dtype  should be float16 or bfloat16, actual dtype is %s",
-                                                    ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "y",
+                                                          ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype),
+                                                          "Only float16 or bfloat16 is supported."),
                     return false);
     return true;
 }
@@ -188,20 +190,24 @@ bool QuantBatchMatmulV4MsdTiling::AnalyzeInputs()
     inputParams_.aFormat = static_cast<ge::Format>(
         ge::GetPrimaryFormat(context_->GetInputDesc(X1_IDX)->GetStorageFormat()));
     OP_TILING_CHECK(inputParams_.aFormat != ge::FORMAT_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "aFormat Only support Nd"), return false);
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                        inputParams_.opName, "x1", Ops::Base::ToString(inputParams_.aFormat), "Only ND is supported."),
+                    return false);
     inputParams_.bFormat = static_cast<ge::Format>(
         ge::GetPrimaryFormat(context_->GetInputDesc(X2_IDX)->GetStorageFormat()));
     if (antiQuantType == QuantBatchMatmulV4QuantType::K_G) {
-        OP_TILING_CHECK(inputParams_.bFormat != ge::FORMAT_ND,
-                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "bFormat Only support Nd"), return false);
+        OP_TILING_CHECK(
+            inputParams_.bFormat != ge::FORMAT_ND,
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(inputParams_.opName, "x2", Ops::Base::ToString(inputParams_.bFormat),
+                                                   "Only ND is supported."),
+            return false);
     }
     auto x1Shape = GetShape(X1_IDX);
     auto x1ShapeLen = x1Shape.GetDimNum();
-    OP_TILING_CHECK(
-        x1ShapeLen != SUPPORT_DIM,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                        "Input x1 dimension should equal to 2, but x1 dimension: %zu.", x1ShapeLen),
-        return false);
+    OP_TILING_CHECK(x1ShapeLen != SUPPORT_DIM,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x1", Ops::Base::ToString(x1Shape),
+                                                          "Rank must be 2."),
+                    return false);
     actualMSize = x1Shape.GetDim(0);
     inputParams_.mSize = actualMSize * INT4_SIZE;
     inputParams_.kSize = x1Shape.GetDim(1);
@@ -209,15 +215,19 @@ bool QuantBatchMatmulV4MsdTiling::AnalyzeInputs()
     if (inputParams_.bFormat == ge::FORMAT_FRACTAL_NZ) {
         auto x2ScaleShape = GetOptionShape(X2_SCALE_IDX);
         auto x2ScaleShapeLen = x2ScaleShape.GetDimNum();
+        OP_TILING_CHECK(
+            x2ScaleShapeLen != 1,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x2Scale", Ops::Base::ToString(x2ScaleShape),
+                                                  "Rank must be 1 for FRACTAL_NZ perchannel."),
+            return false);
         inputParams_.nSize = x2ScaleShape[x2ScaleShapeLen - 1];
     } else {
         auto x2Shape = GetShape(X2_IDX);
         auto x2ShapeLen = x2Shape.GetDimNum();
-        OP_TILING_CHECK(
-            x2ShapeLen != SUPPORT_DIM,
-            VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                            "Inputx2 dimension should equal to 2, but x2 dimension: %zu.", x2ShapeLen),
-            return false);
+        OP_TILING_CHECK(x2ShapeLen != SUPPORT_DIM,
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x2", Ops::Base::ToString(x2Shape),
+                                                              "Rank must be 2."),
+                        return false);
         size_t bKSize = 0;
         size_t bNSize = 0;
         if (inputParams_.transB) {
@@ -227,15 +237,31 @@ bool QuantBatchMatmulV4MsdTiling::AnalyzeInputs()
             bKSize = x2Shape.GetDim(0);
             bNSize = x2Shape.GetDim(1);
         }
-        OP_TILING_CHECK(inputParams_.kSize != static_cast<uint64_t>(bKSize),
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams_.opName,
-                            "The size of k dimension in x1[%lu] is not equal to the size of k dimension in x2[%zu].",
-                            inputParams_.kSize, bKSize),
-                        return false);
+        OP_TILING_CHECK(
+            inputParams_.kSize != static_cast<uint64_t>(bKSize),
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(inputParams_.opName, "x1 K", std::to_string(inputParams_.kSize),
+                                                      "Expected size " + std::to_string(bKSize)),
+            return false);
         inputParams_.nSize = bNSize;
     }
 
+    OP_TILING_CHECK(inputParams_.kSize > 29576,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "K", std::to_string(inputParams_.kSize),
+                                                          "K must be at most 29576 for A8W4."),
+                    return false);
+    if (antiQuantType == QuantBatchMatmulV4QuantType::K_G) {
+        OP_TILING_CHECK(inputParams_.kSize % inputParams_.groupSize != 0,
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            inputParams_.opName, "K", std::to_string(inputParams_.kSize),
+                            "K must be divisible by groupSize " + std::to_string(inputParams_.groupSize)),
+                        return false);
+    } else {
+        OP_TILING_CHECK(inputParams_.groupSize != 0,
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "groupSize",
+                                                              std::to_string(inputParams_.groupSize),
+                                                              "A8W4 perchannel requires groupSize 0."),
+                        return false);
+    }
     return AnalyzeScaleInputs() && AnalyzeYOffsetInputs();
 }
 
@@ -243,71 +269,68 @@ bool QuantBatchMatmulV4MsdTiling::AnalyzeScalePerChannel(const gert::Shape& x1Sc
                                                          const gert::Shape& x2ScaleShape, int64_t x1ScaleShapeLen,
                                                          int64_t x2ScaleShapeLen)
 {
-    OP_TILING_CHECK(x1ScaleShapeLen != 1,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input x1Scale dimension should equal to 1, but x1Scale dimension %ld",
-                        x1ScaleShapeLen),
-                    return false);
+    OP_TILING_CHECK(
+        x1ScaleShapeLen != 1,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x1Scale", Ops::Base::ToString(x1ScaleShape),
+                                              "Rank must be 1 for perchannel."),
+        return false);
     auto x1ScaleShapeSize = x1ScaleShape.GetDim(0);
-    OP_TILING_CHECK(static_cast<uint64_t>(x1ScaleShapeSize) != actualMSize,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "x1Scale size should equal to mSize %lu, but x1Scale inner dim is %ld",
-                        actualMSize, x1ScaleShapeSize),
-                    return false);
-    OP_TILING_CHECK(x2ScaleShapeLen != 1,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input x2Scale dimension should equal to 1, but x2Scale dimension is %ld",
-                        x2ScaleShapeLen),
-                    return false);
+    OP_TILING_CHECK(
+        static_cast<uint64_t>(x1ScaleShapeSize) != actualMSize,
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(inputParams_.opName, "x1Scale", std::to_string(x1ScaleShapeSize),
+                                                  "Expected size " + std::to_string(actualMSize)),
+        return false);
+    OP_TILING_CHECK(
+        x2ScaleShapeLen != 1,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x2Scale", Ops::Base::ToString(x2ScaleShape),
+                                              "Rank must be 1 for perchannel."),
+        return false);
     auto x2ScaleShapeSize = x2ScaleShape.GetDim(0);
-    OP_TILING_CHECK(static_cast<uint64_t>(x2ScaleShapeSize) != inputParams_.nSize,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "x2Scale size should equal to nSize %zu, but x2Scale outer dim is %ld",
-                        inputParams_.nSize, x2ScaleShapeSize),
-                    return false);
+    OP_TILING_CHECK(
+        static_cast<uint64_t>(x2ScaleShapeSize) != inputParams_.nSize,
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(inputParams_.opName, "x2Scale", std::to_string(x2ScaleShapeSize),
+                                                  "Expected size " + std::to_string(inputParams_.nSize)),
+        return false);
     return true;
 }
 
 bool QuantBatchMatmulV4MsdTiling::AnalyzeScalePerGroup(const gert::Shape& x1ScaleShape, const gert::Shape& x2ScaleShape,
                                                        int64_t x1ScaleShapeLen, int64_t x2ScaleShapeLen)
 {
-    OP_TILING_CHECK(x1ScaleShapeLen != SUPPORT_DIM,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input x1Scale dimension should equal to 2, but x1Scale dimension %ld",
-                        x1ScaleShapeLen),
-                    return false);
+    OP_TILING_CHECK(
+        x1ScaleShapeLen != SUPPORT_DIM,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x1Scale", Ops::Base::ToString(x1ScaleShape),
+                                              "Rank must be 2 for pergroup."),
+        return false);
     auto x1ScaleShapeInner = x1ScaleShape.GetDim(0);
     auto x1ScaleShapeOuter = x1ScaleShape.GetDim(1);
+    OP_TILING_CHECK(static_cast<uint64_t>(x1ScaleShapeInner) != actualMSize,
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(inputParams_.opName, "x1Scale inner dimension",
+                                                              std::to_string(x1ScaleShapeInner),
+                                                              "Expected size " + std::to_string(actualMSize)),
+                    return false);
     OP_TILING_CHECK(
-        static_cast<uint64_t>(x1ScaleShapeInner) != actualMSize,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                        "x1Scale inner dim should equal to mSize %lu, but x1Scale inner dim is %ld",
-                                        actualMSize, x1ScaleShapeInner),
+        x1ScaleShapeOuter != 1,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x1Scale", Ops::Base::ToString(x1ScaleShape),
+                                              "Outer dimension must be 1."),
         return false);
-    OP_TILING_CHECK(x1ScaleShapeOuter != 1,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "x1Scale outer dim should equal to 1, but x1Scale outer dim is %ld",
-                                                    x1ScaleShapeOuter),
-                    return false);
-    OP_TILING_CHECK(x2ScaleShapeLen != SUPPORT_DIM,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input x2Scale dimension should equal to 2, but x2Scale dimension is %ld",
-                        x2ScaleShapeLen),
-                    return false);
+    OP_TILING_CHECK(
+        x2ScaleShapeLen != SUPPORT_DIM,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x2Scale", Ops::Base::ToString(x2ScaleShape),
+                                              "Rank must be 2 for pergroup."),
+        return false);
     auto x2ScaleShapeInner = x2ScaleShape.GetDim(0);
     auto x2ScaleShapeOuter = x2ScaleShape.GetDim(1);
     OP_TILING_CHECK(static_cast<uint64_t>(x2ScaleShapeInner) * inputParams_.groupSize != inputParams_.kSize,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName,
-                        "x2Scale inner dim should equal to nSize %zu / groupSizeK %zu, but x2Scale inner dim is %ld",
-                        inputParams_.nSize, inputParams_.groupSize, x2ScaleShapeInner),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        inputParams_.opName, "x2Scale inner dimension", std::to_string(x2ScaleShapeInner),
+                        "Expected size " + std::to_string(inputParams_.kSize / inputParams_.groupSize)),
                     return false);
-    OP_TILING_CHECK(
-        static_cast<uint64_t>(x2ScaleShapeOuter) != inputParams_.nSize,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                        "x2Scale outer dim should equal to nSize %zu, but x2Scale outer dim is %ld",
-                                        inputParams_.nSize, x2ScaleShapeOuter),
-        return false);
+    OP_TILING_CHECK(static_cast<uint64_t>(x2ScaleShapeOuter) != inputParams_.nSize,
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(inputParams_.opName, "x2Scale outer dimension",
+                                                              std::to_string(x2ScaleShapeOuter),
+                                                              "Expected size " + std::to_string(inputParams_.nSize)),
+                    return false);
     return true;
 }
 
@@ -319,12 +342,11 @@ bool QuantBatchMatmulV4MsdTiling::AnalyzeScaleInputs()
     auto x2ScaleShapeLen = x2ScaleShape.GetDimNum();
     if (antiQuantType == QuantBatchMatmulV4QuantType::K_C) {
         OP_TILING_CHECK(!AnalyzeScalePerChannel(x1ScaleShape, x2ScaleShape, x1ScaleShapeLen, x2ScaleShapeLen),
-                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "A8W4 perchannel scale check failed"),
+                        OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "A8W4 perchannel scale check failed"),
                         return false);
     } else {
         OP_TILING_CHECK(!AnalyzeScalePerGroup(x1ScaleShape, x2ScaleShape, x1ScaleShapeLen, x2ScaleShapeLen),
-                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "A8W4 pergroup scale check failed"),
-                        return false);
+                        OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "A8W4 pergroup scale check failed"), return false);
     }
     return true;
 }
@@ -334,16 +356,15 @@ bool QuantBatchMatmulV4MsdTiling::AnalyzeYOffsetInputs()
     auto yOffsetShape = GetOptionShape(Y_OFFSET_IDX);
     auto yOffsetShapeLen = yOffsetShape.GetDimNum();
     OP_TILING_CHECK(yOffsetShapeLen != 1,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input yOffset dimension should equal to 1, but yOffset dimension %zu",
-                        yOffsetShapeLen),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "yOffset",
+                                                          Ops::Base::ToString(yOffsetShape), "Rank must be 1."),
                     return false);
     auto yOffsetShapeInner = yOffsetShape.GetDim(0);
-    OP_TILING_CHECK(static_cast<uint64_t>(yOffsetShapeInner) != inputParams_.nSize,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Input yOffset size should equal to nSize %zu, but yOffset size is %ld",
-                        inputParams_.nSize, yOffsetShapeInner),
-                    return false);
+    OP_TILING_CHECK(
+        static_cast<uint64_t>(yOffsetShapeInner) != inputParams_.nSize,
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(inputParams_.opName, "yOffset", std::to_string(yOffsetShapeInner),
+                                                  "Expected size " + std::to_string(inputParams_.nSize)),
+        return false);
     return true;
 }
 
@@ -592,36 +613,7 @@ int64_t QuantBatchMatmulV4MsdTiling::PrintMatmulTilingDataImpl() const
     return 0;
 }
 
-bool QuantBatchMatmulV4MsdTiling::IsCapable()
-{
-    OP_TILING_CHECK(inputParams_.kSize > 29576,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "K should be less than 29576 on the A8W4 scenario,"
-                                                    "but now is %lu",
-                                                    inputParams_.kSize),
-                    return false);
-    if (antiQuantType == QuantBatchMatmulV4QuantType::K_G) {
-        OP_TILING_CHECK(inputParams_.kSize % inputParams_.groupSize != 0,
-                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                        "K should be divisible by groupSizek, but now k = %lu,"
-                                                        "groupSize is %lu",
-                                                        inputParams_.kSize, inputParams_.groupSize),
-                        return false);
-        OP_TILING_CHECK(inputParams_.groupSize != 256,
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams_.opName, "A8W4 pergroup groupSize should be 256, but now groupSize = %lu",
-                            inputParams_.groupSize),
-                        return false);
-    } else {
-        OP_TILING_CHECK(inputParams_.groupSize != 0,
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams_.opName, "A8W4 perchannel groupSize should be 0, but now groupSize = %lu",
-                            inputParams_.groupSize),
-                        return false);
-    }
-
-    return true;
-}
+bool QuantBatchMatmulV4MsdTiling::IsCapable() { return true; }
 
 ge::graphStatus QuantBatchMatmulV4MsdTiling::PostTiling()
 {

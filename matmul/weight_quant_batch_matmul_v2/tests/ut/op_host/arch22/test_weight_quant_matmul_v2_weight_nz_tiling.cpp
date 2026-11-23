@@ -21,7 +21,7 @@
 #include "exe_graph/runtime/storage_shape.h"
 #include "exe_graph/runtime/tiling_parse_context.h"
 #include "kernel_run_context_facker.h"
-#include "../../../../../mat_mul_v3/op_host/op_tiling/matmul_v3_compile_info.h"
+#include "../../../../op_host/op_tiling/weight_quant_batch_matmul_v2_tiling.h"
 
 using namespace std;
 using namespace ge;
@@ -149,7 +149,7 @@ static void TestOneParamCase(const WeightQuantBatchMatmulV2WeightNzTilingTestPar
     // platform info
     fe::PlatFormInfos platformInfo;
     platformInfo.Init();
-    MatmulV3CompileInfo compileInfo;
+    WeightQuantBatchMatmulV2CompileInfo compileInfo{};
 
     auto kernelHold = gert::KernelRunContextFaker()
                           .KernelIONum(2, 1)
@@ -256,7 +256,7 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, multi_thread)
 }
 
 // Non-cache tiling path: MKN not in WEIGHT_NZ_TILING_CACHE triggers GetMmTilingInput/GetLoopOrder/GetL1Pingpong/etc.
-TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, nonCacheTilingPath)
+static void TestNonCacheTilingPath(bool malformedWeightRank)
 {
     int64_t batch = 1;
     int64_t m = 128;
@@ -270,7 +270,10 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, nonCacheTilingPath)
     gert::StorageShape xShape({batch, m, k}, {batch, m, k});
     int64_t n1 = (n + 15) / 16;
     int64_t k1 = (k + 31) / 32;
-    gert::StorageShape weigthShape({batch, k1, n1, 16, 32}, {batch, n, k});
+    gert::StorageShape weigthShape({batch, n, k}, {batch, k1, n1, 16, 32});
+    if (malformedWeightRank) {
+        weigthShape.MutableStorageShape() = gert::Shape({batch, n, k});
+    }
     gert::StorageShape antiQuantScaleShape({n}, {n});
     gert::StorageShape biasShape({batch, 1, n}, {batch, 1, n});
     gert::StorageShape outputShape({batch, m, n}, {batch, m, n});
@@ -289,7 +292,7 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, nonCacheTilingPath)
 
     fe::PlatFormInfos platformInfo;
     platformInfo.Init();
-    MatmulV3CompileInfo compileInfo;
+    WeightQuantBatchMatmulV2CompileInfo compileInfo{};
 
     auto kernelHold = gert::KernelRunContextFaker()
                           .KernelIONum(2, 1)
@@ -337,8 +340,13 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, nonCacheTilingPath)
 
     auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
     ASSERT_NE(tilingFunc, nullptr);
-    tilingFunc(tilingContext);
+    const auto expectedStatus = malformedWeightRank ? ge::GRAPH_FAILED : ge::GRAPH_SUCCESS;
+    ASSERT_EQ(tilingFunc(tilingContext), expectedStatus);
 }
+
+TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, nonCacheTilingPath) { TestNonCacheTilingPath(false); }
+
+TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, malformedWeightNzRank) { TestNonCacheTilingPath(true); }
 
 // Non-cache tiling path with transA=true and different shapes
 TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, nonCacheTilingPathTransA)
@@ -354,7 +362,7 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, nonCacheTilingPathTransA)
     gert::StorageShape xShape({batch, k, m}, {batch, k, m});
     int64_t n1 = (n + 15) / 16;
     int64_t k1 = (k + 31) / 32;
-    gert::StorageShape weigthShape({batch, k1, n1, 16, 32}, {batch, n, k});
+    gert::StorageShape weigthShape({batch, n, k}, {batch, k1, n1, 16, 32});
     gert::StorageShape antiQuantScaleShape({1}, {1});
     gert::StorageShape outputShape({batch, m, n}, {batch, m, n});
 
@@ -372,7 +380,7 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, nonCacheTilingPathTransA)
 
     fe::PlatFormInfos platformInfo;
     platformInfo.Init();
-    MatmulV3CompileInfo compileInfo;
+    WeightQuantBatchMatmulV2CompileInfo compileInfo{};
 
     auto kernelHold = gert::KernelRunContextFaker()
                           .KernelIONum(2, 1)
@@ -397,7 +405,7 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, nonCacheTilingPathTransA)
                       .NodeInputTd(2, xDtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(0, yDtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeAttrs({{"transpose_x", Ops::NN::AnyValue::CreateFrom<bool>(true)},
-                                  {"transpose_weight", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"transpose_weight", Ops::NN::AnyValue::CreateFrom<bool>(true)},
                                   {"group_size", Ops::NN::AnyValue::CreateFrom<int64_t>(0)}})
                       .TilingData(rawTilingData.get())
                       .Workspace(workspace)
@@ -419,7 +427,7 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, nonCacheTilingPathTransA)
 
     auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
     ASSERT_NE(tilingFunc, nullptr);
-    tilingFunc(tilingContext);
+    ASSERT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
 }
 
 // Cache hit with bias and transA=true: covers different PostTiling branches
@@ -432,12 +440,12 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, cacheHitWithBiasTransA)
     ge::DataType xDtype = ge::DT_FLOAT16;
     ge::DataType weightDtype = ge::DT_INT8;
     ge::DataType yDtype = ge::DT_FLOAT16;
-    ge::DataType biasDtype = ge::DT_FLOAT;
+    ge::DataType biasDtype = ge::DT_FLOAT16;
 
     gert::StorageShape xShape({batch, k, m}, {batch, k, m});
     int64_t n1 = (n + 15) / 16;
     int64_t k1 = (k + 31) / 32;
-    gert::StorageShape weigthShape({batch, k1, n1, 16, 32}, {batch, n, k});
+    gert::StorageShape weigthShape({batch, n, k}, {batch, k1, n1, 16, 32});
     gert::StorageShape antiQuantScaleShape({n}, {n});
     gert::StorageShape antiQuantOffsetShape({n}, {n});
     gert::StorageShape biasShape({batch, 1, n}, {batch, 1, n});
@@ -457,7 +465,7 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, cacheHitWithBiasTransA)
 
     fe::PlatFormInfos platformInfo;
     platformInfo.Init();
-    MatmulV3CompileInfo compileInfo;
+    WeightQuantBatchMatmulV2CompileInfo compileInfo{};
 
     auto kernelHold = gert::KernelRunContextFaker()
                           .KernelIONum(2, 1)
@@ -507,7 +515,7 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, cacheHitWithBiasTransA)
 
     auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
     ASSERT_NE(tilingFunc, nullptr);
-    tilingFunc(tilingContext);
+    ASSERT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
 }
 
 // Large MKN to trigger different L1/UB allocation branches
@@ -524,7 +532,7 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, largeMKNNzTiling)
     gert::StorageShape xShape({batch, m, k}, {batch, m, k});
     int64_t n1 = (n + 15) / 16;
     int64_t k1 = (k + 31) / 32;
-    gert::StorageShape weigthShape({batch, k1, n1, 16, 32}, {batch, n, k});
+    gert::StorageShape weigthShape({batch, n, k}, {batch, k1, n1, 16, 32});
     gert::StorageShape antiQuantScaleShape({1}, {1});
     gert::StorageShape outputShape({batch, m, n}, {batch, m, n});
 
@@ -542,7 +550,7 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, largeMKNNzTiling)
 
     fe::PlatFormInfos platformInfo;
     platformInfo.Init();
-    MatmulV3CompileInfo compileInfo;
+    WeightQuantBatchMatmulV2CompileInfo compileInfo{};
 
     auto kernelHold = gert::KernelRunContextFaker()
                           .KernelIONum(2, 1)
@@ -589,6 +597,6 @@ TEST_F(TestWeightQuantBatchMatmulV2WeightNzTiling, largeMKNNzTiling)
 
     auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
     ASSERT_NE(tilingFunc, nullptr);
-    tilingFunc(tilingContext);
+    ASSERT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
 }
 } // namespace

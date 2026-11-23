@@ -204,13 +204,6 @@ namespace optiling {
 
 bool WeightQuantBatchMatmulV2WeightNz::IsCapable()
 {
-    // 判断weight矩阵是否是4维
-    auto weightShape = context_->GetInputShape(1);
-    auto weightDimNum = weightShape->GetStorageShape().GetDimNum();
-    OP_LOGI_IF_RETURN(
-        weightDimNum < MM_SHAPE_LEN_NZ_MIN && weightDimNum > MM_SHAPE_LEN_NZ_MAX, false, inputParams_.opName,
-        "weightNz template only support right matrix weight >= 4 or <= 8 dims Tensor,now is %ld", weightDimNum);
-
     // weightNz模板只支持weight矩阵是转置的场景
     OP_LOGI_IF_RETURN(!inputParams_.transB, false, inputParams_.opName,
                       "weightNz template only support right matrix is transposed.");
@@ -536,6 +529,11 @@ bool WeightQuantBatchMatmulV2WeightNz::AnalyzeInputShape(const gert::StorageShap
     auto weightDims = weightStorageShape.GetDimNum();
     auto outDims = outStorageShape.GetDimNum();
 
+    OP_TILING_CHECK(weightDims < MM_SHAPE_LEN_NZ_MIN || weightDims > MM_SHAPE_LEN_NZ_MAX,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM(inputParams_.opName, "weight", std::to_string(weightDims),
+                                                 "4 to 8 for FRACTAL_NZ storage"),
+                    return false);
+
     OP_TILING_CHECK(
         (xDims < MM_SHAPE_LEN_ND_MIN || xDims > MM_SHAPE_LEN_ND_MAX),
         VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "left matrix X dim support >=2 and <=6, now is %s",
@@ -640,7 +638,7 @@ ge::graphStatus WeightQuantBatchMatmulV2WeightNz::GetShapeAttrsInfo()
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "invalid context"), return ge::GRAPH_FAILED);
 
     OP_TILING_CHECK(!AnalyzeDtype() || !AnalyzeAttrs() || !AnalyzeInputs(),
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "fail to analyze context info"),
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "fail to analyze context info"),
                     return ge::GRAPH_FAILED);
 
     bool maxDimCheck = inputParams_.kSize > MAX_SHAPE_DIM || inputParams_.nSize > MAX_SHAPE_DIM;

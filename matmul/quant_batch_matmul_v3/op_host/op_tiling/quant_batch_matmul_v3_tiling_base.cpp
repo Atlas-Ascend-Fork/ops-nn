@@ -19,6 +19,7 @@
 #include "arch35/quant_batch_matmul_v3_tiling_util.h"
 #include "quant_batch_matmul_info_factory.h"
 #include "error_util.h"
+#include "matmul/common/op_host/matmul_error_report.h"
 #include "matmul/common/op_host/op_tiling/debug_tiling.h"
 #include "platform/platform_infos_def.h"
 
@@ -133,11 +134,11 @@ ge::graphStatus QuantBatchMatmulV3TilingBase::GetShapeAttrsInfo()
     }
 
     OPS_LOG_D(inputParams_.opName, "TilingContext: %s", Ops::NN::DebugTilingContext(context_).c_str());
-    OP_TILING_CHECK(CheckContext() != ge::GRAPH_SUCCESS, CUBE_INNER_ERR_REPORT(inputParams_.opName, "Invalid context."),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(CheckContext() != ge::GRAPH_SUCCESS,
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Invalid context."), return ge::GRAPH_FAILED);
 
     OP_TILING_CHECK(!AnalyzeAttrs() || !AnalyzeDtype() || !AnalyzeInputs(),
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "Fail to analyze context info."),
+                    OP_LOGE_WITHOUT_REPORT(inputParams_.opName, "Fail to analyze context info."),
                     return ge::GRAPH_PARAM_INVALID);
     auto transA_str = inputParams_.transA ? "true" : "false";
     auto transB_str = inputParams_.transB ? "true" : "false";
@@ -163,7 +164,9 @@ ge::graphStatus QuantBatchMatmulV3TilingBase::CheckContext()
     auto outputDesc = context_->GetOutputDesc(0);
     auto attrs = context_->GetAttrs();
     OP_TILING_CHECK(attrs == nullptr,
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "Function context_->GetAttrs() failed!"),
+                    Ops::NN::ReportMatmulTilingError(
+                        inputParams_.opName, "CheckContext failed because context_->GetAttrs() returned nullptr. "
+                                             "Check that the tiling context contains the operator attributes."),
                     return ge::GRAPH_FAILED);
     auto dtypeAttr = attrs->GetAttrPointer<int64_t>(0);
 

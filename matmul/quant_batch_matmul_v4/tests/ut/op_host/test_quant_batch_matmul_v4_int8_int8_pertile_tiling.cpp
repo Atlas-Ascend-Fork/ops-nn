@@ -248,7 +248,11 @@ static void TestOneParamCase(const QuantBatchMatmulV4TilingTestParam& param)
     compileInfoStr = compileInfoStr.replace(compileInfoStr.find("aivNum"), 6, to_string(aivNum));
     GetPlatFormInfos(compileInfoStr.c_str(), socInfos, aicoreSpec, intrinsics, socVersion);
     socVersion.clear();
-    socVersion["NpuArch"] = "3510";
+    if (socversion == "Ascend910B") {
+        socVersion["Short_SoC_version"] = socversion;
+    } else {
+        socVersion["NpuArch"] = "3510";
+    }
     aicoreSpec["cube_freq"] = "1650";
 
     // platform info
