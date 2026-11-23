@@ -74,4 +74,4 @@
 
 | 调用方式 | 调用样例 | 说明 |
 | :--- | :--- | :--- |
-| 图模式 | [test_geir_quant_conv2d](./examples/arch35/test_geir_quant_conv2d.cpp) | 通过[算子IR](./graph/quant_conv2d_proto.h)构图方式调用QuantConv2D算子。 |
+| 图模式 | [test_geir_quant_conv2d](./examples/arch35/test_geir_quant_conv2d.cpp) | 通过[算子IR](./op_graph/quant_conv2d_proto.h)构图方式调用QuantConv2D算子。 |

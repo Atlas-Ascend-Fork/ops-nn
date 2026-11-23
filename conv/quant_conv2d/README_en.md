@@ -76,4 +76,4 @@ English | [简体中文](./README.md)
 
 | Invocation method | Invocation sample | Description |
 | :--- | :--- | :--- |
-| Graph mode | [test_geir_quant_conv2d](./examples/arch35/test_geir_quant_conv2d.cpp) | Invoke the QuantConv2D operator by building a graph through the [operator IR](./graph/quant_conv2d_proto.h). |
+| Graph mode | [test_geir_quant_conv2d](./examples/arch35/test_geir_quant_conv2d.cpp) | Invoke the QuantConv2D operator by building a graph through the [operator IR](./op_graph/quant_conv2d_proto.h). |
