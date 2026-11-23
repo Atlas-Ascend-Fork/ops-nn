@@ -35,13 +35,13 @@ extern "C" {
  * out = round((x / quantScale))
  *
  * @param [in] self：计算输入，shape大于等于2维
- * npu device侧的aclTensor，数据类型支持FLOAT16、FLOAT32、BFLOAT16类型，
+ * npu device侧的aclTensor，数据类型支持FLOAT16、BFLOAT16类型，
  * 数据格式支持ND，支持非连续的Tensor。
  * @param [in] gamma：计算输入，shape为1维，且等于c维度。
- * npu device侧的aclTensor，数据类型支持FLOAT16、FLOAT32、BFLOAT16类型，
+ * npu device侧的aclTensor，数据类型支持FLOAT16、BFLOAT16类型，与self的数据类型一致，
  * 数据格式支持ND，支持非连续的Tensor。
  * @param [in] beta：shape为1维，且等于c维度。
- * npu device侧的aclTensor，数据类型支持FLOAT16、FLOAT32、BFLOAT16类型，
+ * npu device侧的aclTensor，数据类型支持FLOAT16、BFLOAT16类型，与self的数据类型一致，
  * 数据格式支持ND，支持非连续的Tensor。
  * @param [in] quantScale：shape为1维，且等于1或c维度。
  * npu device侧的aclTensor，数据类型支持FLOAT32类型，
@@ -50,13 +50,13 @@ extern "C" {
  * @param [in] eps：计算属性，host侧的浮点数，数据类型支持double，默认1e-5
  * @param [in] activateSilu：计算属性，是否开启Silu计算，数据类型支持BOOL，当前仅支持开启。
  * @param [out] out：y的输出。
- * npu device侧的aclTensor，数据类型支持FLOAT16、FLOAT32、BFLOAT16类型，
+ * npu device侧的aclTensor，数据类型支持INT8类型，
  * 数据格式支持ND。
  * @param [out] meanOut：均值的输出。
- * npu device侧的aclTensor，数据类型支持FLOAT16、FLOAT32、BFLOAT16类型，
+ * npu device侧的aclTensor，数据类型与self一致，支持FLOAT16、BFLOAT16类型，
  * 数据格式支持ND。
  * @param [out] rstdOut：1/sqrt(Var(x)+ϵ​x)结果输出
- * npu device侧的aclTensor，数据类型支持FLOAT16、FLOAT32、BFLOAT16类型，
+ * npu device侧的aclTensor，数据类型与self一致，支持FLOAT16、BFLOAT16类型，
  * 数据格式支持ND。
  * @param [out] workspaceSize: 返回用户需要在npu device侧申请的workspace大小。
  * @param [out] executor: 返回op执行器，包含算子计算流程。

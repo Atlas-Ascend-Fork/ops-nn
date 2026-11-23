@@ -29,16 +29,16 @@ private:
     __aicore__ inline void CopyInX(const int64_t xOffset, const int64_t copyNum);
     __aicore__ inline void CopyInGammaAndBeta();
     __aicore__ inline void CastGammaAndBeta();
-    __aicore__ inline void ComputeSumX(const int64_t& num);
+    template <bool isVariance>
+    __aicore__ inline float ReduceGroup(const int64_t& outIdx, const float mean);
+    __aicore__ inline void ComputeStatistics(const int64_t& outIdx, float& mean, float& rstd);
     __aicore__ inline void CastMeanAndRstd(const int64_t& copyNum);
     __aicore__ inline void ComputeSilu(const int64_t& loopNum);
     __aicore__ inline void ComputeForMeanAlign(LocalTensor<T1>& meanOut, LocalTensor<T1>& rstdOut,
                                                const int64_t& groups);
     __aicore__ inline void ComputeOneLoop(const int64_t& loopNum);
     __aicore__ inline void ComputeMultipleLoop(const int64_t& loopNum);
-    __aicore__ inline void AccumulateXandX2OneLoop(const int64_t& outIdx);
-    __aicore__ inline void AccumulateXandX2MultipleLoop(const int64_t& outIdx);
-    __aicore__ inline void CalcSilu(const float& scale, const float& quantScale, const float& bias,
+    __aicore__ inline void CalcSilu(const float& scale, const float& quantScale, const float& bias, const float& mean,
                                     const int64_t& calcNum);
     __aicore__ inline void ComputeQuant(const AscendC::LocalTensor<float>& out, int64_t calcNum,
                                         const float quantScale);
@@ -195,8 +195,6 @@ __aicore__ inline void GroupNormSiluQuantB16<T1, T2>::ComputeSilu(const int64_t&
 template <typename T1, typename T2>
 __aicore__ inline void GroupNormSiluQuantB16<T1, T2>::ComputeOneLoop(const int64_t& loopNum)
 {
-    LocalTensor<float> x2Ub32 = x2Buf32.Get<float>();
-    LocalTensor<float> tmpMean = tmpTensor.Get<float>();
     LocalTensor<float> meanUb = meanBuf32.Get<float>();
     LocalTensor<float> rstdUb = rstdBuf32.Get<float>();
     LocalTensor<float> gammaUb32;
@@ -211,12 +209,9 @@ __aicore__ inline void GroupNormSiluQuantB16<T1, T2>::ComputeOneLoop(const int64
     LocalTensor<float> quantScaleLocal = this->inQueueQuantScale.template DeQue<float>();
     float quantScale = quantScaleLocal.GetValue(0);
     for (int64_t outIdx = 0; outIdx < loopNum; outIdx++) {
-        AccumulateXandX2OneLoop(outIdx);
-        // calc var and rstd;
-        float mean = tmpMean.GetValue(0);
-        float rstd = x2Ub32.GetValue(0);
-        mean = mean * numRec;
-        rstd = float(1.0) / sqrt(rstd * numRec - mean * mean + tiling->epsilon);
+        float mean;
+        float rstd;
+        ComputeStatistics(outIdx, mean, rstd);
         meanUb.SetValue(outIdx, mean);
         rstdUb.SetValue(outIdx, rstd);
         event_t eventS2V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_V));
@@ -231,10 +226,9 @@ __aicore__ inline void GroupNormSiluQuantB16<T1, T2>::ComputeOneLoop(const int64
             float beta = betaUb32.GetValue(cIdx);
             quantScale = this->tiling->shapeQuantScale == 1 ? quantScale : quantScaleLocal.GetValue(cIdx);
             float scale = rstd * gamma;
-            float bias = -scale * mean + beta;
             CopyInX<false>(xOffset, tiling->innerLoopTail);
-            CalcSilu(scale, quantScale, bias, tiling->innerLoopTail);
-            CopyOutYWithPad(scale, bias, xOffset, tiling->innerLoopTail);
+            CalcSilu(scale, quantScale, beta, mean, tiling->innerLoopTail);
+            CopyOutYWithPad(scale, beta, xOffset, tiling->innerLoopTail);
         }
     }
     if (sizeof(T2) == sizeof(float)) {
@@ -251,12 +245,9 @@ __aicore__ inline void GroupNormSiluQuantB16<T1, T2>::ComputeMultipleLoop(const 
     LocalTensor<float> quantScaleLocal = this->inQueueQuantScale.template DeQue<float>();
     float quantScale = quantScaleLocal.GetValue(0);
     for (int64_t outIdx = 0; outIdx < loopNum; outIdx++) {
-        AccumulateXandX2MultipleLoop(outIdx);
-        // calc var and rstd;
-        float mean = tmpTensor.Get<float>().GetValue(0);
-        float rstd = x2Buf32.Get<float>().GetValue(0);
-        mean = mean * numRec;
-        rstd = float(1.0) / sqrt(rstd * numRec - mean * mean + tiling->epsilon);
+        float mean;
+        float rstd;
+        ComputeStatistics(outIdx, mean, rstd);
         meanBuf32.Get<float>().SetValue(outIdx, mean);
         rstdBuf32.Get<float>().SetValue(outIdx, rstd);
         // normalize x and calc silu
@@ -267,18 +258,17 @@ __aicore__ inline void GroupNormSiluQuantB16<T1, T2>::ComputeMultipleLoop(const 
             float beta = betaUb32.GetValue(cIdx);
             quantScale = this->tiling->shapeQuantScale == 1 ? quantScale : quantScaleLocal.GetValue(cIdx);
             float scale = rstd * gamma;
-            float bias = -scale * mean + beta;
             for (int64_t innerIdx = 0; innerIdx < tiling->innerLoopNum - 1; innerIdx++) {
                 int64_t xOffset = outIdx * tiling->elemNum + dIdx * tiling->hwNum + innerIdx * tiling->processSize;
                 CopyInX(xOffset, tiling->processSize);
-                CalcSilu(scale, quantScale, bias, tiling->processSize);
+                CalcSilu(scale, quantScale, beta, mean, tiling->processSize);
                 CopyOutY(xOffset, tiling->processSize);
             }
             int64_t tailOffset = outIdx * tiling->elemNum + dIdx * tiling->hwNum +
                                  (tiling->innerLoopNum - 1) * tiling->processSize;
             CopyInX<false>(tailOffset, tiling->innerLoopTail);
-            CalcSilu(scale, quantScale, bias, tiling->innerLoopTail);
-            CopyOutYWithPad(scale, bias, tailOffset, tiling->innerLoopTail);
+            CalcSilu(scale, quantScale, beta, mean, tiling->innerLoopTail);
+            CopyOutYWithPad(scale, beta, tailOffset, tiling->innerLoopTail);
         }
     }
     if (sizeof(T2) == sizeof(float)) {
@@ -288,49 +278,65 @@ __aicore__ inline void GroupNormSiluQuantB16<T1, T2>::ComputeMultipleLoop(const 
 }
 
 template <typename T1, typename T2>
-__aicore__ inline void GroupNormSiluQuantB16<T1, T2>::AccumulateXandX2OneLoop(const int64_t& outIdx)
+template <bool isVariance>
+__aicore__ inline float GroupNormSiluQuantB16<T1, T2>::ReduceGroup(const int64_t& outIdx, const float mean)
 {
     LocalTensor<float> xUb32 = xBuf32.Get<float>();
     LocalTensor<float> x1Ub32 = x1Buf32.Get<float>();
     LocalTensor<float> x2Ub32 = x2Buf32.Get<float>();
-    LocalTensor<float> tmpMean = tmpTensor.Get<float>();
-    CopyInX<false>(outIdx * tiling->elemNum, tiling->loopTail);
-    LocalTensor<T1> xUb = inQueueX.DeQue<T1>();
-    Cast(x1Ub32, xUb, RoundMode::CAST_NONE, tiling->loopTail);
+    const int64_t reduceNum = tiling->loopNum == 1 ? tiling->loopTail : tiling->processSize;
+    float center = mean;
+    event_t eventS2V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_V));
+    SetFlag<HardEvent::S_V>(eventS2V);
+    WaitFlag<HardEvent::S_V>(eventS2V);
+    Duplicate(x2Ub32, 0.0f, reduceNum);
     PipeBarrier<PIPE_V>();
-    inQueueX.FreeTensor(xUb);
-    Mul(x2Ub32, x1Ub32, x1Ub32, tiling->loopTail);
-    // accumulate x and x^2
-    ReduceSum<float>(tmpMean, x1Ub32, xUb32, tiling->loopTail);
-    ReduceSum<float>(x2Ub32, x2Ub32, xUb32, tiling->loopTail);
+    for (int64_t innerIdx = 0; innerIdx < tiling->loopNum; innerIdx++) {
+        const int64_t copyNum = innerIdx == tiling->loopNum - 1 ? tiling->loopTail : tiling->processSize;
+        CopyInX<false>(outIdx * tiling->elemNum + innerIdx * tiling->processSize, copyNum);
+        LocalTensor<T1> xUb = inQueueX.DeQue<T1>();
+        Cast(x1Ub32, xUb, RoundMode::CAST_NONE, copyNum);
+        PipeBarrier<PIPE_V>();
+        inQueueX.FreeTensor(xUb);
+        if constexpr (!isVariance) {
+            if (innerIdx == 0) {
+                // Sum deltas from an input value so large constant inputs retain an exact mean.
+                event_t eventV2S = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
+                SetFlag<HardEvent::V_S>(eventV2S);
+                WaitFlag<HardEvent::V_S>(eventV2S);
+                center = x1Ub32.GetValue(0);
+                SetFlag<HardEvent::S_V>(eventS2V);
+                WaitFlag<HardEvent::S_V>(eventS2V);
+            }
+        }
+        Adds(x1Ub32, x1Ub32, -center, copyNum);
+        PipeBarrier<PIPE_V>();
+        if constexpr (isVariance) {
+            // Accumulate centered squares instead of subtracting two large moments.
+            Mul(x1Ub32, x1Ub32, x1Ub32, copyNum);
+            PipeBarrier<PIPE_V>();
+        }
+        Add(x2Ub32, x2Ub32, x1Ub32, copyNum);
+        PipeBarrier<PIPE_V>();
+    }
+    ReduceSum<float>(tmpTensor.Get<float>(), x2Ub32, xUb32, reduceNum);
+    event_t eventV2S = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
+    SetFlag<HardEvent::V_S>(eventV2S);
+    WaitFlag<HardEvent::V_S>(eventV2S);
+    float reduced = tmpTensor.Get<float>().GetValue(0) * numRec;
+    if constexpr (!isVariance) {
+        reduced += center;
+    }
+    return reduced;
 }
 
 template <typename T1, typename T2>
-__aicore__ inline void GroupNormSiluQuantB16<T1, T2>::AccumulateXandX2MultipleLoop(const int64_t& outIdx)
+__aicore__ inline void GroupNormSiluQuantB16<T1, T2>::ComputeStatistics(const int64_t& outIdx, float& mean, float& rstd)
 {
-    LocalTensor<float> xUb32 = xBuf32.Get<float>();
-    LocalTensor<float> x1Ub32 = x1Buf32.Get<float>();
-    LocalTensor<float> x2Ub32 = x2Buf32.Get<float>();
-    LocalTensor<float> tmpMean = tmpTensor.Get<float>();
-    // process the first loop
-    CopyInX(outIdx * tiling->elemNum, tiling->processSize);
-    LocalTensor<T1> xUb = inQueueX.DeQue<T1>();
-    Cast(x1Ub32, xUb, RoundMode::CAST_NONE, tiling->processSize);
-    inQueueX.FreeTensor(xUb);
-    Mul(x2Ub32, x1Ub32, x1Ub32, tiling->processSize);
-    // process the middle loops
-    for (int64_t innerIdx = 1; innerIdx < tiling->loopNum - 1; innerIdx++) {
-        CopyInX(outIdx * tiling->elemNum + innerIdx * tiling->processSize, tiling->processSize);
-        ComputeSumX(tiling->processSize);
-    }
-    // process the last loop
-    if (tiling->loopNum > 1) { // process tail data
-        CopyInX<false>(outIdx * tiling->elemNum + (tiling->loopNum - 1) * tiling->processSize, tiling->loopTail);
-        ComputeSumX(tiling->loopTail);
-    }
-    // accumulate x and x^2
-    ReduceSum<float>(tmpMean, x1Ub32, xUb32, tiling->processSize);
-    ReduceSum<float>(x2Ub32, x2Ub32, xUb32, tiling->processSize);
+    mean = ReduceGroup<false>(outIdx, 0.0f);
+    float variance = ReduceGroup<true>(outIdx, mean);
+    variance = variance > 0.0f ? variance : 0.0f;
+    rstd = 1.0f / sqrt(variance + tiling->epsilon);
 }
 
 template <typename T1, typename T2>
@@ -343,23 +349,9 @@ __aicore__ inline void GroupNormSiluQuantB16<T1, T2>::CopyInX(const int64_t xOff
 }
 
 template <typename T1, typename T2>
-__aicore__ inline void GroupNormSiluQuantB16<T1, T2>::ComputeSumX(const int64_t& num)
-{
-    LocalTensor<T1> xUb = inQueueX.DeQue<T1>();
-    LocalTensor<float> xUb32 = xBuf32.Get<float>();
-    LocalTensor<float> x1Ub32 = x1Buf32.Get<float>();
-    LocalTensor<float> x2Ub32 = x2Buf32.Get<float>();
-
-    Cast(xUb32, xUb, RoundMode::CAST_NONE, num);
-    inQueueX.FreeTensor(xUb);
-    Add(x1Ub32, x1Ub32, xUb32, num);
-    Mul(xUb32, xUb32, xUb32, num);
-    Add(x2Ub32, x2Ub32, xUb32, num);
-}
-
-template <typename T1, typename T2>
 __aicore__ inline void GroupNormSiluQuantB16<T1, T2>::CalcSilu(const float& scale, const float& quantScale,
-                                                               const float& bias, const int64_t& calcNum)
+                                                               const float& bias, const float& mean,
+                                                               const int64_t& calcNum)
 {
     LocalTensor<T1> xUb = inQueueX.DeQue<T1>();
     LocalTensor<float> x1Ub32 = x1Buf32.Get<float>();
@@ -369,6 +361,8 @@ __aicore__ inline void GroupNormSiluQuantB16<T1, T2>::CalcSilu(const float& scal
     PipeBarrier<PIPE_V>();
     inQueueX.FreeTensor(xUb);
     // normalize x
+    Adds(x1Ub32, x1Ub32, -mean, calcNum);
+    PipeBarrier<PIPE_V>();
     Muls(x1Ub32, x1Ub32, scale, calcNum);
     PipeBarrier<PIPE_V>();
     Adds(x1Ub32, x1Ub32, bias, calcNum);

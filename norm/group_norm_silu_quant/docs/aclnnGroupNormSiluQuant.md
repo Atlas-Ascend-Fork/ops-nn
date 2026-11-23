@@ -129,7 +129,7 @@ aclnnStatus aclnnGroupNormSiluQuant(
         <td>beta</td>
         <td>可选输入</td>
         <td>公式中的β。</td>
-        <td>为空时元素的默认值为1。数据类型与self保持一致，元素数量需与输入self的第1维度保持相同。</td>
+        <td>为空时元素的默认值为0。数据类型与self保持一致，元素数量需与输入self的第1维度保持相同。</td>
         <td>FLOAT16、BFLOAT16</td>
         <td>ND</td>
         <td>1</td>

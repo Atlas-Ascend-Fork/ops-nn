@@ -131,7 +131,7 @@ aclnnStatus aclnnGroupNormSiluQuant(
         <td>betaOptional</td>
         <td>Optional input</td>
         <td>β in the formula.</td>
-        <td>Default value of elements is 1 when empty. The data type remains consistent with self, and the number of elements must be the same as that of the 1st dimension of input self.</td>
+        <td>Default value of elements is 0 when empty. The data type remains consistent with self, and the number of elements must be the same as that of the 1st dimension of input self.</td>
         <td>FLOAT16, BFLOAT16</td>
         <td>ND</td>
         <td>1</td>

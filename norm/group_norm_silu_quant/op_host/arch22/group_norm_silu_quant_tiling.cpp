@@ -24,6 +24,7 @@ static const uint64_t INDEX_ACTIVATE_SILU = 2;
 static const uint64_t DIM_0 = 0;
 static const uint64_t DIM_1 = 1;
 static const uint64_t DEFAULT_PROCESSSIZE = 8192;
+static const int64_t PROCESS_SIZE_ALIGNMENT = 256;
 static const uint64_t DEFAULT_NUMGROUPS = 32;
 static const uint64_t BLOCK_SIZE = 32;
 static const int64_t HW_CAP = 4096;
@@ -185,6 +186,12 @@ static void SetTilingParams(const gert::TilingContext* context, GroupNormSiluQua
     tilingData.set_hwNum(hwNum);
     tilingData.set_elemNum(tilingData.get_shapeD() * hwNum);
     tilingData.set_processSize(DEFAULT_PROCESSSIZE);
+    if (hwNum < BLOCK_SIZE / sizeof(uint16_t)) {
+        // Small spatial dimensions run all groups on one core. Avoid reserving full-size
+        // streaming buffers when each group is tiny, leaving UB for channel/statistics buffers.
+        int64_t alignedElemNum = CeilDiv(tilingData.get_elemNum(), PROCESS_SIZE_ALIGNMENT) * PROCESS_SIZE_ALIGNMENT;
+        tilingData.set_processSize(alignedElemNum < DEFAULT_PROCESSSIZE ? alignedElemNum : DEFAULT_PROCESSSIZE);
+    }
     auto quantScaleShape = context->GetDynamicInputShape(INPUT_IDX_QUANT_SCALE, 0)->GetStorageShape();
     tilingData.set_shapeQuantScale(quantScaleShape.GetDim(DIM_0));
 }
@@ -202,9 +209,10 @@ static ge::graphStatus SetBlockTiling(const gert::TilingContext* context, GroupN
     uint64_t shapeN = xShape.GetDim(DIM_0);
     tilingData.set_numPerCore(CeilDiv(shapeN * tilingData.get_numGroups(), compileInfo->totalCoreNum));
     tilingData.set_realCoreNum(CeilDiv(shapeN * tilingData.get_numGroups(), tilingData.get_numPerCore()));
-    if (tilingData.get_hwNum() < static_cast<int64_t>(BLOCK_SIZE / xDtypeSize) &&
-        (tilingData.get_hwNum() != 1 || tilingData.get_shapeD() < static_cast<int64_t>(BLOCK_SIZE / xDtypeSize))) {
+    if (tilingData.get_hwNum() < static_cast<int64_t>(BLOCK_SIZE / xDtypeSize)) {
+        // Keep sub-block channel writes on one core and size its statistics buffers for every group.
         tilingData.set_realCoreNum(1);
+        tilingData.set_numPerCore(shapeN * tilingData.get_numGroups());
     }
 
     tilingData.set_numLastCore(shapeN * tilingData.get_numGroups() -
@@ -229,8 +237,7 @@ static ge::graphStatus SetTiling(const gert::TilingContext* context, GroupNormSi
         OP_LOGE(context, "Division by zero!");
         return ge::GRAPH_FAILED;
     }
-    if (tilingData.get_hwNum() >= static_cast<int64_t>(BLOCK_SIZE / xDtypeSize) &&
-        tilingData.get_shapeC() + tilingData.get_numPerCore() <= UPPER_LIMIT_ONE) {
+    if (tilingData.get_shapeC() + tilingData.get_numPerCore() <= UPPER_LIMIT_ONE) {
         tilingData.set_tilingKey(static_cast<int64_t>(GroupNormSiluQuantTilingKey::TILINGKEY_HIGH_PERF_B16));
     } else {
         OP_LOGE(context, "shape is too big or too small, please check input shape!");
