@@ -167,6 +167,10 @@ aclnnStatus aclnnGather(
   - <term>Atlas A2系列产品</term>：self的数据类型不支持FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT8_E8M0。
   <!-- end id7 -->
 
+  <!-- npu="910b" id8 -->
+  - <term>Atlas A2系列产品</term>：`self` 或 `index` 由 `expand` 产生零 stride 的非连续 Tensor 时，接口内部的连续化处理可能物化完整的逻辑形状，产生额外临时显存。仅当 `self` 来自同一行表沿查询维的扩展，且 `index` 在特征维共享相同的行索引时，可以在保证索引语义等价的前提下，对扩展前的行表和索引使用 `reshape`/`index_select` 组合，再将结果恢复为目标形状，以避免整体物化扩展后的输入。该方式适用于从共享行表中选取整行的场景，不能直接替换一般 Gather 调用。
+  <!-- end id8 -->
+
   - **返回值**
 
     aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。

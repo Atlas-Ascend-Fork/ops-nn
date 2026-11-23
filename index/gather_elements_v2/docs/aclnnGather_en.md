@@ -169,6 +169,10 @@ aclnnStatus aclnnGather(
   - <term>Atlas A2 products</term>: The data type of self cannot be FLOAT8_E5M2, FLOAT8_E4M3FN, or FLOAT8_E8M0.
   <!-- end id7 -->
 
+  <!-- npu="910b" id8 -->
+  - <term>Atlas A2 products</term>: For non-contiguous `self` or `index` tensors with zero strides created by `expand`, conversion to contiguous tensors inside the API may materialize the full logical shape and require additional temporary device memory. Only when `self` is expanded from a shared row table along a query dimension and `index` uses the same row index across the feature dimension can an equivalent `reshape`/`index_select` sequence operate on the original table and indices before expansion, followed by reshaping the result to the target shape. This avoids materializing the expanded inputs. This approach applies to selecting whole rows from a shared table and cannot directly replace a general Gather call.
+  <!-- end id8 -->
+
   - **Return Value**
 
     aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../docs/en/context/aclnn_return_code.md).

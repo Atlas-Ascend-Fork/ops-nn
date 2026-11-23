@@ -182,8 +182,8 @@ aclnnStatus aclnnMaxUnpool2d(
       <td>Passed self, indices, outputSize, or out is a null pointer.</td>
     </tr>
     <tr>
-      <td rowspan="9">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="9">161002</td>
+      <td rowspan="8">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="8">161002</td>
       <td>The data types of self and indices are not within the supported range.</td>
     </tr>
     <tr>
@@ -206,9 +206,6 @@ aclnnStatus aclnnMaxUnpool2d(
     </tr>
     <tr>
       <td>The sizes of out on the H and W dimensions are not equal to the values of the two elements in outputSize.</td>
-    </tr>
-    <tr>
-      <td>The product of outputSize is smaller than the product of the H and W dimensions of self. </td>
     </tr>
   </tbody>
   </table>
