@@ -259,7 +259,7 @@ aclnnStatus aclnnAdvanceStep(
     <td>输入的存储格式非ND。</td>
   </tr>
   <tr>
-    <td>输入存在空Tensor（所有必选输入不支持空Tensor）。</td>
+    <td>进入 Tiling 校验时，任一必选输入为空 Tensor。若四个原地输出（inputTokens、inputPositions、seqLens、slotMapping）均为空 Tensor，运行时可能跳过 Tiling 校验，返回成功但不执行计算。</td>
   </tr>
   <tr>
     <td>输入sampledTokenIds的shape的第一维长度与numQueries不一致，或者shape的第二维长度不为1。</td>
