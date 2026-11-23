@@ -80,7 +80,7 @@ aclnnStatus aclnnConvTbc(
   <li>支持空Tensor。</li>
   <li>数据类型与weight的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li>
   <li>shape为（H<sub>in</sub>,N,C<sub>in</sub>）。</li>
-  <li>H≥0，N≥0，C<sub>in</sub>≥1。</li>
+  <li>H≥0，N≥0，C<sub>in</sub>≥0。</li>
   </ul></td>
   <td>FLOAT、FLOAT16、BFLOAT16、HIFLOAT8</td>
   <td>ND、NCL</td>
@@ -95,7 +95,7 @@ aclnnStatus aclnnConvTbc(
   <li>支持空Tensor。</li>
   <li>数据类型与self的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li>
   <li>shape为（K,C<sub>in</sub>,C<sub>out</sub>）。</li>
-  <li>所有维度≥1。</li>
+  <li>K≥1，C<sub>in</sub>≥0，C<sub>out</sub>≥0。</li>
   </ul></td>
   <td>FLOAT、FLOAT16、BFLOAT16、HIFLOAT8</td>
   <td>ND、NCL</td>
@@ -210,7 +210,7 @@ aclnnStatus aclnnConvTbc(
   <tr><td align="left">self的dim不为3。</td></tr>
   <tr><td align="left">weight的dim不为3。</td></tr>
   <tr><td align="left">bias的dim不为1。</td></tr>
-  <tr><td align="left">self的第二个维度值不等于weight的第二个维度值。</td></tr>
+  <tr><td align="left">self的第三个维度值（C<sub>in</sub>）不等于weight的第二个维度值（C<sub>in</sub>）。</td></tr>
   <tr><td align="left">bias的长度不等于weight的输出通道数C<sub>out</sub>(即weight的第三个维度)。</td></tr>
   <tr>
   <td align="left">ACLNN_ERR_INNER_NULLPTR</td>
@@ -286,14 +286,15 @@ aclnnStatus aclnnConvTbc(
      <th scope="row">self、weight</th>
      <td>
         <ul>
-          <li>self、weight数据类型不支持HIFLOAT8。支持N、C、L维度大于等于0。</li>
-          <li>weight支持N、C维度大于等于0。</li>
+          <li>self、weight数据类型不支持HIFLOAT8。</li>
+          <li>self支持N、C、L维度大于等于0。</li>
+          <li>weight支持N、C维度大于等于0，L维度（卷积核大小）大于0。</li>
         </ul>
      </td>
      <td>
         <ul>
-           <li>self、weight支持N、C维度大于等于0，支持L维度大于等于0（等于0的场景仅在output推导的L维度也等于0时支持）。</li>
-           <li>weight支持N维度大于等于0（等于0的场景仅在bias的N维度和output的C维度也等于0时支持），C维度大小的支持情况与self的C维度一致，L维度的大小应该在 [1,255] 的范围内。</li>
+           <li>self支持N、C维度大于等于0，支持L维度大于等于0（等于0的场景仅在output推导的L维度也等于0时支持）。</li>
+           <li>weight支持N、C维度大于等于0（N等于0的场景仅在bias的N维度和output的C维度也等于0时支持；C维度大小的支持情况与self的C维度一致），L维度的大小应该在 [1,255] 的范围内。</li>
         </ul>
      </td>
    </tr>

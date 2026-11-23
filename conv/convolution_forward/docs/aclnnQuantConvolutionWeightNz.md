@@ -92,7 +92,7 @@ aclnnStatus aclnnQuantConvolutionWeightNz(
   <td>input（aclTensor*）</td>
   <td>输入</td>
   <td>公式中的input，表示卷积输入。</td>
-  <td><ul><li>input、weight原shape、output的维度需要相同。</li><li>不支持空Tensor。</li><li>数据类型与weight的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li><li>N≥0，C≥1，D≥0，H≥0，W≥0。</li></ul></td>
+  <td><ul><li>input、weight原shape、output的维度需要相同。</li><li>不支持空Tensor。</li><li>数据类型与weight的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li><li>所有维度≥1。</li></ul></td>
   <td>INT8</td>
   <td>NCDHW</td>
   <td>5</td>
@@ -102,9 +102,9 @@ aclnnStatus aclnnQuantConvolutionWeightNz(
   <td>weight（aclTensor*）</td>
   <td>输入</td>
   <td>公式中的weight，表示卷积权重。</td>
-  <td><ul><li>其原shape的C维度需要与input的C维度保持一致。</li><li>不支持空Tensor。</li><li>数据类型与input的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li><li>FRACTAL_Z_3D是3D卷积权重格式。格式各个维度表示：（D * C1 * H * W，N1，N0，C0），其中D，H，W为transdata前的NCDHW。N0=16，C0=32，N1与N满足关系：N1=CEIL(N,N0)。 </li><li>所有维度≥1。</li></ul></td>
+  <td><ul><li>其原shape的C维度需要与input的C维度保持一致。</li><li>不支持空Tensor。</li><li>数据类型与input的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li><li>FRACTAL_Z_3D是3D卷积权重格式。格式各个维度表示：（D * C1 * H * W，N1，N0，C0），其中D，H，W为transdata前的NCDHW。N0=16，C0=32，N1与C<sub>out</sub>满足关系：N1=CEIL(C<sub>out</sub>,N0)，C1与C<sub>in</sub>满足关系：C1=CEIL(C<sub>in</sub>,C0)。 </li><li>所有维度≥1。</li></ul></td>
   <td>INT8</td>
-  <td>Fractal_Z_3D</td>
+  <td>FRACTAL_Z_3D</td>
   <td>4</td>
   <td style="text-align:center">√</td>
   </tr>
@@ -222,7 +222,7 @@ aclnnStatus aclnnQuantConvolutionWeightNz(
   <td>output（aclTensor*）</td>
   <td>输出</td>
   <td>公式中的output，表示卷积输出。</td>
-  <td><ul><li>其shape满足卷积的推导规则。</li><li>不支持空Tensor输出。</li><li>通道数等于weight原shape第一维，其他维度≥0。</li></ul></td>
+  <td><ul><li>其shape满足卷积的推导规则。</li><li>不支持空Tensor输出。</li><li>通道数等于weight原shape第一维，其他维度≥1。</li></ul></td>
   <td>BFLOAT16、FLOAT16</td>
   <td>NCDHW</td>
   <td>5</td>
@@ -674,7 +674,7 @@ int aclnnQuantConvolutionWeightNzTest(int32_t deviceId, aclrtStream& stream, std
   weightNz->SetOriginalShape(weightNcdhwShape);
 
   uint64_t workspaceSizeNz = 0;
-  // 调用aclnnConvolutionWeightNz第一段接口
+  // 调用aclnnQuantConvolutionWeightNz第一段接口
   ret = aclnnQuantConvolutionWeightNzGetWorkspaceSize(input, weightNz, bias, scale, nullptr, strides, pads, dilations,
                                               false, nullptr, 1, 0, nullptr, result, &workspaceSizeNz, &executor);
   CHECK_FREE_RET(ret == ACL_SUCCESS, LOG_PRINT(
@@ -687,7 +687,7 @@ int aclnnQuantConvolutionWeightNzTest(int32_t deviceId, aclrtStream& stream, std
     CHECK_FREE_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
     workspaceAddrPtr.reset(workspaceAddrNz);
   }
-  // 调用aclnnConvolutionWeightNz第二段接口
+  // 调用aclnnQuantConvolutionWeightNz第二段接口
   ret = aclnnQuantConvolutionWeightNz(workspaceAddrNz, workspaceSizeNz, executor, stream);
   CHECK_FREE_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnQuantConvolutionWeightNz failed. ERROR: %d\n", ret); return ret);
 
