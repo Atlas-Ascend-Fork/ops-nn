@@ -345,6 +345,18 @@ def _fill_pattern(tensor, pattern):
     return tensor
 
 
+def _normalize_signed_zero(array):
+    """Map -0.0 to +0.0 on float/bfloat16 ndarrays, copying only when needed."""
+    if isinstance(array, np.ndarray) and (
+        array.dtype.kind == "f" or array.dtype.name == "bfloat16"
+    ):
+        zero_mask = array == 0
+        if np.any(zero_mask):
+            array = array.copy()
+            array[zero_mask] = 0
+    return array
+
+
 def _pre_compare_unique_consecutive(*outputs_and_goldens, **kwargs):
     """Treat -0.0 and +0.0 as the same value before byte comparison.
 
@@ -358,6 +370,11 @@ def _pre_compare_unique_consecutive(*outputs_and_goldens, **kwargs):
     zero components never reach this normalization (non-zero values compare
     bitwise; a zero complex is genuinely equal in both encodings only after the
     same normalization applies to its float components).
+
+    Declared on the ACLNN / E2E entries only — see UniqueConsecutiveKernelSpec
+    for why the Kernel and GEIR entry points cannot carry a compare hook, and
+    _register_signed_zero_exact_comparison for how they get the same ±0
+    convention instead. Complex ±0 components are only reachable here.
     """
     normalized = []
     for arr in outputs_and_goldens:
@@ -376,10 +393,7 @@ def _pre_compare_unique_consecutive(*outputs_and_goldens, **kwargs):
         elif isinstance(arr, np.ndarray) and (
             arr.dtype.kind == "f" or arr.dtype.name == "bfloat16"
         ):
-            zero_mask = arr == 0
-            if np.any(zero_mask):
-                arr = arr.copy()
-                arr[zero_mask] = 0
+            arr = _normalize_signed_zero(arr)
         elif isinstance(arr, np.ndarray) and arr.dtype.kind == "c":
             # complex: normalize ±0 components (real/imag float pairs)
             pair_dtype = np.dtype(f"float{arr.dtype.itemsize // 2 * 8}")
@@ -391,6 +405,74 @@ def _pre_compare_unique_consecutive(*outputs_and_goldens, **kwargs):
                 arr = pair.view(dtype=arr.dtype).reshape(arr.shape)
         normalized.append(arr)
     return normalized
+
+
+def _register_signed_zero_exact_comparison():
+    """Extend the binary_equal standard with ±0 equivalence, for every path.
+
+    Why a comparison standard and not only the pre_compare hook: this operator
+    declares output_shape_unknown_indexes, so TTK appends a shape-metadata slot
+    to the golden (extending output_distribution to 4 slots) and drops it again
+    right before comparing. A pre_compare/compare declared on the Kernel/GEIR
+    entry then makes invoke_pre_compare fold the remaining 3 outputs by the
+    4-slot distribution, which raises IndexError and reports COMPARE_FAILURE
+    for every kernel/GEIR case before the hook ever runs. A registered standard
+    is consumed inside compare() itself and never reaches that folding, so the
+    ±0 convention holds on this path too. Same escape hatch, and the same
+    chunked implementation, as UniqueExactComparison in
+    index/unique/tests/assets/golden.py, which uses it for its own case where
+    TTK skips pre_compare.
+
+    ±0 equivalence is required, not cosmetic: the kernel keeps the TRAILING
+    element of each consecutive group (unique_consecutive_helper.h
+    VFCollectPostUniqueValue collects xPrev where x[i] != x[i+1]) while
+    torch.unique_consecutive returns the leading one. Both are IEEE-equal
+    members of the same group, but a group mixing -0.0 and +0.0 then differs in
+    the sign bit alone. Non-zero values and integer idx/count keep plain
+    binary_equal, so a wrong group boundary or a wrong element still fails.
+
+    Silently skipped when ttk is unavailable (standalone golden verification).
+    """
+    try:
+        from ttk.core_modules.common.comparison.binary_equal import BinaryComparison
+        from ttk.core_modules.common.comparison.registry import (
+            CHUNK_SIZE,
+            register_comparison,
+        )
+    except ImportError:
+        return
+
+    @register_comparison("binary_equal")
+    class UniqueConsecutiveExactComparison(BinaryComparison):
+        """binary_equal over chunks, with -0.0 and +0.0 as the same value."""
+
+        STANDARD_NAME = "unique_consecutive_exact"
+
+        def compare_impl(self):
+            if self.output.dtype != self.golden.dtype or not (
+                self.output.dtype.kind == "f" or self.output.dtype.name == "bfloat16"
+            ):
+                return super().compare_impl()
+            indices = []
+            diff_count = 0
+            for start in range(0, self.output.size, CHUNK_SIZE):
+                end = start + CHUNK_SIZE
+                output = _normalize_signed_zero(self.output[start:end])
+                golden = _normalize_signed_zero(self.golden[start:end])
+                diff, _, count = self._numpy_binary_compare(output, golden)
+                diff_count += count
+                if count and len(indices) < self.MAX_DIFF_OUTPUT:
+                    indices.extend(
+                        (diff + start)[: self.MAX_DIFF_OUTPUT - len(indices)].tolist()
+                    )
+            return self._result(
+                np.asarray(indices, dtype=np.int64) if indices else None,
+                self.golden.size,
+                diff_count,
+            )
+
+
+_register_signed_zero_exact_comparison()
 
 
 # ---------------------------------------------------------------------------
@@ -690,8 +772,12 @@ class UniqueConsecutivePrecisionSpec:
 
     No arithmetic tolerance is used: arithmetic promotion to float64 changes
     dtype-dependent routes and ordering semantics (lesson recorded for Unique).
-    Integer indices/counts and bit-copied values all compare bitwise; ±0 sign
-    bits are part of the copied value and stay exact on the NPU paths.
+    Integer indices/counts and bit-copied values all compare bitwise. The one
+    documented relaxation is ±0: the kernel keeps a group's trailing element
+    while torch keeps the leading one, so a group mixing -0.0 and +0.0 differs
+    in the sign bit alone. Both the ACLNN/E2E pre_compare hook and the
+    registered binary_equal standard treat those two as the same value; every
+    other bit still has to match.
     """
 
     tolerance = {
@@ -722,11 +808,20 @@ class UniqueConsecutiveKernelSpec(UniqueConsecutivePrecisionSpec):
     The golden keeps the exact signature of the legacy __golden__ registration
     (x + def.cpp attributes), so behaviour is identical whether TTK resolves it
     through the TestSpec or the legacy dict.
+
+    No compare hook here, unlike the ACLNN/E2E specs. This operator declares
+    output_shape_unknown_indexes, so TTK appends a shape-metadata slot to the
+    golden and extends output_distribution to 4 slots, then drops that slot
+    again right before comparing (kernel/worker.py _compare_and_finalize).
+    Declaring pre_compare/compare makes invoke_pre_compare fold the remaining
+    3 outputs by the 4-slot distribution, which raises IndexError and turns
+    every kernel/GEIR case into COMPARE_FAILURE before the hook ever runs.
+    The ±0 convention still applies on this path through the registered
+    binary_equal standard (_register_signed_zero_exact_comparison).
     """
 
     golden = staticmethod(unique_consecutive_golden)
     third_party = {"torch": UniqueConsecutiveKernelCompetitor}
-    pre_compare = staticmethod(_pre_compare_unique_consecutive)
 
     @staticmethod
     def customize_inputs(x, **kwargs):
