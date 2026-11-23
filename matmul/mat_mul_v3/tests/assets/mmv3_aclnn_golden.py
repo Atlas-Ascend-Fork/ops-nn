@@ -167,7 +167,7 @@ def _fmm_add_supported(self, mat1, mat2, out, alpha, beta, cubeMathType, kwargs)
         return False
     if abs(float(alpha) - 1.0) > _FP32_EPS or abs(float(beta) - 1.0) > _FP32_EPS:
         return False
-    if mat1.dim() != 2 or mat2.dim() != 2 or self.dim() != 2:
+    if mat1.ndim != 2 or mat2.ndim != 2 or self.ndim != 2:
         return False
     m_dim, n_dim = mat1.shape[0], mat2.shape[1]
     if tuple(self.shape) != (m_dim, n_dim):
