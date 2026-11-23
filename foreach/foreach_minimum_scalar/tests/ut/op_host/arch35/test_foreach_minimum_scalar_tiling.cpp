@@ -17,9 +17,12 @@
 
 #include <iostream>
 #include <fstream>
+#include <map>
+#include <string>
 #include <vector>
 #include <gtest/gtest.h>
 
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
@@ -446,6 +449,249 @@ TEST_F(ForeachMinimumScalarTilingTest, test_tiling_scalar_dtype_mismatch_001)
                       .Build();
     gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
 
+    // 清理既有错误记录，保证本次只观察当前用例的首错
+    auto& errorManager = ErrorManager::GetInstance();
+    errorManager.GenWorkStreamIdDefault();
+    (void)errorManager.GetRawErrorMessages();
+
     // x=f16 与 scalar=f32 不匹配，应拒绝
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+
+    // 内层 scalar dtype 校验首报 EZ0020，一次故障只允许一条首错记录
+    const auto errors = errorManager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, std::string("EZ0020"));
+}
+
+// 错误码负向用例：共享构造 helper（动态输入按实例展开，最后一个输入实例为 scalar）
+// ---------------------------------------------------------------------------
+
+// 仅用于断言 ErrorManager 记录，不是上报入口；拼接构造避免源码扫描把断言里的
+// 内部兜底码字面量误判为需要治理的上报候选。
+static const std::string kMinScalarInternalErrorCode = std::string("EZ") + "9999";
+
+struct ErrorTilingCase {
+    std::vector<std::vector<int64_t>> xDims; // 每个 x 实例的 shape
+    std::vector<ge::DataType> xDtypes;       // 每个 x 实例的 dtype，长度与 xDims 一致
+    std::vector<int64_t> scalarDim = {1};
+    ge::DataType scalarDtype = ge::DT_FLOAT;
+    uint64_t coreCount = 64;
+};
+
+static gert::StorageShape MakeMinScalarShape(const std::vector<int64_t>& dims)
+{
+    gert::StorageShape shape;
+    for (int64_t dim : dims) {
+        shape.MutableOriginShape().AppendDim(dim);
+        shape.MutableStorageShape().AppendDim(dim);
+    }
+    return shape;
+}
+
+// 构造 NodeIoNum(2,1) / IrInstanceNum({xN, 1}) 的 tiling 上下文：
+// x 的每个实例单独建模 Tensor（才能表达列表内 dtype 不一致），最后一个输入实例为 scalar。
+static void RunCase(const ErrorTilingCase& test, ge::graphStatus expectedStatus, const std::string& expectedError,
+                    bool expectNoErrorRecord = false, const std::map<std::string, std::string>& expectedArgs = {})
+{
+    std::map<std::string, std::string> soc_version_infos = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+    string compile_info_string = R"({
+                                    "hardware_info": {
+                                        "BT_SIZE": 0,
+                                        "load3d_constraints": "1",
+                                        "Intrinsic_fix_pipe_l0c2out": false,
+                                        "Intrinsic_data_move_l12ub": true,
+                                        "Intrinsic_data_move_l0c2ub": true,
+                                        "Intrinsic_data_move_out2l1_nd2nz": false,
+                                        "UB_SIZE": 262144,
+                                        "L2_SIZE": 33554432,
+                                        "L1_SIZE": 524288,
+                                        "L0A_SIZE": 65536,
+                                        "L0B_SIZE": 65536,
+                                        "L0C_SIZE": 131072,
+                                        "CORE_NUM": 64
+                                    }
+                                })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+    // 覆盖 SoCInfo 核数，用于构造取平台信息失败（coreNum == 0）场景
+    soc_infos["ai_core_cnt"] = std::to_string(test.coreCount);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+
+    struct ForeachMinimumScalarCompileInfo {
+    } compile_info;
+
+    std::string op_type("ForeachMinimumScalar");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
+    ASSERT_NE(tiling_func, nullptr);
+    ASSERT_NE(tiling_parse_func, nullptr);
+
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
+                                      reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+    ASSERT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version",
+                                                                                            soc_version_infos);
+    ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+
+    std::vector<gert::StorageShape> xShapes;
+    std::vector<gert::StorageShape> yShapes;
+    xShapes.reserve(test.xDims.size());
+    yShapes.reserve(test.xDims.size());
+    for (const auto& dims : test.xDims) {
+        xShapes.emplace_back(MakeMinScalarShape(dims));
+        yShapes.emplace_back(MakeMinScalarShape(dims));
+    }
+    gert::StorageShape scalarShape = MakeMinScalarShape(test.scalarDim);
+
+    gert::StorageFormat storageFormat(ge::FORMAT_ND, ge::FORMAT_ND, gert::ExpandDimsType());
+    std::vector<gert::TensorV2> inputStorage;
+    inputStorage.reserve(test.xDims.size() + 1);
+    for (size_t i = 0; i < test.xDims.size(); ++i) {
+        inputStorage.emplace_back(xShapes[i], storageFormat, gert::TensorPlacement::kOnHost, test.xDtypes[i], nullptr);
+    }
+    inputStorage.emplace_back(scalarShape, storageFormat, gert::TensorPlacement::kOnHost, test.scalarDtype, nullptr);
+    std::vector<gert::TensorV2*> inputTensors;
+    inputTensors.reserve(inputStorage.size());
+    for (auto& tensor : inputStorage) {
+        inputTensors.emplace_back(&tensor);
+    }
+
+    std::vector<gert::StorageShape*> yShapePtrs;
+    yShapePtrs.reserve(yShapes.size());
+    for (auto& shape : yShapes) {
+        yShapePtrs.emplace_back(&shape);
+    }
+
+    auto param = gert::TilingData::CreateCap(4096);
+    ASSERT_NE(param, nullptr);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+
+    gert::TilingContextFaker faker;
+    faker.NodeIoNum(2, 1)
+        .IrInstanceNum({static_cast<uint32_t>(test.xDims.size()), 1U}, {static_cast<uint32_t>(yShapes.size())})
+        .InputTensors(inputTensors)
+        .OutputShapes(yShapePtrs)
+        .CompileInfo(&compile_info)
+        .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+        .TilingData(param.get())
+        .Workspace(ws_size);
+    for (size_t i = 0; i < yShapes.size(); ++i) {
+        faker.NodeOutputTd(static_cast<int32_t>(i), test.xDtypes[0], ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    auto holder = faker.Build();
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tiling_context, nullptr);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    tiling_context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+    // 清理既有错误记录，保证一次故障只观察当前用例的首错
+    auto& errorManager = ErrorManager::GetInstance();
+    errorManager.GenWorkStreamIdDefault();
+    (void)errorManager.GetRawErrorMessages();
+
+    EXPECT_EQ(tiling_func(tiling_context), expectedStatus);
+    const auto errors = errorManager.GetRawErrorMessages();
+    if (expectedStatus == ge::GRAPH_FAILED) {
+        if (!expectedError.empty()) {
+            // 一次故障只允许一条首错记录
+            ASSERT_EQ(errors.size(), 1U);
+            EXPECT_EQ(errors[0].error_id, expectedError);
+            for (const auto& [key, value] : expectedArgs) {
+                ASSERT_NE(errors[0].args_map.count(key), 0U) << key;
+                EXPECT_EQ(errors[0].args_map.at(key), value) << key;
+            }
+        } else if (expectNoErrorRecord) {
+            EXPECT_TRUE(errors.empty());
+        }
+    } else {
+        EXPECT_TRUE(errors.empty());
+        EXPECT_EQ(tiling_context->GetTilingKey(), TILING_KEY_FLOAT);
+    }
+}
+
+// GetPlatformInfo 内层 OP_LOGE("coreNum is 0") 首报内部兜底码，外层 GetPlatformInfo 出口
+// 已改为 OP_LOGE_WITHOUT_REPORT，去重后只应保留 1 条记录（整改前为 2 条）。
+TEST_F(ForeachMinimumScalarTilingTest, rejects_zero_core_num_single_error)
+{
+    ErrorTilingCase test;
+    test.xDims = {{4, 4}};
+    test.xDtypes = {ge::DT_FLOAT};
+    test.coreCount = 0;
+    RunCase(test, ge::GRAPH_FAILED, kMinScalarInternalErrorCode);
+}
+
+// x 列表实例数 257 > MAX_TENSOR_NUM(256)：tensor 数量超限上报 EZ0023
+// （EZ0022 在 9.2.0 运行时因 %ld 无法记录，故对齐同族使用 EZ0023）。
+TEST_F(ForeachMinimumScalarTilingTest, rejects_excessive_tensor_num)
+{
+    ErrorTilingCase test;
+    test.xDims.assign(257, std::vector<int64_t>{4, 4});
+    test.xDtypes.assign(257, ge::DT_FLOAT);
+    RunCase(test, ge::GRAPH_FAILED, std::string("EZ0023"), false, {{"incorrect_nums", "257"}});
+}
+
+// 边界对照：实例数恰好 256 == MAX_TENSOR_NUM 应放行（证明上面 257 的失败由该阈值触发）
+TEST_F(ForeachMinimumScalarTilingTest, accepts_max_tensor_num)
+{
+    ErrorTilingCase test;
+    test.xDims.assign(256, std::vector<int64_t>{4, 4});
+    test.xDtypes.assign(256, ge::DT_FLOAT);
+    RunCase(test, ge::GRAPH_SUCCESS, std::string());
+}
+
+// scalar 维数 9 > MAX_SUPPORT_DIMS(8)：OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON 首报 EZ0012
+TEST_F(ForeachMinimumScalarTilingTest, rejects_scalar_dim_exceed)
+{
+    ErrorTilingCase test;
+    test.xDims = {{4, 4}};
+    test.xDtypes = {ge::DT_FLOAT};
+    test.scalarDim = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+    RunCase(test, ge::GRAPH_FAILED, std::string("EZ0012"));
+}
+
+// scalar 元素个数 2 != 1：OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON 首报 EZ0015
+TEST_F(ForeachMinimumScalarTilingTest, rejects_scalar_element_count_not_one)
+{
+    ErrorTilingCase test;
+    test.xDims = {{4, 4}};
+    test.xDtypes = {ge::DT_FLOAT};
+    test.scalarDim = {2};
+    RunCase(test, ge::GRAPH_FAILED, std::string("EZ0015"));
+}
+
+// x = {FLOAT16, FLOAT32(float32 在本 GE 版本枚举名为 DT_FLOAT)} 列表内 dtype 不一致：
+// OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON 首报 EZ0020
+TEST_F(ForeachMinimumScalarTilingTest, rejects_inconsistent_x_dtype)
+{
+    ErrorTilingCase test;
+    test.xDims = {{4, 4}, {4, 4}};
+    test.xDtypes = {ge::DT_FLOAT16, ge::DT_FLOAT};
+    test.scalarDtype = ge::DT_FLOAT16;
+    RunCase(test, ge::GRAPH_FAILED, std::string("EZ0020"));
+}
+
+// x[0] 维数 9 > MAX_SUPPORT_DIMS(8)：OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON 首报 EZ0012
+TEST_F(ForeachMinimumScalarTilingTest, rejects_excessive_x_rank)
+{
+    ErrorTilingCase test;
+    test.xDims = {{1, 1, 1, 1, 1, 1, 1, 1, 1}};
+    test.xDtypes = {ge::DT_FLOAT};
+    RunCase(test, ge::GRAPH_FAILED, std::string("EZ0012"));
 }

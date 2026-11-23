@@ -67,54 +67,93 @@ static ge::graphStatus CheckTensorListAndScalars(gert::TilingContext* context, u
         OP_CHECK_NULL_WITH_CONTEXT(context, xShapePtr);
         const auto& xShape = xShapePtr->GetStorageShape();
         OP_CHECK_IF(static_cast<int64_t>(xShape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
-                    OP_LOGE(context, "The dim num of x[%lu] must be less than or equal to 8, but got %zu.", i,
-                            xShape.GetDimNum()),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                        ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                       "ForeachSubScalarList"),
+                        ("x[" + std::to_string(i) + "]").c_str(), (std::to_string(xShape.GetDimNum()) + "D").c_str(),
+                        "dim num must be less than or equal to 8"),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(!IsShapeAllNonNegative(xShape), OP_LOGE(context, "The dims of x[%lu] must be non-negative.", i),
+        OP_CHECK_IF(!IsShapeAllNonNegative(xShape),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                       "ForeachSubScalarList"),
+                        ("x[" + std::to_string(i) + "]").c_str(), Ops::Base::ToString(xShape).c_str(),
+                        "all dims must be non-negative"),
                     return ge::GRAPH_FAILED);
         auto xDescPtr = context->GetDynamicInputDesc(INPUT_IDX_0, i);
         OP_CHECK_NULL_WITH_CONTEXT(context, xDescPtr);
         OP_CHECK_IF(xDescPtr->GetDataType() != dataType,
-                    OP_LOGE(context, "The dtype of x[%lu] must be consistent with that of x[0].", i),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                       "ForeachSubScalarList"),
+                        ("x[" + std::to_string(i) + "]").c_str(), Ops::Base::ToString(xDescPtr->GetDataType()).c_str(),
+                        "all tensors in x must have the same dtype as that of x[0]"),
                     return ge::GRAPH_FAILED);
 
         auto yShapePtr = context->GetOutputShape(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, yShapePtr);
         const auto& yShape = yShapePtr->GetStorageShape();
         OP_CHECK_IF(static_cast<int64_t>(yShape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
-                    OP_LOGE(context, "The dim num of y[%lu] must be less than or equal to 8, but got %zu.", i,
-                            yShape.GetDimNum()),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                        ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                       "ForeachSubScalarList"),
+                        ("y[" + std::to_string(i) + "]").c_str(), (std::to_string(yShape.GetDimNum()) + "D").c_str(),
+                        "dim num must be less than or equal to 8"),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(!IsShapeAllNonNegative(yShape), OP_LOGE(context, "The dims of y[%lu] must be non-negative.", i),
+        OP_CHECK_IF(!IsShapeAllNonNegative(yShape),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                       "ForeachSubScalarList"),
+                        ("y[" + std::to_string(i) + "]").c_str(), Ops::Base::ToString(yShape).c_str(),
+                        "all dims must be non-negative"),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(yShape.GetShapeSize() != xShape.GetShapeSize(),
-                    OP_LOGE(context, "The shape size of y[%lu] must be the same as that of x[%lu].", i, i),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            yShape.GetShapeSize() != xShape.GetShapeSize(),
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                               "ForeachSubScalarList"),
+                ("y[" + std::to_string(i) + "]").c_str(), std::to_string(yShape.GetShapeSize()).c_str(),
+                ("shape size of y must be the same as that of x (" + std::to_string(xShape.GetShapeSize()) + ")")
+                    .c_str()),
+            return ge::GRAPH_FAILED);
         auto yDescPtr = context->GetOutputDesc(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, yDescPtr);
         OP_CHECK_IF(yDescPtr->GetDataType() != dataType,
-                    OP_LOGE(context, "The dtype of y[%lu] must be the same as that of x.", i), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                       "ForeachSubScalarList"),
+                        ("y[" + std::to_string(i) + "]").c_str(), Ops::Base::ToString(yDescPtr->GetDataType()).c_str(),
+                        "dtype of y must be the same as that of x"),
+                    return ge::GRAPH_FAILED);
     }
 
     auto scalarsShapePtr = context->GetRequiredInputShape(INPUT_IDX_SCALARS);
     OP_CHECK_NULL_WITH_CONTEXT(context, scalarsShapePtr);
     const auto& scalarsShape = scalarsShapePtr->GetStorageShape();
     OP_CHECK_IF(static_cast<int64_t>(scalarsShape.GetDimNum()) > MAX_SUPPORT_DIM_NUMS,
-                OP_LOGE(context, "The dim num of scalars must be less than or equal to 8, but got %zu.",
-                        scalarsShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                   "ForeachSubScalarList"),
+                    "scalars", (std::to_string(scalarsShape.GetDimNum()) + "D").c_str(),
+                    "dim num must be less than or equal to 8"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         scalarsShape.GetShapeSize() != static_cast<int64_t>(tensorNum),
-        OP_LOGE(context, "The element count of scalars must be equal to the tensor num of x (%lu), but got %ld.",
-                tensorNum, scalarsShape.GetShapeSize()),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                           "ForeachSubScalarList"),
+            "scalars", std::to_string(scalarsShape.GetShapeSize()).c_str(),
+            ("element count of scalars must be equal to the tensor num of x (" + std::to_string(tensorNum) + ")")
+                .c_str()),
         return ge::GRAPH_FAILED);
     auto scalarsDescPtr = context->GetRequiredInputDesc(INPUT_IDX_SCALARS);
     OP_CHECK_NULL_WITH_CONTEXT(context, scalarsDescPtr);
     OP_CHECK_IF(!IsScalarDtypeMatched(dataType, scalarsDescPtr->GetDataType()),
-                OP_LOGE(context,
-                        "The dtype of scalars must be float32 when x is float32/bfloat16/float16, and int64 when x "
-                        "is int32, but got x dtype %d and scalars dtype %d.",
-                        static_cast<int32_t>(dataType), static_cast<int32_t>(scalarsDescPtr->GetDataType())),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                   "ForeachSubScalarList"),
+                    "scalars", Ops::Base::ToString(scalarsDescPtr->GetDataType()).c_str(),
+                    "scalars dtype must be float32 when x is float32/bfloat16/float16, and int64 when x is int32"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -142,8 +181,11 @@ static ge::graphStatus HandleEmptyTensorList(gert::TilingContext* context, uint6
     auto scalarsShapePtr = context->GetRequiredInputShape(INPUT_IDX_SCALARS);
     OP_CHECK_NULL_WITH_CONTEXT(context, scalarsShapePtr);
     OP_CHECK_IF(scalarsShapePtr->GetStorageShape().GetShapeSize() != 0,
-                OP_LOGE(context, "The element count of scalars must be 0 when the tensor list is empty, but got %ld.",
-                        scalarsShapePtr->GetStorageShape().GetShapeSize()),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                   "ForeachSubScalarList"),
+                    "scalars", std::to_string(scalarsShapePtr->GetStorageShape().GetShapeSize()).c_str(),
+                    "element count of scalars must be 0 when the tensor list is empty"),
                 return ge::GRAPH_FAILED);
 
     ForeachSubScalarListTilingData* tiling = context->GetTilingData<ForeachSubScalarListTilingData>();
@@ -174,7 +216,10 @@ static ge::graphStatus ForeachSubScalarListTilingFunc(gert::TilingContext* conte
     OP_CHECK_NULL_WITH_CONTEXT(context, idxInstanceInfoPtr);
     uint64_t tensorNum = idxInstanceInfoPtr->GetInstanceNum();
     OP_CHECK_IF(tensorNum > MAX_TENSOR_NUM,
-                OP_LOGE(context, "tensorNum[%lu] should be less than or equal to %u", tensorNum, MAX_TENSOR_NUM),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                                   "ForeachSubScalarList"),
+                    "x", std::to_string(tensorNum).c_str(), "tensor num must be less than or equal to 256"),
                 return ge::GRAPH_FAILED);
 
     // An empty TensorList is collapsed to a single-core no-op before instance 0 is read.
@@ -186,7 +231,7 @@ static ge::graphStatus ForeachSubScalarListTilingFunc(gert::TilingContext* conte
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     ge::DataType dataType = inputDesc->GetDataType();
     OP_CHECK_IF(CheckTensorListAndScalars(context, tensorNum, dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "input compatibility check failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "input compatibility check failed"), return ge::GRAPH_FAILED);
 
     ForeachSubScalarListTilingData* tiling = context->GetTilingData<ForeachSubScalarListTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
@@ -238,7 +283,10 @@ static ge::graphStatus ForeachSubScalarListTilingFunc(gert::TilingContext* conte
     } else if (dataType == ge::DT_BF16) {
         tilingKey = GET_TPL_TILING_KEY(FOREACH_SUB_SCALAR_LIST_TPL_SCH_MODE_BF16);
     } else {
-        OP_LOGE(context, "unsupported dtype for foreach_sub_scalar_list");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() :
+                                                                           "ForeachSubScalarList"),
+            "x", Ops::Base::ToString(dataType).c_str(), "supported dtypes are float16, float32, int32 and bfloat16");
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(tilingKey);

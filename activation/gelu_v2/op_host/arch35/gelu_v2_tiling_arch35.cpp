@@ -96,11 +96,11 @@ ge::graphStatus GeluV2Tiling::CheckShape()
 
 ge::graphStatus GeluV2Tiling::CheckValid()
 {
-    OP_CHECK_IF(CalcInputDtype() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "get input dtype failed"),
+    OP_CHECK_IF(CalcInputDtype() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "get input dtype failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CalcOutputDtype() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "get output dtype failed"),
+    OP_CHECK_IF(CalcOutputDtype() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "get output dtype failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "check shape failed"),
+    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "check shape failed"),
                 return ge::GRAPH_FAILED);
 
     auto attrs = tilingContext->GetAttrs();
@@ -124,7 +124,7 @@ ge::graphStatus GeluV2Tiling::RunTiling()
 {
     auto tiling = tilingContext->GetTilingData<Ops::Base::EleBaseTilingData16B>();
     ElewiseBaseTiling elewiseBaseTiling(tilingContext);
-    OP_CHECK_IF(CheckValid() == ge::GRAPH_FAILED, OP_LOGE(tilingContext, "validity check failed"),
+    OP_CHECK_IF(CheckValid() == ge::GRAPH_FAILED, OP_LOGE_WITHOUT_REPORT(tilingContext, "validity check failed"),
                 return ge::GRAPH_FAILED);
 
     ge::graphStatus baseTilingResult = ge::GRAPH_FAILED;
@@ -168,8 +168,9 @@ ge::graphStatus GeluV2Tiling::RunTiling()
         return ge::GRAPH_FAILED;
     }
     OP_CHECK_IF(baseTilingResult == ge::GRAPH_FAILED,
-                OP_LOGE(tilingContext->GetNodeName(), "elewiseBaseTiling failed, output dtype: %s.",
-                        ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(this->outputDtype)).c_str()),
+                OP_LOGE_WITHOUT_REPORT(
+                    tilingContext->GetNodeName(), "elewiseBaseTiling failed, output dtype: %s.",
+                    ge::TypeUtils::DataTypeToSerialString(static_cast<ge::DataType>(this->outputDtype)).c_str()),
                 return ge::GRAPH_FAILED);
 
     size_t* currentWorkspace = tilingContext->GetWorkspaceSizes(1);

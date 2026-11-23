@@ -54,11 +54,12 @@ static ge::graphStatus ForeachLog10TilingFunc(gert::TilingContext* context)
     uint64_t ubSize;
     int64_t coreNum;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(ForeachFlatRegbaseValidation::ValidateHomogeneous<1>(
                     context, ForeachFlatRegbaseValidation::IsFloatFamily) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "foreach_log10 input/output contract validation failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "foreach_log10 input/output contract validation failed"),
+                return ge::GRAPH_FAILED);
 
     auto computeNodeInfoPtr = context->GetComputeNodeInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfoPtr);
@@ -117,7 +118,9 @@ static ge::graphStatus ForeachLog10TilingFunc(gert::TilingContext* context)
     } else if (dataType == ge::DT_BF16) {
         tilingKey = GET_TPL_TILING_KEY(FOREACH_LOG10_TPL_SCH_MODE_BF16);
     } else {
-        OP_LOGE(context, "unsupported dtype for foreach_log10");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "ForeachLog10"),
+            "x", Ops::Base::ToString(dataType).c_str(), "only support FLOAT, FLOAT16 and BF16");
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(tilingKey);

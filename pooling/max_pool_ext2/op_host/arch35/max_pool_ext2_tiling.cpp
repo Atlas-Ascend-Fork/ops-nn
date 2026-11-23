@@ -315,13 +315,13 @@ static ge::graphStatus Tiling4MaxPoolExt2(gert::TilingContext* context)
     // 5. 校验属性并提取 ksize/strides
     int64_t kH, kW, sH, sW;
     OP_CHECK_IF(ValidateAttrs(context, hDim, wDim, kH, kW, sH, sW) != ge::GRAPH_SUCCESS,
-                OP_LOGE(opName_, "ValidateAttrs error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(opName_, "ValidateAttrs error"), return ge::GRAPH_FAILED);
 
     // 6. 计算输出 H/W 和 padding
     int64_t outH, outW, tPad = 0, lPad = 0;
     OP_CHECK_IF(
         ComputeOutputShapeAndPadding(context, H, W, kH, kW, sH, sW, outH, outW, tPad, lPad) != ge::GRAPH_SUCCESS,
-        OP_LOGE(opName_, "ComputeOutputShapeAndPadding error"), return ge::GRAPH_FAILED);
+        OP_LOGE_WITHOUT_REPORT(opName_, "ComputeOutputShapeAndPadding error"), return ge::GRAPH_FAILED);
 
     // 7. 计算多核切分（MDE §2.1 两步法 + Step 1.5 下限保护）
     constexpr int64_t PER_CORE_MIN = 1024; // 下限保护，对齐到 32（warp 大小），避免小 shape 启动过多核导致线程空转

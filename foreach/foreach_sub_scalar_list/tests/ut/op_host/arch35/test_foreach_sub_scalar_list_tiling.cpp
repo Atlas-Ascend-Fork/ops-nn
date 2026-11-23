@@ -16,7 +16,11 @@
  */
 
 #include <iostream>
+#include <map>
+#include <string>
+#include <vector>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "tiling_context_faker.h"
 #include "tiling_case_executor.h"
 #include "../../../../op_kernel/arch35/foreach_sub_scalar_list_tiling_data.h"
@@ -34,6 +38,37 @@ protected:
 static std::map<std::string, std::string> soc_version_infos = {{"Short_SoC_version", "Ascend950"}};
 
 struct ForeachSubScalarListCompileInfo {};
+
+// Drop any error reports left over from a previous case so every negative case only observes its own report.
+static void ResetErrorManager()
+{
+    auto& errorManager = ErrorManager::GetInstance();
+    errorManager.GenWorkStreamIdDefault();
+    (void)errorManager.GetRawErrorMessages();
+}
+
+// Each failing check must report one and only one formal error code (no extra EZ9999 fallback).
+static void ExpectSingleError(const std::string& expectedErrorId,
+                              const std::map<std::string, std::string>& expectedArgs,
+                              const std::vector<std::string>& nonEmptyArgs = {})
+{
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    std::string reportedIds;
+    for (const auto& error : errors) {
+        reportedIds += error.error_id + " ";
+    }
+    ASSERT_EQ(errors.size(), 1U) << "expected exactly one error report, got " << errors.size() << " [" << reportedIds
+                                 << "]";
+    EXPECT_EQ(errors[0].error_id, expectedErrorId);
+    for (const auto& [key, value] : expectedArgs) {
+        ASSERT_NE(errors[0].args_map.count(key), 0U) << "missing arg " << key;
+        EXPECT_EQ(errors[0].args_map.at(key), value) << "arg " << key;
+    }
+    for (const auto& key : nonEmptyArgs) {
+        ASSERT_NE(errors[0].args_map.count(key), 0U) << "missing arg " << key;
+        EXPECT_FALSE(errors[0].args_map.at(key).empty()) << "arg " << key;
+    }
+}
 
 // Test float32 case: DYNAMIC_INPUT with 1 instance, shape (32,4,4), float32
 TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_float32)
@@ -139,7 +174,7 @@ TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_bf16)
     ExecuteTestCase(tilingContextPara, ge::GRAPH_SUCCESS, expectTilingKey, expectTilingData, expectWorkspaces);
 }
 
-// Negative: x members must share the same dtype
+// Negative: x members must share the same dtype (EZ0020, param x[1])
 TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_x_dtype_inconsistent_rejected)
 {
     ForeachSubScalarListCompileInfo compileInfo;
@@ -154,10 +189,14 @@ TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_x_dtype_inconsistent_
                                                   {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT16, ge::FORMAT_ND},
                                               },
                                               {}, {2, 1}, {2}, &compileInfo, 80, 262144, 8192);
+    ResetErrorManager();
     ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0020", {{"param_name", "x[1]"}, {"incorrect_dtype", "DT_FLOAT16"}});
 }
 
-// Negative: out members must share the same dtype as x
+// Negative: out members must share the same dtype as x.
+// Target code: EZ0020 (param y[i]). This branch is unreachable in production (guaranteed by
+// InferShape/InferDataType); UT intentionally skips it and adds no new error-code assertion.
 TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_out_dtype_inconsistent_rejected)
 {
     ForeachSubScalarListCompileInfo compileInfo;
@@ -172,10 +211,11 @@ TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_out_dtype_inconsisten
                                                   {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT16, ge::FORMAT_ND},
                                               },
                                               {}, {2, 1}, {2}, &compileInfo, 80, 262144, 8192);
+    ResetErrorManager();
     ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
 }
 
-// Negative: x rank must be less than or equal to 8
+// Negative: x rank must be less than or equal to 8 (EZ0012, param x[0])
 TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_x_rank_over_8_rejected)
 {
     ForeachSubScalarListCompileInfo compileInfo;
@@ -189,10 +229,32 @@ TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_x_rank_over_8_rejecte
             {{{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT, ge::FORMAT_ND},
         },
         {}, &compileInfo, 80, 262144, 8192);
+    ResetErrorManager();
     ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0012", {{"param_name", "x[0]"}, {"incorrect_dim", "9D"}}, {"reason"});
 }
 
-// Negative: out shape size must be the same as that of x
+// Negative: x dims must be non-negative (EZ0009, param x[0])
+TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_x_negative_dim_rejected)
+{
+    ForeachSubScalarListCompileInfo compileInfo;
+    gert::TilingContextPara tilingContextPara("ForeachSubScalarList",
+                                              {
+                                                  {{{-1}, {-1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                                  {{{1}, {1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {
+                                                  {{{-1}, {-1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {}, &compileInfo, 80, 262144, 8192);
+    ResetErrorManager();
+    ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0009", {{"param_name", "x[0]"}}, {"incorrect_shape", "reason"});
+}
+
+// Negative: out shape size must be the same as that of x.
+// Target code: EZ0015 (param y[i]). This branch is unreachable in production (guaranteed by
+// InferShape/InferDataType); UT intentionally skips it and adds no new error-code assertion.
 TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_out_shape_mismatch_rejected)
 {
     ForeachSubScalarListCompileInfo compileInfo;
@@ -205,10 +267,13 @@ TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_out_shape_mismatch_re
                                                   {{{7}, {7}}, ge::DT_FLOAT, ge::FORMAT_ND},
                                               },
                                               {}, &compileInfo, 80, 262144, 8192);
+    ResetErrorManager();
     ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
 }
 
-// Negative: out shape size larger than x is also rejected (equality required)
+// Negative: out shape size larger than x is also rejected (equality required).
+// Target code: EZ0015 (param y[i]). This branch is unreachable in production (guaranteed by
+// InferShape/InferDataType); UT intentionally skips it and adds no new error-code assertion.
 TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_out_shape_larger_rejected)
 {
     ForeachSubScalarListCompileInfo compileInfo;
@@ -221,10 +286,11 @@ TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_out_shape_larger_reje
                                                   {{{9}, {9}}, ge::DT_FLOAT, ge::FORMAT_ND},
                                               },
                                               {}, &compileInfo, 80, 262144, 8192);
+    ResetErrorManager();
     ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
 }
 
-// Negative: scalars element count must be equal to the tensor count of x
+// Negative: scalars element count must be equal to the tensor count of x (EZ0015, param scalars)
 TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_scalars_count_mismatch_rejected)
 {
     ForeachSubScalarListCompileInfo compileInfo;
@@ -239,10 +305,12 @@ TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_scalars_count_mismatc
                                                   {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
                                               },
                                               {}, {2, 1}, {2}, &compileInfo, 80, 262144, 8192);
+    ResetErrorManager();
     ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0015", {{"param_name", "scalars"}, {"incorrect_size", "1"}}, {"reason"});
 }
 
-// Negative: scalars dtype must pair with the dtype of x
+// Negative: scalars dtype must pair with the dtype of x (EZ0020, param scalars)
 TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_scalars_dtype_mismatch_rejected)
 {
     ForeachSubScalarListCompileInfo compileInfo;
@@ -255,5 +323,77 @@ TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_scalars_dtype_mismatc
                                                   {{{32, 4, 4}, {32, 4, 4}}, ge::DT_INT32, ge::FORMAT_ND},
                                               },
                                               {}, &compileInfo, 80, 262144, 8192);
+    ResetErrorManager();
     ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0020", {{"param_name", "scalars"}, {"incorrect_dtype", "DT_FLOAT"}}, {"reason"});
+}
+
+// Negative: scalars rank must be less than or equal to 8 (EZ0012, param scalars)
+TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_scalars_rank_over_8_rejected)
+{
+    ForeachSubScalarListCompileInfo compileInfo;
+    gert::TilingContextPara tilingContextPara(
+        "ForeachSubScalarList",
+        {
+            {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
+            {{{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+        },
+        {
+            {{{32, 4, 4}, {32, 4, 4}}, ge::DT_FLOAT, ge::FORMAT_ND},
+        },
+        {}, &compileInfo, 80, 262144, 8192);
+    ResetErrorManager();
+    ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0012", {{"param_name", "scalars"}, {"incorrect_dim", "9D"}}, {"reason"});
+}
+
+// Negative: empty TensorList with non-empty scalars (EZ0015, param scalars)
+TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_empty_tensorlist_scalars_nonempty_rejected)
+{
+    ForeachSubScalarListCompileInfo compileInfo;
+    gert::TilingContextPara tilingContextPara("ForeachSubScalarList",
+                                              {
+                                                  // x has 0 instances, scalars has 1 instance with 1 element
+                                                  {{{1}, {1}}, ge::DT_FLOAT, ge::FORMAT_ND},
+                                              },
+                                              {}, {0, 1}, {0}, &compileInfo, 80, 262144, 8192);
+    ResetErrorManager();
+    ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+    ExpectSingleError("EZ0015", {{"param_name", "scalars"}, {"incorrect_size", "1"}}, {"reason"});
+}
+
+// Negative: x tensor count must not exceed 256 (EZ0026, param x)
+TEST_F(ForeachSubScalarListTiling, foreach_sub_scalar_list_tensor_num_over_256_rejected)
+{
+    ForeachSubScalarListCompileInfo compileInfo;
+    constexpr uint32_t tensorCount = 257;
+    std::vector<gert::TilingContextPara::TensorDescription> inputDescs;
+    inputDescs.reserve(tensorCount + 1);
+    for (uint32_t i = 0; i < tensorCount; ++i) {
+        inputDescs.emplace_back(gert::StorageShape{{1}, {1}}, ge::DT_FLOAT, ge::FORMAT_ND);
+    }
+    inputDescs.emplace_back(gert::StorageShape{{tensorCount}, {tensorCount}}, ge::DT_FLOAT, ge::FORMAT_ND);
+    std::vector<gert::TilingContextPara::TensorDescription> outputDescs(
+        tensorCount,
+        gert::TilingContextPara::TensorDescription(gert::StorageShape{{1}, {1}}, ge::DT_FLOAT, ge::FORMAT_ND));
+    gert::TilingContextPara tilingContextPara("ForeachSubScalarList", inputDescs, outputDescs, {}, {tensorCount, 1},
+                                              {tensorCount}, &compileInfo, 80, 262144, 8192);
+    ResetErrorManager();
+    ExecuteTestCase(tilingContextPara, ge::GRAPH_FAILED);
+
+    const auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    std::string reportedIds;
+    for (const auto& error : errors) {
+        reportedIds += error.error_id + " ";
+    }
+    ASSERT_EQ(errors.size(), 1U) << "expected exactly one error report, got " << errors.size() << " [" << reportedIds
+                                 << "]";
+    EXPECT_EQ(errors[0].error_id, "EZ0026");
+    ASSERT_NE(errors[0].args_map.count("param_name"), 0U) << "missing arg param_name";
+    EXPECT_EQ(errors[0].args_map.at("param_name"), "x");
+    ASSERT_NE(errors[0].args_map.count("incorrect_value"), 0U) << "missing arg incorrect_value";
+    EXPECT_EQ(errors[0].args_map.at("incorrect_value"), "257");
+    ASSERT_NE(errors[0].args_map.count("reason"), 0U) << "missing arg reason";
+    EXPECT_NE(errors[0].args_map.at("reason").find("less than or equal to 256"), std::string::npos)
+        << "reason: " << errors[0].args_map.at("reason");
 }

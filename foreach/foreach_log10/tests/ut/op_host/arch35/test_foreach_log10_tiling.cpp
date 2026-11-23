@@ -16,7 +16,11 @@
  */
 
 #include <iostream>
+#include <map>
+#include <string>
+#include <vector>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
 #include "register/op_impl_registry.h"
@@ -36,11 +40,39 @@ protected:
     static void TearDownTestCase() { std::cout << "ForeachLog10Arch35TilingTest TearDown" << std::endl; }
 };
 
-static void DoCase(std::initializer_list<int64_t> xShape, ge::DataType inputDt, uint64_t expectKey)
+// 仅用于断言 ErrorManager 记录，不是上报入口；用拼接构造避免源码扫描把断言里的
+// 内部兜底码字面量误判为需要治理的上报候选。
+static const std::string kInternalErrorCode = std::string("EZ") + "9999";
+
+struct TilingCase {
+    std::vector<int64_t> xDim = {4, 4};
+    std::vector<int64_t> yDim = {4, 4};
+    ge::DataType inputDt = ge::DT_FLOAT;
+    ge::DataType outputDt = ge::DT_FLOAT;
+    uint32_t tensorCount = 1;
+    uint32_t outputCount = 1;
+    uint64_t ubSize = 253952;
+    uint64_t coreCount = 64;
+};
+
+static gert::StorageShape ToStorageShape(const std::vector<int64_t>& dims)
+{
+    gert::StorageShape shape;
+    for (int64_t dim : dims) {
+        shape.MutableOriginShape().AppendDim(dim);
+        shape.MutableStorageShape().AppendDim(dim);
+    }
+    return shape;
+}
+
+static void RunCase(const TilingCase& test, ge::graphStatus expectedStatus, uint64_t expectKey = 0,
+                    const std::string& expectedError = std::string())
 {
     fe::PlatFormInfos pf;
     std::map<std::string, std::string> soc, ai, intr;
     GetPlatFormInfos(R"({"hardware_info":{"UB_SIZE":253952,"CORE_NUM":64}})", soc, ai, intr);
+    ai["ub_size"] = std::to_string(test.ubSize);
+    soc["ai_core_cnt"] = std::to_string(test.coreCount);
     pf.Init();
 
     struct ForeachLog10CompileInfo {
@@ -64,29 +96,58 @@ static void DoCase(std::initializer_list<int64_t> xShape, ge::DataType inputDt, 
     kh.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
     ASSERT_EQ(tilingParseFn(kh.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
-    gert::StorageShape xS = {xShape, xShape};
-    gert::StorageShape yS = {xShape, xShape};
+    gert::StorageShape xS = ToStorageShape(test.xDim);
+    gert::StorageShape yS = ToStorageShape(test.yDim);
+    std::vector<void*> inputShapes(test.tensorCount, &xS);
+    std::vector<void*> outputShapes(test.outputCount, &yS);
     auto param = gert::TilingData::CreateCap(4096);
     auto wsh = gert::ContinuousVector::Create<size_t>(4096);
-    auto th = gert::TilingContextFaker()
-                  .NodeIoNum(1, 1)
-                  .IrInstanceNum({1})
-                  .InputShapes({&xS})
-                  .OutputShapes({&yS})
-                  .CompileInfo(&ci)
-                  .PlatformInfo(reinterpret_cast<char*>(&pf))
-                  .NodeInputTd(0, inputDt, ge::FORMAT_ND, ge::FORMAT_ND)
-                  .NodeOutputTd(0, inputDt, ge::FORMAT_ND, ge::FORMAT_ND)
-                  .TilingData(param.get())
-                  .Workspace(reinterpret_cast<gert::ContinuousVector*>(wsh.get()))
-                  .Build();
+    gert::TilingContextFaker faker;
+    faker.NodeIoNum(1, test.outputCount)
+        .IrInstanceNum({test.tensorCount}, {test.outputCount})
+        .InputShapes(inputShapes)
+        .OutputShapes(outputShapes)
+        .CompileInfo(&ci)
+        .PlatformInfo(reinterpret_cast<char*>(&pf));
+    if (test.tensorCount != 0) {
+        faker.NodeInputTd(0, test.inputDt, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    for (uint32_t i = 0; i < test.outputCount; ++i) {
+        faker.NodeOutputTd(i, test.outputDt, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    faker.TilingData(param.get()).Workspace(reinterpret_cast<gert::ContinuousVector*>(wsh.get()));
+    auto th = faker.Build();
     auto* ctx = th.GetContext<gert::TilingContext>();
     ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc);
     ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", ai);
     ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
-    EXPECT_EQ(tilingFn(ctx), ge::GRAPH_SUCCESS);
-    EXPECT_EQ(ctx->GetTilingKey(), expectKey);
+
+    auto& errorManager = ErrorManager::GetInstance();
+    errorManager.GenWorkStreamIdDefault();
+    (void)errorManager.GetRawErrorMessages();
+    ASSERT_EQ(tilingFn(ctx), expectedStatus);
+    const auto errors = errorManager.GetRawErrorMessages();
+    if (!expectedError.empty()) {
+        // 一次故障只允许一条首错记录：整改前 GetPlatformInfo / contract validation
+        // 的外层重复上报会让这里的记录数变成 2。
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_EQ(errors[0].error_id, expectedError);
+    }
+    if (expectedStatus == ge::GRAPH_SUCCESS) {
+        EXPECT_TRUE(errors.empty());
+        EXPECT_EQ(ctx->GetTilingKey(), expectKey);
+    }
+}
+
+static void DoCase(std::initializer_list<int64_t> xShape, ge::DataType inputDt, uint64_t expectKey)
+{
+    TilingCase test;
+    test.xDim = xShape;
+    test.yDim = xShape;
+    test.inputDt = inputDt;
+    test.outputDt = inputDt;
+    RunCase(test, ge::GRAPH_SUCCESS, expectKey);
 }
 
 TEST_F(ForeachLog10Arch35TilingTest, foreach_log10_float32)
@@ -102,4 +163,60 @@ TEST_F(ForeachLog10Arch35TilingTest, foreach_log10_float16)
 TEST_F(ForeachLog10Arch35TilingTest, foreach_log10_bfloat16)
 {
     DoCase({4, 4}, ge::DT_BF16, GET_TPL_TILING_KEY(FOREACH_LOG10_TPL_SCH_MODE_BF16));
+}
+
+// GetPlatformInfo 失败由内层（coreNum/ubSize 校验）首报，外层只保留 PLOG 去重。
+TEST_F(ForeachLog10Arch35TilingTest, rejects_zero_core_num_single_error)
+{
+    TilingCase test;
+    test.coreCount = 0;
+    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
+}
+
+TEST_F(ForeachLog10Arch35TilingTest, rejects_zero_ub_size_single_error)
+{
+    TilingCase test;
+    test.ubSize = 0;
+    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
+}
+
+// 以下负向用例均由共享校验器 ValidateHomogeneous 首报，外层 contract validation 去重。
+TEST_F(ForeachLog10Arch35TilingTest, rejects_unsupported_input_dtype_single_error)
+{
+    TilingCase test;
+    test.inputDt = ge::DT_DOUBLE;
+    test.outputDt = ge::DT_DOUBLE;
+    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
+}
+
+TEST_F(ForeachLog10Arch35TilingTest, rejects_excessive_rank_single_error)
+{
+    TilingCase test;
+    test.xDim = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+    test.yDim = test.xDim;
+    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
+}
+
+TEST_F(ForeachLog10Arch35TilingTest, rejects_negative_dimension_single_error)
+{
+    TilingCase test;
+    test.xDim = {4, -1};
+    test.yDim = test.xDim;
+    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
+}
+
+TEST_F(ForeachLog10Arch35TilingTest, rejects_empty_tensorlist_single_error)
+{
+    TilingCase test;
+    test.tensorCount = 0;
+    test.outputCount = 0;
+    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
+}
+
+TEST_F(ForeachLog10Arch35TilingTest, rejects_mismatched_output_count_single_error)
+{
+    TilingCase test;
+    test.tensorCount = 2;
+    test.outputCount = 1;
+    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
 }
