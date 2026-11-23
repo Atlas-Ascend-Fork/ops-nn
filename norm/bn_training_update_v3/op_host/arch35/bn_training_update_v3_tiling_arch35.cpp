@@ -161,7 +161,8 @@ ge::graphStatus BNTrainingUpdateV3Tiling::CheckXDescAndShape()
                     return ge::GRAPH_FAILED);
     }
 
-    if (xFormat == ge::FORMAT_NHWC) {
+    // A wide rank-two input has contiguous channels in either layout.
+    if (xFormat == ge::FORMAT_NHWC || (dimNum == 2 && xStorageShape.GetDim(1) > NHWC_PATTERN_LIMIT)) {
         return ParseNhwcShape(xStorageShape, dimNum);
     }
 
@@ -273,6 +274,13 @@ ge::graphStatus BNTrainingUpdateV3Tiling::CalcNhwcRowsUbTile()
                     ("NHWC rows path: C=" + std::to_string(numC_) + " window budget exceeds UB").c_str()),
                 return ge::GRAPH_FAILED);
 
+    // Reuse each wide channel window across rows and distribute statistics writes.
+    if (numC_ > wMax && numC_ / minWindow >= coreNum_) {
+        unitCores_ = 1;
+        formerCoreNum_ = 0;
+        latterUnits_ = rows_;
+        formerUnits_ = rows_;
+    }
     int64_t maxWindows = (numC_ + minWindow - 1) / minWindow;
     innerCores_ = 1;
     if (unitCores_ < coreNum_ && maxWindows > 1) {
@@ -351,6 +359,21 @@ ge::graphStatus BNTrainingUpdateV3Tiling::CheckStatInputs()
 
 ge::graphStatus BNTrainingUpdateV3Tiling::CalcCoreSplit()
 {
+    // Pack consecutive complete rows when their channel coefficients fit in UB.
+    const int64_t inner = isNhwc_ ? 1 : innerSize_;
+    const int64_t tile = (ubSize_ - RESERVED_UB - 4 * NHWC_STAT_BULK_ELEMS * FLOAT_BYTES) /
+                         (4 * xDtypeSize_ + 2 * FLOAT_BYTES) / VL * VL;
+    if (numN_ >= coreNum_ && numC_ <= NHWC_STAT_BULK_ELEMS && inner <= VL && numC_ * inner <= tile && tile >= 2 * VL &&
+        (!isNhwc_ || numC_ < VL)) {
+        nhwcPath_ = 5;
+        innerSize_ = inner;
+        units_ = numN_;
+        innerCores_ = 1;
+        innerPerCore_ = inner;
+        ubTileSize_ = tile;
+        SplitPlanesAcrossCores();
+        return ge::GRAPH_SUCCESS;
+    }
     if (isNhwc_) {
         return CalcNhwcSplit();
     }

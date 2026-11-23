@@ -389,8 +389,12 @@ TEST_F(BNTrainingUpdateV3TilingUT, accept_nhwc_rows_windowed_huge_c)
     EXPECT_EQ(td.numC, 30000);
     EXPECT_EQ(td.units, 2);                                      // rows=2
     EXPECT_TRUE(td.ubTileSize >= 64 && td.ubTileSize % 64 == 0); // 窗口宽 W
-    EXPECT_EQ(td.innerCores, 32);
-    EXPECT_EQ(td.innerSize, 32);
+    EXPECT_EQ(td.unitCores, 1);
+    EXPECT_EQ(td.latterUnits, 2); // Each active channel window processes all rows.
+    EXPECT_EQ(td.innerCores, 64);
+    EXPECT_EQ(td.ubTileSize, 512);
+    EXPECT_EQ(td.innerSize, (30000 + 512 - 1) / 512);
+    EXPECT_EQ(td.innerPerCore, 1);
     EXPECT_EQ(blockDim, 64);
 }
 
@@ -405,9 +409,44 @@ TEST_F(BNTrainingUpdateV3TilingUT, accept_nhwc_rows_windowed_huge_c_f16)
     EXPECT_EQ(td.nhwcPath, 4);
     EXPECT_EQ(td.numC, 15608);
     EXPECT_TRUE(td.ubTileSize >= 64 && td.ubTileSize % 64 == 0);
-    EXPECT_EQ(td.innerCores, 9);
-    EXPECT_EQ(td.innerSize, 9);
-    EXPECT_EQ(blockDim, 63);
+    EXPECT_EQ(td.unitCores, 1);
+    EXPECT_EQ(td.latterUnits, 7); // Each active channel window processes all rows.
+    EXPECT_EQ(td.innerCores, 64);
+    EXPECT_EQ(td.ubTileSize, 256);
+    EXPECT_EQ(td.innerSize, (15608 + 256 - 1) / 256);
+    EXPECT_EQ(td.innerPerCore, 1);
+    EXPECT_EQ(blockDim, 64);
+}
+
+TEST_F(BNTrainingUpdateV3TilingUT, pack_short_nhwc_rows)
+{
+    uint64_t key = 0;
+    int64_t blocks = 0;
+    BNTrainingUpdateV3TilingData td = {};
+    ASSERT_EQ(RunTiling({65, 3}, 3, key, &blocks, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_NHWC, true, &td),
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(td.nhwcPath, 5);
+    EXPECT_EQ(td.units, 65);
+    EXPECT_EQ(td.innerSize, 1);
+    EXPECT_EQ(td.formerCoreNum, 1);
+    EXPECT_EQ(td.formerUnits, 2);
+    EXPECT_EQ(td.latterUnits, 1);
+    EXPECT_EQ(blocks, 64);
+}
+
+TEST_F(BNTrainingUpdateV3TilingUT, pack_short_nd_rows_with_inner_dimension)
+{
+    uint64_t key = 0;
+    int64_t blocks = 0;
+    BNTrainingUpdateV3TilingData td = {};
+    ASSERT_EQ(RunTiling({128, 5, 5}, 5, key, &blocks, ge::DT_FLOAT, ge::DT_FLOAT, ge::FORMAT_ND, true, &td),
+              ge::GRAPH_SUCCESS);
+    EXPECT_EQ(td.nhwcPath, 5);
+    EXPECT_EQ(td.units, 128);
+    EXPECT_EQ(td.innerSize, 5);
+    EXPECT_EQ(td.latterUnits, 2);
+    EXPECT_GE(td.ubTileSize, 2 * 5 * 5);
+    EXPECT_EQ(blocks, 64);
 }
 
 // epsilon 为 REQUIRED 属性，缺失须拒

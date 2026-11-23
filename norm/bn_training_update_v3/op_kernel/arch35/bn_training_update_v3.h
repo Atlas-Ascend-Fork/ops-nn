@@ -173,6 +173,9 @@ public:
         batchVarScaler_ = tl_->batchVarScaler;
 
         int64_t gmLen = (tl_->isNhwc != 0) ? (tl_->numN * tl_->numC) : (tl_->units * tl_->innerSize);
+        if (tl_->nhwcPath == 5) {
+            gmLen = tl_->numN * tl_->numC * tl_->innerSize;
+        }
         xGm_.SetGlobalBuffer((__gm__ T*)x, gmLen);
         yGm_.SetGlobalBuffer((__gm__ T*)y, gmLen);
         sumGm_.SetGlobalBuffer((__gm__ float*)sum, tl_->numC);
@@ -196,7 +199,7 @@ public:
             // Rows 系数 buffer 驻留 2×ceil64(C)（一次构建，tile 循环只搬 x/y）
             pipe_->InitBuffer(multiplierBuf_, pitchElems_ * sizeof(float));
             pipe_->InitBuffer(addendBuf_, pitchElems_ * sizeof(float));
-        } else if (tl_->isNhwc != 0 && tl_->nhwcPath == 4) {
+        } else if (tl_->nhwcPath == 4 || tl_->nhwcPath == 5) {
             // RowsWindowed：统计量 bulk staging；x/y 为 c 窗口段 tile（ubTileSize 复用为窗口宽 W）；
             // multiplier/addend 为 W 元系数窗（每窗从任意通道偏移 64 对齐直算重建）
             pipe_->InitBuffer(sumQue_, 1, NHWC_STAT_BULK_ELEMS * sizeof(float));
@@ -239,6 +242,15 @@ public:
         // channel 段 [batchC0_, batchC1_) 分 chunk staging sum/square_sum，向量化算出
         // save_mean/save_var 后批量写出（避免逐 channel 4B 小 DMA），零核间通信；
         // NHWC 下 batchC0_/batchC1_ = [0, C)，固定 0 号核全量负责
+        if (tl_->nhwcPath == 5) {
+            if (GetBlockIdx() == 0) {
+                batchC0_ = 0;
+                batchC1_ = tl_->numC;
+                ComputeAndStoreBatchStatsNhwc();
+            }
+            ProcessPackedRows();
+            return;
+        }
         if (writeBatch_) {
             if (tl_->isNhwc != 0) {
                 ComputeAndStoreBatchStatsNhwc();
@@ -280,6 +292,65 @@ public:
     }
 
 private:
+    __aicore__ inline void ProcessPackedRows()
+    {
+        int64_t width = tl_->numC * tl_->innerSize;
+        int64_t rows = tl_->ubTileSize / width;
+        rows = rows < planeNum_ ? rows : planeNum_;
+        auto sum = StageStat(sumQue_, sumGm_, 0, tl_->numC);
+        auto sqr = StageStat(squareSumQue_, squareSumGm_, 0, tl_->numC);
+        auto scale = StageStat(scaleQue_, scaleGm_, 0, tl_->numC);
+        auto bias = StageStat(offsetQue_, offsetGm_, 0, tl_->numC);
+        auto m = (__ubuf__ float*)scale.GetPhyAddr();
+        auto b = (__ubuf__ float*)bias.GetPhyAddr();
+        for (int64_t c = 0; c < tl_->numC; c += VL_FP32) {
+            int64_t count = tl_->numC - c < VL_FP32 ? tl_->numC - c : VL_FP32;
+            PrecomputeAffine((__ubuf__ float*)sum.GetPhyAddr() + c, (__ubuf__ float*)sqr.GetPhyAddr() + c, m + c, b + c,
+                             m + c, b + c, count);
+        }
+        ExpandCoefficients(m, b, (__ubuf__ float*)multiplierBuf_.Get<float>().GetPhyAddr(),
+                           (__ubuf__ float*)addendBuf_.Get<float>().GetPhyAddr(), tl_->numC, tl_->innerSize,
+                           rows * width);
+        sumQue_.FreeTensor(sum);
+        squareSumQue_.FreeTensor(sqr);
+        scaleQue_.FreeTensor(scale);
+        offsetQue_.FreeTensor(bias);
+        for (int64_t r = 0; r < planeNum_; r += rows) {
+            int64_t count = planeNum_ - r < rows ? planeNum_ - r : rows;
+            ProcessMergedR1((planeStart_ + r) * width, count * width);
+        }
+    }
+
+    __aicore__ inline void ExpandCoefficients(__ubuf__ float* compactMult, __ubuf__ float* compactAdd,
+                                              __ubuf__ float* mult, __ubuf__ float* add, uint32_t channels,
+                                              uint32_t inner, uint32_t extent)
+    {
+        uint16_t loops = (extent + VL_FP32 - 1) / VL_FP32;
+        uint32_t width = channels * inner;
+        __VEC_SCOPE__
+        {
+            RegTensor<int32_t> lane, pos, divR, divWidth, row, idx;
+            RegTensor<float> m, b;
+            MaskReg all = CreateMask<float, MaskPattern::ALL>();
+            AscendC::Reg::Arange(lane, static_cast<int32_t>(0));
+            Duplicate(divR, static_cast<int32_t>(inner), all);
+            Duplicate(divWidth, static_cast<int32_t>(width), all);
+            uint32_t remaining = extent;
+            for (uint16_t i = 0; i < loops; ++i) {
+                MaskReg mask = UpdateMask<float>(remaining);
+                Adds(pos, lane, static_cast<int32_t>(i * VL_FP32), all);
+                Div(row, pos, divWidth, all);
+                Mul(row, row, divWidth, all);
+                Sub(pos, pos, row, all);
+                Div(idx, pos, divR, all);
+                AscendC::Reg::Gather(m, compactMult, (RegTensor<uint32_t>&)idx, mask);
+                AscendC::Reg::Gather(b, compactAdd, (RegTensor<uint32_t>&)idx, mask);
+                DataCopy<float, StoreDist::DIST_NORM>(mult + i * VL_FP32, m, mask);
+                DataCopy<float, StoreDist::DIST_NORM>(add + i * VL_FP32, b, mask);
+            }
+        }
+    }
+
     // R==1 合并路径：段内按 MERGE_CHANNELS（4 个 chunk，256 channel）分批 staging/预计算
     // 系数进 256 项 TBuf，随后单 tile 单 DMA 覆盖整批 plane——channel 与元素一一对应，
     // 系数即 per-element 向量，消除逐 plane 微小 DMA 与广播 load
@@ -660,8 +731,8 @@ private:
                 LoadXToFp32(xAddr, xReg, fullMask, offset);
                 DataCopy<float, LoadDist::DIST_NORM>(mulReg, multiplierAddr + offset);
                 DataCopy<float, LoadDist::DIST_NORM>(addReg, addendAddr + offset);
-                Mul(yReg, xReg, mulReg, fullMask);
-                Add(yReg, yReg, addReg, fullMask);
+                yReg = addReg;
+                MulAddDst(yReg, xReg, mulReg, fullMask);
                 StoreYFromFp32(yAddr, yReg, fullMask, offset);
             }
             for (uint16_t i = fullLoops; i < totalLoops; i++) { // 尾块 0 或 1 次，无 if
@@ -673,8 +744,8 @@ private:
                 // 经 tailMask 的 Mul/Add(ZEROING)/store 全部屏蔽，不进输出
                 DataCopy<float, LoadDist::DIST_NORM>(mulReg, multiplierAddr + offset);
                 DataCopy<float, LoadDist::DIST_NORM>(addReg, addendAddr + offset);
-                Mul(yReg, xReg, mulReg, tailMask);
-                Add(yReg, yReg, addReg, tailMask);
+                yReg = addReg;
+                MulAddDst(yReg, xReg, mulReg, tailMask);
                 StoreYFromFp32(yAddr, yReg, tailMask, offset);
             }
         }
@@ -842,8 +913,8 @@ private:
                 DataCopy<float, LoadDist::DIST_NORM>(mulReg, multPat + patOff);
                 DataCopy<float, LoadDist::DIST_NORM>(addReg, addPat + patOff);
                 LoadXToFp32(xAddr, xReg, mask, static_cast<uint32_t>(v * vl));
-                Mul(yReg, xReg, mulReg, mask);
-                Add(yReg, yReg, addReg, mask);
+                yReg = addReg;
+                MulAddDst(yReg, xReg, mulReg, mask);
                 StoreYFromFp32(yAddr, yReg, mask, static_cast<uint32_t>(v * vl));
             }
         }
@@ -922,10 +993,7 @@ private:
                 LocalTensor<T> yUb = yQue_.AllocTensor<T>();
                 __ubuf__ T* xSeg = (__ubuf__ T*)xUb.GetPhyAddr();
                 __ubuf__ T* ySeg = (__ubuf__ T*)yUb.GetPhyAddr();
-                for (int64_t c = 0; c < cnt; c += CHUNK_CHANNELS) {
-                    int64_t n = (cnt - c) < CHUNK_CHANNELS ? (cnt - c) : CHUNK_CHANNELS;
-                    ComputeNhwcRowTile(xSeg, ySeg, c, n, multAddr + c, addAddr + c);
-                }
+                ComputeTileMergedR1(xSeg, ySeg, cnt);
                 yQue_.EnQue(yUb);
                 yUb = yQue_.DeQue<T>();
                 DataCopyPad(yGm_[r * tl_->numC + c0], yUb, cpSeg);
@@ -949,8 +1017,8 @@ private:
             DataCopy<float, LoadDist::DIST_NORM>(mulReg, multAddr);
             DataCopy<float, LoadDist::DIST_NORM>(addReg, addAddr);
             LoadXToFp32(xRow, xReg, mask, static_cast<uint32_t>(c));
-            Mul(yReg, xReg, mulReg, mask);
-            Add(yReg, yReg, addReg, mask);
+            yReg = addReg;
+            MulAddDst(yReg, xReg, mulReg, mask);
             StoreYFromFp32(yRow, yReg, mask, static_cast<uint32_t>(c));
         }
     }
