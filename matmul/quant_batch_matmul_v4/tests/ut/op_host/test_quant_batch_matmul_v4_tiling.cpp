@@ -26,6 +26,7 @@
 #include "exe_graph/runtime/tiling_parse_context.h"
 #include "kernel_run_context_facker.h"
 #include "../../../op_host/op_tiling/arch35/quant_batch_matmul_v4_tiling.h"
+#include "../../../op_host/op_tiling/arch35/quant_batch_matmul_v4_weight_quant_mx_swat_tiling_solver.h"
 #include "test_cube_util.h"
 #include "platform/platform_infos_def.h"
 #include "../../../op_host/op_tiling/quant_batch_matmul_v4_compile_info.h"
@@ -375,6 +376,74 @@ TEST_P(TestQuantBatchMatmulV4Tiling, generalTest)
 {
     QuantBatchMatmulV4TilingTestParam param = GetParam();
     TestOneParamCase(param);
+}
+
+TEST(QuantBatchMatmulV4WeightQuantMxSwatSolver, SelectK256NSplitWhenUbFits)
+{
+    constexpr uint64_t AIC_NUM = 32UL;
+    constexpr uint64_t UB_SIZE = 262144UL;
+    constexpr uint64_t L1_SIZE = 524032UL;
+    constexpr uint64_t L0_SIZE = 65536UL;
+    constexpr uint64_t L0C_SIZE = 131072UL;
+    constexpr uint64_t GROUP_SIZE = 32UL;
+    const WeightQuantMxSwatPlatformParam platform{AIC_NUM, UB_SIZE, L1_SIZE, L0_SIZE, L0_SIZE, L0C_SIZE};
+    const WeightQuantMxSwatShapeParam shape{128UL, 8192UL, 512UL};
+    qbmmv4_tiling::QuantBatchMatmulV4WeightQuantMxSwatTilingData tilingData;
+    std::string reason;
+
+    WeightQuantMxSwatTilingSolver solver(2UL, 2UL);
+    ASSERT_TRUE(
+        solver.Solve(platform, shape, GROUP_SIZE, false, true, true, true, ge::DT_BF16, true, tilingData, reason));
+    EXPECT_EQ(tilingData.baseM, 128U);
+    EXPECT_EQ(tilingData.baseN, 256U);
+    EXPECT_EQ(tilingData.baseK, 128U);
+    EXPECT_EQ(tilingData.kL1, 256U);
+    EXPECT_EQ(tilingData.tileShapeScaleKL1, 512U);
+    EXPECT_EQ(tilingData.nBubSize, 256U);
+    EXPECT_EQ(tilingData.kBubSize, 128U);
+    EXPECT_EQ(tilingData.usedCoreNum, 32U);
+}
+
+TEST(QuantBatchMatmulV4WeightQuantMxSwatSolver, RejectK256NSplitWhenUbExceeds)
+{
+    constexpr uint64_t AIC_NUM = 32UL;
+    constexpr uint64_t UB_SIZE = 98303UL;
+    constexpr uint64_t L1_SIZE = 524032UL;
+    constexpr uint64_t L0_SIZE = 65536UL;
+    constexpr uint64_t L0C_SIZE = 131072UL;
+    constexpr uint64_t GROUP_SIZE = 32UL;
+    const WeightQuantMxSwatPlatformParam platform{AIC_NUM, UB_SIZE, L1_SIZE, L0_SIZE, L0_SIZE, L0C_SIZE};
+    const WeightQuantMxSwatShapeParam shape{128UL, 8192UL, 512UL};
+    qbmmv4_tiling::QuantBatchMatmulV4WeightQuantMxSwatTilingData tilingData;
+    std::string reason;
+
+    WeightQuantMxSwatTilingSolver solver(2UL, 2UL);
+    EXPECT_FALSE(
+        solver.Solve(platform, shape, GROUP_SIZE, false, true, true, true, ge::DT_BF16, true, tilingData, reason));
+    EXPECT_EQ(reason, "K256 N-split path cannot satisfy UB capacity constraints");
+}
+
+TEST(QuantBatchMatmulV4WeightQuantMxSwatSolver, RejectInvalidBufferCount)
+{
+    constexpr uint64_t AIC_NUM = 32UL;
+    constexpr uint64_t UB_SIZE = 262144UL;
+    constexpr uint64_t L1_SIZE = 524032UL;
+    constexpr uint64_t L0_SIZE = 65536UL;
+    constexpr uint64_t L0C_SIZE = 131072UL;
+    const WeightQuantMxSwatPlatformParam platform{AIC_NUM, UB_SIZE, L1_SIZE, L0_SIZE, L0_SIZE, L0C_SIZE};
+    const WeightQuantMxSwatShapeParam shape{128UL, 8192UL, 512UL};
+    qbmmv4_tiling::QuantBatchMatmulV4WeightQuantMxSwatTilingData tilingData;
+    std::string reason;
+
+    WeightQuantMxSwatTilingSolver invalidL1Solver(3UL, 3UL);
+    EXPECT_FALSE(
+        invalidL1Solver.Solve(platform, shape, 32UL, false, true, true, true, ge::DT_BF16, true, tilingData, reason));
+    EXPECT_EQ(reason, "target L1 buffer count must be 2 or 4");
+
+    WeightQuantMxSwatTilingSolver smallUbSolver(4UL, 2UL);
+    EXPECT_FALSE(
+        smallUbSolver.Solve(platform, shape, 32UL, false, true, true, true, ge::DT_BF16, true, tilingData, reason));
+    EXPECT_EQ(reason, "target UB buffer count must not be less than target L1 buffer count");
 }
 
 static const std::vector<QuantBatchMatmulV4TilingTestParam> kCaseParams = GetParams();

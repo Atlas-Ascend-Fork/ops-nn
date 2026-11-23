@@ -77,10 +77,12 @@ private:
     bool CalcBasicBlock(std::string& reason);
     bool CalcConservativeTiling(std::string& reason);
     void AdjustBasicBlock();
+    bool FindFullCoreBasicBlock(uint64_t& baseM, uint64_t& baseN, uint64_t& mCnt, uint64_t& nCnt) const;
     void OptimizeEdgeBasicBlock();
     void CalcTailBasicBlock();
     bool CalcPathSpecificL1(std::string& reason);
     uint64_t CalcMaxScaleFactor(uint64_t stepK) const;
+    bool ShouldUseK256NSplit() const;
     bool ValidateTilingResult() const;
     bool IsL0Feasible(uint64_t baseM, uint64_t baseN, uint64_t baseK) const;
     bool IsL1Feasible(uint64_t tileShapeKL1, uint64_t tileShapeScaleKL1) const;

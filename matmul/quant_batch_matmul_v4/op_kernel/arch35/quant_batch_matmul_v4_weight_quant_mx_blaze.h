@@ -68,6 +68,7 @@ __aicore__ inline void RunWeightQuantMxBlazeSwat(
         {x2, bias, tilingData.kBubSize, tilingData.nBubSize, tilingData.disableWeightL2 != 0U},
         {tilingData.mL1, tilingData.nL1, tilingData.mTailTile, tilingData.nTailTile, tilingData.mBaseTailSplitCnt,
          tilingData.nBaseTailSplitCnt, tilingData.mTailMain, tilingData.nTailMain}};
+    params.mmadParams.ubBufferNum = tilingData.ubBufferNum;
     KernelImpl kernel;
     kernel(params);
 }

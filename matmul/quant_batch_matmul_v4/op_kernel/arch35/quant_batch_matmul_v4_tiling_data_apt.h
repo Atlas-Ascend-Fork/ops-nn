@@ -215,7 +215,7 @@ struct alignas(sizeof(uint64_t)) QuantBatchMatmulV4WeightQuantMxSwatTilingData {
     uint32_t weightNz = 0;
     uint32_t yDtype = 0;
     uint32_t l1BufferNum = 0;
-    uint32_t ubBufferNum = 0;
+    uint32_t ubBufferNum = l1BufferNum;
     uint32_t scaleBufferNum = 0;
     uint32_t disableWeightL2 = 0;
 };
