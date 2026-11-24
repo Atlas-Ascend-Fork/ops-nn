@@ -69,14 +69,6 @@ def _compute_dtype(x):
     return torch.float64 if dtype in (torch.float64, np.float64) else torch.float32
 
 
-def _to_numpy_for_golden(x):
-    if torch.is_tensor(x):
-        if x.dtype == torch.bfloat16:
-            return x.detach().cpu().to(torch.float32).numpy().astype(ml_dtypes.bfloat16)
-        return x.detach().cpu().numpy()
-    return x
-
-
 def _shape_of(x):
     if torch.is_tensor(x):
         return tuple(int(dim) for dim in x.shape)
@@ -96,7 +88,7 @@ def _cast_like(array, like):
 
 
 def _quantize_state(state, qmap, absmax):
-    one = torch.tensor(1.0, dtype=torch.float32)
+    one = torch.ones_like(absmax)
     denom = torch.where(absmax == 0, one, absmax)
     normalized = state / denom
     distances = torch.abs(normalized[:, None] - qmap[None, :])
@@ -276,20 +268,148 @@ def customize_inputs(
 
 
 class _ApplyAdamWQuantCompose:
-    """Third-party reference executed on the remote GPU server."""
+    """Kernel third-party reference; all math stays on the input device.
 
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
+    Explicit names let TTK bind tensors separately from attributes. Unlike the
+    CPU golden, the third-party leg uses the input precision (fp16/bf16 widen to
+    fp32) and returns each state in its original dtype.
+    """
 
-    def __call__(self, *inputs, **kwargs):
-        merged = dict(self.kwargs)
-        merged.update(kwargs)
-        outputs = apply_adam_w_quant_golden(
-            *[_to_numpy_for_golden(value) for value in inputs],
-            **merged,
+    def __init__(
+        self,
+        *,
+        lr=0.001,
+        beta1=0.9,
+        beta2=0.999,
+        weight_decay=1.0,
+        eps=1e-8,
+        gnorm_scale=1.0,
+        quant_mode="BLOCKWISE",
+        block_size=BLOCK,
+        **_,
+    ):
+        self.lr = float(lr)
+        self.beta1 = float(beta1)
+        self.beta2 = float(beta2)
+        self.weight_decay = float(weight_decay)
+        self.eps = float(eps)
+        self.gnorm_scale = float(gnorm_scale)
+        self.block_size = int(block_size)
+
+    def __call__(
+        self,
+        var,
+        grad,
+        m,
+        v,
+        qmap_m,
+        qmap_v,
+        absmax_m,
+        absmax_v,
+        step,
+        **_,
+    ):
+        work = _compute_dtype(var)
+        param = var.to(work).reshape(-1)
+        grad_f = grad.to(work).reshape(-1)
+        n = param.numel()
+        block_ids = torch.arange(n, device=var.device) // self.block_size
+        qmap_m_f = qmap_m.to(work).reshape(-1)
+        qmap_v_f = qmap_v.to(work).reshape(-1)
+        state_m = (
+            qmap_m_f[m.reshape(-1).long()] * absmax_m.to(work).reshape(-1)[block_ids]
         )
-        device = inputs[0].device if inputs and torch.is_tensor(inputs[0]) else "cpu"
-        return [torch.as_tensor(np.asarray(out), device=device) for out in outputs]
+        state_v = (
+            qmap_v_f[v.reshape(-1).long()] * absmax_v.to(work).reshape(-1)[block_ids]
+        )
+
+        # Match the CPU oracle's scalar rounding without copying GPU inputs to CPU.
+        one = param.new_tensor(1.0)
+        lr = param.new_tensor(self.lr)
+        beta1 = param.new_tensor(self.beta1)
+        beta2 = param.new_tensor(self.beta2)
+        weight_decay = param.new_tensor(self.weight_decay)
+        eps = param.new_tensor(self.eps)
+        grad_f = grad_f * param.new_tensor(self.gnorm_scale)
+        step_f = step.to(work).reshape(-1)[0] + one
+        bias_c1 = one - torch.pow(beta1, step_f)
+        bias_c2_sqrt = torch.sqrt(one - torch.pow(beta2, step_f))
+        step_size = -lr * bias_c2_sqrt / bias_c1
+        state_m = state_m * beta1 + (one - beta1) * grad_f
+        state_v = state_v * beta2 + (one - beta2) * (grad_f * grad_f)
+        param = param + step_size * state_m / (torch.sqrt(state_v) + eps * bias_c2_sqrt)
+        if self.weight_decay > 0.0:
+            param = param * (one - lr * weight_decay)
+
+        # Pad only the last block for its reduction; padded elements are never
+        # quantized or returned. A negative sentinel preserves negative maxima.
+        padding = (-n) % self.block_size
+        blocks_m = torch.nn.functional.pad(state_m.abs(), (0, padding))
+        blocks_v = torch.nn.functional.pad(state_v, (0, padding), value=-float("inf"))
+        new_am = blocks_m.reshape(-1, self.block_size).amax(dim=1)
+        new_av = blocks_v.reshape(-1, self.block_size).amax(dim=1)
+        m_out = _quantize_state(state_m, qmap_m_f, new_am[block_ids])
+        v_out = _quantize_state(state_v, qmap_v_f, new_av[block_ids])
+        return [
+            param.reshape_as(var).to(var.dtype),
+            m_out.reshape_as(m).to(m.dtype),
+            v_out.reshape_as(v).to(v.dtype),
+            new_am.reshape_as(absmax_m).to(absmax_m.dtype),
+            new_av.reshape_as(absmax_v).to(absmax_v.dtype),
+        ]
+
+
+class _ApplyAdamWQuantAclnnCompose(_ApplyAdamWQuantCompose):
+    """ACLNN adapter: names match aclnnApplyAdamWQuantGetWorkspaceSize."""
+
+    def __init__(
+        self,
+        *,
+        lr=0.001,
+        beta1=0.9,
+        beta2=0.999,
+        weightDecay=1.0,
+        eps=1e-8,
+        gnormScale=1.0,
+        quantModeOptional="BLOCKWISE",
+        blockSize=BLOCK,
+        **_,
+    ):
+        super().__init__(
+            lr=lr,
+            beta1=beta1,
+            beta2=beta2,
+            weight_decay=weightDecay,
+            eps=eps,
+            gnorm_scale=gnormScale,
+            quant_mode=quantModeOptional,
+            block_size=blockSize,
+        )
+
+    def __call__(
+        self,
+        varRef,
+        grad,
+        mRef,
+        vRef,
+        qmapM,
+        qmapV,
+        absmaxMRef,
+        absmaxVRef,
+        step,
+        **_,
+    ):
+        return super().__call__(
+            varRef,
+            grad,
+            mRef,
+            vRef,
+            qmapM,
+            qmapV,
+            absmaxMRef,
+            absmaxVRef,
+            step,
+        )
 
 
 class ApplyAdamWQuantKernelSpec:
@@ -302,7 +422,7 @@ class ApplyAdamWQuantKernelSpec:
 class ApplyAdamWQuantAclnnSpec:
     golden = apply_adam_w_quant_golden
     customize_inputs = customize_inputs
-    third_party = {"torch": _ApplyAdamWQuantCompose}
+    third_party = {"torch": _ApplyAdamWQuantAclnnCompose}
     tolerance = _ACLNN_TOLERANCE
 
 
