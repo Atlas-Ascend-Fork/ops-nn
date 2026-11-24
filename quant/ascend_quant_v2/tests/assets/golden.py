@@ -49,6 +49,12 @@ def ascend_quant_v2_golden(
     scale = scale.astype(cast_dtype)
     offset = offset.astype(cast_dtype) if offset is not None else None
 
+    if scale.ndim == 1 and x.ndim != 1:
+        broadcast_shape = [1] * x.ndim
+        broadcast_shape[int(axis)] = scale.shape[0]
+        scale = scale.reshape(broadcast_shape)
+        if offset is not None:
+            offset = offset.reshape(broadcast_shape)
     scale_rst = x * (scale**2) if sqrt_mode else x * scale
     if offset is not None:
         scale_rst = scale_rst + offset
@@ -101,6 +107,12 @@ def aclnn_ascend_quant_v3_golden(
     x_f = x.to(torch.float32)
     scale_f = scale.to(torch.float32)
     offset_f = offset.to(torch.float32) if offset is not None else None
+    if scale_f.dim() == 1 and x_f.dim() != 1:
+        broadcast_shape = [1] * x_f.dim()
+        broadcast_shape[int(axis)] = scale_f.shape[0]
+        scale_f = scale_f.reshape(broadcast_shape)
+        if offset_f is not None:
+            offset_f = offset_f.reshape(broadcast_shape)
     scale_rst = x_f * (scale_f**2) if sqrtMode else x_f * scale_f
     if offset_f is not None:
         scale_rst = scale_rst + offset_f
@@ -110,6 +122,8 @@ def aclnn_ascend_quant_v3_golden(
         round_data = torch.floor(scale_rst)
     elif roundMode == "ceil":
         round_data = torch.ceil(scale_rst)
+    elif roundMode == "trunc":
+        round_data = torch.trunc(scale_rst)
     else:
         round_data = torch.round(scale_rst)
     round_data = round_data.clamp(-128, 127).to(torch.int8)

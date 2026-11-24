@@ -110,5 +110,16 @@ def aclnn_quantize_golden(x, scales, zeroPoints, dtype, axis, out, **kwargs):
     if offset is not None:
         offset = offset.reshape(scale.shape)
         scale_rst = scale_rst + offset
-    round_data = torch.round(scale_rst).clamp(-128, 127).to(torch.int8)
+    # Limit this reference extension to the validated integer output modes.
+    output_dtype = (
+        out.dtype if out.dtype in (torch.int8, torch.uint8, torch.int32) else torch.int8
+    )
+    limits = torch.iinfo(output_dtype)
+    # The int32 upper endpoint is not exactly representable in float32.
+    round_data = (
+        torch.round(scale_rst)
+        .to(torch.float64)
+        .clamp(limits.min, limits.max)
+        .to(output_dtype)
+    )
     return [round_data]
