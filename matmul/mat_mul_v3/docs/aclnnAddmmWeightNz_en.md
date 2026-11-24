@@ -125,7 +125,6 @@ aclnnStatus aclnnAddmmWeightNz(
       <td>-</td>
     </tr>
     <tr>
-    <tr>
       <td>beta(β)</td>
       <td>Input</td>
       <td>Represents β in the formula.</td>
@@ -145,6 +144,7 @@ aclnnStatus aclnnAddmmWeightNz(
       <td>-</td>
       <td>-</td>
     </tr>
+    <tr>
       <td>out</td>
       <td>Output</td>
       <td>Represents the output matrix of Matrix Multiplication, that is, out in the formula.</td>
