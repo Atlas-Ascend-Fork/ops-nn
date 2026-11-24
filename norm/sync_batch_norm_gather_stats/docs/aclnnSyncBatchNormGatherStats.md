@@ -134,8 +134,8 @@ aclnnStatus aclnnSyncBatchNormGatherStats(
     </tr>
     <tr>
       <td>mean（aclTensor*）</td>
-      <td>输入</td>
-      <td>表示计算过程中的均值，对应公式中的runningMean。</td>
+      <td>输入/输出</td>
+      <td>表示计算过程中的均值，对应公式中的runningMean，更新后的runningMean通过该参数输出。</td>
       <td><ul><li>支持空Tensor。</li><li>shape与totalSum的第二维一致。</li><li>数据类型与totalSum的数据类型保持一致。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
@@ -144,8 +144,8 @@ aclnnStatus aclnnSyncBatchNormGatherStats(
     </tr>
     <tr>
       <td>variance（aclTensor*）</td>
-      <td>输入</td>
-      <td>表示计算过程中的方差，对应公式中的runningVar。</td>
+      <td>输入/输出</td>
+      <td>表示计算过程中的方差，对应公式中的runningVar，更新后的runningVar通过该参数输出。</td>
       <td><ul><li>支持空Tensor。</li><li>shape与totalSum的第二维一致。</li><li>数据类型与totalSum的数据类型保持一致。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
@@ -383,28 +383,28 @@ int main() {
   std::vector<int64_t> totalSquareSumShape = {1, 2};
   std::vector<int64_t> sampleCountShape = {1};
   std::vector<int64_t> meanShape = {2};
-  std::vector<int64_t> varShape = {2};
+  std::vector<int64_t> varianceShape = {2};
   std::vector<int64_t> batchMeanShape = {2};
   std::vector<int64_t> batchInvstdShape = {2};
   void* totalSumDeviceAddr = nullptr;
   void* totalSquareSumDeviceAddr = nullptr;
   void* sampleCountDeviceAddr = nullptr;
   void* meanDeviceAddr = nullptr;
-  void* varDeviceAddr = nullptr;
+  void* varianceDeviceAddr = nullptr;
   void* batchMeanDeviceAddr = nullptr;
   void* batchInvstdDeviceAddr = nullptr;
   aclTensor* totalSum = nullptr;
   aclTensor* totalSquareSum = nullptr;
   aclTensor* sampleCount = nullptr;
   aclTensor* mean = nullptr;
-  aclTensor* var = nullptr;
+  aclTensor* variance = nullptr;
   aclTensor* batchMean = nullptr;
   aclTensor* batchInvstd = nullptr;
   std::vector<float> totalSumData = {300, 400};
   std::vector<float> totalSquareSumData = {300, 400};
   std::vector<int32_t> sampleCountData = {400};
   std::vector<float> meanData = {400, 400};
-  std::vector<float> varData = {400, 400};
+  std::vector<float> varianceData = {400, 400};
   std::vector<float> batchMeanData = {0, 0};
   std::vector<float> batchInvstdData = {0, 0};
   float momentum = 1e-1;
@@ -421,8 +421,8 @@ int main() {
   // 创建input meanData aclTensor
   ret = CreateAclTensor(meanData, meanShape, &meanDeviceAddr, aclDataType::ACL_FLOAT, &mean);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
-  // 创建input varData aclTensor
-  ret = CreateAclTensor(varData, varShape, &varDeviceAddr, aclDataType::ACL_FLOAT, &var);
+  // 创建input varianceData aclTensor
+  ret = CreateAclTensor(varianceData, varianceShape, &varianceDeviceAddr, aclDataType::ACL_FLOAT, &variance);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 创建input batchMeanData aclTensor
   ret = CreateAclTensor(batchMeanData, batchMeanShape, &batchMeanDeviceAddr, aclDataType::ACL_FLOAT, &batchMean);
@@ -436,7 +436,7 @@ int main() {
   aclOpExecutor* executor;
 
   // 调用aclnnSyncBatchNormGatherStats第一段接口
-  ret = aclnnSyncBatchNormGatherStatsGetWorkspaceSize(totalSum, totalSquareSum, sampleCount, mean, var, momentum, eps, batchMean, batchInvstd, &workspaceSize, &executor);
+  ret = aclnnSyncBatchNormGatherStatsGetWorkspaceSize(totalSum, totalSquareSum, sampleCount, mean, variance, momentum, eps, batchMean, batchInvstd, &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSyncBatchNormGatherStatsGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
 
   // 根据第一段接口计算出的workspaceSize申请device内存
@@ -469,7 +469,7 @@ int main() {
   aclDestroyTensor(totalSquareSum);
   aclDestroyTensor(sampleCount);
   aclDestroyTensor(mean);
-  aclDestroyTensor(var);
+  aclDestroyTensor(variance);
   aclDestroyTensor(batchMean);
   aclDestroyTensor(batchInvstd);
   // 7.释放device资源，需要根据具体API的接口定义修改
@@ -477,7 +477,7 @@ int main() {
   aclrtFree(totalSquareSumDeviceAddr);
   aclrtFree(sampleCountDeviceAddr);
   aclrtFree(meanDeviceAddr);
-  aclrtFree(varDeviceAddr);
+  aclrtFree(varianceDeviceAddr);
   aclrtFree(batchMeanDeviceAddr);
   aclrtFree(batchInvstdDeviceAddr);
   if (workspaceSize > 0) {
