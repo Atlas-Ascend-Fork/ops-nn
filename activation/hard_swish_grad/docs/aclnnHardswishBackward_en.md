@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: backward propagation of [aclnnHardswish](../../hard_swish/docs/aclnnHardswish&aclnnInplaceHardswish.md), which computes the gradient of tensor self.
+- Description: backward propagation of [aclnnHardswish](../../hard_swish/docs/aclnnHardswish&aclnnInplaceHardswish_en.md), which computes the gradient of tensor self.
 - Formula:
 
   $$
