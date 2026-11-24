@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Implements the backward propagation of [aclnnGlu](../../glu/docs/aclnnGlu.md).
+- Description: Implements the backward propagation of [aclnnGlu](../../glu/docs/aclnnGlu_en.md).
 - Formula:
 
   $$
