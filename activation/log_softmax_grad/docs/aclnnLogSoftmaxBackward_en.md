@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Performs backward propagation of [aclnnLogSoftmax](../../log_softmax_v2/docs/aclnnLogSoftmax.md).
+- Description: Performs backward propagation of [aclnnLogSoftmax](../../log_softmax_v2/docs/aclnnLogSoftmax_en.md).
 - Formula:
 
 $$
