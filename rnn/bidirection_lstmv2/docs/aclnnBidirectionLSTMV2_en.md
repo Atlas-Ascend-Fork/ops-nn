@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: The LSTM (Long Short-Term Memory) network is a special recurrent neural network (RNN) model. This API performs LSTM network computation. It receives the input sequence and initial state, and returns the output sequence and final state. Compared with [aclnnBidirectionLSTM](../../bidirection_lstm/docs/aclnnBidirectionLSTM.md), this API adds support for the use case where sequences have unequal lengths.
+- Description: The LSTM (Long Short-Term Memory) network is a special recurrent neural network (RNN) model. This API performs LSTM network computation. It receives the input sequence and initial state, and returns the output sequence and final state. Compared with [aclnnBidirectionLSTM](../../bidirection_lstm/docs/aclnnBidirectionLSTM_en.md), this API adds support for the use case where sequences have unequal lengths.
 - Formula:
 
   $$
