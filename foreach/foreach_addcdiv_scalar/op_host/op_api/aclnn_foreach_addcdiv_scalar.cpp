@@ -152,7 +152,6 @@ static inline bool CheckShape(const aclTensorList* x1, const aclTensorList* x2, 
 {
     if (x1->Size() != x2->Size() || x1->Size() != x3->Size()) {
         const bool x2Mismatch = x1->Size() != x2->Size();
-        const bool x3Mismatch = x1->Size() != x3->Size();
         const char* parameter = x2Mismatch ? "x2" : "x3";
         const auto actualSize = x2Mismatch ? x2->Size() : x3->Size();
         const std::string reason = (("Tensor lists must have the same number of tensors; x2=" +

@@ -84,8 +84,9 @@ static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t& u
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& totalLength, ge::DataType& dataType,
-                                         float& alpha, float& beta, float& maskLo, float& maskHi)
+static ge::graphStatus GetShapeAttrsInfo(const gert::TilingContext* context, int64_t& totalLength,
+                                         ge::DataType& dataType, float& alpha, float& beta, float& maskLo,
+                                         float& maskHi)
 {
     auto inputGrad = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputGrad);

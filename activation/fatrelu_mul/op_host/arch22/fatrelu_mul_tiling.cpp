@@ -55,7 +55,7 @@ public:
 private:
     void GetTilingKey();
     ge::graphStatus CheckYShape(size_t inputShapeDim);
-    ge::graphStatus CheckInputShapeValidation();
+    ge::graphStatus CheckInputShapeValidation() const;
     ge::DataType dataType = ge::DT_UNDEFINED;
     gert::TilingContext* tilingContext = nullptr;
     gert::Shape inputShape;
@@ -112,7 +112,7 @@ void FatreluMulTiling::GetTilingKey()
     }
 }
 
-ge::graphStatus FatreluMulTiling::CheckInputShapeValidation()
+ge::graphStatus FatreluMulTiling::CheckInputShapeValidation() const
 {
     auto thresholdShape = tilingContext->GetInputShape(1)->GetStorageShape();
     OP_CHECK_IF((thresholdShape.GetShapeSize() != 1),
