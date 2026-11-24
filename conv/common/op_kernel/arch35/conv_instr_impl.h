@@ -27,7 +27,7 @@ using namespace conv;
 template <class Intf, typename ChannelWiseT>
 __aicore__ inline void LoadChannelWiseL1Tools<Intf, ChannelWiseT>::LoadChannelWiseL1FullLoad(
     const LocalTensor<ChannelWiseT>& tensorL1, const GlobalTensor<ChannelWiseT>& tensorGm, uint64_t loadNum,
-    uint64_t gmStartAddr)
+    uint64_t gmStartAddr, uint64_t blockCount)
 {
     uint64_t byteNum = sizeof(ChannelWiseT);
     InitConstValueParams<ChannelWiseT> initParams;
@@ -37,6 +37,10 @@ __aicore__ inline void LoadChannelWiseL1Tools<Intf, ChannelWiseT>::LoadChannelWi
         initParams = InitConstValueParams<ChannelWiseT>(
             1, static_cast<uint16_t>(initDataNum * self_->ctx.singleGroupOpt), 0, 0);
         dataCopyParams = DataCopyParams(self_->ctx.singleGroupOpt, loadNum * byteNum,
+                                        (self_->ctx.convTilingData->coutOpt - loadNum) * byteNum, 0);
+    } else if (blockCount > 1) {
+        initParams = InitConstValueParams<ChannelWiseT>(1, static_cast<uint16_t>(initDataNum * blockCount), 0, 0);
+        dataCopyParams = DataCopyParams(blockCount, loadNum * byteNum,
                                         (self_->ctx.convTilingData->coutOpt - loadNum) * byteNum, 0);
     } else {
         initParams = InitConstValueParams<ChannelWiseT>(1, static_cast<uint16_t>(initDataNum), 0, 0);
@@ -58,6 +62,9 @@ __aicore__ inline void LoadChannelWiseL1Tools<Intf, ChannelWiseT>::LoadChannelWi
     } else {
         uint64_t tensorGmOffset = self_->ctx.nBL1Iter * self_->ctx.convTilingData->nBL1 +
                                   self_->ctx.nL0Iter * self_->ctx.convTilingData->nL0;
+        if constexpr (Intf::groupOptFlag && Intf::isQuantScene && !Intf::isExtendConv2d) {
+            tensorGmOffset += static_cast<uint64_t>(self_->ctx.groupOptIter) * self_->ctx.convTilingData->singleCoreCo;
+        }
         LoadChannelWiseL1FullLoad(tensorL1, tensorGm, currentNL0_, tensorGmOffset);
     }
 }

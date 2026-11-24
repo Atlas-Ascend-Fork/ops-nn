@@ -276,8 +276,14 @@ struct ConvPreProcess {
                                     self->ctx.scaleL1[self->ctx.scale1L1offset], self->ctx.scale1gm, scaleLoadNum, 0);
                             }
                         } else {
+                            uint64_t scaleBlockCount = 1;
+                            if constexpr (Intf::groupOptFlag && !Intf::groupOptPreloadFlag) {
+                                if (self->ctx.convTilingData->singleCoreGroupOpt > 1) {
+                                    scaleBlockCount = self->ctx.convTilingData->singleCoreGroupOpt;
+                                }
+                            }
                             self->ctx.loadScaleL1Ins.LoadChannelWiseL1FullLoad(self->ctx.scaleL1, self->ctx.scalegm,
-                                                                               scaleLoadNum, 0);
+                                                                               scaleLoadNum, 0, scaleBlockCount);
                         }
                         self->ctx.queueScaleL1.EnQue(self->ctx.scaleL1);
                         self->ctx.scaleL1 = self->ctx.queueScaleL1.template DeQue<typename Intf::ScaleT>();
@@ -646,6 +652,13 @@ __aicore__ inline void InitBuffer(Intf* self)
             if constexpr (Intf::groupOptPreloadFlag) {
                 if (self->ctx.convTilingData->fixpParamsFullLoadFlag) {
                     scaleL1SpaceSize = AlignB(self->ctx.convTilingData->orgCo * Intf::sizeOfScale,
+                                              BLOCK_L0_N * Intf::sizeOfScale);
+                }
+            } else if constexpr (Intf::groupOptFlag) {
+                if (self->ctx.convTilingData->fixpParamsFullLoadFlag &&
+                    self->ctx.convTilingData->singleCoreGroupOpt > 1) {
+                    scaleL1SpaceSize = AlignB(static_cast<uint64_t>(self->ctx.convTilingData->singleCoreGroupOpt) *
+                                                  self->ctx.convTilingData->singleCoreCo * Intf::sizeOfScale,
                                               BLOCK_L0_N * Intf::sizeOfScale);
                 }
             }

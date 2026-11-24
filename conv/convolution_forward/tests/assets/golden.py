@@ -558,6 +558,13 @@ def aclnn_conv_tbc_golden(
     if bias is not None and isinstance(bias, np.ndarray):
         bias = torch.from_numpy(bias.astype(np.float32))
 
+    # 记录原始声明 dtype（to_float32 归一前）：cubeMathType=2(USE_FP16) 的实现
+    # 路径按原始 dtype 决策（CalcUseFp16PromoteType：fp16/fp32/bf16 一律 DT_FLOAT16）
+    if isinstance(self, torch.Tensor):
+        origin_dtype_str = normalize_promoted_dtype(str(self.dtype).split(".")[-1])
+    else:
+        origin_dtype_str = normalize_promoted_dtype(str(np.asarray(self).dtype))
+
     self = to_float32(self)
     weight = to_float32(weight)
     if bias is not None:
@@ -585,10 +592,27 @@ def aclnn_conv_tbc_golden(
             if bias is not None:
                 bias = bias.to(torch.float16).to(torch.float32)
 
+    use_fp16_conv = cubeMathType == 2 and origin_dtype_str in (
+        "float32",
+        "float16",
+        "bfloat16",
+    )
+    if use_fp16_conv:
+        # 与 aclnn 实现一致（CalcUseFp16PromoteType + CommonPreProcess/输出 Cast）：
+        # input/weight/bias 全部 cast 到 fp16，fp16 卷积（fp16 累加），
+        # 输出为 fp16，再 cast 回声明 dtype。
+        self = self.to(torch.float16)
+        weight = weight.to(torch.float16)
+        if bias is not None:
+            bias = bias.to(torch.float16)
+
     out = torch.ops.aten.convolution(self, weight, bias, [1], [pad], [1], False, [0], 1)
 
     if out.dim() == 3:
         out = out.permute(2, 0, 1).contiguous()
+
+    if use_fp16_conv:
+        out = out.to(torch.float16)
 
     out_np = out.numpy().astype(np.float32)
     tensor_dtypes = kwargs.get("tensor_dtypes", [])
@@ -677,6 +701,20 @@ def aclnn_conv_depthwise2d_golden(
             if bias is not None:
                 bias = bias.to(torch.float16).to(torch.float32)
 
+    use_fp16_conv = cubeMathType == 2 and input_dtype_str in (
+        "float32",
+        "float16",
+        "bfloat16",
+    )
+    if use_fp16_conv:
+        # 与 aclnn 实现一致（CalcUseFp16PromoteType + CommonPreProcess/输出 Cast）：
+        # input/weight/bias 全部 cast 到 fp16，fp16 卷积（fp16 累加），
+        # 输出为 fp16，再 cast 回声明 dtype。
+        self = self.to(torch.float16)
+        weight = weight.to(torch.float16)
+        if bias is not None:
+            bias = bias.to(torch.float16)
+
     groups = self.shape[1]
 
     stride = ensure_list(stride, 2)
@@ -686,6 +724,8 @@ def aclnn_conv_depthwise2d_golden(
     out = torch.ops.aten.convolution(
         self, weight, bias, stride, padding, dilation, False, [0, 0], groups
     )
+    if use_fp16_conv:
+        out = out.to(torch.float16)
 
     output_tensor_index = kwargs.get("output_tensor_indexes", [-1])[0]
     output_dtype = kwargs.get("tensor_dtypes")[output_tensor_index]

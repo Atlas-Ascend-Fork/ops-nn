@@ -550,6 +550,11 @@ private:
         }
         if constexpr (Intf::isQuantScene) {
             if (self_->ctx.convTilingData->hasScale != 0 && self_->ctx.convTilingData->fixpParamsFullLoadFlag) {
+                if constexpr (Intf::groupOptFlag) {
+                    return static_cast<uint64_t>(self_->ctx.groupOptIter) * self_->ctx.convTilingData->singleCoreCo +
+                           self_->ctx.nBL1Iter * self_->ctx.convTilingData->nBL1 +
+                           self_->ctx.nL0Iter * self_->ctx.convTilingData->nL0;
+                }
                 return self_->ctx.nBL1Iter * self_->ctx.convTilingData->nBL1 +
                        self_->ctx.nL0Iter * self_->ctx.convTilingData->nL0;
             }
