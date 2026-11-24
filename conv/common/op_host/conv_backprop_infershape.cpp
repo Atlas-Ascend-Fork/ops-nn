@@ -55,6 +55,28 @@ constexpr size_t kNDimIndexOfHWCN = 3;
 // 通道后置format中C维在倒数第二位(HWCN/DHWCN)时距末维的偏移
 constexpr size_t kSecondLastDimOffset = 2;
 
+// geir通路的output_padding元素个数校验：属性总数不足def完整布局时该槽位非真实列表，跳过；个数不符按expected_list_size拦截
+ge::graphStatus CheckOutputPaddingListSize(gert::InferShapeContext* context, size_t output_padding_attr_idx,
+                                           size_t expected_list_size, size_t min_attr_num_for_layout)
+{
+    const auto runtime_attrs = context->GetAttrs();
+    OP_CHECK_IF(runtime_attrs == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get runtime attrs"),
+                return ge::GRAPH_FAILED);
+    if (runtime_attrs->GetAttrNum() < min_attr_num_for_layout) {
+        return ge::GRAPH_SUCCESS;
+    }
+    const auto output_padding_list = runtime_attrs->GetAttrPointer<gert::ContinuousVector>(output_padding_attr_idx);
+    if (output_padding_list == nullptr) {
+        return ge::GRAPH_SUCCESS;
+    }
+    OP_CHECK_IF(output_padding_list->GetSize() != expected_list_size,
+                OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "output_padding",
+                                             std::to_string(output_padding_list->GetSize()).c_str(),
+                                             std::to_string(expected_list_size).c_str()),
+                return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
+
 ge::graphStatus InferShapeForConvBackprop(gert::InferShapeContext* context, size_t const_tensor_idx,
                                           const char* const_tensor_name, size_t dim_num)
 {

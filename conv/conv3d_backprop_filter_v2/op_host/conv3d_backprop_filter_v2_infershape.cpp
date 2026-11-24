@@ -25,6 +25,9 @@ constexpr int32_t NCDHW_C_INDEX = 1;
 constexpr int32_t DHWCN_N_INDEX = 4;
 constexpr int32_t DHWCN_C_INDEX = 3;
 constexpr int32_t FROM_DEPTHWISE_INDEX = 9;
+// 属性总数>=10为当前def布局，槽6是output_padding列表；不足10(旧V2布局)时槽6是padding字符串，跳过校验
+constexpr size_t kOutputPaddingAttrIdx = 6;
+constexpr size_t kMinAttrNumForLayout = 10;
 
 static ge::graphStatus InferShapeForDepthwiseConv2DBackpropFilter(gert::InferShapeContext* context, ge::graphStatus ret)
 {
@@ -71,6 +74,9 @@ static ge::graphStatus InferShapeForDepthwiseConv2DBackpropFilter(gert::InferSha
 
 static ge::graphStatus InferShapeForConv3DBackpropFilter(gert::InferShapeContext* context)
 {
+    OP_CHECK_IF(CheckOutputPaddingListSize(context, kOutputPaddingAttrIdx, kConv3dDimSizeLimit, kMinAttrNumForLayout) !=
+                    ge::GRAPH_SUCCESS,
+                OP_LOGE(context->GetNodeName(), "check output_padding failed."), return ge::GRAPH_FAILED);
     auto const_tensor = context->GetInputTensor(1);
     OP_CHECK_IF(const_tensor == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "get null tensor"),
                 return ge::GRAPH_FAILED);

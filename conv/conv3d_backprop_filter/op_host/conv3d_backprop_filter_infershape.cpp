@@ -24,9 +24,15 @@ namespace Conv {
 static constexpr size_t kConv2dDimSizeLimit = 4;
 static constexpr size_t kConv3dDimSizeLimit = 5;
 static constexpr size_t kFilterSizeIndex = 1;
+// 属性总数>=8为当前def布局，槽5是output_padding列表；不足8(旧def或L0直调)时槽5是其他类型，跳过校验
+static constexpr size_t kOutputPaddingAttrIdx = 5;
+static constexpr size_t kMinAttrNumForLayout = 8;
 
 static ge::graphStatus InferShape4Conv3DBackpropFilter(gert::InferShapeContext* context)
 {
+    OP_CHECK_IF(CheckOutputPaddingListSize(context, kOutputPaddingAttrIdx, kConv3dDimSizeLimit, kMinAttrNumForLayout) !=
+                    ge::GRAPH_SUCCESS,
+                OP_LOGE(context->GetNodeName(), "check output_padding failed."), return ge::GRAPH_FAILED);
     auto const_tensor = context->GetInputTensor(kFilterSizeIndex);
     OP_CHECK_IF(const_tensor == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "get null tensor"),
                 return ge::GRAPH_FAILED);

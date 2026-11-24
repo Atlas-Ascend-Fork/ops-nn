@@ -50,6 +50,9 @@ ge::graphStatus InferShapeForConvBackpropExtend3D(gert::InferShapeContext* conte
 ge::graphStatus SetOutputShapeDim(const gert::InferShapeContext* context, const gert::Tensor* const_tensor,
                                   gert::Shape* y_shape);
 int32_t GetConvBackpropIndex(ge::Format format);
+// geir通路的output_padding元素个数校验：属性总数不足def完整布局时该槽位非真实列表，跳过；个数不符按expected_list_size拦截
+ge::graphStatus CheckOutputPaddingListSize(gert::InferShapeContext* context, size_t output_padding_attr_idx,
+                                           size_t expected_list_size, size_t min_attr_num_for_layout);
 
 } // namespace Conv
 } // namespace NN
