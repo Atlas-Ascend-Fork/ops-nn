@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Backward propagation of [aclnnDeepNorm](../../deep_norm/docs/aclnnDeepNorm.md). Computes the gradients of tensor x, tensor gx, and tensor gamma, and the sum of tensor dy.
+- Description: Backward propagation of [aclnnDeepNorm](../../deep_norm/docs/aclnnDeepNorm_en.md). Computes the gradients of tensor x, tensor gx, and tensor gamma, and the sum of tensor dy.
 
 - Formula:
 
