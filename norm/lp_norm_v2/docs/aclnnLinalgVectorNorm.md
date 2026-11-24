@@ -94,7 +94,7 @@ aclnnStatus aclnnLinalgVectorNorm(
       <td>ord（aclScalar*）</td>
       <td>输入</td>
       <td>表示范数的类型。对应公式中的ord。</td>
-      <td>-</td>
+      <td>取值支持0、1、2、inf、-inf以及其他float类型的值。</td>
       <td>FLOAT32</td>
       <td>-</td>
       <td>-</td>
@@ -104,7 +104,7 @@ aclnnStatus aclnnLinalgVectorNorm(
       <td>dims（aclIntArray*）</td>
       <td>输入</td>
       <td>指定计算范数的维度。</td>
-      <td>支持[-N, N-1]，且dims中的元素不能重复，N为self的维度。默认值为None，为None时self会被展平后计算。</td>
+      <td>支持[-N, N-1]，且dims中的元素不能重复，N为self的维度。当dims为空数组（数组长度为0）时，表示对self的所有维度计算范数。</td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
@@ -134,7 +134,7 @@ aclnnStatus aclnnLinalgVectorNorm(
       <td>out（aclTensor*）</td>
       <td>输出</td>
       <td>计算输出张量。对应公式中的out。</td>
-      <td>若keepDims为true，除dims指定维度上的size为1以外，其余维度的shape需要与self保持一致；若keepDims为false，reduce轴的维度不保留，其余维度shape需要与self一致。</td>
+      <td><ul><li>若keepDims为true，除dims指定维度上的size为1以外，其余维度的shape需要与self保持一致；当dims为空数组时，out的每个维度大小均为1。</li><li>若keepDims为false，reduce轴的维度不保留，其余维度shape需要与self一致；当dims为空数组时，out为0维Tensor。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
@@ -385,7 +385,7 @@ int main()
     // 创建ord aclScalar
     ord = aclCreateScalar(&pValue, aclDataType::ACL_FLOAT);
     CHECK_RET(ord != nullptr, return ret);
-    // 创建dim aclIntArray
+    // 创建dims aclIntArray
     dims = aclCreateIntArray(dimData.data(), 1);
     CHECK_RET(dims != nullptr, return ret);
 

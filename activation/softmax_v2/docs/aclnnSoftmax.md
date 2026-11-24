@@ -94,8 +94,8 @@ aclnnStatus aclnnSoftmax(
       <td>dim（int64_t）</td>
       <td>输入</td>
       <td>需要做Softmax的轴。</td>
+      <td>取值范围[-dim_num, dim_num-1]（dim_num为self的shape维度）。</td>
       <td>INT64</td>
-      <td>-</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

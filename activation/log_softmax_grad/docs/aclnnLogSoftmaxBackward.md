@@ -88,16 +88,6 @@ aclnnStatus aclnnLogSoftmaxBackward(
       <td>1-8</td>
       <td>√</td>
     </tr>
-      <tr>
-      <td>dim（int64_t）</td>
-      <td>输入</td>
-      <td>反向传播函数的维度。</td>
-      <td>取值范围[-dim_num, dim_num-1]（dim_num为gradOutput的shape维度）。</td>
-      <td>INT64</td>
-      <td>-</td>
-      <td>-</td>
-      <td>-</td>
-    </tr>
      <tr>
       <td>output（aclTensor*）</td>
       <td>输入</td>
@@ -107,6 +97,16 @@ aclnnStatus aclnnLogSoftmaxBackward(
       <td>ND</td>
       <td>1-8</td>
       <td>√</td>
+    </tr>
+      <tr>
+      <td>dim（int64_t）</td>
+      <td>输入</td>
+      <td>反向传播函数的维度。</td>
+      <td>取值范围[-dim_num, dim_num-1]（dim_num为gradOutput的shape维度）。</td>
+      <td>INT64</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>out（aclTensor*）</td>
@@ -360,7 +360,7 @@ int main() {
     LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
   }
 
-  // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
+  // 6. 释放aclTensor，需要根据具体API的接口定义修改
   aclDestroyTensor(gradOutput);
   aclDestroyTensor(output);
   aclDestroyTensor(out);

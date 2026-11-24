@@ -415,6 +415,7 @@ aclnnStatus aclnnGroupNormBackward(
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
 ```Cpp
+#include <array>
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"
@@ -617,7 +618,7 @@ int main()
         LOG_PRINT("gradBetaOutResultData[%ld] is: %f\n", i, gradBetaOutResultData[i]);
     }
 
-    // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
+    // 6. 释放aclTensor和aclBoolArray，需要根据具体API的接口定义修改
     aclDestroyTensor(gradOut);
     aclDestroyTensor(input);
     aclDestroyTensor(mean);
@@ -626,6 +627,7 @@ int main()
     aclDestroyTensor(gradInput);
     aclDestroyTensor(gradGammaOut);
     aclDestroyTensor(gradBetaOut);
+    aclDestroyBoolArray(outputMask);
 
     // 7. 释放device资源，需要根据具体API的接口定义修改
     aclrtFree(gradOutDeviceAddr);

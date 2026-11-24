@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：返回给定张量的矩阵范数或者向量范数。
+- 接口功能：返回给定张量沿`dim`指定维度计算的向量范数，`dim`支持同时指定多个维度。
 
 - 计算公式：支持0/1/2范数、无穷范数以及其他`p`为float类型的范数计算。
   - 0-范数：
@@ -38,7 +38,7 @@
     \Vert x \Vert = \sum_{i=1}^{N}{\vert x_i \vert}
     $$
 
-  - 2-范数（默认值）：
+  - 2-范数：
 
     $$
     \Vert x \Vert_2 = (\sum_{i=1}^{N}{\vert x_i \vert^2})^{\frac{1}{2}}
@@ -123,7 +123,7 @@ aclnnStatus aclnnNorm(
       <td>pScalar（aclScalar*）</td>
       <td>输入</td>
       <td>表示范数的类型，公式中的p。</td>
-      <td>-</td>
+      <td>取值支持0、1、2、inf、-inf以及其他float类型的值；各取值对应的计算公式参见功能说明。</td>
       <td>FLOAT32</td>
       <td>-</td>
       <td>-</td>
@@ -392,7 +392,7 @@ int main()
     // 创建out aclTensor
     ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT, &out);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    // 创建p aclTensor
+    // 创建pScalar aclScalar
     pScalar = aclCreateScalar(&pValue, aclDataType::ACL_FLOAT);
     CHECK_RET(pScalar != nullptr, return ret);
     // 创建dim aclIntArray
