@@ -46,7 +46,7 @@ Each operator uses a [two-phase API](../../../docs/en/context/two_phase_api.md).
 aclnnStatus aclnnForeachDivListGetWorkspaceSize(
   const aclTensorList *x1,
   const aclTensorList *x2,
-  const aclTensorList *out,
+  aclTensorList       *out,
   uint64_t            *workspaceSize,
   aclOpExecutor      **executor)
 ```
