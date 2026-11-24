@@ -28,12 +28,16 @@ REG_OP(Data).INPUT(x, TensorType::ALL()).OUTPUT(y, TensorType::ALL()).ATTR(index
 } // namespace ge
 
 namespace {
+// 算子输出 sum 和 square_sum；本示例的每个输出张量有两个元素。
+constexpr size_t OUTPUT_TENSOR_COUNT = 2;
+constexpr size_t VALUES_PER_OUTPUT = 2;
+
 bool CheckOutputs(const std::vector<ge::Tensor>& outputs)
 {
-    constexpr float expected[2][2] = {{12.0F, 24.0F}, {12.0F, 48.0F}};
-    const char* names[] = {"sum", "square_sum"};
-    const std::vector<int64_t> outputShape = {2};
-    if (outputs.size() != 2) {
+    constexpr float expected[OUTPUT_TENSOR_COUNT][VALUES_PER_OUTPUT] = {{12.0F, 24.0F}, {12.0F, 48.0F}};
+    const char* names[OUTPUT_TENSOR_COUNT] = {"sum", "square_sum"};
+    const std::vector<int64_t> outputShape = {VALUES_PER_OUTPUT};
+    if (outputs.size() != OUTPUT_TENSOR_COUNT) {
         std::printf("Expected two outputs, got %zu\n", outputs.size());
         return false;
     }
@@ -44,11 +48,11 @@ bool CheckOutputs(const std::vector<ge::Tensor>& outputs)
             std::printf("Unexpected descriptor or buffer size for %s\n", names[i]);
             return false;
         }
-        float values[2];
+        float values[VALUES_PER_OUTPUT];
         if (memcpy_s(values, sizeof(values), outputs[i].GetData(), sizeof(values)) != EOK) {
             return false;
         }
-        for (size_t c = 0; c < 2; ++c) {
+        for (size_t c = 0; c < VALUES_PER_OUTPUT; ++c) {
             std::printf("%s[%zu] = %g\n", names[i], c, values[c]);
             // These small integer sums are exactly representable in float32.
             if (values[c] != expected[i][c]) {

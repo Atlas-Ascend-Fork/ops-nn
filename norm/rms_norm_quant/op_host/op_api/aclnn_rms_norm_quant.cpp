@@ -144,7 +144,7 @@ struct RmsNormQuantInputTensor {
     const aclTensor* offset;
 };
 
-static bool CheckNotNull(RmsNormQuantInputTensor& inputTensor, aclTensor* y)
+static bool CheckNotNull(RmsNormQuantInputTensor& inputTensor, const aclTensor* y)
 {
     OP_CHECK(inputTensor.x != nullptr, ReportNullPointerError(__func__, "inputTensor.x"), return false);
     OP_CHECK(inputTensor.gamma != nullptr, ReportNullPointerError(__func__, "inputTensor.gamma"), return false);

@@ -35,6 +35,9 @@
 
 using namespace op;
 
+static constexpr size_t NDHWC_DIM_NUM = 5;
+static constexpr size_t NHWC_DIM_NUM = 4;
+
 static const std::initializer_list<op::DataType> ASCEND910_DTYPE_SUPPORT_LIST = {op::DataType::DT_FLOAT,
                                                                                  op::DataType::DT_FLOAT16};
 
@@ -117,8 +120,8 @@ static bool CheckFormat(const aclTensor* input, const aclTensor* out)
     if (Ops::NN::AclnnUtil::IsRegbase()) {
         const auto dimNum = input->GetViewShape().GetDimNum();
         const auto storageFormat = input->GetStorageFormat();
-        if ((storageFormat == Format::FORMAT_NDHWC && dimNum != 5) ||
-            (storageFormat == Format::FORMAT_NHWC && dimNum != 4)) {
+        if ((storageFormat == Format::FORMAT_NDHWC && dimNum != NDHWC_DIM_NUM) ||
+            (storageFormat == Format::FORMAT_NHWC && dimNum != NHWC_DIM_NUM)) {
             OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
                 "aclnnBatchNormElemt", "format",
                 (std::string(op::ToString(storageFormat).GetString()) + ", dim=" + std::to_string(dimNum)).c_str(),

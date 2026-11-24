@@ -218,8 +218,8 @@ static bool CheckShapeDim(const aclTensor* x1, const aclTensor* x2, const aclTen
     return true;
 }
 
-static bool CheckShapeRelation(const aclTensor* x1, const aclTensor* x2, const aclTensor* gamma, aclTensor* y1Out,
-                               aclTensor* y2Out, aclTensor* xOut)
+static bool CheckShapeRelation(const aclTensor* x1, const aclTensor* x2, const aclTensor* gamma, const aclTensor* y1Out,
+                               const aclTensor* y2Out, const aclTensor* xOut)
 {
     // 资料约束：x2/y1Out/y2Out/xOut 的 shape 须与 x1 一致，
     // 否则 kernel 按 x1 布局扁平读 x2 静默出错、ViewCopy 因输出 shape 不匹配返回空指针（561103）

@@ -44,6 +44,21 @@ constexpr int64_t kUbSlotCnt = 11;
 // axis == -65535 → Mul 模式；其他任意值 → Div 模式（不报错）。
 // 仅 host tiling 消费（kernel 侧只读模板参数 isMulMode），故定义在 host 侧。
 constexpr int64_t MUL_MODE_AXIS = -65535;
+// 偶数下标判定基数（idx % 2 == 0 表示 x1/x2 连续读取块）。
+constexpr int64_t kEvenModDivisor = 2;
+// 分组双流水准入阈值：A 循环总数不超过核数一半，且 R 循环总数至少 2 轮才值得分组。
+constexpr int64_t kGroupCoreDivisor = 2;
+constexpr int64_t kGroupMinRLoopCnt = 2;
+// 输入/输出个数（与 OpDef 一致）：x1,x2,gamma,beta,bias,scales1,scales2,zp1,zp2 共 9 入；y1,y2,x 共 3 出。
+constexpr int32_t kInTotalNum = 9;
+// 逐输入校验的起始下标：跳过 x1/x2，从 gamma（下标 2）起。
+constexpr int32_t kInParamStartIdx = 2;
+constexpr int32_t kOutTotalNum = 3;
+// 维数上限（rank ∉ [1,8] → 拒绝）。
+constexpr size_t kMaxRank = 8;
+// dtype 字节数：fp16/bf16 占 2 字节，fp32 占 4 字节。
+constexpr int64_t kFp16Bytes = 2;
+constexpr int64_t kFp32Bytes = 4;
 
 // scalar shape（rank=0）规范化为 {1}，与 add_layer_norm/elu 等 arch35 tiling 同惯例。
 const gert::Shape g_vec_1_shape = {1};
@@ -126,7 +141,7 @@ static ge::graphStatus ComputeAUbFactor(const DuaQuantizeAddLayerNormCompileInfo
     if (idx < 0) {
         v.aSplitIdx = 0;
         v.aUbFactor = pp.axisShape[0];
-    } else if (idx % 2 == 0) {
+    } else if (idx % kEvenModDivisor == 0) {
         v.aSplitIdx = idx;
         v.aUbFactor = std::min(cachelineTmp / product, pp.axisShape[idx]);
     } else {
@@ -138,7 +153,7 @@ static ge::graphStatus ComputeAUbFactor(const DuaQuantizeAddLayerNormCompileInfo
 
 static bool ShouldUseGroup(int64_t aLoopCntTotal, int64_t coreNum, int64_t rLoopCntTotal)
 {
-    return (aLoopCntTotal <= coreNum / 2) && (rLoopCntTotal >= 2);
+    return (aLoopCntTotal <= coreNum / kGroupCoreDivisor) && (rLoopCntTotal >= kGroupMinRLoopCnt);
 }
 
 // 字段名与 tiling_data.h 一致
@@ -263,7 +278,7 @@ static ge::graphStatus CheckSupported(gert::TilingContext* context)
                                   "FLOAT, FLOAT16 or BF16");
         return ge::GRAPH_FAILED;
     }
-    for (int32_t i = 0; i < 9; ++i) {
+    for (int32_t i = 0; i < kInTotalNum; ++i) {
         // 必选输入（i<7）按 runtime 序号取；可选输入（i>=7）必须用 GetOptionalInputTensor：
         // 缺省的可选输入不占 runtime slot，按 IR 序号调 GetInputTensor 会串到后面的输入/输出。
         const gert::Tensor* t = (i >= 7) ? context->GetOptionalInputTensor(i) : context->GetInputTensor(i);
@@ -295,7 +310,7 @@ static ge::graphStatus CheckSupported(gert::TilingContext* context)
                 return ge::GRAPH_FAILED);
     const gert::Shape& x1Shape = EnsureNotScalar(s1->GetStorageShape());
     const size_t rank = x1Shape.GetDimNum();
-    if (rank > 8) {
+    if (rank > kMaxRank) {
         OP_LOGE_FOR_INVALID_SHAPEDIM(opName, "x1", std::to_string(rank).c_str(), "within the range [1, 8]");
         return ge::GRAPH_FAILED;
     }
@@ -322,7 +337,7 @@ static ge::graphStatus CheckSupported(gert::TilingContext* context)
                                                "x2.shape must equal x1.shape");
         return ge::GRAPH_FAILED;
     }
-    for (int32_t i = 2; i < 9; ++i) { // gamma/beta/bias/scales1/2/zp1/zp2 均为 [W]
+    for (int32_t i = kInParamStartIdx; i < kInTotalNum; ++i) { // gamma/beta/bias/scales1/2/zp1/zp2 均为 [W]
         // i>=7 为可选输入：缺省不占 runtime slot，必须用 GetOptionalInputShape（同 §1 索引规则）
         const gert::StorageShape* si = (i >= 7) ? context->GetOptionalInputShape(i) : context->GetInputShape(i);
         if (si == nullptr) { // 可选输入缺省
@@ -344,7 +359,7 @@ static ge::graphStatus CheckSupported(gert::TilingContext* context)
     // 调用方传入的输出缓冲若小于 tiling 写入量，kernel 会越界写，故必须拦截。
     // 可达性：**shape 分支可达**（实测三输出各自形状非法均在此拦下）；
     //         **dtype 分支为防御性**——OpDef 已声明输出 dtype，违规在框架层先被拦。
-    for (int32_t i = 0; i < 3; ++i) {
+    for (int32_t i = 0; i < kOutTotalNum; ++i) {
         const gert::StorageShape* os = context->GetOutputShape(i);
         // 防御：框架未下发必选输出，非用户可触发（保持仅记日志, 不再隐式生成E9内部码）
         OP_CHECK_IF(
@@ -600,11 +615,11 @@ static int64_t GetDTypeSizeOf(gert::TilingContext* context)
     switch (dt) {
         case ge::DT_FLOAT16:
         case ge::DT_BF16:
-            return 2;
+            return kFp16Bytes;
         case ge::DT_FLOAT:
-            return 4;
+            return kFp32Bytes;
         default:
-            return 4;
+            return kFp32Bytes;
     }
 }
 
@@ -779,7 +794,6 @@ ge::graphStatus TilingFuncDuaQuantizeAddLayerNorm(gert::TilingContext* context)
     // 可选输入存在性：zero_points1/2 缺省按全 0（判据同 DESIGN：shape + desc 双非空）
     const bool hasZp1 = (context->GetOptionalInputShape(7) != nullptr && context->GetOptionalInputDesc(7) != nullptr);
     const bool hasZp2 = (context->GetOptionalInputShape(8) != nullptr && context->GetOptionalInputDesc(8) != nullptr);
-
     // 分支自判短路链：准入条件与 SetTilingKey 均在各分支函数内部，链上不写。
     if (DuaQuantizeAddLayerNormGroupTiling(context, *compileInfo, pp, v, sysWsBytes, epsilon, hasZp1, hasZp2,
                                            isMulMode)) {

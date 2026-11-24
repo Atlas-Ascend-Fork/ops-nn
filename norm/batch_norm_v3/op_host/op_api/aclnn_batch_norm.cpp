@@ -360,7 +360,7 @@ aclnnStatus aclnnBatchNormGetWorkspaceSize(const aclTensor* input, const aclTens
     } else {
         // 4D/5D ND输入经ReFormat为NCHW/NCDHW计算后，写回前需对齐回用户的原始格式，
         // ViewCopy要求源与目标格式一致（issue#7146）
-        auto bnOutputAligned = (const aclTensor*)bnOutput;
+        auto bnOutputAligned = static_cast<const aclTensor*>(bnOutput);
         if (bnOutput->GetStorageFormat() != output->GetStorageFormat()) {
             bnOutputAligned = l0op::ReFormat(bnOutput, output->GetStorageFormat());
             CHECK_RET(bnOutputAligned != nullptr, ACLNN_ERR_INNER_NULLPTR);

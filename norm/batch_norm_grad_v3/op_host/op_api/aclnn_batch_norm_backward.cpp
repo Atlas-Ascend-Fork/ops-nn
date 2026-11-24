@@ -445,7 +445,7 @@ aclnnStatus BatchNormPost(op::Shape& inputShape, aclTensor* bnGradInput, aclTens
     } else {
         // 4D/5D ND输入经ReFormat为NCHW/NCDHW计算后，写回前需对齐回用户的原始格式，
         // ViewCopy要求源与目标格式一致（issue#7036）
-        auto bnGradInputAligned = (const aclTensor*)bnGradInput;
+        auto bnGradInputAligned = static_cast<const aclTensor*>(bnGradInput);
         if (bnGradInput->GetStorageFormat() != gradInput->GetStorageFormat()) {
             bnGradInputAligned = l0op::ReFormat(bnGradInput, gradInput->GetStorageFormat());
             CHECK_RET(bnGradInputAligned != nullptr, ACLNN_ERR_INNER_NULLPTR);

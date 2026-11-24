@@ -316,10 +316,9 @@ static graphStatus InferDataType4AddRmsNormDynamicQuantV2(gert::InferDataTypeCon
 
 // Keep the original inference functions intact for every non-regbase target.
 static ge::graphStatus FetchOptionalInputsAndAttrRegbase(
-    gert::InferShapeContext* context, const gert::Shape* x1Shape, const gert::Shape* gammaShape, bool& smooth1Exist,
-    bool& smooth2Exist, bool& betaExist, const gert::Shape*& smooth1Shape, const gert::Shape*& smooth2Shape,
-    const gert::Shape*& betaShape, const gert::ContinuousVector*& outputMaskAttr, gert::Shape* xShape,
-    gert::Shape* y1Shape, gert::Shape* y2Shape)
+    const gert::InferShapeContext* context, const gert::Shape* x1Shape, bool& smooth1Exist, bool& smooth2Exist,
+    bool& betaExist, const gert::Shape*& smooth1Shape, const gert::Shape*& smooth2Shape, const gert::Shape*& betaShape,
+    const gert::ContinuousVector*& outputMaskAttr, gert::Shape* xShape, gert::Shape* y1Shape, gert::Shape* y2Shape)
 {
     smooth1Shape = context->GetOptionalInputShape(SMOOTH1_IDX);
     smooth1Exist = CheckOptionalShapeExisting(smooth1Shape);
@@ -367,8 +366,8 @@ static ge::graphStatus InferShape4AddRmsNormDynamicQuantV2Regbase(gert::InferSha
     const gert::Shape* smooth2Shape = nullptr;
     const gert::Shape* betaShape = nullptr;
     const gert::ContinuousVector* outputMaskAttr = nullptr;
-    if (FetchOptionalInputsAndAttrRegbase(context, x1Shape, gammaShape, smooth1Exist, smooth2Exist, betaExist,
-                                          smooth1Shape, smooth2Shape, betaShape, outputMaskAttr, xShape, y1Shape,
+    if (FetchOptionalInputsAndAttrRegbase(context, x1Shape, smooth1Exist, smooth2Exist, betaExist, smooth1Shape,
+                                          smooth2Shape, betaShape, outputMaskAttr, xShape, y1Shape,
                                           y2Shape) != GRAPH_SUCCESS) {
         return GRAPH_FAILED;
     }

@@ -42,6 +42,10 @@ using namespace ge;
 using std::map;
 using std::string;
 using std::vector;
+
+// QuantizeAddLayerNorm 固定输出 y（int8）与 x（浮点）共 OUTPUT_TENSOR_NUM 个张量。
+constexpr int OUTPUT_TENSOR_NUM = 2;
+
 #define ADD_INPUT(inputIndex, inputName, inputDtype, inputShape)                                                \
     vector<int64_t> placeholder##inputIndex##Shape = inputShape;                                                \
     auto placeholder##inputIndex = op::Data("placeholder" + std::to_string(inputIndex)).set_attr_index(0);      \
@@ -64,9 +68,9 @@ using std::vector;
         return FAILED;                                                                                          \
     }                                                                                                           \
     add1.set_input_##inputName(placeholder##inputIndex);                                                        \
-    inputs.push_back(placeholder##inputIndex);
+    inputs.push_back(placeholder##inputIndex)
 
-#define ADD_INPUT_ATTR(attrName, attrValue) add1.set_attr_##attrName(attrValue);
+#define ADD_INPUT_ATTR(attrName, attrValue) add1.set_attr_##attrName(attrValue)
 
 #define LOG_PRINT(message, ...)         \
     do {                                \
@@ -258,7 +262,7 @@ int RunExample()
     }
 
     int output_num = output.size();
-    if (output_num != 2 || output[0].GetTensorDesc().GetDataType() != DT_INT8 ||
+    if (output_num != OUTPUT_TENSOR_NUM || output[0].GetTensorDesc().GetDataType() != DT_INT8 ||
         output[1].GetTensorDesc().GetDataType() != DT_FLOAT || output[0].GetData() == nullptr ||
         output[1].GetData() == nullptr) {
         printf("%s - ERROR - [XIR]: Graph returned invalid y/x outputs\n", GetTime().c_str());
