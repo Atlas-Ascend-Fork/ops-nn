@@ -555,7 +555,7 @@ bool FlatQuantTiling::CheckDstTypeMax(ge::DataType outDtype) const
 {
     if (dstTypeMax_ != nullptr && outDtype == ge::DT_FLOAT4_E2M1) {
         float localDstTypeMax = *dstTypeMax_;
-        OP_CHECK_IF(localDstTypeMax != ZERO_FLOAT && (localDstTypeMax < SIX_FLOAT || localDstTypeMax > TWELVE_FLOAT),
+        OP_CHECK_IF(localDstTypeMax != ZERO_FLOAT && !(localDstTypeMax >= SIX_FLOAT && localDstTypeMax <= TWELVE_FLOAT),
                     OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
                         tilingContext_->GetNodeName(), "dst_type_max", std::to_string(localDstTypeMax).c_str(),
                         "the value of attr dst_type_max must be 0 or in the range [6, 12]"),

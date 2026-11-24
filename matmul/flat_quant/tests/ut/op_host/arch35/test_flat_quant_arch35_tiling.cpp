@@ -9,6 +9,7 @@
  */
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 #include <gtest/gtest.h>
@@ -333,6 +334,14 @@ static const vector<FlatQuantArch35Data> MakeTilingCases()
     groupListCase.groupListType = 1;
     groupListCase.expect_status = ge::GRAPH_FAILED;
     cases.push_back(groupListCase);
+
+    // ==================== dst_type_max=NaN: MXFP4校验须拒绝(NaN关系比较均false, 正向判定拦截) ====================
+    FlatQuantArch35Data nanDstTypeMaxCase = MakeArch35Case("960dt_mxfp4_dst_type_max_nan_fail", COMPILE_INFO_960DT,
+                                                           ge::DT_FLOAT16, ge::DT_FLOAT4_E2M1, ge::DT_FLOAT8_E8M0,
+                                                           ge::DT_FLOAT4_E2M1, 16, 64, 64);
+    nanDstTypeMaxCase.dstTypeMax = std::numeric_limits<float>::quiet_NaN();
+    nanDstTypeMaxCase.expect_status = ge::GRAPH_FAILED;
+    cases.push_back(nanDstTypeMaxCase);
 
     // ==================== ascend950对照: 同形状非对齐MXFP4走key6(Blaze), 与920x的key4回退互为区分 ====================
     cases.push_back(MakeArch35Case("950_mxfp4_noalign_key6_contrast", COMPILE_INFO_DAV_3510, ge::DT_FLOAT16,

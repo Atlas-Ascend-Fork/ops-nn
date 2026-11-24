@@ -8,12 +8,14 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include <iostream>
+#include <limits>
 #include "gtest/gtest.h"
 #include "infershape_test_util.h"
 #include "ut_op_common.h"
 #include "log/log.h"
 #include "platform/platform_info.h"
 #include "op_common/op_host/util/op_const_def.h"
+#include "util/shape_util.h"
 #include "../../../../../common/inc/op_host/op_const_def_nn.h"
 #include "../../../op_graph/flat_quant_proto.h"
 
@@ -556,4 +558,101 @@ TEST_F(FlatQuantProto, infershape_dav9201_case_3)
                       .Build();
 
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(FlatQuantProto, infershape_dav9201_case_4)
+{
+    // mock DAV_9201, MxFP4且dst_type_max=NaN(关系比较均false,须正向判定拒绝) -> 失败
+    SetFlatQuantPlatform920Series("Ascend960DT", static_cast<int32_t>(Ops::Base::DAV_9201));
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("FlatQuant")->infer_shape;
+
+    int64_t dimK = 16;
+    int64_t dimM = 64;
+    int64_t dimN = 64;
+    int64_t dimMNCeil = 64;
+    int64_t dimN_EQUAL_2 = 2;
+    gert::StorageShape xShape = {{dimK, dimM, dimN}, {dimK, dimM, dimN}};
+    gert::StorageShape p1Shape = {{dimM, dimM}, {dimM, dimM}};
+    gert::StorageShape p2Shape = {{dimN, dimN}, {dimN, dimN}};
+    gert::StorageShape outShape = {{dimK, dimM * dimN}, {dimK, dimM * dimN}};
+    gert::StorageShape scaleShape = {{dimK, dimMNCeil, dimN_EQUAL_2}, {dimK, dimMNCeil, dimN_EQUAL_2}};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(3, 2)
+                      .IrInstanceNum({1, 1, 1})
+                      .NodeAttrs({{"clip_ratio", Ops::NN::AnyValue::CreateFrom<float>(1.0f)},
+                                  {"dst_dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(40L)},
+                                  {"dst_type_max",
+                                   Ops::NN::AnyValue::CreateFrom<float>(std::numeric_limits<float>::quiet_NaN())}})
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT16, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT16, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT4_E2M1, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT8_E8M0, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .InputShapes({&xShape, &p1Shape, &outShape})
+                      .OutputShapes({&outShape, &scaleShape})
+                      .Build();
+
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(FlatQuantProto, infershape_dav9201_case_5)
+{
+    // mock DAV_9201, x秩为1(非3维): 取维前须校验秩, 不允许读残留维度 -> 失败
+    SetFlatQuantPlatform920Series("Ascend960DT", static_cast<int32_t>(Ops::Base::DAV_9201));
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("FlatQuant")->infer_shape;
+
+    gert::StorageShape xShape = {{16}, {16}};
+    gert::StorageShape p1Shape = {{64, 64}, {64, 64}};
+    gert::StorageShape p2Shape = {{64, 64}, {64, 64}};
+    gert::StorageShape outShape = {{16, 64, 64}, {16, 64, 64}};
+    gert::StorageShape scaleShape = {{16}, {16}};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(3, 2)
+                      .IrInstanceNum({1, 1, 1})
+                      .NodeAttrs({{"clip_ratio", Ops::NN::AnyValue::CreateFrom<float>(1.0f)},
+                                  {"dst_dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(29L)}})
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT16, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT16, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT4, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .InputShapes({&xShape, &p1Shape, &outShape})
+                      .OutputShapes({&outShape, &scaleShape})
+                      .Build();
+
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(FlatQuantProto, infershape_dav9201_case_6)
+{
+    // mock DAV_9201, x为未知秩(-2): 按约定输出未知秩shape并成功
+    SetFlatQuantPlatform920Series("Ascend960DT", static_cast<int32_t>(Ops::Base::DAV_9201));
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("FlatQuant")->infer_shape;
+
+    gert::StorageShape xShape = {{-2}, {-2}};
+    gert::StorageShape p1Shape = {{64, 64}, {64, 64}};
+    gert::StorageShape p2Shape = {{64, 64}, {64, 64}};
+    gert::StorageShape outShape;
+    gert::StorageShape scaleShape;
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(3, 2)
+                      .IrInstanceNum({1, 1, 1})
+                      .NodeAttrs({{"clip_ratio", Ops::NN::AnyValue::CreateFrom<float>(1.0f)},
+                                  {"dst_dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(29L)}})
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT16, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT16, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT4, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::Format::FORMAT_ND, ge::Format::FORMAT_ND)
+                      .InputShapes({&xShape, &p1Shape, &outShape})
+                      .OutputShapes({&outShape, &scaleShape})
+                      .Build();
+
+    auto context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    EXPECT_TRUE(Ops::Base::IsUnknownRank(*context->GetOutputShape(0)));
+    EXPECT_TRUE(Ops::Base::IsUnknownRank(*context->GetOutputShape(1)));
 }

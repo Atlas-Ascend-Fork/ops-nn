@@ -10,7 +10,7 @@
 
 /*!
  * \file flat_quant.cpp
- * \brief
+ * \brief l0op wrapper for the FlatQuant operator (output allocation and AICore launch).
  */
 
 #include "flat_quant.h"
@@ -24,7 +24,6 @@
 #include "opdev/op_dfx.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "log/log.h"
-#include "flat_quant_op_util.h"
 
 using namespace op;
 
@@ -34,15 +33,15 @@ OP_TYPE_REGISTER(FlatQuant);
 static std::tuple<aclTensor*, aclTensor*> FlatQuantAICore(const aclTensor* x, const aclTensor* kroneckerP1,
                                                           const aclTensor* kroneckerP2,
                                                           const aclTensor* groupListOptional, float clipRatio,
-                                                          int64_t dst_dtype, float dstTypeMax, int64_t groupListType,
+                                                          int64_t dstDtype, float dstTypeMax, int64_t groupListType,
                                                           aclTensor* out, aclTensor* quantScale,
                                                           aclOpExecutor* executor)
 {
-    L0_DFX(FlatQuantAICore, x, kroneckerP1, kroneckerP2, groupListOptional, clipRatio, dst_dtype, dstTypeMax,
+    L0_DFX(FlatQuantAICore, x, kroneckerP1, kroneckerP2, groupListOptional, clipRatio, dstDtype, dstTypeMax,
            groupListType, out, quantScale);
     auto retAicore = ADD_TO_LAUNCHER_LIST_AICORE(FlatQuant, OP_INPUT(x, kroneckerP1, kroneckerP2, groupListOptional),
                                                  OP_OUTPUT(out, quantScale),
-                                                 OP_ATTR(clipRatio, dst_dtype, dstTypeMax, groupListType));
+                                                 OP_ATTR(clipRatio, dstDtype, dstTypeMax, groupListType));
     OP_CHECK_ADD_TO_LAUNCHER_LIST_AICORE(retAicore != ACLNN_SUCCESS, return std::tuple(nullptr, nullptr),
                                          "FlatQuant add to aicore launch list failed.");
     return std::tie(out, quantScale);
@@ -50,11 +49,11 @@ static std::tuple<aclTensor*, aclTensor*> FlatQuantAICore(const aclTensor* x, co
 
 const std::tuple<aclTensor*, aclTensor*> FlatQuant(const aclTensor* x, const aclTensor* kroneckerP1,
                                                    const aclTensor* kroneckerP2, const aclTensor* groupListOptional,
-                                                   float clipRatio, int64_t dst_dtype, float dstTypeMax,
+                                                   float clipRatio, int64_t dstDtype, float dstTypeMax,
                                                    int64_t groupListType, aclTensor* out, aclTensor* quantScale,
                                                    aclOpExecutor* executor)
 {
-    if (dst_dtype != DataType::DT_FLOAT4_E2M1 && dst_dtype != Ops::NN::DT_HIFLOAT4) {
+    if (dstDtype != DataType::DT_FLOAT4_E2M1 && dstDtype != Ops::NN::DT_HIFLOAT4) {
         out = executor->AllocTensor(x->GetViewShape(), DataType::DT_INT4, x->GetViewFormat());
         if (out == nullptr) {
             // AllocTensor失败属内部资源错误, 不复用EZ1011入参语义; 上报EZ1009(执行失败)
@@ -63,9 +62,9 @@ const std::tuple<aclTensor*, aclTensor*> FlatQuant(const aclTensor* x, const acl
             REPORT_PREDEFINED_ERR_MSG("EZ1009", ez1009Key, ez1009Value);
             return std::tuple(nullptr, nullptr);
         }
-        int64_t K = x->GetViewShape().GetDim(0);
-        dst_dtype = DataType::DT_INT32;
-        quantScale = executor->AllocTensor(op::Shape({K}), op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
+        int64_t dimM = x->GetViewShape().GetDim(0);
+        dstDtype = DataType::DT_INT32;
+        quantScale = executor->AllocTensor(op::Shape({dimM}), op::DataType::DT_FLOAT, op::Format::FORMAT_ND);
         if (quantScale == nullptr) {
             // AllocTensor失败属内部资源错误, 不复用EZ1011入参语义; 上报EZ1009(执行失败)
             const std::vector<const char*> ez1009Key = {"opName", "reason"};
@@ -74,7 +73,7 @@ const std::tuple<aclTensor*, aclTensor*> FlatQuant(const aclTensor* x, const acl
             return std::tuple(nullptr, nullptr);
         }
     }
-    return FlatQuantAICore(x, kroneckerP1, kroneckerP2, groupListOptional, clipRatio, dst_dtype, dstTypeMax,
+    return FlatQuantAICore(x, kroneckerP1, kroneckerP2, groupListOptional, clipRatio, dstDtype, dstTypeMax,
                            groupListType, out, quantScale, executor);
 }
 

@@ -15,7 +15,7 @@
 namespace l0op {
 const std::tuple<aclTensor*, aclTensor*> FlatQuant(const aclTensor* x, const aclTensor* kroneckerP1,
                                                    const aclTensor* kroneckerP2, const aclTensor* groupListOptional,
-                                                   float clipRatio, int64_t dst_dtype, float dstTypeMax,
+                                                   float clipRatio, int64_t dstDtype, float dstTypeMax,
                                                    int64_t groupListType, aclTensor* out, aclTensor* quantScale,
                                                    aclOpExecutor* executor);
 } // namespace l0op
