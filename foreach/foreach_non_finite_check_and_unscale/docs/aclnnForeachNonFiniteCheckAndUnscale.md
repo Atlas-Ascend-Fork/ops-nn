@@ -167,8 +167,13 @@ aclnnStatus aclnnForeachNonFiniteCheckAndUnscale(
       <td>scaledGrads、foundInf、invScale的数据类型不在支持的范围之内，或TensorList中存在空指针元素，或Tensor使用私有格式。</td>
     </tr>
     <tr>
-      <td rowspan="5">ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td rowspan="5">561002</td>
+      <td>ACLNN_ERR_INNER</td>
+      <td>561000</td>
+      <td>scaledGrads中存在空Tensor。</td>
+    </tr>
+    <tr>
+      <td rowspan="4">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="4">561002</td>
       <td>scaledGrads的长度不在1至256个的范围内。</td>
     </tr>
     <tr>
@@ -176,9 +181,6 @@ aclnnStatus aclnnForeachNonFiniteCheckAndUnscale(
     </tr>
     <tr>
       <td>foundInf或invScale中的元素个数不为1。</td>
-    </tr>
-    <tr>
-      <td>scaledGrads中存在空Tensor。</td>
     </tr>
     <tr>
       <td>scaledGrads、foundInf或invScale中的Tensor维度超过8维。</td>

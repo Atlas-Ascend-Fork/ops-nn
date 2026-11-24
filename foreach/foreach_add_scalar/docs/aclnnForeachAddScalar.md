@@ -179,8 +179,8 @@ aclnnStatus aclnnForeachAddScalar(
       <td>传入的x、scalar、out是空指针。</td>
     </tr>
     <tr>
-      <td rowspan="3">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="3">161002</td>
+      <td rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="6">161002</td>
       <td>x、scalar、out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
@@ -190,17 +190,17 @@ aclnnStatus aclnnForeachAddScalar(
       <td>x的tensorList长度（包含的Tensor个数）大于out的tensorList长度（包含的Tensor个数）。</td>
     </tr>
     <tr>
-      <td rowspan="4">ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td rowspan="4">561002</td>
-      <td>x与out的shape不满足约束。</td>
-    </tr>
-    <tr>
       <td>x或out中的Tensor的数据类型不一致。</td>
     </tr>
     <tr>
       <td>x或out中的Tensor维度超过8维。</td>
     </tr>
     <tr>
+      <td>x与out的shape不满足约束。</td>
+    </tr>
+    <tr>
+      <td>ACLNN_ERR_INNER_NULLPTR</td>
+      <td>561103</td>
       <td>scalar元素个数不为1。</td>
     </tr>
   </tbody></table>
