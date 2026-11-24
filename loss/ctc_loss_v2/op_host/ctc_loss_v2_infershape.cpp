@@ -169,7 +169,6 @@ static ge::graphStatus CTCLossV2InferShapeFunc(gert::InferShapeContext* context)
 
     int64_t const timeStep = logProbsShape->GetDim(0);  // time step size info
     int64_t const batchSize = logProbsShape->GetDim(1); // batch size size info
-
     // Validate lengths tensors before reading their data
     if (CheckLengthsShape(context, batchSize) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
