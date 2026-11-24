@@ -280,7 +280,7 @@ bool QuantizeAddLayerNormRegbaseTiling::GetAttrs()
         this->quantMode_ = QuantMode::PER_CHANNEL;
     }
 
-    this->eps_ = GetOptionalAttr<float>(attrs, EPS_IDX, (float)1e-5);
+    this->eps_ = GetOptionalAttr<float>(attrs, EPS_IDX, 1e-5f);
     this->needOutputX_ = GetOptionalAttr<bool>(attrs, X_OUT_ATTR_IDX, false);
 
     OP_CHECK_IF(this->eps_ <= 0.0F,

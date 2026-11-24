@@ -338,7 +338,7 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus GetScalarParams(gert::TilingContext* context, float& p, float& maxNorm, int32_t& normMode)
+static ge::graphStatus GetScalarParams(const gert::TilingContext* context, float& p, float& maxNorm, int32_t& normMode)
 {
     auto attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);

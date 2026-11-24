@@ -153,7 +153,7 @@ static ge::graphStatus FillKnownRankShapesV2(gert::InferShapeContext* context, c
     return GRAPH_SUCCESS;
 }
 
-static ge::graphStatus FetchOptionalInputsAndAttr(gert::InferShapeContext* context, const gert::Shape* x1Shape,
+static ge::graphStatus FetchOptionalInputsAndAttr(const gert::InferShapeContext* context, const gert::Shape* x1Shape,
                                                   const gert::Shape* gammaShape, bool& smooth1Exist, bool& smooth2Exist,
                                                   bool& betaExist, const gert::Shape*& smooth1Shape,
                                                   const gert::Shape*& smooth2Shape, const gert::Shape*& betaShape,

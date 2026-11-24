@@ -15,6 +15,9 @@
 
 namespace NsDeepNorm {
 
+// affineBuffer 为 gamma 与 beta 拼接，各 DEEP_NORM_VL_FP32 个 fp32。
+constexpr uint32_t DEEP_NORM_AFFINE_TENSOR_COUNT = 2;
+
 template <typename T>
 __aicore__ inline void DeepNormShortPackAffine(__ubuf__ T* gamma, __ubuf__ T* beta, __ubuf__ float* affine,
                                                uint32_t columns)
@@ -210,7 +213,7 @@ public:
         pipe_.InitBuffer(rstdQueue_, 1, data_->tileLength * sizeof(float));
         pipe_.InitBuffer(gammaQueue_, 1, DEEP_NORM_VL_FP32 * sizeof(T));
         pipe_.InitBuffer(betaQueue_, 1, DEEP_NORM_VL_FP32 * sizeof(T));
-        pipe_.InitBuffer(affineBuffer_, 2 * DEEP_NORM_VL_FP32 * sizeof(float));
+        pipe_.InitBuffer(affineBuffer_, DEEP_NORM_AFFINE_TENSOR_COUNT * DEEP_NORM_VL_FP32 * sizeof(float));
         if (data_->numCol > 1) {
             pipe_.InitBuffer(hBuffer_, elements * sizeof(float));
             if constexpr (!IsSameType<T, float>::value) {

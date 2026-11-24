@@ -23,7 +23,6 @@
  */
 
 #include <cassert>
-#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +33,7 @@
 #include <map>
 #include <memory>
 #include <new>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -60,6 +60,14 @@ namespace {
 constexpr int64_t DEFAULT_ROWS = 672;
 constexpr int64_t DEFAULT_COLS = 224;
 constexpr size_t MAX_MANIFEST_LINE_LENGTH = 4096;
+// RunGraph 输出布局：output[0]=y(int8)；output[1]=x，仅 additional_output=true 时存在。
+constexpr size_t X_OUTPUT_IDX = 1;
+// main 位置参数下标：argv[1]=rows, argv[2]=cols, argv[3]=zero_points, argv[4]=epsilon, argv[5]=outPrefix。
+constexpr int ARG_IDX_ROWS = 1;
+constexpr int ARG_IDX_COLS = 2;
+constexpr int ARG_IDX_ZERO_POINTS = 3;
+constexpr int ARG_IDX_EPSILON = 4;
+constexpr int ARG_IDX_OUT_PREFIX = 5;
 
 bool CheckedMultiply(int64_t lhs, int64_t rhs, int64_t& result)
 {
@@ -83,15 +91,22 @@ bool GetElementCount(const vector<int64_t>& shape, int64_t& elementCount)
     return true;
 }
 
+// Preserve the original C-string parsing boundary for replay manifest values.
+bool HasUnparsedCharacters(const string& text, size_t pos) { return pos < text.size() && text[pos] != '\0'; }
+
 bool ParseInt64(const string& text, int64_t& value)
 {
-    errno = 0;
-    char* end = nullptr;
-    long long parsed = strtoll(text.c_str(), &end, 10);
-    if (errno == ERANGE || end == text.c_str() || end == nullptr || *end != '\0') {
+    size_t pos = 0;
+    int64_t parsed = 0;
+    try {
+        parsed = std::stoll(text, &pos);
+    } catch (const std::exception&) {
         return false;
     }
-    value = static_cast<int64_t>(parsed);
+    if (HasUnparsedCharacters(text, pos)) {
+        return false;
+    }
+    value = parsed;
     return true;
 }
 
@@ -107,11 +122,14 @@ bool ParseFlag(const string& text, int& value)
 
 bool ParsePositiveFloat(const string& text, float& value)
 {
-    errno = 0;
-    char* end = nullptr;
-    float parsed = strtof(text.c_str(), &end);
-    if (errno == ERANGE || end == text.c_str() || end == nullptr || *end != '\0' || !std::isfinite(parsed) ||
-        parsed <= 0.0F) {
+    size_t pos = 0;
+    float parsed = 0.0F;
+    try {
+        parsed = std::stof(text, &pos);
+    } catch (const std::exception&) {
+        return false;
+    }
+    if (HasUnparsedCharacters(text, pos) || !std::isfinite(parsed) || parsed <= 0.0F) {
         return false;
     }
     value = parsed;
@@ -137,13 +155,29 @@ int32_t WriteBin(const string& path, uint64_t bytes, const uint8_t* data)
 
 // All values are integer * power-of-two: exactly representable in fp32 and trivially
 // reproducible by the off-device numpy oracle.
-float GenX1(int64_t idx) { return static_cast<float>(((idx * 37) % 199) - 99) * 0.03125f; }
-float GenX2(int64_t idx) { return static_cast<float>(((idx * 53) % 173) - 86) * 0.015625f; }
-float GenGamma(int64_t c) { return 0.5f + static_cast<float>(c % 7) * 0.125f; }
-float GenBeta(int64_t c) { return static_cast<float>(((c * 13) % 41) - 20) * 0.125f; }
-float GenBias(int64_t c) { return static_cast<float>(((c * 29) % 61) - 30) * 0.0625f; }
-// Negative per-channel division scales, mirroring bb_l2_941: in [-2.125, -0.125].
-float GenScale(int64_t c) { return -(0.125f * static_cast<float>(1 + (c % 16))); }
+// 各张量使用不同的确定性取模模式。
+constexpr int64_t GEN_X1_MUL = 37;
+constexpr int64_t GEN_X1_MOD = 199;
+constexpr int64_t GEN_X1_OFFSET = 99;
+constexpr int64_t GEN_X2_MUL = 53;
+constexpr int64_t GEN_X2_MOD = 173;
+constexpr int64_t GEN_X2_OFFSET = 86;
+constexpr int64_t GEN_GAMMA_MOD = 7;
+constexpr int64_t GEN_BETA_MUL = 13;
+constexpr int64_t GEN_BETA_MOD = 41;
+constexpr int64_t GEN_BETA_OFFSET = 20;
+constexpr int64_t GEN_BIAS_MUL = 29;
+constexpr int64_t GEN_BIAS_MOD = 61;
+constexpr int64_t GEN_BIAS_OFFSET = 30;
+constexpr int64_t GEN_SCALE_MOD = 16;
+
+float GenX1(int64_t idx) { return static_cast<float>(((idx * GEN_X1_MUL) % GEN_X1_MOD) - GEN_X1_OFFSET) * 0.03125f; }
+float GenX2(int64_t idx) { return static_cast<float>(((idx * GEN_X2_MUL) % GEN_X2_MOD) - GEN_X2_OFFSET) * 0.015625f; }
+float GenGamma(int64_t c) { return 0.5f + static_cast<float>(c % GEN_GAMMA_MOD) * 0.125f; }
+float GenBeta(int64_t c) { return static_cast<float>(((c * GEN_BETA_MUL) % GEN_BETA_MOD) - GEN_BETA_OFFSET) * 0.125f; }
+float GenBias(int64_t c) { return static_cast<float>(((c * GEN_BIAS_MUL) % GEN_BIAS_MOD) - GEN_BIAS_OFFSET) * 0.0625f; }
+// Negative per-channel division scales, mirroring bb_l2_941: in [-2.0, -0.125].
+float GenScale(int64_t c) { return -(0.125f * static_cast<float>(1 + (c % GEN_SCALE_MOD))); }
 
 int32_t GenFp32Tensor(int64_t elemNum, float (*gen)(int64_t), const string& dumpPath, TensorDesc& desc, Tensor& tensor)
 {
@@ -327,8 +361,10 @@ std::unique_ptr<uint8_t[]> ReadBin(const string& path, uint64_t expectedBytes)
         return {};
     }
     size_t bytesToRead = static_cast<size_t>(expectedBytes);
-    auto buffer = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[bytesToRead]);
-    if (buffer == nullptr) {
+    std::unique_ptr<uint8_t[]> buffer;
+    try {
+        buffer = std::make_unique<uint8_t[]>(bytesToRead);
+    } catch (const std::bad_alloc&) {
         printf("[CASE] allocation failed while reading %s (%zu bytes)\n", path.c_str(), bytesToRead);
         fclose(fp);
         return {};
@@ -564,18 +600,18 @@ int RunCase(const string& caseDir, const string& outPrefix)
     }
 
     if (cfg.outX != 0) {
-        if (output.size() < 2 || output[1].GetTensorDesc().GetDataType() != GeDt(cfg.xDtype) ||
-            output[1].GetData() == nullptr) {
+        if (output.size() <= X_OUTPUT_IDX || output[X_OUTPUT_IDX].GetTensorDesc().GetDataType() != GeDt(cfg.xDtype) ||
+            output[X_OUTPUT_IDX].GetData() == nullptr) {
             printf("[CASE] required x output is missing or has the wrong dtype\n");
             return FAILED;
         }
-        int64_t sz = output[1].GetTensorDesc().GetShape().GetShapeSize();
-        uint32_t itemBytes = DtItemBytes(output[1].GetTensorDesc().GetDataType());
+        int64_t sz = output[X_OUTPUT_IDX].GetTensorDesc().GetShape().GetShapeSize();
+        uint32_t itemBytes = DtItemBytes(output[X_OUTPUT_IDX].GetTensorDesc().GetDataType());
         if (sz <= 0 || static_cast<uint64_t>(sz) > std::numeric_limits<uint64_t>::max() / itemBytes) {
             return FAILED;
         }
         uint64_t bytes = static_cast<uint64_t>(sz) * itemBytes;
-        if (WriteBin(outPrefix + "_x.bin", bytes, output[1].GetData()) != SUCCESS) {
+        if (WriteBin(outPrefix + "_x.bin", bytes, output[X_OUTPUT_IDX].GetData()) != SUCCESS) {
             return FAILED;
         }
     }
@@ -639,7 +675,7 @@ int main(int argc, char* argv[])
     const char* envCols = getenv("QALN_COLS");
     const char* envPrefix = getenv("QALN_PREFIX");
     const char* envCaseDir = getenv("QALN_CASE_DIR");
-    if (envCaseDir != nullptr && (envRows != nullptr || envCols != nullptr || argc > 1)) {
+    if (envCaseDir != nullptr && (envRows != nullptr || envCols != nullptr || argc > ARG_IDX_ROWS)) {
         printf("[CASE] replay mode reads shape, zero_points, and epsilon from manifest; do not pass generate-mode "
                "arguments or QALN_ROWS/QALN_COLS\n");
         return FAILED;
@@ -655,24 +691,24 @@ int main(int argc, char* argv[])
     if (envPrefix != nullptr) {
         outPrefix = envPrefix;
     }
-    if (argc > 1 && !ParseInt64(argv[1], rows)) {
+    if (argc > ARG_IDX_ROWS && !ParseInt64(argv[ARG_IDX_ROWS], rows)) {
         printf("[AB] invalid rows argument\n");
         return FAILED;
     }
-    if (argc > 2 && !ParseInt64(argv[2], cols)) {
+    if (argc > ARG_IDX_COLS && !ParseInt64(argv[ARG_IDX_COLS], cols)) {
         printf("[AB] invalid cols argument\n");
         return FAILED;
     }
-    if (argc > 3 && !ParseFlag(argv[3], useZp)) {
+    if (argc > ARG_IDX_ZERO_POINTS && !ParseFlag(argv[ARG_IDX_ZERO_POINTS], useZp)) {
         printf("[AB] invalid zero_points flag\n");
         return FAILED;
     }
-    if (argc > 4 && !ParsePositiveFloat(argv[4], epsilon)) {
+    if (argc > ARG_IDX_EPSILON && !ParsePositiveFloat(argv[ARG_IDX_EPSILON], epsilon)) {
         printf("[AB] invalid epsilon argument\n");
         return FAILED;
     }
-    if (argc > 5) {
-        outPrefix = argv[5];
+    if (argc > ARG_IDX_OUT_PREFIX) {
+        outPrefix = argv[ARG_IDX_OUT_PREFIX];
     }
     int64_t expectedElements = 0;
     if (!CheckedMultiply(rows, cols, expectedElements) || !std::isfinite(epsilon) || epsilon <= 0.0F ||
