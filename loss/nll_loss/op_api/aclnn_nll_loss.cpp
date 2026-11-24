@@ -9,6 +9,7 @@
  */
 
 #include "aclnn_nll_loss.h"
+#include "loss/nll_loss_common/op_api/target_value_range.h"
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
 #include "level0/div.h"
@@ -168,8 +169,12 @@ static bool CheckShape(const aclTensor* self, const aclTensor* target, const acl
     return true;
 }
 
+// target 值域校验（[0, C-1]，越界报错而非静默错误 loss）见 target_value_range.h/cpp。
+// arch22（910B/910_93）实际执行 CANN 内置 legacy kernel，无 TargetCheck；arch35 kernel 的
+// TargetCheck 是 ASSERT，release 下同样无效，故在一段（GetWorkspaceSize 阶段）做 D2H 回读校验。
 static aclnnStatus CheckParams(const aclTensor* self, const aclTensor* target, const aclTensor* weight,
-                               int64_t reduction, const aclTensor* out, const aclTensor* totalWeightOut)
+                               int64_t reduction, int64_t ignoreIndex, const aclTensor* out,
+                               const aclTensor* totalWeightOut)
 {
     // 1. 检查参数是否为空指针
     CHECK_RET(CheckNotNull(self, target, weight, out, totalWeightOut), ACLNN_ERR_PARAM_NULLPTR);
@@ -182,6 +187,11 @@ static aclnnStatus CheckParams(const aclTensor* self, const aclTensor* target, c
 
     // 4. 检查输出输出shape
     CHECK_RET(CheckShape(self, target, weight, out, totalWeightOut, reduction), ACLNN_ERR_PARAM_INVALID);
+
+    // 5. 检查 target 值域（device 数据，需 D2H 回读；越界时 legacy kernel 静默产生错误 loss）
+    CHECK_RET(
+        CheckTargetValueRange(target, self->GetViewShape().GetDim(self->GetViewShape().GetDimNum() - 1), ignoreIndex),
+        ACLNN_ERR_PARAM_INVALID);
 
     CheckFormat(self);
 
@@ -240,8 +250,11 @@ aclnnStatus aclnnNLLLossGetWorkspaceSize(const aclTensor* self, const aclTensor*
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // 本算子在一段做 target 值域校验（D2H 回读 device 数据）。executor 缓存命中会整体跳过一段，
+    // 导致"同签名先合法后越界"的调用绕过校验，必须禁用。
+    uniqueExecutor->AbandonCache();
     // 固定写法，参数检查
-    auto ret = CheckParams(self, target, weight, reduction, out, totalWeightOut);
+    auto ret = CheckParams(self, target, weight, reduction, ignoreIndex, out, totalWeightOut);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     if (self->IsEmpty()) {

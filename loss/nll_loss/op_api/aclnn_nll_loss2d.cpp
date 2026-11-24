@@ -9,6 +9,7 @@
  */
 
 #include "aclnn_nll_loss2d.h"
+#include "loss/nll_loss_common/op_api/target_value_range.h"
 #include "aclnn_kernels/transpose.h"
 #include "aclnn_kernels/transdata.h"
 #include "aclnn_kernels/reshape.h"
@@ -156,11 +157,15 @@ static bool CheckShape2D(const aclTensor* self, const aclTensor* target, const a
     return true;
 }
 
+// target 值域校验（[0, C-1]，越界报错而非静默错误 loss）见 target_value_range.h/cpp。
+// 一段（GetWorkspaceSize 阶段）D2H 回读校验，语义对齐 PyTorch "Target X is out of bounds"。
+
 /**
  * param类型检查
  */
 static aclnnStatus CheckParams(const aclTensor* self, const aclTensor* target, const aclTensor* weight,
-                               int64_t reduction, const aclTensor* out, const aclTensor* totalWeightOut)
+                               int64_t reduction, int64_t ignoreIndex, const aclTensor* out,
+                               const aclTensor* totalWeightOut)
 {
     // 1. 检查参数是否为空指针
     CHECK_RET(CheckNotNull2D(self, target, weight, out, totalWeightOut), ACLNN_ERR_PARAM_NULLPTR);
@@ -173,6 +178,9 @@ static aclnnStatus CheckParams(const aclTensor* self, const aclTensor* target, c
 
     // 4. 检查输出输出shape
     CHECK_RET(CheckShape2D(self, target, weight, out, totalWeightOut, reduction), ACLNN_ERR_PARAM_INVALID);
+
+    // 5. 检查 target 值域（device 数据，需 D2H 回读；越界时 kernel 静默产生错误 loss）
+    CHECK_RET(CheckTargetValueRange(target, self->GetViewShape().GetDim(1), ignoreIndex), ACLNN_ERR_PARAM_INVALID);
 
     CheckFormat2D(self);
 
@@ -231,9 +239,12 @@ aclnnStatus aclnnNLLLoss2dGetWorkspaceSize(const aclTensor* self, const aclTenso
     // 固定写法，创建OpExecutor
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // 本算子在一段做 target 值域校验（D2H 回读 device 数据）。executor 缓存命中会整体跳过一段，
+    // 导致"同签名先合法后越界"的调用绕过校验，必须禁用。
+    uniqueExecutor->AbandonCache();
 
     // 固定写法，参数检查
-    auto ret = CheckParams(self, target, weight, reduction, out, totalWeightOut);
+    auto ret = CheckParams(self, target, weight, reduction, ignoreIndex, out, totalWeightOut);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     // normal_ API的空tensor在kernel中支持，对标竞品根据算子实际情况补充
