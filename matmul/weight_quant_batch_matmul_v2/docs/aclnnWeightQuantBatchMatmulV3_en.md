@@ -377,7 +377,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
   - **Deterministic computation description**: Defaults to a non-deterministic implementation. Supports enabling deterministic computation through aclrtCtxSetSysParamOpt.
 
   - **General Constraints**
-    - When the weight data format is FRACTAL_NZ and the data type is INT4/INT32, or when the weight data format is ND and the data type is INT32, this is supported only in the INT4Pack scenario. You need to use the aclnnConvertWeightToINT4Pack API to complete the conversion of INT32 to INT4Pack and the conversion of ND to FRACTAL_NZ, <a href="../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md" target="_blank">For details, see</a>. If the data type is INT4, the innermost dimension of weight should be an even number.
+    - When the weight data format is FRACTAL_NZ and the data type is INT4/INT32, or when the weight data format is ND and the data type is INT32, this is supported only in the INT4Pack scenario. You need to use the aclnnConvertWeightToINT4Pack API to complete the conversion of INT32 to INT4Pack and the conversion of ND to FRACTAL_NZ, <a href="../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack_en.md" target="_blank">For details, see</a>. If the data type is INT4, the innermost dimension of weight should be an even number.
     - For different pseudo-quantization algorithm modes, the weight data format FRACTAL_NZ is supported only in the following scenarios:
       - per_channel mode:
           The weight data type is INT8 and the y data type is non-INT8.
@@ -461,7 +461,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
     - **Constraints**
       In addition to [common constraints](#constraints), the other constraints are as follows:
       - If the data type of `weight` is INT4 or FLOAT4_E2M1, the last dimension of weight must be 2-aligned. If the data type of `weight` is INT32 or FLOAT, the last dimension of weight must be 8-aligned.
-      - If the `weight` data type is INT32/FLOAT, the conversion of INT32/FLOAT to tightly packed INT4/FLOAT4_E2M1 must be completed through the `aclnnConvertWeightToINT4Pack` API. [For details, see the sample](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md).
+      - If the `weight` data type is INT32/FLOAT, the conversion of INT32/FLOAT to tightly packed INT4/FLOAT4_E2M1 must be completed through the `aclnnConvertWeightToINT4Pack` API. [For details, see the sample](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack_en.md).
 
   <a id="ascend_950pr_ascend950dt_performance-optimization-suggestions"></a>
 
