@@ -432,6 +432,40 @@ TEST_F(l2_adaptive_max_pool2d_test, self_float32_nhwc)
     EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
 }
 
+// NHWC C>1：恒等池化走 MaxPool3D 回写路径，需 NCHW->NHWC transpose
+TEST_F(l2_adaptive_max_pool2d_test, self_float32_nhwc_c_gt1_identity)
+{
+    auto selfDesc = TensorDesc({1, 4, 4, 8}, ACL_FLOAT, ACL_FORMAT_NHWC);
+    vector<int64_t> outputSize = {4, 4};
+    auto outputSizeArray = IntArrayDesc(outputSize);
+
+    auto valDesc = TensorDesc({1, 4, 4, 8}, ACL_FLOAT, ACL_FORMAT_NHWC);
+    auto indDesc = TensorDesc({1, 4, 4, 8}, ACL_INT64, ACL_FORMAT_NHWC);
+
+    auto ut = OP_API_UT(aclnnAdaptiveMaxPool2d, INPUT(selfDesc, outputSizeArray), OUTPUT(valDesc, indDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
+// NHWC C>1：不可整除，走 AdaptiveMaxPool 回写路径
+TEST_F(l2_adaptive_max_pool2d_test, self_float32_nhwc_c_gt1_adaptive)
+{
+    auto selfDesc = TensorDesc({1, 5, 5, 8}, ACL_FLOAT, ACL_FORMAT_NHWC);
+    vector<int64_t> outputSize = {2, 2};
+    auto outputSizeArray = IntArrayDesc(outputSize);
+
+    auto valDesc = TensorDesc({1, 2, 2, 8}, ACL_FLOAT, ACL_FORMAT_NHWC);
+    auto indDesc = TensorDesc({1, 2, 2, 8}, ACL_INT64, ACL_FORMAT_NHWC);
+
+    auto ut = OP_API_UT(aclnnAdaptiveMaxPool2d, INPUT(selfDesc, outputSizeArray), OUTPUT(valDesc, indDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
 TEST_F(l2_adaptive_max_pool2d_test, ascend910B2_self_float32_nhwc)
 {
     auto selfDesc = TensorDesc({1, 5, 5, 1}, ACL_FLOAT, ACL_FORMAT_NHWC);
@@ -448,6 +482,22 @@ TEST_F(l2_adaptive_max_pool2d_test, ascend910B2_self_float32_nhwc)
     EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
 }
 
+TEST_F(l2_adaptive_max_pool2d_test, ascend910B2_self_float32_nhwc_c_gt1_identity)
+{
+    auto selfDesc = TensorDesc({1, 4, 4, 8}, ACL_FLOAT, ACL_FORMAT_NHWC);
+    vector<int64_t> outputSize = {4, 4};
+    auto outputSizeArray = IntArrayDesc(outputSize);
+
+    auto valDesc = TensorDesc({1, 4, 4, 8}, ACL_FLOAT, ACL_FORMAT_NHWC);
+    auto indDesc = TensorDesc({1, 4, 4, 8}, ACL_INT64, ACL_FORMAT_NHWC);
+
+    auto ut = OP_API_UT(aclnnAdaptiveMaxPool2d, INPUT(selfDesc, outputSizeArray), OUTPUT(valDesc, indDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
 TEST_F(l2_adaptive_max_pool2d_test, ascend910B2_self_float16_ncl_maxpool3dwithargmaxv2)
 {
     auto selfDesc = TensorDesc({1, 64, 16, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
@@ -456,6 +506,71 @@ TEST_F(l2_adaptive_max_pool2d_test, ascend910B2_self_float16_ncl_maxpool3dwithar
 
     auto valDesc = TensorDesc({1, 64, 1, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
     auto indDesc = TensorDesc({1, 64, 1, 8}, ACL_INT64, ACL_FORMAT_NCHW);
+
+    auto ut = OP_API_UT(aclnnAdaptiveMaxPool2d, INPUT(selfDesc, outputSizeArray), OUTPUT(valDesc, indDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
+// 3D + outputSize 整除 H/W：不可再走 MaxPool3D 捷径（会 561103），应走 AdaptiveMaxPool2d
+TEST_F(l2_adaptive_max_pool2d_test, self_float32_3d_divisible_2x2)
+{
+    auto selfDesc = TensorDesc({3, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    vector<int64_t> outputSize = {2, 2};
+    auto outputSizeArray = IntArrayDesc(outputSize);
+
+    auto valDesc = TensorDesc({3, 2, 2}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto indDesc = TensorDesc({3, 2, 2}, ACL_INT64, ACL_FORMAT_NCHW);
+
+    auto ut = OP_API_UT(aclnnAdaptiveMaxPool2d, INPUT(selfDesc, outputSizeArray), OUTPUT(valDesc, indDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
+TEST_F(l2_adaptive_max_pool2d_test, self_float32_3d_divisible_4x4)
+{
+    auto selfDesc = TensorDesc({3, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    vector<int64_t> outputSize = {4, 4};
+    auto outputSizeArray = IntArrayDesc(outputSize);
+
+    auto valDesc = TensorDesc({3, 4, 4}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto indDesc = TensorDesc({3, 4, 4}, ACL_INT64, ACL_FORMAT_NCHW);
+
+    auto ut = OP_API_UT(aclnnAdaptiveMaxPool2d, INPUT(selfDesc, outputSizeArray), OUTPUT(valDesc, indDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
+TEST_F(l2_adaptive_max_pool2d_test, self_float32_3d_nondivisible_3x3)
+{
+    auto selfDesc = TensorDesc({3, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    vector<int64_t> outputSize = {3, 3};
+    auto outputSizeArray = IntArrayDesc(outputSize);
+
+    auto valDesc = TensorDesc({3, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto indDesc = TensorDesc({3, 3, 3}, ACL_INT64, ACL_FORMAT_NCHW);
+
+    auto ut = OP_API_UT(aclnnAdaptiveMaxPool2d, INPUT(selfDesc, outputSizeArray), OUTPUT(valDesc, indDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
+TEST_F(l2_adaptive_max_pool2d_test, ascend910B2_self_float32_3d_divisible_2x2)
+{
+    auto selfDesc = TensorDesc({3, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    vector<int64_t> outputSize = {2, 2};
+    auto outputSizeArray = IntArrayDesc(outputSize);
+
+    auto valDesc = TensorDesc({3, 2, 2}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto indDesc = TensorDesc({3, 2, 2}, ACL_INT64, ACL_FORMAT_NCHW);
 
     auto ut = OP_API_UT(aclnnAdaptiveMaxPool2d, INPUT(selfDesc, outputSizeArray), OUTPUT(valDesc, indDesc));
 

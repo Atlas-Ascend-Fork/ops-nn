@@ -192,13 +192,51 @@ static aclnnStatus CheckParams(const aclTensor* self, const aclIntArray* outputS
     return ACLNN_SUCCESS;
 }
 
+// NCHW/NCDHW 计算结果转回 NHWC（与 ConvertNHWCtoNCHW 成对）
+static aclnnStatus ConvertResultToNHWC(const aclTensor*& outTensor, const aclTensor*& indicesTensor,
+                                       const aclTensor* outputOut, aclOpExecutor* executor)
+{
+    if (outputOut->GetViewFormat() != op::Format::FORMAT_NHWC) {
+        return ACLNN_SUCCESS;
+    }
+
+    // 5D NCDHW(D=1) 先收成 4D NCHW，再做 NCHW->NHWC transpose
+    auto curShape = outTensor->GetViewShape();
+    if (curShape.GetDimNum() == NCDHW_DIM_NUM) {
+        auto outShape = outputOut->GetViewShape(); // NHWC: [N, H, W, C]
+        std::vector<int64_t> nchwShape = {outShape.GetDim(INDEX_DIM0), outShape.GetDim(INDEX_DIM3),
+                                          outShape.GetDim(INDEX_DIM1), outShape.GetDim(INDEX_DIM2)};
+        auto nchwShapeArray = executor->AllocIntArray(nchwShape.data(), NCHW_DIM_NUM);
+        CHECK_RET(nchwShapeArray != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        outTensor = l0op::Reshape(outTensor, nchwShapeArray, executor);
+        CHECK_RET(outTensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        indicesTensor = l0op::Reshape(indicesTensor, nchwShapeArray, executor);
+        CHECK_RET(indicesTensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
+
+    // NCHW -> NHWC: [N, C, H, W] -> [N, H, W, C]
+    std::vector<int64_t> valuePerm{INDEX_DIM0, INDEX_DIM2, INDEX_DIM3, INDEX_DIM1};
+    auto perm = executor->AllocIntArray(valuePerm.data(), NCHW_DIM_NUM);
+    CHECK_RET(perm != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    outTensor = l0op::Transpose(outTensor, perm, executor);
+    CHECK_RET(outTensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    indicesTensor = l0op::Transpose(indicesTensor, perm, executor);
+    CHECK_RET(indicesTensor != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    return ACLNN_SUCCESS;
+}
+
 static aclnnStatus ProcessAndCopyResults(const aclTensor* outResult, const aclTensor* indicesResultCast,
                                          aclTensor* outputOut, aclTensor* indicesOut, aclOpExecutor* executor)
 {
+    const aclTensor* outTensor = outResult;
+    const aclTensor* indicesTensor = indicesResultCast;
+    auto ret = ConvertResultToNHWC(outTensor, indicesTensor, outputOut, executor);
+    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+
     auto resShapeVector = op::ToShapeVector(outputOut->GetViewShape());
     aclIntArray* resShapeArray = executor->AllocIntArray(resShapeVector.data(), resShapeVector.size());
     CHECK_RET(resShapeArray != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    auto resTranReshapeOut = l0op::Reshape(outResult, resShapeArray, executor);
+    auto resTranReshapeOut = l0op::Reshape(outTensor, resShapeArray, executor);
     CHECK_RET(resTranReshapeOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     resTranReshapeOut = l0op::ReFormat(resTranReshapeOut, outputOut->GetStorageFormat(), executor);
@@ -207,7 +245,7 @@ static aclnnStatus ProcessAndCopyResults(const aclTensor* outResult, const aclTe
     auto viewCopyResultOut = l0op::ViewCopy(resTranReshapeOut, outputOut, executor);
     CHECK_RET(viewCopyResultOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    auto resTranReshapeIndices = l0op::Reshape(indicesResultCast, resShapeArray, executor);
+    auto resTranReshapeIndices = l0op::Reshape(indicesTensor, resShapeArray, executor);
     CHECK_RET(resTranReshapeIndices != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
     resTranReshapeIndices = l0op::ReFormat(resTranReshapeIndices, indicesOut->GetStorageFormat(), executor);
@@ -262,15 +300,20 @@ static aclnnStatus ProcessAdaptiveMaxPoolResults(const aclTensor* outResult, con
     auto indicesResultCast = l0op::Cast(indicesResult, op::DataType::DT_INT64, executor);
     CHECK_RET(indicesResultCast != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
+    const aclTensor* outTensor = outResult;
+    const aclTensor* indicesTensor = indicesResultCast;
+    auto ret = ConvertResultToNHWC(outTensor, indicesTensor, outputOut, executor);
+    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+
     auto resShapeVector = op::ToShapeVector(outputOut->GetViewShape());
     aclIntArray* resShapeArray = executor->AllocIntArray(resShapeVector.data(), resShapeVector.size());
     CHECK_RET(resShapeArray != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    auto resTranReshapeOut = l0op::Reshape(outResult, resShapeArray, executor);
+    auto resTranReshapeOut = l0op::Reshape(outTensor, resShapeArray, executor);
     CHECK_RET(resTranReshapeOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
     auto viewCopyResultOut = l0op::ViewCopy(resTranReshapeOut, outputOut, executor);
     CHECK_RET(viewCopyResultOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    auto resTranReshapeIndices = l0op::Reshape(indicesResultCast, resShapeArray, executor);
+    auto resTranReshapeIndices = l0op::Reshape(indicesTensor, resShapeArray, executor);
     CHECK_RET(resTranReshapeIndices != nullptr, ACLNN_ERR_INNER_NULLPTR);
     auto viewCopyResultIndices = l0op::ViewCopy(resTranReshapeIndices, indicesOut, executor);
     CHECK_RET(viewCopyResultIndices != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -311,14 +354,16 @@ static aclnnStatus Handle910DCase(const aclTensor* self, const aclIntArray* outp
 
     int64_t hValueRemainder = hiValue % (*outputSize)[0];
     int64_t wValueRemainder = wiValue % (*outputSize)[1];
-    bool ifTranMaxPool3D = hValueRemainder == 0 && wValueRemainder == 0;
+    // 仅 4 维整除走 MaxPool3D 捷径；3 维整除该捷径会 561103，一律走 AdaptiveMaxPool2d
+    constexpr int64_t DIM_3D = 3;
+    bool ifTranMaxPool3D = (inputDimNum != DIM_3D) && (hValueRemainder == 0 && wValueRemainder == 0);
     const aclTensor* inputContiguousReshape = inputContiguous;
-    constexpr int64_t DIM_1D = 3;
-    if (inputDimNum == DIM_1D && !ifTranMaxPool3D) { // 转ada 2d
+    if (inputDimNum == DIM_3D) {
         inputContiguousReshape = View3Das4D(inputContiguous, executor);
-    } else if (ifTranMaxPool3D) { // 转max3d
-        inputContiguousReshape = inputDimNum == 3 ? View3Das5D(inputContiguous, executor) :
-                                                    View4Das5D(inputContiguous, executor);
+        CHECK_RET(inputContiguousReshape != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    } else if (ifTranMaxPool3D) {
+        inputContiguousReshape = View4Das5D(inputContiguous, executor);
+        CHECK_RET(inputContiguousReshape != nullptr, ACLNN_ERR_INNER_NULLPTR);
     }
     if (ifTranMaxPool3D) {
         int64_t kernelDSize = 1;
@@ -377,7 +422,10 @@ static aclnnStatus Handle910BCase(const aclTensor* self, const aclIntArray* outp
     int64_t dValueRemainder = inputContiguousReshape->GetViewShape()[INDEX_DIM2] % (*newOutputSize)[INDEX_DIM0];
     int64_t hValueRemainder = inputContiguousReshape->GetViewShape()[INDEX_DIM3] % (*newOutputSize)[INDEX_DIM1];
     int64_t wValueRemainder = inputContiguousReshape->GetViewShape()[INDEX_DIM4] % (*newOutputSize)[INDEX_DIM2];
-    if (dValueRemainder == 0 && hValueRemainder == 0 && wValueRemainder == 0) {
+    // 与 910D 对齐：仅原始 4 维输入才走 MaxPool3D 捷径
+    bool ifTranMaxPool3D = (inputDimNum == static_cast<int64_t>(NCHW_DIM_NUM)) &&
+                           (dValueRemainder == 0 && hValueRemainder == 0 && wValueRemainder == 0);
+    if (ifTranMaxPool3D) {
         int64_t kernelDSize = inputContiguousReshape->GetViewShape()[INDEX_DIM2] / (*newOutputSize)[INDEX_DIM0];
         int64_t kernelHSize = inputContiguousReshape->GetViewShape()[INDEX_DIM3] / (*newOutputSize)[INDEX_DIM1];
         int64_t kernelWSize = inputContiguousReshape->GetViewShape()[INDEX_DIM4] / (*newOutputSize)[INDEX_DIM2];
