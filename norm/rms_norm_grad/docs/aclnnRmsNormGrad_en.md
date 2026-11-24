@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Backward computation of [aclnnRmsNorm](../../rms_norm/docs/aclnnRmsNorm.md). Computes the gradient of RmsNorm, that is, the gradient of the input tensor during backward propagation.
+- Description: Backward computation of [aclnnRmsNorm](../../rms_norm/docs/aclnnRmsNorm_en.md). Computes the gradient of RmsNorm, that is, the gradient of the input tensor during backward propagation.
 - Operator formula:
 
   - Forward formula:
