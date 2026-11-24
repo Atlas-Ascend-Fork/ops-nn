@@ -47,7 +47,7 @@ aclnnStatus aclnnForeachAddListGetWorkspaceSize(
   const aclTensorList *x1,
   const aclTensorList *x2,
   const aclTensor     *alpha,
-  const aclTensorList *out,
+  aclTensorList       *out,
   uint64_t            *workspaceSize,
   aclOpExecutor      **executor)
 ```
