@@ -280,7 +280,10 @@ aclnnStatus aclnnMatmul(
   <!-- end id12 -->
 
 <!-- npu="A3,910b" id13 -->
-- <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：支持两个输入分别为BFLOAT16和FLOAT16、BFLOAT16和FLOAT32的数据类型推导。
+- <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：支持两个输入分别为BFLOAT16和FLOAT16、BFLOAT16和FLOAT32的数据类型推导，不因类型不同返回错误：
+  - cubeMathType为ALLOW_FP32_DOWN_PRECISION或USE_HF32时，先统一为FLOAT32，再按HFLOAT32计算。BFLOAT16和FLOAT16组合仅告警，该选项生效。
+  - cubeMathType为KEEP_DTYPE或USE_FP32_ADD时不降精度，按FLOAT32计算。其中KEEP_DTYPE不保持原始的BFLOAT16或FLOAT16。
+  - cubeMathType为USE_FP16时，上述两种组合都转换为FLOAT16后计算，仅告警不报错。两个输入均为BFLOAT16时该选项不生效。
 <!-- end id13 -->
 - self和mat2都是1维时，cubeMathType不生效。
 

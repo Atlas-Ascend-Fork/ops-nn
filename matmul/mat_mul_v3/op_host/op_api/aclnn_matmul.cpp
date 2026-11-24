@@ -145,24 +145,6 @@ inline static bool CheckWeightNzDtypeValid(const aclTensor* self, const aclTenso
     return CheckWeightNzDtype(self, mat2);
 }
 
-// A2/A3（DAV_2201）不支持 BF16 与 FP16/FP32 的混合输入推导。
-static bool CheckMixedBf16Dtype(const aclTensor* self, const aclTensor* mat2)
-{
-    if (GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_2201) {
-        return true;
-    }
-    auto selfDtype = self->GetDataType();
-    auto mat2Dtype = mat2->GetDataType();
-    if ((selfDtype == op::DataType::DT_BF16) != (mat2Dtype == op::DataType::DT_BF16)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "Deriving data types from inputs of BFLOAT16 and non-BFLOAT16 is unsupported, now self's dtype is "
-                "[%s], mat2's dtype is [%s]",
-                op::ToString(selfDtype).GetString(), op::ToString(mat2Dtype).GetString());
-        return false;
-    }
-    return true;
-}
-
 // 获取broadcast shape
 inline static op::Shape GetBroadcastShape(const aclTensor* tensor)
 {
@@ -344,7 +326,6 @@ inline static aclnnStatus CheckInputParams(const aclTensor* self, const aclTenso
     CHECK_RET(archRule->CheckInput(self, mat2, nullptr, out, cubeMathType), ACLNN_ERR_PARAM_INVALID);
 
     CHECK_RET(CheckWeightNzDtype(self, mat2), ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckMixedBf16Dtype(self, mat2), ACLNN_ERR_PARAM_INVALID);
 
     // 3. 检查Shape是否支持
     CHECK_RET(CheckShapeValid(self, mat2), ACLNN_ERR_PARAM_INVALID);

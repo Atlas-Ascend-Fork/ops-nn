@@ -282,7 +282,10 @@ aclnnStatus aclnnMatmul(
   <!-- end id12 -->
 
 <!-- npu="A3,910b" id13 -->
-- <term>Atlas A2 products</term>, <term>Atlas A3 products</term>: Data type deduction is supported when the two inputs are BFLOAT16 and FLOAT16 respectively, and when the two inputs are BFLOAT16 and FLOAT32 respectively.
+- <term>Atlas A2 products</term>, <term>Atlas A3 products</term>: Data type deduction is supported when the two inputs are BFLOAT16 and FLOAT16, and when the two inputs are BFLOAT16 and FLOAT32. Different data types do not cause an error to be returned:
+  - When cubeMathType is ALLOW_FP32_DOWN_PRECISION or USE_HF32, the inputs are first unified to FLOAT32 and then computed in HFLOAT32. For the BFLOAT16 and FLOAT16 combination, only a warning is reported and the option takes effect.
+  - When cubeMathType is KEEP_DTYPE or USE_FP32_ADD, down-precision is not applied and computation is performed in FLOAT32. KEEP_DTYPE does not keep the original BFLOAT16 or FLOAT16.
+  - When cubeMathType is USE_FP16, both combinations above are converted to FLOAT16 for computation. Only a warning is reported, and no error is returned. This option does not take effect when both inputs are BFLOAT16.
 <!-- end id13 -->
 - When both self and mat2 are 1-dimensional, cubeMathType does not take effect.
 
