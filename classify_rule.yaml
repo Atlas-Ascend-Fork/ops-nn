@@ -472,6 +472,7 @@ conv_forward_ascendc@ops-nn:
         - ops/ops-nn/conv/quant_conv2d/op_kernel/
         - ops/ops-nn/conv/quant_conv2d/op_host/quant_conv2d_def.cpp
         - ops/ops-nn/conv/quant_conv2d/op_host/arch35/quant_conv2d_tiling.cpp
+        - ops/ops-nn/conv/quant_conv2d/tests/ut/op_host/arch35/test_quant_conv2d_tiling.cpp
         - ops/ops-nn/conv/convolution_forward/op_host/op_api/*h
         - ops/ops-nn/conv/conv2d_v2/op_graph/conv2d_v2_proto.h
         - ops/ops-nn/conv/conv3d_v2/op_graph/conv3d_v2_proto.h
