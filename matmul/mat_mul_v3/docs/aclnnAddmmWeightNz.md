@@ -123,7 +123,6 @@ aclnnStatus aclnnAddmmWeightNz(
       <td>-</td>
     </tr>
     <tr>
-    <tr>
       <td>beta(β)</td>
       <td>输入</td>
       <td>表示公式中的β。</td>
@@ -143,6 +142,7 @@ aclnnStatus aclnnAddmmWeightNz(
       <td>-</td>
       <td>-</td>
     </tr>
+    <tr>
       <td>out</td>
       <td>输出</td>
       <td>表示矩阵乘的输出矩阵，公式中的out。</td>
