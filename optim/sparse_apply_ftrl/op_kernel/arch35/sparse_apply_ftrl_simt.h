@@ -34,8 +34,8 @@ static constexpr uint32_t THREAD_NUM = 512;
 
 template <typename T>
 __simt_vf__ __aicore__ LAUNCH_BOUND(THREAD_NUM) inline void OpSparseApplyFtrlCopyKernel(
-    int64_t totalElements, const __gm__ T* src1, const __gm__ T* src2, const __gm__ T* src3, __gm__ T* dst1,
-    __gm__ T* dst2, __gm__ T* dst3)
+    int64_t totalElements, const __gm__ T* src1, const __gm__ T* src2, const __gm__ T* src3, __gm__ volatile T* dst1,
+    __gm__ volatile T* dst2, __gm__ volatile T* dst3)
 {
     uint64_t globalTid = static_cast<uint64_t>(blockIdx.x) * static_cast<uint64_t>(blockDim.x) +
                          static_cast<uint64_t>(threadIdx.x);
