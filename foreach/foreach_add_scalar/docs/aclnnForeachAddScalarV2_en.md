@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Adds the specified scalar value to each tensor in the tensor list. Compared with [aclnnForeachAddScalar](aclnnForeachAddScalar.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Select an appropriate API as required.
+- Description: Adds the specified scalar value to each tensor in the tensor list. Compared with [aclnnForeachAddScalar](aclnnForeachAddScalar_en.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Select an appropriate API as required.
 - Formula:
 
   $$
