@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Performs element-wise comparison between the tensor list x and the scalar value scalar to compute the minimum value of each element. Compared with [aclnnForeachMinimumScalar](aclnnForeachMinimumScalar.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Select an appropriate API based on actual requirements.
+- Description: Performs element-wise comparison between the tensor list x and the scalar value scalar to compute the minimum value of each element. Compared with [aclnnForeachMinimumScalar](aclnnForeachMinimumScalar_en.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Select an appropriate API based on actual requirements.
 - Formula:
 
   $$
