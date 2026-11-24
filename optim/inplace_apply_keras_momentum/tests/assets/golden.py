@@ -55,7 +55,10 @@ __golden__ = {
 # 浮点算子按对齐要求使用 cross_check（三方交叉校验）；tf 为声明竞品，
 # torch 作为 GPU 端无 TF 时的可用兜底。cross_check 会触发 TTK Promote，
 # 此时 golden 输入/输出统一升为 FP32 计算。
-__spec__ = {"inplace_apply_keras_momentum": "InplaceApplyKerasMomentumTestSpec"}
+__spec__ = {
+    "inplace_apply_keras_momentum": "InplaceApplyKerasMomentumTestSpec",
+    "tf.raw_ops.ResourceApplyKerasMomentum": "InplaceApplyKerasMomentumTfSpec",
+}
 
 
 class InplaceApplyKerasMomentumTestSpec:
@@ -263,3 +266,29 @@ def inplace_apply_keras_momentum_golden(
         ).numpy()
 
     return var_out, accum_out
+
+
+def tf_golden(
+    var, accum, lr, grad, momentum, use_locking=False, use_nesterov=False, **kwargs
+):
+    """TF 通路参考真值——复用 kernel golden 的数学。"""
+    return inplace_apply_keras_momentum_golden(
+        var,
+        accum,
+        lr,
+        grad,
+        momentum,
+        use_nesterov=use_nesterov,
+        use_locking=use_locking,
+        **kwargs,
+    )
+
+
+class InplaceApplyKerasMomentumTfSpec:
+    golden = staticmethod(tf_golden)
+    third_party = {"tf": InplaceApplyKerasMomentumTestSpec.ThirdPartyImpl}
+    tolerance = {
+        "float16": {"standard": "cross_check", "level": "L1"},
+        "bfloat16": {"standard": "cross_check", "level": "L1"},
+        "float32": {"standard": "cross_check", "level": "L1"},
+    }
