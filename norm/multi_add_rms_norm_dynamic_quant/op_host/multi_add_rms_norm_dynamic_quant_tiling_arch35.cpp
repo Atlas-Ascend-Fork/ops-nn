@@ -29,8 +29,9 @@ constexpr uint64_t BETA_INDEX = 5;
 constexpr uint64_t Y1_INDEX = 0;
 constexpr uint64_t Y2_INDEX = 1;
 constexpr uint64_t X_INDEX = 2;
-constexpr uint64_t SCALE1_INDEX = 3;
-constexpr uint64_t SCALE2_INDEX = 4;
+constexpr uint64_t Y_INDEX = 3;
+constexpr uint64_t SCALE1_INDEX = 4;
+constexpr uint64_t SCALE2_INDEX = 5;
 constexpr uint64_t EPS_ATTR_INDEX = 0;
 constexpr uint32_t LOG_2 = 2;
 constexpr uint32_t NUM_TWO = 2;
@@ -43,14 +44,20 @@ constexpr uint32_t CONST_THIRTY_TWO = 32;
 constexpr uint32_t MAX_DIM_CNT = 8;
 constexpr uint32_t WORKSPACE_COUNT = 3;
 constexpr uint32_t B32_BLOCK_NUM = 8;
+// 一个向量寄存器的 fp32 元素数: 行标量数组按此对齐, 使整寄存器读恒在界内。
+constexpr uint32_t REG_ELEMS_FP32 = 64;
 constexpr uint32_t BLOCK_SIZE = 32;
 constexpr uint32_t ALING_FACTOR_512 = 512;
 constexpr uint32_t ONCE_VECTOR_SIZE = 256;
-constexpr uint32_t DEFAULT_SYS_WORKSPACE = 16 * 1024 * 1024;
 
 constexpr uint32_t LEVEL_BUFFER_CNT = 3;
 constexpr uint32_t MULTI_FACTOR_2 = 2;
 constexpr uint32_t FULL_LOAD_R_MAX = 16384;
+// 内核跨核合并区布局: 每核 4 个 64B 广播槽(Σx²hi/lo/max1/max2 各一), 与 renorm_global.h 的
+// A5 配方一致(独立 cacheline + 写侧 DCCI + 读侧标量取数, 规避共享槽原子与跨核向量脏 lane)。
+constexpr uint64_t N_SPLIT_PARTIAL_CORE_BYTES = 256;
+// 合并槽区基址对齐粒度(64B cacheline), 与 kernel 的 PART_BASE_ALIGN_ELEMS(16 float) 同源。
+constexpr uint64_t PART_BASE_ALIGN_BYTES = 64;
 constexpr uint32_t ALIGN_SPACE = 1 * 1024;
 constexpr uint32_t DOUBLE_BUFFER = 2;
 constexpr uint32_t MAX_X1_NUM = 5; // multi-add x1 TensorList 最大长度
@@ -231,6 +238,42 @@ bool MultiAddRmsNormDynamicQuantRegbaseTiling::CheckOutputDtype()
     OP_CHECK_NULL_WITH_CONTEXT(context_, y2Desc);
     auto y1DataType = y1Desc->GetDataType();
     auto y2DataType = y2Desc->GetDataType();
+    // x/y 必须与 x1 同型, scale1/scale2 必须 float32 —— 与 IR 注册(def.cpp / canndev nn_norm.h:
+    // OUTPUT(x|y, {FP16,BF16}), OUTPUT(scale1|scale2, {DT_FLOAT}))及 A2 的 CheckInputOutputDType 一致。
+    // GEIR 通路下 InferDataType 会覆盖输出 dtype 使之不可达, 但 aclnn/直调通路由调用方自带
+    // output desc, 缺这两条即为真实缺口。
+    const auto xOutDesc = context_->GetOutputDesc(X_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, xOutDesc);
+    const auto yOutDesc = context_->GetOutputDesc(Y_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, yOutDesc);
+    const auto scale1Desc = context_->GetOutputDesc(SCALE1_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, scale1Desc);
+    const auto scale2Desc = context_->GetOutputDesc(SCALE2_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, scale2Desc);
+    const auto x1Desc0 = context_->GetDynamicInputDesc(X1_INDEX, 0);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, x1Desc0);
+    ge::DataType x1DtypeForOut = x1Desc0->GetDataType();
+    ge::DataType xOutDtype = xOutDesc->GetDataType();
+    ge::DataType yOutDtype = yOutDesc->GetDataType();
+    if ((xOutDtype != x1DtypeForOut) || (yOutDtype != x1DtypeForOut)) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(nodeName.c_str(), "x, y and x1",
+                                               (Ops::Base::ToString(xOutDtype) + ", " + Ops::Base::ToString(yOutDtype) +
+                                                " and " + Ops::Base::ToString(x1DtypeForOut))
+                                                   .c_str(),
+                                               "The dtypes of outputs x and y should be the same as x1");
+        return false;
+    }
+    std::vector<ge::DataType> supportedScaleDtypes = {ge::DataType::DT_FLOAT};
+    ge::DataType scale1Dtype = scale1Desc->GetDataType();
+    ge::DataType scale2Dtype = scale2Desc->GetDataType();
+    if ((ge::GRAPH_SUCCESS != CheckDtypeVaild(scale1Dtype, supportedScaleDtypes, "MultiAddRmsNormDynamicQuant")) ||
+        (ge::GRAPH_SUCCESS != CheckDtypeVaild(scale2Dtype, supportedScaleDtypes, "MultiAddRmsNormDynamicQuant"))) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            nodeName.c_str(), "scale1 and scale2",
+            (Ops::Base::ToString(scale1Dtype) + " and " + Ops::Base::ToString(scale2Dtype)).c_str(),
+            "The dtypes of outputs scale1 and scale2 should be float32");
+        return false;
+    }
     if ((ge::GRAPH_SUCCESS != CheckDtypeVaild(y1DataType, supportedYDtypes, "MultiAddRmsNormDynamicQuant")) ||
         (ge::GRAPH_SUCCESS != CheckDtypeVaild(y2DataType, supportedYDtypes, "MultiAddRmsNormDynamicQuant")) ||
         (y1DataType != y2DataType)) {
@@ -271,6 +314,37 @@ bool MultiAddRmsNormDynamicQuantRegbaseTiling::CheckInputDtype()
         const auto smooth2Tensor = context_->GetOptionalInputTensor(SMOOTH_SCALE2_INDEX);
         OP_CHECK_NULL_WITH_CONTEXT(context_, smooth2Tensor);
         smoothScale2Dtype = smooth2Tensor->GetDataType();
+    }
+    // 输入 dtype 白名单必须真正校验(此前 supportedXGammaDtypes/supportedSmoothScaleDtypes 只声明未使用,
+    // 仅输出 y1/y2 走了 CheckDtypeVaild): 不在白名单的 dtype 只要"三者相等"就能通过, 带着错误的
+    // dtypeSize 进 tiling。L2 exc_dtype_001(x1/x2/gamma 全为 bool)实证: 相等性校验通过后在
+    // tiling 内挂死(600s 超时, 既不出结果也不报错)。A2 侧 CheckInputOutputDType 是强制白名单的,
+    // 此处与之对齐 —— 不支持的 dtype 必须在任何尺寸推导之前拒绝。
+    if ((ge::GRAPH_SUCCESS != CheckDtypeVaild(x1Dtype, supportedXGammaDtypes, "MultiAddRmsNormDynamicQuant")) ||
+        (ge::GRAPH_SUCCESS != CheckDtypeVaild(x2Dtype, supportedXGammaDtypes, "MultiAddRmsNormDynamicQuant")) ||
+        (ge::GRAPH_SUCCESS != CheckDtypeVaild(gammaDtype, supportedXGammaDtypes, "MultiAddRmsNormDynamicQuant"))) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(nodeName.c_str(), "x1, x2 and gamma",
+                                               (Ops::Base::ToString(x1Dtype) + ", " + Ops::Base::ToString(x2Dtype) +
+                                                " and " + Ops::Base::ToString(gammaDtype))
+                                                   .c_str(),
+                                               "The dtypes of x1, x2 and gamma should be float16 or bfloat16");
+        return false;
+    }
+    if (tilingParams.hasSmoothScale1 &&
+        (ge::GRAPH_SUCCESS !=
+         CheckDtypeVaild(smoothScale1Dtype, supportedSmoothScaleDtypes, "MultiAddRmsNormDynamicQuant"))) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(nodeName.c_str(), "smoothScale1",
+                                               Ops::Base::ToString(smoothScale1Dtype).c_str(),
+                                               "The dtype of smoothScale1 should be float16 or bfloat16");
+        return false;
+    }
+    if (tilingParams.hasSmoothScale2 &&
+        (ge::GRAPH_SUCCESS !=
+         CheckDtypeVaild(smoothScale2Dtype, supportedSmoothScaleDtypes, "MultiAddRmsNormDynamicQuant"))) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(nodeName.c_str(), "smoothScale2",
+                                               Ops::Base::ToString(smoothScale2Dtype).c_str(),
+                                               "The dtype of smoothScale2 should be float16 or bfloat16");
+        return false;
     }
     if ((x1Dtype != x2Dtype) || (x1Dtype != gammaDtype)) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(nodeName.c_str(), "x1, x2 and gamma",
@@ -452,15 +526,12 @@ ge::graphStatus MultiAddRmsNormDynamicQuantRegbaseTiling::GetPlatformInfo()
 bool MultiAddRmsNormDynamicQuantRegbaseTiling::IsCapable() { return true; }
 
 /**
- * @brief: Cal base UB total size
- * @param M dim Num
+ * @brief: Cal base UB total size(单行账: 两个调用点均按 baseM=1 记)
  * @param N dim Num
  * @return Bytes of UBSize
  */
-uint64_t MultiAddRmsNormDynamicQuantRegbaseTiling::CalUBTotalSize(uint64_t baseM, uint64_t baseN,
-                                                                  const uint32_t tilingType)
+uint64_t MultiAddRmsNormDynamicQuantRegbaseTiling::CalUBTotalSize(uint64_t baseN, const uint32_t tilingType)
 {
-    uint64_t baseMB32Align = Ops::Base::CeilAlign(baseM, static_cast<uint64_t>(B32_BLOCK_NUM));
     uint64_t baseNB8Align = Ops::Base::CeilAlign(baseN, static_cast<uint64_t>(BLOCK_SIZE));
     uint64_t baseNReduceAlign = Ops::Base::CeilAlign(baseN, tilingParams.xReduceAlignNum);
     uint64_t baseNDtypeAlign = Ops::Base::CeilAlign(baseN, tilingParams.xDtypeAlignNum);
@@ -498,6 +569,13 @@ uint64_t MultiAddRmsNormDynamicQuantRegbaseTiling::CalUBTotalSize(uint64_t baseM
     totalSize += 1 * B32_BLOCK_NUM * sizeof(float);                   // rstdLo(两段式 rstd 低位段)
     totalSize += LEVEL_BUFFER_CNT * ONCE_VECTOR_SIZE * sizeof(float); // levelbuf
     totalSize += 1 * tilingParams.vecLength * sizeof(float);          // tempBuf
+    if ((tilingType == TILING_TYPE_SPILT || tilingType == TILING_TYPE_NSPLIT) && tilingParams.numM >= 1 &&
+        tilingParams.numM * 2 <= tilingParams.totalCoreNum) {
+        // N-split 跨核合并槽: partOutBuf_ + partInBuf_ 各 4 槽 × 64B(kernel PART_SLOTS_PER_CORE
+        // 同源)。powerSplit 按"贴满 UB"选择, 漏记这 512B 会令 InitBuffer 实际分配越界 → 设备侧
+        // EZ9999。仅 numM==1(nSplit 唯一启用域)预留, M>1 的 split 决策逐位不变。
+        totalSize += NUM_TWO * N_SPLIT_PARTIAL_CORE_BYTES;
+    }
 
     return totalSize;
 }
@@ -548,7 +626,11 @@ uint64_t MultiAddRmsNormDynamicQuantRegbaseTiling::CalUsedSize(uint64_t baseM, u
                                                                uint64_t baseNB32Align, uint64_t baseNDtypeAlign,
                                                                int64_t firstVcaddLength)
 {
-    uint64_t ubFactorRstd = Ops::Base::CeilAlign(baseM, static_cast<uint64_t>(B32_BLOCK_NUM));
+    // 行标量数组(rstd/xReduceTmp/scale1/scale2/denBrc/preBrc)按一个向量寄存器(64 个 float)对齐:
+    // 内核与 norm_common 的 rstd 链都用 DataCopy(reg, addr + i*V_LENGTH) 整寄存器读, baseM 不是 64
+    // 的倍数时会读过缓冲尾部 —— 原先靠"后面还有别的 buffer"这一布局事实兜着, 属隐含约束。
+    // 按 64 对齐后读取恒在界内, 代价约 1.8KB UB。
+    uint64_t ubFactorRstd = Ops::Base::CeilAlign(baseM, static_cast<uint64_t>(REG_ELEMS_FP32));
     uint64_t totalSize = 0;
     totalSize += baseNDtypeAlign * tilingParams.xDtypeSize +
                  tilingParams.quantBufCnt * baseNDtypeAlign * tilingParams.xDtypeSize + ALIGN_SPACE;
@@ -558,11 +640,14 @@ uint64_t MultiAddRmsNormDynamicQuantRegbaseTiling::CalUsedSize(uint64_t baseM, u
     totalSize += baseM * DOUBLE_BUFFER * baseNDtypeAlign *
                  tilingParams.xDtypeSize; // outQueueY_(y RmsNorm 输出,double buffer;multi-add 增,原漏算致 PERF 大 shape
                                           // UB 越界 VEC_ERROR/bug#3)
-    totalSize += baseM * (baseNB8Align * sizeof(int8_t) * DOUBLE_BUFFER + // y1 * double
-                          baseNB32Align * sizeof(float));                 // y1Tmp
-    totalSize += 2 * ubFactorRstd * sizeof(float);                        // rstd/xReduceTmp
-    totalSize += DOUBLE_BUFFER * ubFactorRstd * sizeof(float);            // Scale1 * double
-    totalSize += baseM * firstVcaddLength * sizeof(float);                // xTmp
+    totalSize += baseM * (baseNB8Align * sizeof(int8_t) *
+                              DOUBLE_BUFFER + // y1 * double
+                                              // y1Tmp: 微 N 平面路径按 dtype 对齐步长(N≤8 且 fp16/bf16 时 8<16)
+                          (baseNB32Align > baseNDtypeAlign ? baseNB32Align : baseNDtypeAlign) * sizeof(float));
+    totalSize += 2 * ubFactorRstd * sizeof(float);             // rstd/xReduceTmp
+    totalSize += DOUBLE_BUFFER * ubFactorRstd * sizeof(float); // Scale1 * double
+    totalSize += 2 * ubFactorRstd * sizeof(float);             // denBrc/preBrc(微 N 平面路径)
+    totalSize += baseM * firstVcaddLength * sizeof(float);     // xTmp
     if (tilingParams.hasY2Scale2) {
         totalSize += baseM * (baseNB8Align * sizeof(int8_t) * DOUBLE_BUFFER); // y2 * double
         totalSize += DOUBLE_BUFFER * ubFactorRstd * sizeof(float);            // Scale2 * double
@@ -643,10 +728,10 @@ bool MultiAddRmsNormDynamicQuantRegbaseTiling::TrySingleRowTiling()
 
 bool MultiAddRmsNormDynamicQuantRegbaseTiling::TrySplitTiling()
 {
-    uint64_t tmpUBSize = CalUBTotalSize(1, tilingParams.xReduceAlignNum, TILING_TYPE_SPILT);
+    uint64_t tmpUBSize = CalUBTotalSize(tilingParams.xReduceAlignNum, TILING_TYPE_SPILT);
     if (tmpUBSize <= tilingParams.maxUbSize) {
         uint64_t tmpPowerCutN = tilingParams.xReduceAlignNum;
-        while (CalUBTotalSize(1, tmpPowerCutN * MULTI_FACTOR_2, TILING_TYPE_SPILT) <= tilingParams.maxUbSize) {
+        while (CalUBTotalSize(tmpPowerCutN * MULTI_FACTOR_2, TILING_TYPE_SPILT) <= tilingParams.maxUbSize) {
             tmpPowerCutN *= MULTI_FACTOR_2;
         }
         tilingParams.powerSplit = tmpPowerCutN;
@@ -661,6 +746,56 @@ bool MultiAddRmsNormDynamicQuantRegbaseTiling::TrySplitTiling()
         return true;
     }
     return false;
+}
+
+// 行×列二维划分(issue#43 全量修复): numM < 核数 且 split 档时, 每行分 K2 个列段,
+// 总块数 = numM*K2(≤核数)。协议(tiling 字段同 v15, kernel 同源推导):
+//   K2 = totalCoreNum / numM (整除, numM==1 时即全核 —— 与 v15 行为完全一致)
+//   每行列分段: quanta=ceil(N/(K2*ps)); segLen=ps*quanta(负载均衡最优); K2'=ceil(N/segLen)
+//   nSplitNum = numM*K2'(总块数=block_dim); kernel: row=blockIdx/K2', seg=blockIdx%K2'
+// 启用前置条件: K2>=2(列方向有并行空间) 且 segTail>=ps; 否则回落 legacy 路径。
+// 作用域: 1 <= numM <= totalCoreNum/2(行数把核占满一半以上时列切分无收益)。
+void MultiAddRmsNormDynamicQuantRegbaseTiling::TryNSplitTiling()
+{
+    tilingParams.nSplitNum = 1;
+    tilingParams.nSegLen = 0;
+    tilingParams.nSegTail = 0;
+    if (tilingParams.tilingType != TILING_TYPE_SPILT || tilingParams.numM < 1 || tilingParams.totalCoreNum <= 1 ||
+        tilingParams.powerSplit == 0 || tilingParams.numM * 2 > tilingParams.totalCoreNum) {
+        return;
+    }
+    uint64_t k2 = tilingParams.totalCoreNum / tilingParams.numM;
+    if (k2 < 2) {
+        return;
+    }
+    // 封闭式划分(负载均衡最优): q 取 ceil 使最大段长在"≤K2 核 + ps 量化"的全体划分中可证最小
+    //   (N=2M/ps=4096/K2=72: q=8 → 64 段×32768 完美均分; floor 式尾段 2.05×拖慢 ~2 倍)。
+    uint64_t quanta = Ops::Base::CeilDiv(tilingParams.numN, k2 * tilingParams.powerSplit);
+    uint64_t segLen = quanta * tilingParams.powerSplit;
+    if (segLen < tilingParams.powerSplit) {
+        return; // 防御
+    }
+    uint64_t segCnt = Ops::Base::CeilDiv(tilingParams.numN, segLen);
+    uint64_t segTail = tilingParams.numN - (segCnt - 1) * segLen;
+    // 尾段吸收修正(一步, 可证): tail<ps 时段数减一、尾段并入 → 新尾段 = tail+segLen
+    // ∈ (segLen, 2·segLen), 恒 ≥ ps。修 N=100K=6×16K+1792 类形态被"尾段过薄"守卫
+    // 误杀回落的缺陷(否则中 M 大 N 家族无法启用二维划分)。
+    if (segTail < tilingParams.powerSplit) {
+        if (segCnt < 3) {
+            return; // N < 2*ps(近似): 列不可再分, 回落 legacy
+        }
+        segCnt -= 1;
+        segTail += segLen;
+    }
+    tilingParams.nSplitNum = tilingParams.numM * segCnt;
+    tilingParams.nSegLen = segLen;
+    tilingParams.nSegTail = segTail;
+    tilingParams.usedCoreNum = tilingParams.nSplitNum;
+    tilingParams.mPerCore = 1;
+    tilingParams.mLastCore = 1;
+    tilingParams.tilingType = TILING_TYPE_NSPLIT; // key 104: 静态绑定 MIX 任务类型(SyncAll 资源)
+    OP_LOGI(nodeName.c_str(), "NSplit2D tiling: M=%lu, K2=%lu, segLen=%lu, segTail=%lu, N=%lu, blocks=%lu.",
+            tilingParams.numM, segCnt, segLen, segTail, tilingParams.numN, tilingParams.nSplitNum);
 }
 
 ge::graphStatus MultiAddRmsNormDynamicQuantRegbaseTiling::DoOpTiling()
@@ -690,6 +825,9 @@ ge::graphStatus MultiAddRmsNormDynamicQuantRegbaseTiling::DoOpTiling()
 
     ge::graphStatus res = SetTilingParams();
     OP_CHECK_IF(ge::GRAPH_SUCCESS != res, , return res);
+
+    // N 维跨核切分必须在 SetTilingParams 之后: 依赖 TrySplitTiling 产出的 powerSplit/tilingType。
+    TryNSplitTiling();
 
     // Set align params
     tilingParams.baseNDtypeAlign = Ops::Base::CeilAlign(tilingParams.baseN, tilingParams.xDtypeAlignNum);
@@ -721,6 +859,9 @@ void MultiAddRmsNormDynamicQuantRegbaseTiling::SetTilingData()
     tilingData.set_hasSmoothScale2(static_cast<uint32_t>(tilingParams.hasSmoothScale2));
     tilingData.set_hasBeta(static_cast<uint32_t>(tilingParams.hasBeta));
     tilingData.set_x1Num(tilingParams.x1Num);
+    tilingData.set_nSplitNum(tilingParams.nSplitNum);
+    tilingData.set_nSegLen(tilingParams.nSegLen);
+    tilingData.set_nSegTail(tilingParams.nSegTail);
 }
 
 void MultiAddRmsNormDynamicQuantRegbaseTiling::PrintTilingData()
@@ -742,8 +883,22 @@ ge::graphStatus MultiAddRmsNormDynamicQuantRegbaseTiling::DoLibApiTiling() { ret
 ge::graphStatus MultiAddRmsNormDynamicQuantRegbaseTiling::GetWorkspaceSize()
 {
     tilingParams.workspaceSize = 0;
-    if (TILING_TYPE_SPILT == tilingParams.tilingType) {
-        tilingParams.workspaceSize = WORKSPACE_COUNT * tilingParams.usedCoreNum * tilingParams.numN * sizeof(float);
+    if (TILING_TYPE_SPILT == tilingParams.tilingType || TILING_TYPE_NSPLIT == tilingParams.tilingType) {
+        if (tilingParams.nSplitNum > 1) {
+            // N-split 2D: 暂存区按"每面积 M 整行"布局(各核只写自己 (row,seg) 段),
+            // 面积基址 = i*M*N, 段内偏移 = row*N + blockIdx_in_row*nSegLen, 与内核同源;
+            // 另加每核 4×64B 合并槽(块数 = M*K2)。
+            // 合并槽区基址须 64B(cacheline) 对齐: 内核每核 4 个 64B 槽靠 DCCI 逐槽 clean,
+            // 基址落在 cacheline 中间会让相邻两核的槽共享同一行而互相刷写。暂存三面积共
+            // 3*M*N 个 float, 仅 M*N % 16 == 0 时天然对齐(反例 M=18,N=30406)。
+            // 内核 partGmAll_/partGm_ 用同一个对齐表达式, 两侧必须同源。
+            const uint64_t areaBytes = WORKSPACE_COUNT * tilingParams.numM * tilingParams.numN * sizeof(float);
+            const uint64_t partBaseBytes = (areaBytes + PART_BASE_ALIGN_BYTES - 1) / PART_BASE_ALIGN_BYTES *
+                                           PART_BASE_ALIGN_BYTES;
+            tilingParams.workspaceSize = partBaseBytes + tilingParams.nSplitNum * N_SPLIT_PARTIAL_CORE_BYTES;
+        } else {
+            tilingParams.workspaceSize = WORKSPACE_COUNT * tilingParams.usedCoreNum * tilingParams.numN * sizeof(float);
+        }
     }
 
     return ge::GRAPH_SUCCESS;
@@ -757,7 +912,10 @@ ge::graphStatus MultiAddRmsNormDynamicQuantRegbaseTiling::PostTiling()
     context_->GetRawTilingData()->SetDataSize(tilingData.GetDataSize());
 
     size_t usrWorkspaceSize = tilingParams.workspaceSize;
-    size_t sysWorkSpaceSize = DEFAULT_SYS_WORKSPACE;
+    // 系统 workspace 必须向平台查询(与 A2 的 ascendcPlatform.GetLibApiWorkSpaceSize() 一致):
+    // 原先硬编码 16MB 是个隐含约束 —— 平台实际值变化时要么浪费要么不足。
+    auto ascendcPlatformWs = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
+    size_t sysWorkSpaceSize = ascendcPlatformWs.GetLibApiWorkSpaceSize();
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     currentWorkspace[0] = usrWorkspaceSize + sysWorkSpaceSize;
     return ge::GRAPH_SUCCESS;

@@ -51,6 +51,10 @@ public:
 
     __aicore__ inline void Process()
     {
+        if (!this->smooth2Exist) {
+            // ss2 缺省: y2/s2 占位输出写 0 定值(修复 deterministic FAIL), 详见 common.h
+            WritePlaceholderY2Scale2(this->y2Gm, this->outScale2Gm);
+        }
         if (this->smooth1Exist) {
             AscendC::LocalTensor<T_X> smooth1Local = smoothBuf.Get<T_X>();
             DataCopyPad(smooth1Local, this->smooth1Gm, {1, static_cast<uint16_t>(this->numLastDim * sizeof(T_X)), 0, 0},
@@ -468,6 +472,9 @@ private:
         y1Gm.SetGlobalBuffer((__gm__ T_Y*)(y1) + this->blockIdx_ * this->gmOffset_, gmLen);
         if (this->smooth2Exist) {
             y2Gm.SetGlobalBuffer((__gm__ T_Y*)(y2) + this->blockIdx_ * this->gmOffset_, gmLen);
+        } else {
+            // ss2 缺省: y2/s2 为 size=1 占位输出, 设 1 元素窗口供写 0(详见 common.h)
+            y2Gm.SetGlobalBuffer((__gm__ T_Y*)(y2), 1);
         }
         xGm.SetGlobalBuffer((__gm__ T_X*)(x) + this->blockIdx_ * this->gmOffset_, gmLen);
         yGm.SetGlobalBuffer((__gm__ T_X*)(y) + this->blockIdx_ * this->gmOffset_, gmLen); // 增:y 输出(RmsNorm 结果)
@@ -476,6 +483,8 @@ private:
         if (this->smooth2Exist) {
             outScale2Gm.SetGlobalBuffer((__gm__ float*)(outScale2) + this->blockIdx_ * this->firstDimPerCore,
                                         this->rowWork);
+        } else {
+            outScale2Gm.SetGlobalBuffer((__gm__ float*)(outScale2), 1);
         }
     }
 

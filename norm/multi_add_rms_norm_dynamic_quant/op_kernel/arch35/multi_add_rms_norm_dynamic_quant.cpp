@@ -24,11 +24,12 @@ using namespace AscendC;
 // workspace 入参是整块基址, 前 RESERVED_WORKSPACE(2201/3510 下为 16MB)是框架系统区(dump/KFC 等),
 // 用户临时数据必须从 GetUserWorkspace(workspace) 起写, 否则一旦开 ASCENDC_DUMP 或引入 lib-API 即互踩。
 // tiling 申报的就是"系统区 + 用户区"(tiling_arch35.cpp DEFAULT_SYS_WORKSPACE), 此处按约定取用户区。
-#define INIT_AND_PROCESS_WORKSPACE                                                                                    \
-    do {                                                                                                              \
-        GM_ADDR usrWorkspace = AscendC::GetUserWorkspace(workspace);                                                  \
-        op.Init(x1, x2, gamma, smooathScale1, smooathScale2, y1, y2, x, y, scale1, scale2, usrWorkspace, tilingData); \
-        op.Process();                                                                                                 \
+#define INIT_AND_PROCESS_WORKSPACE                                                                                                    \
+    do {                                                                                                                              \
+        AscendC::SetSysWorkspace(workspace); /* SyncAll 软栅障计数器落点(renorm_sm_cr 同款), 缺失则全核自旋崩溃 */ \
+        GM_ADDR usrWorkspace = AscendC::GetUserWorkspace(workspace);                                                                  \
+        op.Init(x1, x2, gamma, smooathScale1, smooathScale2, y1, y2, x, y, scale1, scale2, usrWorkspace, tilingData);                 \
+        op.Process();                                                                                                                 \
     } while (0)
 
 #define INIT_AND_PROCESS                                                                                \
@@ -47,6 +48,10 @@ extern "C" __global__ __aicore__ void multi_add_rms_norm_dynamic_quant(GM_ADDR x
     if (TILING_KEY_IS(TILING_KEY_UNRUN)) {
         // Do nothing
     } else {
+        // 任务类型按 tiling key 静态声明(框架从预编译产物提取 __enable_feature_for_compile_<key>,
+        // 运行时数据条件不可判, 必须用声明式宏): 104(N-split) 绑 MIX_AIV_1_0 以建立 SyncAll
+        // 跨核同步资源(intercoreSync); 其余 key 维持 AIV_ONLY 默认, M>1 形态零波及。
+        KERNEL_TASK_TYPE(104, KERNEL_TYPE_MIX_AIV_1_0);
         KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
         GET_TILING_DATA_WITH_STRUCT(MultiAddRmsNormDynamicQuantRegbaseTilingData, tilingDataIn, tiling);
         const MultiAddRmsNormDynamicQuantRegbaseTilingData* __restrict tilingData = &tilingDataIn;
@@ -57,6 +62,11 @@ extern "C" __global__ __aicore__ void multi_add_rms_norm_dynamic_quant(GM_ADDR x
             KernelMultiAddRmsNormDynamicQuantRegbaseSingleRow<DTYPE_X1, DTYPE_Y1> op(&pipe);
             INIT_AND_PROCESS;
         } else if (TILING_KEY_IS(103)) {
+            KernelMultiAddRmsNormDynamicQuantRegbaseSpiltReduce<DTYPE_X1, DTYPE_Y1> op(&pipe);
+            INIT_AND_PROCESS_WORKSPACE;
+        } else if (TILING_KEY_IS(104)) {
+            // N-split 与 103 同一内核类(host 保证 104 仅在 numM==1 且分段可行时下发,
+            // nSplitNum>1 → ProcessNSplit), 差异只在任务类型(静态)与 tiling 分区字段。
             KernelMultiAddRmsNormDynamicQuantRegbaseSpiltReduce<DTYPE_X1, DTYPE_Y1> op(&pipe);
             INIT_AND_PROCESS_WORKSPACE;
         }

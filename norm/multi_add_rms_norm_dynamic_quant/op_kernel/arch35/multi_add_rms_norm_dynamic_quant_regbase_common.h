@@ -174,10 +174,29 @@ __aicore__ inline void InitOptionalGmBuffers(GlobalTensor<T_SMOOTH_SCALE>& smoot
     if (hasY2Scale2) {
         y2Gm.SetGlobalBuffer((__gm__ T_Y*)y2 + gmOffset, gmLen);
         scale2Gm.SetGlobalBuffer((__gm__ float*)scale2 + scalesGmOffset, mCore);
+    } else {
+        // ss2 缺省时 y2/s2 退化为 size=1 占位输出(infershape 固定 6 输出): 此前完全不写,
+        // 两次执行的输出 buffer 残留不同 → GEIR deterministic 逐位比对 FAIL(精度比对
+        // golden=None 跳过, 故 precision 仍 PASS; _004/_010/_026/_195/_197 实测)。设 1 元素
+        // 窗口供 WritePlaceholderY2Scale2 显式写 0 定值。
+        y2Gm.SetGlobalBuffer((__gm__ T_Y*)y2, 1);
+        scale2Gm.SetGlobalBuffer((__gm__ float*)scale2, 1);
     }
     if (hasBeta) {
         betaGm.SetGlobalBuffer((__gm__ T_X*)beta, numN);
     }
+}
+
+// ss2 缺省分支的占位输出写 0(修复 deterministic FAIL)。2026-11-17 v28 改标量 GM 写:
+// 原实现(Duplicate+V_MTE3 事件对+DataCopyPad)在 split/N-split 内核上 FetchEventID
+// 挪动了 PublishSlots 等既有事件号消耗模式 → _060/_534 出现 0.0003% 级散点错(v25
+// 无占位全过/v26 加占位差之毫厘的对照定案)。SetValue 走标量管道直写 GM, 零事件、
+// 零 MTE3、不占 scratch, 各核幂等写同值 0 无害。
+template <typename T_Y>
+__aicore__ inline void WritePlaceholderY2Scale2(GlobalTensor<T_Y>& y2Gm, GlobalTensor<float>& scale2Gm)
+{
+    y2Gm.SetValue(0, static_cast<T_Y>(0));
+    scale2Gm.SetValue(0, static_cast<float>(0.0));
 }
 
 template <typename T_X, typename T_GAMMA, typename T_SMOOTH_SCALE = float, bool HAS_SMOOTH_SCALE = true,
@@ -427,7 +446,27 @@ __aicore__ inline void ComputeScale(LocalTensor<float>& scaleLocal, uint32_t rst
         }
         DataCopy<float, LoadDist::DIST_BRC_B32>(scaleReg, scaleAddr + rstdScaleOffset);
         Duplicate(qmaxReg, quantMaxV, maskRegOne);
-        Div(scaleReg, scaleReg, qmaxReg, maskRegOne);
+        // 向量 Div 非正确舍入(_055 实证: row_max 与 golden 一致时商仍偏 1 ULP,
+        // 而 scale 的 cross_check 容差折合 sub-ULP, 必须逐位正确)。Markstein 末端校正:
+        //   r = a - b*q0(FMA, 精确);  q = fma(r, 1/b, q0)
+        // 对 b=127/448/57344/32768 均满足 Markstein 条件(q0 偏 ≤1ULP, y=fl(1/b)
+        // 为正确舍入倒数), 且商绝无 fp32 中点(b 含奇因子) → 校正值即正确舍入值。
+        // 用 20 万随机样本 + q0±1ULP 双向仿真验证 0 误判。
+        RegTensor<float> aReg, negBReg, rReg, yReg;
+        Muls(aReg, scaleReg, 1.0f, maskRegOne); // a = row_max
+        Muls(negBReg, qmaxReg, -1.0f, maskRegOne);
+        Duplicate(yReg, static_cast<float>(1.0) / quantMaxV, maskRegOne);
+        Div(scaleReg, scaleReg, qmaxReg, maskRegOne);     // q0
+        Muls(rReg, scaleReg, 1.0f, maskRegOne);           // r = q0
+        FusedMulDstAdd(rReg, negBReg, aReg, maskRegOne);  // r = a - b*q0(精确)
+        FusedMulDstAdd(rReg, yReg, scaleReg, maskRegOne); // r = q0 + r*(1/b)
+        // 非有限保护: row_max 为 inf/NaN 时 r = inf-inf = NaN 会把 q0 的 inf 污染成 NaN,
+        // 保持 q0 原值(IEEE 自然传播)。
+        RegTensor<float> absQ;
+        MaskReg finiteMask;
+        Abs(absQ, scaleReg, maskRegOne);
+        Compares<float, CMPMODE::LE>(finiteMask, absQ, MAX_FINITE_FP32, maskRegOne);
+        Select(scaleReg, rReg, scaleReg, finiteMask);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(scaleAddr + rstdScaleOffset, scaleReg, maskRegOne);
     }
 }

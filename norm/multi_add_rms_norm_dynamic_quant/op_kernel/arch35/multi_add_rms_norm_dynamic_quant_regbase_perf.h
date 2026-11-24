@@ -87,7 +87,10 @@ public:
     __aicore__ inline void InitUBBuffer()
     {
         uint64_t ubFactorQuant = CeilAlign(numN_, BLOCK_SIZE / sizeof(T_SMOOTH_SCALE));
-        uint64_t ubFactorRstd = CeilAlign(baseM_, B32_BLOCK_NUM);
+        // 行标量数组按一个向量寄存器(V_LENGTH 个 float)对齐: 行标量批量链用无掩码整寄存器读
+        // DataCopy(reg, addr + i * V_LENGTH), baseM_ 非 64 倍数时末段会读过缓冲尾部 —— 原先靠
+        // "后面还有别的 buffer"这一布局事实兜着。主机 CalUsedSize 用同一对齐, 两侧必须同源。
+        uint64_t ubFactorRstd = CeilAlign(baseM_, static_cast<uint64_t>(V_LENGTH));
         uint64_t firstVcaddResult = baseM_ * (((powerSplit_ + V_LENGTH - 1) / V_LENGTH + B32_BLOCK_NUM - 1) /
                                               B32_BLOCK_NUM * B32_BLOCK_NUM);
         pipe_->InitBuffer(inQueueX1_, 1, baseM_ * baseNDtypeAlign_ * sizeof(T_X));
@@ -101,7 +104,13 @@ public:
         pipe_->InitBuffer(outQueueScale1_, DOUBLE_BUFFER, ubFactorRstd * sizeof(float));
 
         pipe_->InitBuffer(xOutTmpBuf_, baseM_ * baseNDtypeAlign_ * sizeof(float));
-        pipe_->InitBuffer(y1TmpBuf_, baseM_ * baseNB32Align_ * sizeof(float));
+        // 微 N 平面路径的 inp 暂存按 dtype 对齐步长(N≤8 且 fp16/bf16 时 B32 对齐(8) < dtype 对齐(16))
+        pipe_->InitBuffer(y1TmpBuf_, baseM_ * (baseNB32Align_ > baseNDtypeAlign_ ? baseNB32Align_ : baseNDtypeAlign_) *
+                                         sizeof(float));
+        // γ/ss 平铺暂存: 恒定一个向量寄存器宽的独立缓冲, 与行平面区无重叠、与行数无关
+        // (尾批 realM 再小也始终存在), 读写恰为一个寄存器界内, 无越界无残留
+        pipe_->InitBuffer(denBrcBuf_, ubFactorRstd * sizeof(float));
+        pipe_->InitBuffer(preBrcBuf_, ubFactorRstd * sizeof(float));
 
         pipe_->InitBuffer(rstdBuf_, ubFactorRstd * sizeof(float));
         pipe_->InitBuffer(xReduceTmpBuf_, ubFactorRstd * sizeof(float));
@@ -122,6 +131,10 @@ public:
     }
     __aicore__ inline void Process()
     {
+        if (!hasY2Scale2_) {
+            // ss2 缺省: y2/s2 占位输出写 0 定值(修复 deterministic FAIL), 详见 common.h
+            WritePlaceholderY2Scale2(y2Gm_, scale2Gm_);
+        }
         CopyInParamToQueue(inQueueGamma_, gammaGm_, numN_);
         CopyInDynamicQuantCommon(inQueueSmoothScale1_, inQueueSmoothScale2_, smoothScale1Gm_, smoothScale2Gm_, numN_,
                                  hasSmoothScale1_, hasSmoothScale2_);
@@ -131,6 +144,9 @@ public:
         LocalTensor<T_X> betaLocal;
         PrepareOptionalParamLocals(inQueueSmoothScale1_, inQueueSmoothScale2_, inQueueBeta_, betaGm_, smoothScale1Local,
                                    smoothScale2Local, betaLocal, numN_, hasSmoothScale1_, hasSmoothScale2_, hasBeta_);
+
+        // 微 N(一行装进一个向量寄存器, repeatTimes==1): 走行标量批量化分支, 省掉逐行冗余发射。
+        const bool microN = (baseN_ <= static_cast<uint64_t>(V_LENGTH));
 
         for (uint64_t mOuterIdx = 0; mOuterIdx < mOuterCnt_; mOuterIdx++) {
             uint64_t realM = mOuterIdx == (mOuterCnt_ - 1) ? tailMOuter_ : baseM_;
@@ -157,14 +173,15 @@ public:
                 xOutTmpLocal, xReduceLocal, xReduceTmpBuf_, static_cast<uint16_t>(realM),
                 static_cast<uint32_t>(baseNDtypeAlign_), static_cast<uint32_t>(baseN_),
                 static_cast<uint32_t>(powerSplit_), static_cast<uint32_t>(B32_BLOCK_NUM));
-            NormCommon::ComputeRstdNewtonRaphson<true, true>(xReduceLocal, rstdLocal, realM, epsilon_, avgFactor_,
-                                                             V_LENGTH);
+            ComputeRstdPerf(xReduceLocal, rstdLocal, static_cast<uint32_t>(realM));
 
             // y(RmsNorm 结果,量化前)= xOut * rstd * gamma,逐行(batch realM)计算并写回
             LocalTensor<T_X> yLocal = outQueueY_.AllocTensor<T_X>();
-            ComputeYOutBatch(yLocal, xOutTmpLocal, rstdLocal, gammaLocal, realM);
-            outQueueY_.EnQue<T_X>(yLocal);
-            CopyOutYRms(gmOffset, realM);
+            if (!microN) {
+                ComputeYOutBatch(yLocal, xOutTmpLocal, rstdLocal, gammaLocal, realM);
+                outQueueY_.EnQue<T_X>(yLocal);
+                CopyOutYRms(gmOffset, realM);
+            } // microN: y 由下面 scale 第一轮顺手写出(共用 x*rstd*gamma)
 
             LocalTensor<T_Y> y1Local = outQueueY1_.AllocTensor<T_Y>();
             LocalTensor<float> y1TmpLocal = y1TmpBuf_.Get<float>();
@@ -173,17 +190,42 @@ public:
                 y2Local = outQueueY2_.AllocTensor<T_Y>();
             }
             SetOverflowMode<T_Y>(0);
-            DispatchMutlScale<T_X, T_SMOOTH_SCALE, T_Y>(scale1Local, xOutTmpLocal, rstdLocal, gammaLocal, betaLocal,
-                                                        smoothScale1Local, y1TmpLocal, baseN_, realM, baseN_,
-                                                        baseNDtypeAlign_, hasSmoothScale1_, hasBeta_);
-            PipeBarrier<PIPE_V>();
-            ComputeMutlY<T_Y>(y1Local, scale1Local, y1TmpLocal, baseN_, realM);
-            if (hasSmoothScale2_) {
-                DispatchMutlScale<T_X, T_SMOOTH_SCALE, T_Y>(scale2Local, xOutTmpLocal, rstdLocal, gammaLocal, betaLocal,
-                                                            smoothScale2Local, y1TmpLocal, baseN_, realM, baseN_,
-                                                            baseNDtypeAlign_, hasSmoothScale2_, hasBeta_);
+            if (microN) {
+                // 微 N: 行标量链批量化 + 行间恒定参数提升(与逐行版逐位等价)
+                LocalTensor<float> preLocal = preBrcBuf_.Get<float>();
+                LocalTensor<float> denLocal = denBrcBuf_.Get<float>();
+                DispatchMutlScaleMicroN<true, T_X, T_SMOOTH_SCALE, T_Y>(
+                    scale1Local, xOutTmpLocal, rstdLocal, gammaLocal, betaLocal, smoothScale1Local, y1TmpLocal, baseN_,
+                    realM, baseN_, baseNDtypeAlign_, hasSmoothScale1_, hasBeta_, yLocal);
+                outQueueY_.EnQue<T_X>(yLocal);
+                CopyOutYRms(gmOffset, realM);
                 PipeBarrier<PIPE_V>();
-                ComputeMutlY<T_Y>(y2Local, scale2Local, y1TmpLocal, baseN_, realM);
+                PrepQuantRowScalarMicroN<T_Y>(scale1Local, preLocal, denLocal, realM);
+                PipeBarrier<PIPE_V>();
+                ComputeMutlYMicroN<T_Y>(y1Local, preLocal, denLocal, y1TmpLocal, baseN_, realM);
+                if (hasSmoothScale2_) {
+                    PipeBarrier<PIPE_V>();
+                    DispatchMutlScaleMicroN<false, T_X, T_SMOOTH_SCALE, T_Y>(
+                        scale2Local, xOutTmpLocal, rstdLocal, gammaLocal, betaLocal, smoothScale2Local, y1TmpLocal,
+                        baseN_, realM, baseN_, baseNDtypeAlign_, hasSmoothScale2_, hasBeta_, yLocal);
+                    PipeBarrier<PIPE_V>();
+                    PrepQuantRowScalarMicroN<T_Y>(scale2Local, preLocal, denLocal, realM);
+                    PipeBarrier<PIPE_V>();
+                    ComputeMutlYMicroN<T_Y>(y2Local, preLocal, denLocal, y1TmpLocal, baseN_, realM);
+                }
+            } else {
+                DispatchMutlScale<T_X, T_SMOOTH_SCALE, T_Y>(scale1Local, xOutTmpLocal, rstdLocal, gammaLocal, betaLocal,
+                                                            smoothScale1Local, y1TmpLocal, baseN_, realM, baseN_,
+                                                            baseNDtypeAlign_, hasSmoothScale1_, hasBeta_);
+                PipeBarrier<PIPE_V>();
+                ComputeMutlY<T_Y>(y1Local, scale1Local, y1TmpLocal, baseN_, realM);
+                if (hasSmoothScale2_) {
+                    DispatchMutlScale<T_X, T_SMOOTH_SCALE, T_Y>(scale2Local, xOutTmpLocal, rstdLocal, gammaLocal,
+                                                                betaLocal, smoothScale2Local, y1TmpLocal, baseN_, realM,
+                                                                baseN_, baseNDtypeAlign_, hasSmoothScale2_, hasBeta_);
+                    PipeBarrier<PIPE_V>();
+                    ComputeMutlY<T_Y>(y2Local, scale2Local, y1TmpLocal, baseN_, realM);
+                }
             }
             SetOverflowMode<T_Y>(oriOverflowMode_);
 
@@ -315,8 +357,6 @@ private:
         outQueueY_.FreeTensor(yLocal);
     }
 
-    // 增:逐行(batch realM)调用共享 ComputeYOut,y = xOut * rstd * gamma。
-    // xOutTmpLocal 为 fp32 的 xOut(=Σx1+x2),每行占 baseNDtypeAlign_;rstd 每行一个标量。
     __aicore__ inline void ComputeYOutBatch(LocalTensor<T_X>& yLocal, LocalTensor<float>& xOutTmpLocal,
                                             LocalTensor<float>& rstdLocal, LocalTensor<T_X>& gammaLocal, uint32_t realM)
     {
@@ -412,14 +452,27 @@ private:
                         // inp/scale 恒不溢出(|inp| <= row_max), 次正规分母的 DAZ 由 pre 同乘化解。
                         Mul(yRegFp32, xRegFp32, smoothScaleRegFp32, maskReg);
                         DataCopy<float>(yTmpAddr + curA * baseNB32Align_ + idx * V_LENGTH, yRegFp32, maskReg);
-                        Abs(yRegFp32, yRegFp32, maskReg);               // VF abs is zeroing mode
-                        Max(scaleReg, scaleReg, yRegFp32, maskRegFull); // Using full mask
+                        Abs(yRegFp32, yRegFp32, maskReg); // VF abs is zeroing mode
+                        // 累加必须用全掩码: Reg 掩码运算是 ZEROING 合并模式, 掩码外的目的 lane
+                        // 会被【清零】而非保留。尾轮掩码只剩 N%64 条时, 用 maskReg 会把累加器
+                        // lane[tail,64) 全清掉, row_max 退化成"只看下标 ≡0 (mod 64) 的元素"
+                        // (_027 dump 实证 250/250 行命中点都是 64 的倍数, scale 偏小至 0.29 倍,
+                        //  |y1|=127 饱和点 263→15484)。Abs 已把掩码外 lane 置 0, 而 |inp|>=0,
+                        // 故全掩码取 max 不会引入伪最大值 —— 与 common.h ComputeReduceMax 同形。
+                        Max(scaleReg, scaleReg, yRegFp32, maskRegFull);
                     } else {
                         DataCopy<float>(yTmpAddr + curA * baseNB32Align_ + idx * V_LENGTH, xRegFp32, maskReg);
                         Abs(yRegFp32, xRegFp32, maskReg);               // VF abs is zeroing mode
-                        Max(scaleReg, scaleReg, yRegFp32, maskRegFull); // Using full mask
+                        Max(scaleReg, scaleReg, yRegFp32, maskRegFull); // 同上: 全掩码累加
                     }
                 }
+                // 规约前必须用 UpdateMask 把元素计数器重新装满 64: vcmax 在 counter 模式下
+                // 按硬件元素计数器决定规约宽度, 传入的 MaskReg 不起作用(实测: 把这里的
+                // maskReg 换成 CreateMask<ALL> 产出逐字节不变)。内层循环最后一轮已把计数器
+                // 耗到 N%64, N=705 时只剩 1 → 规约只覆盖 lane0, row_max 退化成"只看下标
+                // ≡0 (mod 64) 的 12 个元素"(_027 dump 实证: 250/250 行的 row_max 命中点
+                // 都是 64 的整数倍), scale 偏小至 0.29 倍 → |y1|=127 饱和点 263→15484。
+                // 仅 N≤64 或 N%64==0 时计数器余量恰好等于有效 lane 数, 故此前未暴露。
                 ReduceMax(scaleReg, scaleReg, maskRegFull);
                 // 存入 UB 的是 row_max(正规数)而非 row_max/127(可能次正规)。
                 // 矢量单元对次正规做 DAZ, 次正规值一旦落 UB, 重新加载时即被刷成 0,
@@ -476,10 +529,27 @@ private:
                 Mul(rmScaled, scaleReg, preReg, maskRegAll);
                 // 分母 = (row_max*PRE)/qmax = scale*PRE
                 Div(rmScaled, rmScaled, qmaxReg, maskRegAll);
-                // row_max==0(整行 inp 恒为 0): 分母换 1, out = 0/1 = 0, 规避 0/0; 与算法公式一致
-                MaskReg isZero;
-                CompareScalar<float, CMPMODE::EQ>(isZero, rmScaled, static_cast<float>(0.0), maskRegAll);
-                Select(denReg, oneReg, rmScaled, isZero);
+                // 次正规 scale 的舍入语义(与 PrepQuantRowScalarMicroN 同款, 详见该处注释):
+                // 规格用 fl32(row_max/127) 作除数, 次正规区网格为 2^-149; PRE_SCALE 域内为 2^-69。
+                {
+                    constexpr float GRID_UP = 590295810358705651712.0f;        // 2^69
+                    constexpr float GRID_DN = 1.6940658945086007e-21f;         // 2^-69
+                    constexpr float SUBNORM_DEN_LIM = 1.4210854715202004e-14f; // 2^-46 = 2^-126*2^80
+                    MaskReg isSubDen;
+                    CompareScalar<float, CMPMODE::LT>(isSubDen, rmScaled, SUBNORM_DEN_LIM, maskRegAll);
+                    And(isSubDen, isSubDen, isSmall, maskRegAll);
+                    RegTensor<float> gridReg;
+                    Muls(gridReg, rmScaled, GRID_UP, maskRegAll);
+                    Truncate<float, RoundMode::CAST_RINT>(gridReg, gridReg, maskRegAll);
+                    Muls(gridReg, gridReg, GRID_DN, maskRegAll);
+                    Select(rmScaled, gridReg, rmScaled, isSubDen);
+                }
+                // 零守卫判据必须是"整行 inp 恒为 0"(row_max==0), 不是"den==0": row_max>0 但 scale
+                // 被次正规网格舍成 0 时, 规格是 inp/0=±inf -> 饱和到 ±127/-128(_335 实证 11531
+                // 行 dev=0 而 golden=-128); row_max==0 时规格是 0/0=NaN -> int8 取 0, 仍用 den=1。
+                MaskReg isZeroRow;
+                CompareScalar<float, CMPMODE::EQ>(isZeroRow, scaleReg, static_cast<float>(0.0), maskRegAll);
+                Select(denReg, oneReg, rmScaled, isZeroRow);
                 for (uint16_t idx = 0; idx < (uint16_t)repeatTimes; idx++) {
                     maskReg = UpdateMask<float>(sregElewiseNum);
                     DataCopy<float>(yRegFp32, yTmpAddr + curA * baseNB32Align_ + idx * V_LENGTH);
@@ -502,6 +572,275 @@ private:
                 // 也与算法公式 scale = row_max(abs(inp))/127 字面一致。
                 Div(scaleReg, scaleReg, qmaxReg, maskRegOneY);
                 DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(scaleAddr + curA, scaleReg, maskRegOneY);
+            }
+        }
+    }
+
+    // ---- 微 N(baseN<=V_LENGTH)专用三件套 ----
+    // 动机: 逐行链每行发射一条全宽向量指令, N=2 时 64 条 lane 只有 2 条有效, 实测 _026
+    // vec 发射占 95%(420/441us)。这里把"行标量"运算从逐行搬到一次 64 行, 元素级运算仍逐行。
+    // 指令序与 legacy 逐行版逐字对应(同输入同次序), 故逐位等价, 不触动精度判据。
+
+    // rstd(本地版, 替代 NormCommon::ComputeRstdNewtonRaphson): 指令序与库版逐字相同,
+    // 只多了巨 var 的 2 的幂预缩放 —— 库版算式为 r = 1/var; y = sqrt(r), 中间量 1/var 在
+    // var > ~8.5e37 时落入 fp32 次正规区被向量单元 DAZ 冲成 0 -> rstd = 0 -> y 整行为 0,
+    // 而 rstd = 1/sqrt(var) 本身完全可表示(_520 实证: var=1.53e38 正解 8.08e-20, 设备给 0;
+    // 428 条错行的 var 全部落在 [8.6e37, 1.69e38], 恰是 1/var 次正规的窗口)。
+    // 做法: var' = var*2^-60 后调同一个 Reg 级函数, 再把结果乘回 2^-30(两次缩放都是 2 的幂,
+    // 精确无额外舍入)。未超限的行走 Select 原值并乘 1.0, 逐位与库版一致。
+    __aicore__ inline void ComputeRstdPerf(LocalTensor<float>& ssLocal, LocalTensor<float>& rstdLocal, uint32_t rows)
+    {
+        // 判据取 2^126 = 1/2^-126 —— var 超过它时 1/var 落入次正规被 DAZ 冲成 0(库版算式
+        // r=1/var; y=sqrt(r) 即在此失效)。等于号归库版: var==2^126 时 1/var 恰为最小正规数。
+        constexpr float HUGE_VAR_LIM = 85070591730234615865843651857942052864.0f; // 2^126
+        constexpr float DN60 = 8.673617379884035e-19f;                            // 2^-60
+        constexpr float DN30 = 9.313225746154785e-10f;                            // 2^-30
+        __local_mem__ float* src = (__ubuf__ float*)ssLocal.GetPhyAddr();
+        __local_mem__ float* dst = (__ubuf__ float*)rstdLocal.GetPhyAddr();
+        uint16_t loopCount = static_cast<uint16_t>((rows + V_LENGTH - 1) / V_LENGTH);
+        uint32_t sregRows = rows;
+        float avg = avgFactor_;
+        float eps = epsilon_;
+
+        __VEC_SCOPE__
+        {
+            RegTensor<float> var, rstd, varScaled, corrReg, oneReg, dn30Reg;
+            MaskReg mAll = CreateMask<float, MaskPattern::ALL>();
+            MaskReg pregLoop, isHuge;
+            Duplicate(oneReg, static_cast<float>(1.0), mAll);
+            Duplicate(dn30Reg, DN30, mAll);
+            for (uint16_t i = 0; i < loopCount; ++i) {
+                pregLoop = UpdateMask<float>(sregRows);
+                DataCopy<float>(var, src + i * V_LENGTH);
+                Muls(var, var, avg, pregLoop);
+                Adds(var, var, eps, pregLoop);
+                CompareScalar<float, CMPMODE::GT>(isHuge, var, HUGE_VAR_LIM, mAll);
+                Select(corrReg, dn30Reg, oneReg, isHuge);
+                Muls(varScaled, var, DN60, mAll);
+                Select(var, varScaled, var, isHuge);
+                NormCommon::ComputeRstdNewtonRaphsonReg<true>(var, rstd, pregLoop, static_cast<float>(0.0));
+                Mul(rstd, rstd, corrReg, pregLoop);
+                DataCopy<float>(dst + i * V_LENGTH, rstd, pregLoop);
+            }
+        }
+    }
+
+    // 行标量链批量化: row_max -> (preBrc, denBrc) + scaleLocal 原地换成最终 scale。
+    // 对应 legacy ComputeMutlY 内每行那 9 条(BRC/Compare×2/Select×2/Mul/Div×2/存)。
+    template <typename T_YB8>
+    __aicore__ inline void PrepQuantRowScalarMicroN(LocalTensor<float>& scaleLocal, LocalTensor<float>& preLocal,
+                                                    LocalTensor<float>& denLocal, uint32_t realM)
+    {
+        constexpr float SUBNORM_GUARD = 1.0e-30f;
+        constexpr float PRE_SCALE = 1208925819614629174706176.0f; // 2^80
+        float quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_INT8;
+        if constexpr (IsSameType<T_YB8, fp8_e4m3fn_t>::value) {
+            quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_FP8E4M3FN;
+        } else if constexpr (IsSameType<T_YB8, fp8_e5m2_t>::value) {
+            quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_FP8E5M2;
+        } else if constexpr (IsSameType<T_YB8, hifloat8_t>::value) {
+            quantMaxV = static_cast<float>(1.0) / DIV_FACTOR_HIFP8;
+        }
+        __local_mem__ float* scaleAddr = (__ubuf__ float*)scaleLocal.GetPhyAddr();
+        __local_mem__ float* preAddr = (__ubuf__ float*)preLocal.GetPhyAddr();
+        __local_mem__ float* denAddr = (__ubuf__ float*)denLocal.GetPhyAddr();
+        uint16_t loopCount = static_cast<uint16_t>((realM + V_LENGTH - 1) / V_LENGTH);
+        uint32_t sregRows = realM;
+
+        __VEC_SCOPE__
+        {
+            RegTensor<float> rmReg, preReg, denReg, rmScaled, bigReg, oneReg, qmaxReg;
+            MaskReg maskRegAll = CreateMask<float, MaskPattern::ALL>();
+            MaskReg pregLoop;
+            Duplicate(bigReg, PRE_SCALE, maskRegAll);
+            Duplicate(oneReg, static_cast<float>(1.0), maskRegAll);
+            Duplicate(qmaxReg, quantMaxV, maskRegAll);
+            for (uint16_t i = 0; i < loopCount; ++i) {
+                pregLoop = UpdateMask<float>(sregRows);
+                DataCopy<float>(rmReg, scaleAddr + i * V_LENGTH); // row_max(逐行紧排)
+                MaskReg isSmall;
+                CompareScalar<float, CMPMODE::LT>(isSmall, rmReg, SUBNORM_GUARD, maskRegAll);
+                Select(preReg, bigReg, oneReg, isSmall);
+                Mul(rmScaled, rmReg, preReg, maskRegAll);
+                Div(rmScaled, rmScaled, qmaxReg, maskRegAll);
+                // 真 scale 落 fp32 次正规区时, 规格(golden: scale=fl32(row_max/127), 再 inp/scale)
+                // 会把 scale 舍到次正规网格 2^-149 的整数倍 —— 次正规只剩 1~3 位有效精度。
+                // 本内核用 PRE_SCALE 把分子分母同搬正规域(防 DAZ 除零), 结果精度"过高", 反而
+                // 与规格不符(_276 实证: 设备 y1=90 / golden=79, 复算证实 golden==fl32 舍入版 100%)。
+                // 故此处把 den 量化到同一网格: pre=2^80 域内网格为 2^-149*2^80 = 2^-69。
+                // 仅在"pre 已施加(row_max<SUBNORM_GUARD) 且 den < 2^-126*2^80 = 2^-46"时生效,
+                // 正规 scale 不受影响(Div 本身已是正确舍入, 且 2 的幂缩放无双舍入)。
+                {
+                    constexpr float GRID_UP = 590295810358705651712.0f;        // 2^69
+                    constexpr float GRID_DN = 1.6940658945086007e-21f;         // 2^-69
+                    constexpr float SUBNORM_DEN_LIM = 1.4210854715202004e-14f; // 2^-46
+                    MaskReg isSubDen;
+                    CompareScalar<float, CMPMODE::LT>(isSubDen, rmScaled, SUBNORM_DEN_LIM, maskRegAll);
+                    And(isSubDen, isSubDen, isSmall, maskRegAll); // 仅 pre=2^80 的行
+                    RegTensor<float> gridReg;
+                    Muls(gridReg, rmScaled, GRID_UP, maskRegAll);
+                    Truncate<float, RoundMode::CAST_RINT>(gridReg, gridReg, maskRegAll);
+                    Muls(gridReg, gridReg, GRID_DN, maskRegAll);
+                    Select(rmScaled, gridReg, rmScaled, isSubDen);
+                }
+                // 零守卫判据必须是"整行 inp 恒为 0"(row_max==0), 不是"den==0": row_max>0 但 scale
+                // 被次正规网格舍成 0 时, 规格是 inp/0=±inf -> 饱和到 ±127/-128(_335 实证 11531
+                // 行 dev=0 而 golden=-128); row_max==0 时规格是 0/0=NaN -> int8 取 0, 仍用 den=1。
+                MaskReg isZeroRow;
+                CompareScalar<float, CMPMODE::EQ>(isZeroRow, rmReg, static_cast<float>(0.0), maskRegAll);
+                Select(denReg, oneReg, rmScaled, isZeroRow);
+                DataCopy<float>(preAddr + i * V_LENGTH, preReg, pregLoop);
+                DataCopy<float>(denAddr + i * V_LENGTH, denReg, pregLoop);
+                Div(rmReg, rmReg, qmaxReg, maskRegAll); // 最终 scale = row_max/qmax
+                DataCopy<float>(scaleAddr + i * V_LENGTH, rmReg, pregLoop);
+            }
+        }
+    }
+
+    // 微 N 逐行量化: 行标量已批量算好, 每行只剩元素级 7 条 + 2 条 BRC。
+    template <typename T_YB8>
+    __aicore__ inline void ComputeMutlYMicroN(LocalTensor<T_YB8>& yLocal, LocalTensor<float>& preLocal,
+                                              LocalTensor<float>& denLocal, LocalTensor<float>& yTmpLocal,
+                                              uint32_t calCount, uint32_t realM)
+    {
+        __local_mem__ T_YB8* yAddr = (__ubuf__ T_YB8*)yLocal.GetPhyAddr();
+        __local_mem__ float* preAddr = (__ubuf__ float*)preLocal.GetPhyAddr();
+        __local_mem__ float* denAddr = (__ubuf__ float*)denLocal.GetPhyAddr();
+        __local_mem__ float* yTmpAddr = (__ubuf__ float*)yTmpLocal.GetPhyAddr();
+        uint16_t rowLoops = static_cast<uint16_t>(realM);
+
+        __VEC_SCOPE__
+        {
+            RegTensor<float> yRegFp32, yRegFp32Tmp, preReg, denReg;
+            RegTensor<half> yRegFp16;
+            RegTensor<T_YB8> yReg;
+            MaskReg maskReg;
+            for (uint16_t curA = 0; curA < rowLoops; curA++) {
+                uint32_t sregElewiseNum = calCount;
+                maskReg = UpdateMask<float>(sregElewiseNum);
+                DataCopy<float, LoadDist::DIST_BRC_B32>(preReg, preAddr + curA);
+                DataCopy<float, LoadDist::DIST_BRC_B32>(denReg, denAddr + curA);
+                DataCopy<float>(yRegFp32, yTmpAddr + curA * baseNB32Align_);
+                Mul(yRegFp32, yRegFp32, preReg, maskReg);
+                Div(yRegFp32, yRegFp32, denReg, maskReg);
+                if constexpr (IsSameType<T_YB8, int8_t>::value) {
+                    Truncate<float, RoundMode::CAST_RINT>(yRegFp32Tmp, yRegFp32, maskReg);
+                    Cast<half, float, castTraitFp322Fp16>(yRegFp16, yRegFp32Tmp, maskReg);
+                    Cast<T_YB8, half, castTraitFp162Int8>(yReg, yRegFp16, maskReg);
+                } else if constexpr (IsSameType<T_YB8, fp8_e4m3fn_t>::value || IsSameType<T_YB8, fp8_e5m2_t>::value) {
+                    Cast<T_YB8, float, castTraitFp322Fp8>(yReg, yRegFp32, maskReg);
+                } else if constexpr (IsSameType<T_YB8, hifloat8_t>::value) {
+                    Cast<T_YB8, float, castTraitFp322Hifp8>(yReg, yRegFp32, maskReg);
+                }
+                DataCopy<T_YB8, StoreDist::DIST_PACK4_B32>(yAddr + curA * baseNB8Align_, yReg, maskReg);
+            }
+        }
+    }
+
+    // 微 N 的 scale 计算: γ/β/ss 三个参数在行间恒定, 提到行循环外只载一次;
+    // repeatTimes==1 时 Duplicate(-INF)+Max 的跨段累积是冗余的, 直接 ReduceMax(同一组 N 个值, 取值相同)。
+    // WRITE_Y=true 时顺手把 y(RmsNorm 结果, 量化前)写出 —— y 与 scale 两条链本来都要算
+    // x*rstd*gamma, legacy 各算一遍(ComputeYOut + ComputeMutlScale)。合并后只算一次,
+    // 存 y 的位置在 beta 相加之前, 与 ComputeYOut 的语义完全一致(逐位同值)。
+    template <typename T_XPF32, typename T_GAMMA, typename T_SMOOTHSCALE = float, bool HAS_SMOOTH_SCALE = true,
+              bool HAS_BETA = false, bool WRITE_Y = false, typename T_YB8>
+    __aicore__ inline void ComputeMutlScaleMicroN(LocalTensor<float>& scaleLocal, LocalTensor<T_XPF32>& xLocal,
+                                                  LocalTensor<float>& rstdLocal, LocalTensor<T_GAMMA>& gammaLocal,
+                                                  LocalTensor<T_GAMMA>& betaLocal,
+                                                  LocalTensor<T_SMOOTHSCALE>& smoothScaleLocal,
+                                                  LocalTensor<float>& yTmpLocal, uint32_t calCount, uint32_t realM,
+                                                  uint64_t baseN, uint64_t baseNDtypeAlign,
+                                                  LocalTensor<T_GAMMA>& yRmsLocal)
+    {
+        __local_mem__ T_XPF32* xAddr = (__ubuf__ T_XPF32*)xLocal.GetPhyAddr();
+        __local_mem__ float* rstdAddr = (__ubuf__ float*)rstdLocal.GetPhyAddr();
+        __local_mem__ T_GAMMA* gammaAddr = (__ubuf__ T_GAMMA*)gammaLocal.GetPhyAddr();
+        __local_mem__ T_GAMMA* betaAddr;
+        if constexpr (HAS_BETA) {
+            betaAddr = (__ubuf__ T_GAMMA*)betaLocal.GetPhyAddr();
+        }
+        __local_mem__ T_SMOOTHSCALE* smoothScaleAddr;
+        if constexpr (HAS_SMOOTH_SCALE) {
+            smoothScaleAddr = (__ubuf__ T_SMOOTHSCALE*)smoothScaleLocal.GetPhyAddr();
+        }
+        __local_mem__ float* scaleAddr = (__ubuf__ float*)scaleLocal.GetPhyAddr();
+        __local_mem__ float* yTmpAddr = (__ubuf__ float*)yTmpLocal.GetPhyAddr();
+        __local_mem__ T_GAMMA* yRmsAddr;
+        if constexpr (WRITE_Y) {
+            yRmsAddr = (__ubuf__ T_GAMMA*)yRmsLocal.GetPhyAddr();
+        }
+        uint16_t rowLoops = static_cast<uint16_t>(realM);
+        uint32_t sregHoist = calCount;
+
+        __VEC_SCOPE__
+        {
+            RegTensor<float> rstdReg, scaleReg;
+            RegTensor<float> xRegFp32, yRegFp32, gammaRegFp32, betaRegFp32, smoothScaleRegFp32;
+            MaskReg maskRegOne = CreateMask<float, MaskPattern::VL1>();
+            MaskReg maskReg = UpdateMask<float>(sregHoist);
+            // 行间恒定参数: 提到行循环外(legacy 版每行重载+重 cast)
+            NormCommon::LoadCastRegVF(gammaRegFp32, gammaAddr, 0, maskReg);
+            if constexpr (HAS_BETA) {
+                NormCommon::LoadCastRegVF(betaRegFp32, betaAddr, 0, maskReg);
+            }
+            if constexpr (HAS_SMOOTH_SCALE) {
+                NormCommon::LoadCastRegVF(smoothScaleRegFp32, smoothScaleAddr, 0, maskReg);
+            }
+            for (uint16_t curA = 0; curA < rowLoops; curA++) {
+                DataCopy<float, LoadDist::DIST_BRC_B32>(rstdReg, rstdAddr + static_cast<uint32_t>(curA));
+                NormCommon::LoadCastRegVF(xRegFp32, xAddr + curA * baseNDtypeAlign, 0, maskReg);
+                Mul(xRegFp32, xRegFp32, rstdReg, maskReg);
+                Mul(xRegFp32, xRegFp32, gammaRegFp32, maskReg);
+                if constexpr (WRITE_Y) {
+                    // 与 ComputeYOut 同一位置(beta 之前)、同一值 -> 逐位一致
+                    StoreRegForDtype<T_GAMMA>(yRmsAddr, xRegFp32, maskReg,
+                                              static_cast<uint32_t>(curA * baseNDtypeAlign));
+                }
+                if constexpr (HAS_BETA) {
+                    Add(xRegFp32, xRegFp32, betaRegFp32, maskReg);
+                }
+                if constexpr (HAS_SMOOTH_SCALE) {
+                    Mul(yRegFp32, xRegFp32, smoothScaleRegFp32, maskReg);
+                    DataCopy<float>(yTmpAddr + curA * baseNB32Align_, yRegFp32, maskReg);
+                    Abs(yRegFp32, yRegFp32, maskReg);
+                } else {
+                    DataCopy<float>(yTmpAddr + curA * baseNB32Align_, xRegFp32, maskReg);
+                    Abs(yRegFp32, xRegFp32, maskReg);
+                }
+                ReduceMax(scaleReg, yRegFp32, maskReg);
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(scaleAddr + curA, scaleReg, maskRegOne);
+            }
+        }
+    }
+
+    template <bool WRITE_Y, typename T_GAMMA, typename T_SMOOTHSCALE, typename T_YB8>
+    __aicore__ inline void DispatchMutlScaleMicroN(LocalTensor<float>& scaleLocal, LocalTensor<float>& xLocal,
+                                                   LocalTensor<float>& rstdLocal, LocalTensor<T_GAMMA>& gammaLocal,
+                                                   LocalTensor<T_GAMMA>& betaLocal,
+                                                   LocalTensor<T_SMOOTHSCALE>& smoothScaleLocal,
+                                                   LocalTensor<float>& yTmpLocal, uint32_t calCount, uint32_t realM,
+                                                   uint64_t baseN, uint64_t baseNDtypeAlign, bool hasSmoothScale,
+                                                   bool hasBeta, LocalTensor<T_GAMMA>& yRmsLocal)
+    {
+        if (hasSmoothScale) {
+            if (hasBeta) {
+                ComputeMutlScaleMicroN<float, T_GAMMA, T_SMOOTHSCALE, true, true, WRITE_Y, T_YB8>(
+                    scaleLocal, xLocal, rstdLocal, gammaLocal, betaLocal, smoothScaleLocal, yTmpLocal, calCount, realM,
+                    baseN, baseNDtypeAlign, yRmsLocal);
+            } else {
+                ComputeMutlScaleMicroN<float, T_GAMMA, T_SMOOTHSCALE, true, false, WRITE_Y, T_YB8>(
+                    scaleLocal, xLocal, rstdLocal, gammaLocal, betaLocal, smoothScaleLocal, yTmpLocal, calCount, realM,
+                    baseN, baseNDtypeAlign, yRmsLocal);
+            }
+        } else {
+            if (hasBeta) {
+                ComputeMutlScaleMicroN<float, T_GAMMA, T_SMOOTHSCALE, false, true, WRITE_Y, T_YB8>(
+                    scaleLocal, xLocal, rstdLocal, gammaLocal, betaLocal, smoothScaleLocal, yTmpLocal, calCount, realM,
+                    baseN, baseNDtypeAlign, yRmsLocal);
+            } else {
+                ComputeMutlScaleMicroN<float, T_GAMMA, T_SMOOTHSCALE, false, false, WRITE_Y, T_YB8>(
+                    scaleLocal, xLocal, rstdLocal, gammaLocal, betaLocal, smoothScaleLocal, yTmpLocal, calCount, realM,
+                    baseN, baseNDtypeAlign, yRmsLocal);
             }
         }
     }
@@ -572,7 +911,9 @@ private:
     TBuf<TPosition::VECCALC> xOutTmpBuf_;
     TBuf<TPosition::VECCALC> xReduceTmpBuf_;
     TBuf<TPosition::VECCALC> xTmpBuf_;
-    TBuf<TPosition::VECCALC> x1AccBuf_; // 增:multi-add Σx1 累加缓冲
+    TBuf<TPosition::VECCALC> x1AccBuf_;  // 增:multi-add Σx1 累加缓冲
+    TBuf<TPosition::VECCALC> denBrcBuf_; // 增:微 N 平面路径量化分母(行批量暂存)
+    TBuf<TPosition::VECCALC> preBrcBuf_; // 增:微 N 平面路径次正规守卫因子(行批量暂存)
 
     // Tiling data
     uint64_t numN_{0};

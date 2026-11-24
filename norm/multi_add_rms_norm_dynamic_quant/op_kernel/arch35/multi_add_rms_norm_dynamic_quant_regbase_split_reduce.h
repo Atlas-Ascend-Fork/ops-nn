@@ -19,6 +19,16 @@
 
 namespace MultiAddRmsNormDynamicQuant {
 
+// 跨核合并槽: 每个值 1 个 16 fp32(64B, 恰一个 cacheline)的广播槽, 每核 4 个值
+// (Σx²hi/Σx²lo/max1/max2)。写入全走 Duplicate(标量操作数, 向量指令) —— 不做标量直写 UB,
+// 标量↔向量序由 V_S/S_V 事件对表达(renorm_global.h 同款), 不使用 PIPE_ALL。
+constexpr uint64_t PART_SLOT_ELEMS = 16;
+constexpr uint64_t PART_SLOTS_PER_CORE = 4;
+// 暂存面积数(y1Tmp / xOutTmp / y2Tmp), 与 host GetWorkspaceSize 的 WORKSPACE_COUNT 同源。
+constexpr uint64_t NSPLIT_AREA_CNT = 3;
+// 合并槽区基址对齐粒度(64B = 16 个 float), 与 host 的对齐表达式同源。
+constexpr uint64_t PART_BASE_ALIGN_ELEMS = 16;
+
 template <typename T_X, typename T_Y>
 class KernelMultiAddRmsNormDynamicQuantRegbaseSpiltReduce {
     using T_SMOOTH_SCALE = T_X;
@@ -55,6 +65,42 @@ public:
         blockIdx_ = GetBlockIdx();
         oriOverflowMode_ = GetOverflowMode<T_Y>();
 
+        // 行×列二维划分(issue#43 全量修复): host 下发 nSplitNum = M*K2(总块数), kernel 同源推导
+        //   K2 = nSplitNum/numM(整除), 本核负责 (rowIdx_, segIdx_) = (blockIdx/K2, blockIdx%K2),
+        //   只处理该行 [segStart_, segStart_+numN_) 一段。numM==1 时 K2=nSplitNum, 与 v15 完全一致。
+        // numN_ 覆写为段长; powerLoop_ 按段长本地重算。oriNumN_ 保留整行长度, 供 workspace
+        // 三面积基址(每面积 M 行)与合并槽寻址。不变量同 v15(段长>=ps; 决策全局一致防 SyncAll 死锁)。
+        nSplitNum_ = tilingData->nSplitNum;
+        nSegLen_ = tilingData->nSegLen;
+        nSegTail_ = tilingData->nSegTail;
+        oriNumN_ = numN_;
+        if (nSplitNum_ > 1) {
+            uint64_t rows = numM_;
+            k2_ = nSplitNum_ / rows;
+            // 一致性防御(各核同 tiling → 同决策, 不会分叉死锁): 块数失配/不整除/段长越域
+            // (历史缺陷: 尾段无符号回绕成巨值)→ 整体回落单核。
+            if (k2_ < 2 || nSplitNum_ != rows * k2_ || nSplitNum_ != static_cast<uint64_t>(blockNum_) ||
+                nSegLen_ < powerSplit_ || nSegLen_ > oriNumN_ || nSegTail_ < powerSplit_ || nSegTail_ > oriNumN_) {
+                // 不能回落单核 legacy: 此时实际起核数是 numM*K2, 而 legacy 按
+                // blockIdx_*mPerCore_*numN_ 定位, blockIdx_ >= numM 的核会算出张量界外偏移,
+                // 把"结果不可信"升级成 GM 越界写。标记非法, Process 直接空转返回,
+                // 由 host tiling 的校验保证不下发非法 tiling。
+                invalidTiling_ = true;
+            }
+        }
+        if (nSplitNum_ > 1) {
+            uint64_t myIdx = static_cast<uint64_t>(blockIdx_);
+            rowIdx_ = myIdx / k2_;
+            uint64_t segIdx = myIdx % k2_;
+            rowBase_ = rowIdx_ * oriNumN_;
+            segStart_ = segIdx * nSegLen_;
+            numN_ = (segIdx == k2_ - 1) ? nSegTail_ : nSegLen_;
+            powerLoop_ = 1;
+            while (powerLoop_ * CONST_FACTOR_2 * powerSplit_ <= numN_) {
+                powerLoop_ *= CONST_FACTOR_2;
+            }
+        }
+
         CalBlockTail();
         InitBuffer(x1, x2, gamma, smooathScale1, smooathScale2, y1, y2, x, y, scale1, scale2, workspace);
     }
@@ -76,17 +122,23 @@ public:
                                       GM_ADDR smooathScale2, GM_ADDR y1, GM_ADDR y2, GM_ADDR x, GM_ADDR y,
                                       GM_ADDR scale1, GM_ADDR scale2, GM_ADDR workspace)
     {
-        uint64_t gmOffset = blockIdx_ * mPerCore_ * numN_;
-        uint64_t gmLen = mCore_ * numN_;
-        uint64_t scalesGmOffset = blockIdx_ * mPerCore_;
-        uint64_t workSpaceOffset = blockIdx_ * numN_;
-        uint64_t workSpaceStart = blockNum_ * numN_;
+        // nSplit: 输入/输出按段重绑(gmOffset=segStart_, gmLen=段长); 暂存区三面积基址改为
+        // i*oriNumN_(原为 i*blockNum_*numN_, 两语义在 M 分组下同值), 各核只写自己段的槽。
+        bool nSplit = nSplitNum_ > 1;
+        // nSplit 2D: 行/列输入输出按 (rowBase_+segStart_, 段长) 重绑; gamma/smooth 按列段共享;
+        // scale 按行(每行 group-0 核独写); 暂存面积基址 = i*M*oriNumN_(每面积 M 整行)。
+        uint64_t gmOffset = nSplit ? (rowBase_ + segStart_) : static_cast<uint64_t>(blockIdx_) * mPerCore_ * numN_;
+        uint64_t gmLen = nSplit ? numN_ : mCore_ * numN_;
+        uint64_t gammaOffset = nSplit ? segStart_ : 0;
+        uint64_t scalesGmOffset = nSplit ? rowIdx_ : static_cast<uint64_t>(blockIdx_) * mPerCore_;
+        uint64_t workSpaceOffset = nSplit ? (rowBase_ + segStart_) : static_cast<uint64_t>(blockIdx_) * numN_;
+        uint64_t workSpaceStart = nSplit ? oriNumN_ * numM_ : static_cast<uint64_t>(blockNum_) * numN_;
         // x1 为 TensorList:逐个 tensor 取地址(参照 ascend910b kernel GetTensorAddr<T>(i, x1))
         for (uint32_t i = 0; i < x1Num_; ++i) {
             x1GmList_[i].SetGlobalBuffer(GetTensorAddr<T_X>(i, x1) + gmOffset, gmLen);
         }
         x2Gm_.SetGlobalBuffer((__gm__ T_X*)x2 + gmOffset, gmLen);
-        gammaGm_.SetGlobalBuffer((__gm__ T_X*)gamma, numN_);
+        gammaGm_.SetGlobalBuffer((__gm__ T_X*)gamma + gammaOffset, numN_);
         y1Gm_.SetGlobalBuffer((__gm__ T_Y*)y1 + gmOffset, gmLen);
         xGm_.SetGlobalBuffer((__gm__ T_X*)x + gmOffset, gmLen);
         yGm_.SetGlobalBuffer((__gm__ T_X*)y + gmOffset, gmLen); // 增:y 输出(RmsNorm 结果)
@@ -94,15 +146,22 @@ public:
         y1TmpGm_.SetGlobalBuffer((__gm__ float*)workspace + workSpaceOffset, numN_);
         xOutTmpGm_.SetGlobalBuffer((__gm__ float*)workspace + workSpaceStart + workSpaceOffset, numN_);
         if (hasSmoothScale1_) {
-            smoothScale1Gm_.SetGlobalBuffer((__gm__ T_SMOOTH_SCALE*)smooathScale1, numN_);
+            smoothScale1Gm_.SetGlobalBuffer((__gm__ T_SMOOTH_SCALE*)smooathScale1 + gammaOffset, numN_);
         }
         if (hasSmoothScale2_) {
-            smoothScale2Gm_.SetGlobalBuffer((__gm__ T_SMOOTH_SCALE*)smooathScale2, numN_);
+            smoothScale2Gm_.SetGlobalBuffer((__gm__ T_SMOOTH_SCALE*)smooathScale2 + gammaOffset, numN_);
         }
         if (hasY2Scale2_) {
             y2Gm_.SetGlobalBuffer((__gm__ T_Y*)y2 + gmOffset, gmLen);
             scale2Gm_.SetGlobalBuffer((__gm__ float*)scale2 + scalesGmOffset, mCore_);
             y2TmpGm_.SetGlobalBuffer((__gm__ float*)workspace + 2 * workSpaceStart + workSpaceOffset, numN_);
+        } else {
+            // ss2 缺省: y2/s2 退化为 1 元素占位输出(infershape 固定 6 输出)。必须绑定合法
+            // 窗口 —— GlobalTensor 默认构造不初始化地址, 不绑定则 WritePlaceholderY2Scale2
+            // 的 SetValue 把 0 写到残留地址(逐核不同、随代码形态漂移): _055 实证其砸穿了
+            // 每核 x 段首元素低字节(62 处, golden&0xFF00)。
+            y2Gm_.SetGlobalBuffer((__gm__ T_Y*)y2, 1);
+            scale2Gm_.SetGlobalBuffer((__gm__ float*)scale2, 1);
         }
 
         uint64_t ubFactorQuant = CeilAlign(baseN_, BLOCK_SIZE / sizeof(T_SMOOTH_SCALE));
@@ -145,10 +204,40 @@ public:
         pipe_->InitBuffer(level2Buf_, RmsNorm::ONCE_VECTOR_SIZE * sizeof(float));
         pipe_->InitBuffer(level3Buf_, RmsNorm::ONCE_VECTOR_SIZE * sizeof(float));
         pipe_->InitBuffer(tempBuf_, V_LENGTH * sizeof(float));
+        if (nSplit) {
+            // 跨核合并槽: 每核 4 个 64B 广播槽(写视图 partGm_ + 全量读视图 partGmAll_),
+            // 布局/配方与 renorm_global.h 的 A5 跨核规约一致(host N_SPLIT_PARTIAL_CORE_BYTES 同源)。
+            pipe_->InitBuffer(partOutBuf_, PART_SLOTS_PER_CORE * PART_SLOT_ELEMS * sizeof(float));
+            pipe_->InitBuffer(partInBuf_, PART_SLOTS_PER_CORE * PART_SLOT_ELEMS * sizeof(float));
+            // 槽区基址必须 64B(16 个 float) 对齐: 每核 4 个 64B 槽靠 DCCI 逐槽 clean/invalidate,
+            // 基址落在 cacheline 中间会让相邻两核的槽共享同一 cacheline, 互相刷掉未落地的数据。
+            // 暂存三面积共 3*M*N 个 float, 仅当 M*N % 16 == 0 时天然对齐(反例: M=18,N=30406)。
+            // host GetWorkspaceSize 必须用同一个对齐表达式, 否则两侧基址或总量对不上。
+            const uint64_t partBase = (NSPLIT_AREA_CNT * oriNumN_ * numM_ + PART_BASE_ALIGN_ELEMS - 1) /
+                                      PART_BASE_ALIGN_ELEMS * PART_BASE_ALIGN_ELEMS;
+            partGmAll_.SetGlobalBuffer((__gm__ float*)workspace + partBase,
+                                       nSplitNum_ * PART_SLOTS_PER_CORE * PART_SLOT_ELEMS);
+            partGm_.SetGlobalBuffer((__gm__ float*)workspace + partBase +
+                                        static_cast<uint64_t>(blockIdx_) * PART_SLOTS_PER_CORE * PART_SLOT_ELEMS,
+                                    PART_SLOTS_PER_CORE * PART_SLOT_ELEMS);
+        }
     }
 
     __aicore__ inline void Process()
     {
+        if (invalidTiling_) {
+            return;
+        }
+        if (nSplitNum_ > 1) {
+            ProcessNSplit();
+            // ss2 缺省: y2/s2 占位输出写 0 定值(修复 deterministic FAIL)。
+            // 必须在 ProcessNSplit 之后写: 放在入口会扰动每核首段 x 的前 32B
+            // (_055 seed42 实证 62 段×32 元素被清零; v22.6 无此写全过)。
+            if (!hasY2Scale2_) {
+                WritePlaceholderY2Scale2(y2Gm_, scale2Gm_);
+            }
+            return;
+        }
         uint64_t powerMain = powerSplit_ * powerLoop_;
         uint64_t powerTail = numN_ - powerMain;
         uint64_t powerTailLoop = powerTail / powerSplit_;
@@ -201,156 +290,97 @@ public:
                 CopyOutScale(scale2Gm_, outQueueScale2_, mIdx, 1);
             }
         }
-    }
-
-private:
-    __aicore__ inline void CopyInGamma(uint64_t gmOffset, uint64_t blockLen)
-    {
-        LocalTensor<T_X> gammaLocal = inQueueGamma_.AllocTensor<T_X>();
-        RmsNorm::DataCopyImpl<T_X>(gammaLocal, gammaGm_[gmOffset], 1, blockLen);
-        inQueueGamma_.EnQue(gammaLocal);
-    }
-
-    __aicore__ inline void CopyInQuant(uint64_t gmOffset, uint64_t blockLen)
-    {
-        if (hasSmoothScale1_) {
-            LocalTensor<T_SMOOTH_SCALE> smoothScale1Local = inQueueSmoothScale1_.AllocTensor<T_SMOOTH_SCALE>();
-            RmsNorm::DataCopyImpl<T_SMOOTH_SCALE>(smoothScale1Local, smoothScale1Gm_[gmOffset], 1, blockLen);
-            inQueueSmoothScale1_.EnQue(smoothScale1Local);
-        }
-        if (hasSmoothScale2_) {
-            LocalTensor<T_SMOOTH_SCALE> smoothScale2Local = inQueueSmoothScale2_.AllocTensor<T_SMOOTH_SCALE>();
-            RmsNorm::DataCopyImpl<T_SMOOTH_SCALE>(smoothScale2Local, smoothScale2Gm_[gmOffset], 1, blockLen);
-            inQueueSmoothScale2_.EnQue(smoothScale2Local);
+        // ss2 缺省: y2/s2 占位输出写 0 定值(与 perf/single_row/nSplit 分支一致, 修 deterministic
+        // 残值)。放在主循环之后, 避免扰动每核首段 x 的前 32B(_055 实证)。
+        if (!hasY2Scale2_) {
+            WritePlaceholderY2Scale2(y2Gm_, scale2Gm_);
         }
     }
 
-    __aicore__ inline void CopyInBeta(uint64_t gmOffset, uint64_t blockLen)
+    // N-split 多核主流程(仅 numM==1): 每核处理一段, 两轮 SyncAll 栅障交换跨核规约量。
+    // 数值语义与单核版逐段对齐: Phase A/B 只改 Σx² 的求和划分(每核段内补偿累加 + 跨核
+    // 固定 k 序两段式合并), row_max 为精确 max(可结合); x 输出与 rstd 无关, 逐位不变。
+    __aicore__ inline void ProcessNSplit()
     {
-        LocalTensor<T_X> betaLocal = inQueueBeta_.AllocTensor<T_X>();
-        RmsNorm::DataCopyImpl<T_X>(betaLocal, betaGm_[gmOffset], 1, blockLen);
-        inQueueBeta_.EnQue(betaLocal);
-    }
+        uint64_t powerMain = powerSplit_ * powerLoop_;
+        uint64_t powerTail = numN_ - powerMain;
+        uint64_t powerTailLoop = powerTail / powerSplit_;
+        uint64_t powerTailTail = powerTail % powerSplit_;
+        uint64_t masterLoop = powerTailTail != 0 ? 1 : 0;
+        masterLoop = powerLoop_ - powerTailLoop - masterLoop;
 
-    /**
-     * @brief Copy in xGm_[srcGmOffset:srcGmOffset+count] and reduce to dst[dstOffset].
-     */
-    __aicore__ inline void ComputeFormerHandle(LocalTensor<float>& dstLocal, uint64_t srcGmOffset, uint64_t dstOffset,
-                                               uint64_t workSpaceOffset, uint32_t count, uint32_t powerSplit)
-    {
-        LocalTensor<float> xOutTmpLocal = xOutTmpBuf_.Get<float>();
-        uint32_t calCount = Aligned((uint64_t)(count * sizeof(T_X)), ALIGN_32_FACTOR) / sizeof(T_X);
-        // multi-add:按 ascend910b 的次序在 fp32 累加(canndev normal_kernel CopyInX1X2AndAddX1X2
-        // 「1.将x1的第一个tensor和x2相加 2.将x1剩余的相加」),即 x = (x1[0]+x2)+x1[1]+..+x1[n-1]。
-        // fp32 加法不满足结合律,写成 (Σx1)+x2 会在相消点产生 1~2 个 ULP 的偏差。
-        // ReduceSumRstd 内部会做 x1Local+x2Local,故把 A2 次序的「末项」留给它:
-        //   n==1: x1Local = x1[0],                        x2Local = x2
-        //   n>=2: x1Local = (x1[0]+x2)+x1[1]+..+x1[n-2],  x2Local = x1[n-1]
-        // 两种情形下 ReduceSumRstd 的那次加法都恰好是 A2 的最后一步。
-        LocalTensor<float> x1Local = x1AccBuf_.Get<float>();
-        LocalTensor<float> x2Local = x2Fp32Buf_.Get<float>(); // 中间项的 cast 暂存,末项落定后即为第二操作数
-        for (uint32_t i = 0; i < x1Num_; ++i) {
-            CopyInX(inQueueX1_, x1GmList_[i], srcGmOffset, count, 0, calCount - count);
-            LocalTensor<T_X> x1In = inQueueX1_.DeQue<T_X>();
-            if (i == 0) {
-                Cast(x1Local, x1In, RoundMode::CAST_NONE, calCount); // x = x1[0].to(fp32)
-                PipeBarrier<PIPE_V>();
-                inQueueX1_.FreeTensor(x1In);
-                if (x1Num_ > 1) { // x1[0] + x2 紧随其后
-                    CopyInX(inQueueX2_, x2Gm_, srcGmOffset, count, 0, calCount - count);
-                    LocalTensor<T_X> x2First = inQueueX2_.DeQue<T_X>();
-                    Cast(x2Local, x2First, RoundMode::CAST_NONE, calCount);
-                    PipeBarrier<PIPE_V>();
-                    inQueueX2_.FreeTensor(x2First);
-                    Add(x1Local, x1Local, x2Local, calCount);
-                    PipeBarrier<PIPE_V>();
-                }
-                continue;
-            }
-            Cast(x2Local, x1In, RoundMode::CAST_NONE, calCount); // x1[i].to(fp32)
-            PipeBarrier<PIPE_V>();
-            inQueueX1_.FreeTensor(x1In);
-            if (i + 1 == x1Num_) {
-                break; // 末项 x1[n-1] 留在 x2Local,交给 ReduceSumRstd 完成最后一次加法
-            }
-            Add(x1Local, x1Local, x2Local, calCount); // x += x1[i]
-            PipeBarrier<PIPE_V>();
-        }
-        if (x1Num_ == 1) { // 只有一个 x1 时,第二操作数就是 x2
-            CopyInX(inQueueX2_, x2Gm_, srcGmOffset, count, 0, calCount - count);
-            LocalTensor<T_X> x2In = inQueueX2_.DeQue<T_X>();
-            Cast(x2Local, x2In, RoundMode::CAST_NONE, calCount);
-            PipeBarrier<PIPE_V>();
-            inQueueX2_.FreeTensor(x2In);
+        LocalTensor<float> rstdLocal = rstdBuf_.Get<float>();
+        LocalTensor<float> msAccLocal = msAccBuf_.Get<float>();
+
+        LocalTensor<float> scale1Local = outQueueScale1_.AllocTensor<float>();
+        LocalTensor<float> scale2Local;
+        if (hasY2Scale2_) {
+            scale2Local = outQueueScale2_.AllocTensor<float>();
         }
 
-        LocalTensor<float> workLocal = reduceSumBuf_.Get<float>();
-        uint32_t calNum = Aligned((uint64_t)(count * sizeof(T_X)), ALIGN_512_FACTOR) / sizeof(T_X);
-        uint64_t dupLen = calNum - calCount;
-        if (dupLen > 0) {
-            Duplicate(x1Local[calCount], (float)0.0, dupLen);
-            Duplicate(x2Local[calCount], (float)0.0, dupLen);
+        // Phase A: 段内 Σx² 补偿累加 + x 输出 + fp32 x 暂存(与 legacy 同一条 SubProcessRstd)
+        Duplicate(scale1Local, 0.0f, B32_BLOCK_NUM);
+        if (hasY2Scale2_) {
+            Duplicate(scale2Local, 0.0f, B32_BLOCK_NUM);
         }
-
-        // ReduceSumRstd<float,HAS_XOUT=false,HAS_XOUT_FP32=true,IS_RSTD=false>:x1/x2 均 fp32
-        //   => xOutTmpLocal = Σx1+x2(fp32 x),dstLocal = Σ((Σx1+x2)^2)(fp32)。
-        //   HAS_XOUT=false(x 输出需 T_X,单独 Cast);dummy xOut 传 x1Local(U=float 下 HAS_XOUT=false 不写)。
-        NormCommon::ReduceSumRstd<float, false, true, false>(dstLocal, x1Local, xOutTmpLocal, x1Local, x2Local,
-                                                             workLocal, dstOffset, calNum, powerSplit);
-
-        // Σx² 补偿累加(用共享规约已算好的 fp32 x, 不重复搬运)
+        Duplicate(msAccLocal, 0.0f, NUM_FOUR_DF * V_LENGTH);
         PipeBarrier<PIPE_V>();
-        AccumSqCompensated(xOutTmpLocal, count);
+        SubProcessRstd<false>(rstdLocal, 0, 0, masterLoop, powerTailLoop, powerTailTail, avgFactor_, epsilon_);
+        PipeBarrier<PIPE_V>();
+        ReduceMsAccToPair();
+        VecToScalarSync(); // V→S: 随后标量 GetValue 读向量写入
+        float msHi = msAccLocal.GetValue(0);
+        float msLo = msAccLocal.GetValue(NUM_TWO_DF * V_LENGTH);
+        WriteMsPartial(msHi, msLo);
+        SyncAll();
+
+        // Phase B: 每核读全部槽, 固定 k 序两段式合并 → rstd(各核逐位一致, 确定性保持)。
+        // rstd 由 RstdScalarFromHi 以 FinalizeRstd 尾段同款向量指令算出(相同 hi → 逐位一致),
+        // 再以 Duplicate(标量操作数)广播落 UB。
+        float msHiMerged = MergeMsToHi();
+        Duplicate(rstdLocal, msHiMerged, B32_BLOCK_NUM);
+        PipeBarrier<PIPE_V>();
+        float rstd = RstdScalarFromHi(rstdLocal, avgFactor_, epsilon_);
+        Duplicate(rstdLocal, rstd, B32_BLOCK_NUM);
         PipeBarrier<PIPE_V>();
 
-        LocalTensor<T_X> xOutLocal = outQueueX_.AllocTensor<T_X>();
-        Cast(xOutLocal, xOutTmpLocal, RoundMode::CAST_RINT,
-             calCount); // x 输出 = fp32 x.to(T_X)(round-nearest-even 对齐 ascend910b)
-        outQueueX_.EnQue<T_X>(xOutLocal);
+        // Phase C: 段内 row_max + y 输出 + inp 暂存(与 legacy 同一条 SubProcessReduceMax)
+        SubProcessReduceMax(scale1Local, scale2Local, rstdLocal, 0);
+        VecToScalarSync(); // V→S
+        float segMax1 = scale1Local.GetValue(0);
+        float segMax2 = hasY2Scale2_ ? scale2Local.GetValue(0) : 0.0f;
+        WriteMaxPartial(segMax1, segMax2);
+        SyncAll();
 
-        CopyOutX(xGm_, outQueueX_, srcGmOffset, count);
-        // Copy xOut to workspace
-        event_t eventVMTE3 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
-        event_t eventMTE3V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
-        SetFlag<HardEvent::V_MTE3>(eventVMTE3);
-        WaitFlag<HardEvent::V_MTE3>(eventVMTE3);
-        RmsNorm::DataCopyImpl<float>(xOutTmpGm_[workSpaceOffset], xOutTmpLocal, 1, count);
-        SetFlag<HardEvent::MTE3_V>(eventMTE3V);
-        WaitFlag<HardEvent::MTE3_V>(eventMTE3V);
-    }
-
-    // 把本 slice 的 x(fp32) 的平方以补偿求和累加进 msAccBuf_。掩码外 zeroing, 尾块不污染。
-    __aicore__ inline void AccumSqCompensated(LocalTensor<float>& xFp32Local, uint32_t count)
-    {
-        __local_mem__ float* xAddr = (__ubuf__ float*)xFp32Local.GetPhyAddr();
-        __local_mem__ float* accAddr = (__ubuf__ float*)msAccBuf_.Get<float>().GetPhyAddr();
-        uint16_t repeatTimes = (uint16_t)CeilDivision(count, (uint32_t)V_LENGTH);
-        uint32_t calCount = count;
-        __VEC_SCOPE__
-        {
-            RegTensor<float> accHi, accLo, xReg, sqHi, sqLo, tHi, eReg;
-            MaskReg maskFull = CreateMask<float, MaskPattern::ALL>();
-            MaskReg maskReg;
-            DataCopy<float>(accHi, accAddr);
-            DataCopy<float>(accLo, accAddr + NUM_TWO_DF * V_LENGTH);
-            for (uint16_t i = 0; i < repeatTimes; i++) {
-                maskReg = UpdateMask<float>(calCount);
-                DataCopy<float>(xReg, xAddr + i * V_LENGTH);
-                DfTwoProd(sqHi, sqLo, xReg, xReg, maskReg); // x^2 = sqHi + sqLo(精确)
-                DfTwoSum(tHi, eReg, accHi, sqHi, maskFull);
-                Add(eReg, eReg, accLo, maskFull);
-                Add(eReg, eReg, sqLo, maskFull);
-                DfTwoSum(accHi, accLo, tHi, eReg, maskFull);
+        // Phase D: 合并全局 row_max → scale 换算 → 段内量化输出; scale 全行仅 1 元素, 0 号核独写
+        float gmax1 = 0.0f;
+        float gmax2 = 0.0f;
+        MergeMax(gmax1, gmax2);
+        Duplicate(scale1Local, gmax1, B32_BLOCK_NUM);
+        if (hasY2Scale2_) {
+            Duplicate(scale2Local, gmax2, B32_BLOCK_NUM);
+        }
+        PipeBarrier<PIPE_V>();
+        // 顺序与 legacy Process 严格一致: ComputeY 要求 scaleLocal[0] 仍是 row_max
+        // (den = row_max*PRE/127), 先 Y 后 Scale —— 若先换算成 scale(row_max/127),
+        // 分母小 127 倍, y1 全行饱和(实测 62% 错位、边界元素 ±127 饱和)。
+        SubProcessY(scale1Local, scale2Local, 0);
+        PipeBarrier<PIPE_V>();
+        SubProcessScale(scale1Local, scale2Local);
+        // 二维: 每行的 seg-0 核独写该行 scale(scale1Gm_ 已按 rowIdx_ 绑定, 长度 1)
+        if (k2_ > 0 && static_cast<uint64_t>(blockIdx_) % k2_ == 0) {
+            outQueueScale1_.EnQue<float>(scale1Local);
+            CopyOutScale(scale1Gm_, outQueueScale1_, 0, 1);
+            if (hasY2Scale2_) {
+                outQueueScale2_.EnQue<float>(scale2Local);
+                CopyOutScale(scale2Gm_, outQueueScale2_, 0, 1);
             }
-            DataCopy<float>(accAddr, accHi, maskFull);
-            DataCopy<float>(accAddr + NUM_TWO_DF * V_LENGTH, accLo, maskFull);
         }
     }
 
-    // 横向补偿规约(V_LENGTH lane -> 1) + t = ms*avg+eps + rstd = 1/sqrt(t)。
-    // 横向合并保留补偿: 普通树形求和会把逐 slice 累加积累的低位段丢掉, 而合并过程中的
-    // 残差会回灌 hi, 所以那部分是活的; 只有最终的低位段无下游消费者。
-    __aicore__ inline void FinalizeRstd(LocalTensor<float>& rstdLocal, float avgFactor, float epsilon)
+    // 把 msAccBuf_ 横向规约成 (hi@acc[0], lo@acc[2V]) 一对(FinalizeRstd 前半段原样拆出,
+    // 单核路径与 N-split 路径共用, 保证两种划分下横向规约自身逐位一致)。
+    __aicore__ inline void ReduceMsAccToPair()
     {
         __local_mem__ float* accAddr = (__ubuf__ float*)msAccBuf_.Get<float>().GetPhyAddr();
         // 成对规约只做到 stride=B32_BLOCK_NUM(8): 整 VL 载入要求 32B 对齐(=8 个 float),
@@ -393,6 +423,373 @@ private:
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(accAddr, sHi, m1);
             DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(accAddr + NUM_TWO_DF * V_LENGTH, sLo, m1);
         }
+    }
+
+private:
+    // 标量↔向量序(renorm_global.h 同款事件对, 不使用 PIPE_ALL):
+    //   VecToScalarSync: 向量写入 → 随后标量 GetValue
+    //   ScalarToVecSync: 标量读取段结束 → 随后向量指令可安全复用该 UB
+    __aicore__ inline void VecToScalarSync()
+    {
+        event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
+        SetFlag<HardEvent::V_S>(ev);
+        WaitFlag<HardEvent::V_S>(ev);
+    }
+
+    __aicore__ inline void ScalarToVecSync()
+    {
+        event_t ev = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_V));
+        SetFlag<HardEvent::S_V>(ev);
+        WaitFlag<HardEvent::S_V>(ev);
+    }
+
+    // 标量 TwoSum(与 DfTwoSum 同式): 跨核合并槽按 k 序标量读取后逐对合并, 各核执行
+    // 相同指令序列 → 结果逐位一致(确定性)。残差非有限即置 0, 同 DfClampResidual 语义。
+    static __aicore__ inline void ScalarTwoSum(float a, float b, float& s, float& e)
+    {
+        s = a + b;
+        float bb = s - a;
+        float aa = s - bb;
+        float da = a - aa;
+        float db = b - bb;
+        e = da + db;
+        if (e != e || e > MAX_FINITE_FP32 || e < -MAX_FINITE_FP32) {
+            e = 0.0f;
+        }
+    }
+
+    // 写本核合并槽并发布(单写单读协议): ms 对(槽0/1)只在 Phase A 写一次, max 对(槽2/3)只在
+    // Phase C 写一次 —— 槽不复用, 读侧 L1 无旧行可驻留。若复用槽位, 第二轮读会命中读侧
+    // 第一轮留下的陈旧 L1 行(写侧 DCCI 只清写侧缓存, 实测致 max 读旧值 → y1 成片饱和)。
+    // 写入全走 Duplicate(标量操作数, 纯向量写), V_MTE3 事件对 + 写侧逐槽 DCCI(renorm 配方)。
+    __aicore__ inline void WriteMsPartial(float msHi, float msLo)
+    {
+        LocalTensor<float> slot = partOutBuf_.Get<float>();
+        Duplicate(slot, msHi, PART_SLOT_ELEMS);
+        Duplicate(slot[PART_SLOT_ELEMS], msLo, PART_SLOT_ELEMS);
+        PublishSlots(0, NUM_TWO_DF);
+    }
+
+    __aicore__ inline void WriteMaxPartial(float max1, float max2)
+    {
+        LocalTensor<float> slot = partOutBuf_.Get<float>();
+        Duplicate(slot, max1, PART_SLOT_ELEMS);
+        Duplicate(slot[PART_SLOT_ELEMS], hasY2Scale2_ ? max2 : (float)0.0, PART_SLOT_ELEMS);
+        PublishSlots(NUM_TWO_DF, NUM_TWO_DF);
+    }
+
+    __aicore__ inline void PublishSlots(uint64_t slotIdx, uint64_t slotCnt)
+    {
+        LocalTensor<float> slot = partOutBuf_.Get<float>();
+        PipeBarrier<PIPE_V>();
+        event_t eventVMTE3 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
+        event_t eventMTE3V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
+        SetFlag<HardEvent::V_MTE3>(eventVMTE3);
+        WaitFlag<HardEvent::V_MTE3>(eventVMTE3);
+        DataCopy(partGm_[slotIdx * PART_SLOT_ELEMS], slot, slotCnt * PART_SLOT_ELEMS);
+        SetFlag<HardEvent::MTE3_V>(eventMTE3V);
+        WaitFlag<HardEvent::MTE3_V>(eventMTE3V);
+        for (uint64_t v = 0; v < slotCnt; ++v) {
+            DataCacheCleanAndInvalid<float, CacheLine::SINGLE_CACHE_LINE, DcciDst::CACHELINE_OUT>(
+                partGm_[(slotIdx + v) * PART_SLOT_ELEMS]);
+        }
+    }
+
+    // 读第 k 核指定槽对(A5 上跨核向量读可能脏 lane, 故整槽 GM→UB 后标量取值, 同 renorm)。
+    __aicore__ inline void ReadSlotPair(uint64_t k, uint64_t slotIdx, float& v0, float& v1)
+    {
+        LocalTensor<float> slot = partInBuf_.Get<float>();
+        event_t eventVMTE2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE2));
+        event_t eventMTE2V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
+        SetFlag<HardEvent::V_MTE2>(eventVMTE2);
+        WaitFlag<HardEvent::V_MTE2>(eventVMTE2);
+        DataCopy(slot, partGmAll_[k * PART_SLOTS_PER_CORE * PART_SLOT_ELEMS + slotIdx * PART_SLOT_ELEMS],
+                 NUM_TWO_DF * PART_SLOT_ELEMS);
+        SetFlag<HardEvent::MTE2_V>(eventMTE2V);
+        WaitFlag<HardEvent::MTE2_V>(eventMTE2V);
+        VecToScalarSync(); // MTE2→V→S: 槽载入完成后标量取值
+        v0 = slot.GetValue(0);
+        v1 = slot.GetValue(PART_SLOT_ELEMS);
+        ScalarToVecSync();
+    }
+
+    // Σx² 跨核合并(固定 k 序两段式链, 与 FinalizeRstd 逐 slice 累加的补偿结构同型),
+    // 返回合并后的高位段(低位段无下游消费者, 同单核路径)。
+    __aicore__ inline float MergeMsToHi()
+    {
+        float accHi = 0.0f;
+        float accLo = 0.0f;
+        // 只合并本行组的 k2 个槽(全局槽号 rowIdx_*k2_ 起); 每核读自己行的槽, 固定序确定性
+        for (uint64_t k = rowIdx_ * k2_; k < (rowIdx_ + 1) * k2_; ++k) {
+            float hi, lo;
+            ReadSlotPair(k, 0, hi, lo);
+            if (k == rowIdx_ * k2_) {
+                accHi = hi;
+                accLo = lo;
+                continue;
+            }
+            float s, e, s2, e2;
+            ScalarTwoSum(accHi, hi, s, e);
+            e += accLo;
+            e += lo;
+            ScalarTwoSum(s, e, s2, e2);
+            accHi = s2;
+            accLo = e2;
+        }
+        return accHi;
+    }
+
+    // rstd 尾段: 与 FinalizeRstd 尾段**同一套向量指令**(单 lane Mul/Add/Sqrt/Div, 只出高位段),
+    // srcLocal[0] 存 msHi —— 给定相同 hi 时两种路径的 rstd 逐位一致。AICore 无标量 sqrtf
+    // (__host__ 函数), 标量侧只做 TwoSum 链, 开方/取倒一律走向量单元。
+    __aicore__ inline float RstdScalarFromHi(LocalTensor<float>& srcLocal, float avgFactor, float epsilon)
+    {
+        __local_mem__ float* addr = (__ubuf__ float*)srcLocal.GetPhyAddr();
+        __VEC_SCOPE__
+        {
+            RegTensor<float> msHi, avgReg, tHi, epsReg, oneReg, r0, tmp;
+            MaskReg m1 = CreateMask<float, MaskPattern::VL1>();
+            DataCopy<float, LoadDist::DIST_BRC_B32>(msHi, addr);
+            Duplicate(avgReg, avgFactor, m1);
+            Duplicate(epsReg, epsilon, m1);
+            Duplicate(oneReg, static_cast<float>(1.0), m1);
+            Mul(tHi, msHi, avgReg, m1);
+            Add(tHi, tHi, epsReg, m1);
+            Sqrt(tmp, tHi, m1);
+            Div(r0, oneReg, tmp, m1);
+            // t 非有限守卫: Σx² 在 fp32 溢出成 inf 时(x 取到 ±3.4e38 的用例, _072 实证),
+            // 未校正的 1/sqrt(inf)=0 已是数学正确值(golden 同样溢出, 得 y=0/scale=0);
+            // 而 Markstein 残差 d = t - s0² = inf - inf = NaN 会把它毁成 NaN, 整张 y 被污染。
+            // 故留一份未校正值, 校正后按 t 的有限性择一: t 有限时逐位不变(校正照常生效),
+            // t=inf 取 0, t=NaN 取 1/sqrt(NaN)=NaN(NaN 传播语义不变)。
+            RegTensor<float> r0Keep;
+            MaskReg mFiniteT;
+            Muls(r0Keep, r0, static_cast<float>(1.0), m1);
+            CompareScalar<float, CMPMODE::LT>(mFiniteT, tHi, static_cast<float>(INFINITY), m1);
+            // 向量 Sqrt 与 Div 均非正确舍入(_055 实证: sqrt 偏 +1 ULP, 经 1/s 再偏 1 ULP,
+            // rstd 连锁使 row_max/scale 各偏 1 ULP)。两级 Markstein 校正到正确舍入
+            // (sqrt 校正与 NR+Markstein 除法校正各经 30/50 万随机样本 0 误判):
+            //   d = t - s0^2(FMA 精确);  s1 = s0 + d*(0.5*q0)   (q0=1/s0 兼作引导)
+            //   e = 1 - s1*q0';  q1 = q0' + q0'*e;  r = 1 - s1*q1;  rstd = q1 + q1*r
+            {
+                RegTensor<float> negS, eReg, q1Reg, halfReg, dReg, s1Reg;
+                Muls(negS, tmp, static_cast<float>(-1.0), m1);
+                Muls(dReg, tmp, static_cast<float>(1.0), m1);
+                FusedMulDstAdd(dReg, negS, tHi, m1); // d = t - s0*s0
+                Muls(halfReg, r0, static_cast<float>(0.5), m1);
+                Muls(s1Reg, dReg, static_cast<float>(1.0), m1);
+                FusedMulDstAdd(s1Reg, halfReg, tmp, m1); // s1 = s0 + d*0.5*q0(正确舍入 sqrt)
+                Div(r0, oneReg, s1Reg, m1);              // q0' = 1/s1(~1 ULP)
+                Muls(negS, s1Reg, static_cast<float>(-1.0), m1);
+                Muls(eReg, r0, static_cast<float>(1.0), m1);
+                FusedMulDstAdd(eReg, negS, oneReg, m1); // e = 1 - s1*q0'
+                Muls(q1Reg, eReg, static_cast<float>(1.0), m1);
+                FusedMulDstAdd(q1Reg, r0, r0, m1); // q1 = q0' + q0'*e(NR)
+                Muls(eReg, q1Reg, static_cast<float>(1.0), m1);
+                FusedMulDstAdd(eReg, negS, oneReg, m1); // e = 1 - s1*q1
+                FusedMulDstAdd(eReg, q1Reg, q1Reg, m1); // rstd = q1 + q1*e(正确舍入)
+                Select(eReg, eReg, r0Keep, mFiniteT);   // t 非有限 -> 取未校正值
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(addr, eReg, m1);
+            }
+        }
+        VecToScalarSync();
+        return srcLocal.GetValue(0);
+    }
+
+    // row_max 跨核合并: max 精确可结合, 与合并次序无关。NaN 语义对齐段内向量 Max
+    // (NaN 传播): 标量 `>` 对 NaN 恒 false 会把含 NaN 段的最大值丢成 0, 使 scale 输出
+    // 与 golden(含 NaN 输入用例)不符 —— 任一段为 NaN 即全局 NaN。
+    __aicore__ inline void MergeMax(float& gmax1, float& gmax2)
+    {
+        gmax1 = 0.0f;
+        gmax2 = 0.0f;
+        for (uint64_t k = rowIdx_ * k2_; k < (rowIdx_ + 1) * k2_; ++k) {
+            float m1, m2;
+            ReadSlotPair(k, NUM_TWO_DF, m1, m2);
+            if (m1 > gmax1 || m1 != m1) {
+                gmax1 = m1;
+            }
+            if (hasY2Scale2_ && (m2 > gmax2 || m2 != m2)) {
+                gmax2 = m2;
+            }
+        }
+    }
+
+    __aicore__ inline void CopyInGamma(uint64_t gmOffset, uint64_t blockLen)
+    {
+        LocalTensor<T_X> gammaLocal = inQueueGamma_.AllocTensor<T_X>();
+        RmsNorm::DataCopyImpl<T_X>(gammaLocal, gammaGm_[gmOffset], 1, blockLen);
+        inQueueGamma_.EnQue(gammaLocal);
+    }
+
+    __aicore__ inline void CopyInQuant(uint64_t gmOffset, uint64_t blockLen)
+    {
+        if (hasSmoothScale1_) {
+            LocalTensor<T_SMOOTH_SCALE> smoothScale1Local = inQueueSmoothScale1_.AllocTensor<T_SMOOTH_SCALE>();
+            RmsNorm::DataCopyImpl<T_SMOOTH_SCALE>(smoothScale1Local, smoothScale1Gm_[gmOffset], 1, blockLen);
+            inQueueSmoothScale1_.EnQue(smoothScale1Local);
+        }
+        if (hasSmoothScale2_) {
+            LocalTensor<T_SMOOTH_SCALE> smoothScale2Local = inQueueSmoothScale2_.AllocTensor<T_SMOOTH_SCALE>();
+            RmsNorm::DataCopyImpl<T_SMOOTH_SCALE>(smoothScale2Local, smoothScale2Gm_[gmOffset], 1, blockLen);
+            inQueueSmoothScale2_.EnQue(smoothScale2Local);
+        }
+    }
+
+    __aicore__ inline void CopyInBeta(uint64_t gmOffset, uint64_t blockLen)
+    {
+        LocalTensor<T_X> betaLocal = inQueueBeta_.AllocTensor<T_X>();
+        RmsNorm::DataCopyImpl<T_X>(betaLocal, betaGm_[gmOffset], 1, blockLen);
+        inQueueBeta_.EnQue(betaLocal);
+    }
+
+    /**
+     * @brief Copy in xGm_[srcGmOffset:srcGmOffset+count] and reduce to dst[dstOffset].
+     */
+    // 竞态修复v7(2026-11-18): 共享 CopyInX 恒走 DataCopyPad(isPad=true), 对齐长度下
+    // pad 通路首块行为可疑(v31 曾因变体映射错误未在 fp16 上生效过)。blockLen 已 32B
+    // 对齐时改无 pad 直拷。RmsNorm:: 限定名避免与 AscendC 内部 DataCopyImpl 撞名。
+    __aicore__ inline void CopyInXNoPad(TQue<QuePosition::VECIN, 1>& inQueue, GlobalTensor<T_X>& srcGm,
+                                        uint64_t gmOffset, uint32_t blockLen)
+    {
+        LocalTensor<T_X> xLocal = inQueue.AllocTensor<T_X>();
+        RmsNorm::DataCopyImpl<T_X>(xLocal, srcGm[gmOffset], 1, blockLen);
+        inQueue.EnQue(xLocal);
+    }
+
+    __aicore__ inline void ComputeFormerHandle(LocalTensor<float>& dstLocal, uint64_t srcGmOffset, uint64_t dstOffset,
+                                               uint64_t workSpaceOffset, uint32_t count, uint32_t powerSplit)
+    {
+        LocalTensor<float> xOutTmpLocal = xOutTmpBuf_.Get<float>();
+        uint32_t calCount = Aligned((uint64_t)(count * sizeof(T_X)), ALIGN_32_FACTOR) / sizeof(T_X);
+        // multi-add:按 ascend910b 的次序在 fp32 累加(canndev normal_kernel CopyInX1X2AndAddX1X2
+        // 「1.将x1的第一个tensor和x2相加 2.将x1剩余的相加」),即 x = (x1[0]+x2)+x1[1]+..+x1[n-1]。
+        // fp32 加法不满足结合律,写成 (Σx1)+x2 会在相消点产生 1~2 个 ULP 的偏差。
+        // ReduceSumRstd 内部会做 x1Local+x2Local,故把 A2 次序的「末项」留给它:
+        //   n==1: x1Local = x1[0],                        x2Local = x2
+        //   n>=2: x1Local = (x1[0]+x2)+x1[1]+..+x1[n-2],  x2Local = x1[n-1]
+        // 两种情形下 ReduceSumRstd 的那次加法都恰好是 A2 的最后一步。
+        LocalTensor<float> x1Local = x1AccBuf_.Get<float>();
+        LocalTensor<float> x2Local = x2Fp32Buf_.Get<float>(); // 中间项的 cast 暂存,末项落定后即为第二操作数
+        for (uint32_t i = 0; i < x1Num_; ++i) {
+            if (calCount == count) {
+                CopyInXNoPad(inQueueX1_, x1GmList_[i], srcGmOffset, count);
+            } else {
+                CopyInX(inQueueX1_, x1GmList_[i], srcGmOffset, count, 0, calCount - count);
+            }
+            LocalTensor<T_X> x1In = inQueueX1_.DeQue<T_X>();
+            if (i == 0) {
+                Cast(x1Local, x1In, RoundMode::CAST_NONE, calCount); // x = x1[0].to(fp32)
+                PipeBarrier<PIPE_V>();
+                inQueueX1_.FreeTensor(x1In);
+                if (x1Num_ > 1) { // x1[0] + x2 紧随其后
+                    if (calCount == count) {
+                        CopyInXNoPad(inQueueX2_, x2Gm_, srcGmOffset, count);
+                    } else {
+                        CopyInX(inQueueX2_, x2Gm_, srcGmOffset, count, 0, calCount - count);
+                    }
+                    LocalTensor<T_X> x2First = inQueueX2_.DeQue<T_X>();
+                    Cast(x2Local, x2First, RoundMode::CAST_NONE, calCount);
+                    PipeBarrier<PIPE_V>();
+                    inQueueX2_.FreeTensor(x2First);
+                    Add(x1Local, x1Local, x2Local, calCount);
+                    PipeBarrier<PIPE_V>();
+                }
+                continue;
+            }
+            Cast(x2Local, x1In, RoundMode::CAST_NONE, calCount); // x1[i].to(fp32)
+            PipeBarrier<PIPE_V>();
+            inQueueX1_.FreeTensor(x1In);
+            if (i + 1 == x1Num_) {
+                break; // 末项 x1[n-1] 留在 x2Local,交给 ReduceSumRstd 完成最后一次加法
+            }
+            Add(x1Local, x1Local, x2Local, calCount); // x += x1[i]
+            PipeBarrier<PIPE_V>();
+        }
+        if (x1Num_ == 1) { // 只有一个 x1 时,第二操作数就是 x2
+            if (calCount == count) {
+                CopyInXNoPad(inQueueX2_, x2Gm_, srcGmOffset, count);
+            } else {
+                CopyInX(inQueueX2_, x2Gm_, srcGmOffset, count, 0, calCount - count);
+            }
+            LocalTensor<T_X> x2In = inQueueX2_.DeQue<T_X>();
+            Cast(x2Local, x2In, RoundMode::CAST_NONE, calCount);
+            PipeBarrier<PIPE_V>();
+            inQueueX2_.FreeTensor(x2In);
+        }
+
+        LocalTensor<float> workLocal = reduceSumBuf_.Get<float>();
+        uint32_t calNum = Aligned((uint64_t)(count * sizeof(T_X)), ALIGN_512_FACTOR) / sizeof(T_X);
+        uint64_t dupLen = calNum - calCount;
+        if (dupLen > 0) {
+            Duplicate(x1Local[calCount], (float)0.0, dupLen);
+            Duplicate(x2Local[calCount], (float)0.0, dupLen);
+        }
+
+        // ReduceSumRstd<float,HAS_XOUT=false,HAS_XOUT_FP32=true,IS_RSTD=false>:x1/x2 均 fp32
+        //   => xOutTmpLocal = Σx1+x2(fp32 x),dstLocal = Σ((Σx1+x2)^2)(fp32)。
+        //   HAS_XOUT=false(x 输出需 T_X,单独 Cast);dummy xOut 传 x1Local(U=float 下 HAS_XOUT=false 不写)。
+        NormCommon::ReduceSumRstd<float, false, true, false>(dstLocal, x1Local, xOutTmpLocal, x1Local, x2Local,
+                                                             workLocal, dstOffset, calNum, powerSplit);
+
+        AccumSqCompensated(xOutTmpLocal, count);
+        PipeBarrier<PIPE_V>();
+        event_t eventVMTE3 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
+        event_t eventMTE3V = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
+        SetFlag<HardEvent::V_MTE3>(eventVMTE3);
+        WaitFlag<HardEvent::V_MTE3>(eventVMTE3);
+        RmsNorm::DataCopyImpl<float>(xOutTmpGm_[workSpaceOffset], xOutTmpLocal, 1, count);
+        SetFlag<HardEvent::MTE3_V>(eventMTE3V);
+        WaitFlag<HardEvent::MTE3_V>(eventMTE3V);
+
+        LocalTensor<T_X> xOutLocal = outQueueX_.AllocTensor<T_X>();
+        Cast(xOutLocal, xOutTmpLocal, RoundMode::CAST_RINT,
+             calCount); // x 输出 = fp32 x.to(T_X)(round-nearest-even 对齐 ascend910b)
+        outQueueX_.EnQue<T_X>(xOutLocal);
+        // x 拷出前显式 V→MTE3 依赖: fp32 workspace 拷出(下方)有事件对且从不撕裂;
+        // x 路径仅靠队列槽隐式序, 新构建链时序下每核首段 lane0 出现字节级撕裂(62/62,
+        // ours=golden&0xFF00)。补上与本应等价的显式边。
+        event_t eventVMTE3X = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
+        SetFlag<HardEvent::V_MTE3>(eventVMTE3X);
+        WaitFlag<HardEvent::V_MTE3>(eventVMTE3X);
+        CopyOutX(xGm_, outQueueX_, srcGmOffset, count);
+    }
+
+    // 把本 slice 的 x(fp32) 的平方以补偿求和累加进 msAccBuf_。掩码外 zeroing, 尾块不污染。
+    __aicore__ inline void AccumSqCompensated(LocalTensor<float>& xFp32Local, uint32_t count)
+    {
+        __local_mem__ float* xAddr = (__ubuf__ float*)xFp32Local.GetPhyAddr();
+        __local_mem__ float* accAddr = (__ubuf__ float*)msAccBuf_.Get<float>().GetPhyAddr();
+        uint16_t repeatTimes = (uint16_t)CeilDivision(count, (uint32_t)V_LENGTH);
+        uint32_t calCount = count;
+        __VEC_SCOPE__
+        {
+            RegTensor<float> accHi, accLo, xReg, sqHi, sqLo, tHi, eReg;
+            MaskReg maskFull = CreateMask<float, MaskPattern::ALL>();
+            MaskReg maskReg;
+            DataCopy<float>(accHi, accAddr);
+            DataCopy<float>(accLo, accAddr + NUM_TWO_DF * V_LENGTH);
+            for (uint16_t i = 0; i < repeatTimes; i++) {
+                maskReg = UpdateMask<float>(calCount);
+                DataCopy<float>(xReg, xAddr + i * V_LENGTH);
+                DfTwoProd(sqHi, sqLo, xReg, xReg, maskReg); // x^2 = sqHi + sqLo(精确)
+                DfTwoSum(tHi, eReg, accHi, sqHi, maskFull);
+                Add(eReg, eReg, accLo, maskFull);
+                Add(eReg, eReg, sqLo, maskFull);
+                DfTwoSum(accHi, accLo, tHi, eReg, maskFull);
+            }
+            DataCopy<float>(accAddr, accHi, maskFull);
+            DataCopy<float>(accAddr + NUM_TWO_DF * V_LENGTH, accLo, maskFull);
+        }
+    }
+
+    // 横向补偿规约(V_LENGTH lane -> 1) + t = ms*avg+eps + rstd = 1/sqrt(t)。
+    // 横向合并保留补偿: 普通树形求和会把逐 slice 累加积累的低位段丢掉, 而合并过程中的
+    // 残差会回灌 hi, 所以那部分是活的; 只有最终的低位段无下游消费者。
+    __aicore__ inline void FinalizeRstd(LocalTensor<float>& rstdLocal, float avgFactor, float epsilon)
+    {
+        ReduceMsAccToPair();
+        __local_mem__ float* accAddr = (__ubuf__ float*)msAccBuf_.Get<float>().GetPhyAddr();
 
         __local_mem__ float* rAddr = (__ubuf__ float*)rstdLocal.GetPhyAddr();
         __VEC_SCOPE__
@@ -411,7 +808,33 @@ private:
             Add(tHi, tHi, epsReg, m1);
             Sqrt(tmp, tHi, m1);
             Div(r0, oneReg, tmp, m1); // r0 = 1/sqrt(t)
-            DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rAddr, r0, m1);
+            // t 非有限守卫(与 RstdScalarFromHi 同款, 两路径必须逐位一致): 见该函数注释。
+            RegTensor<float> r0Keep;
+            MaskReg mFiniteT;
+            Muls(r0Keep, r0, static_cast<float>(1.0), m1);
+            CompareScalar<float, CMPMODE::LT>(mFiniteT, tHi, static_cast<float>(INFINITY), m1);
+            // 与 RstdScalarFromHi 完全相同的两级 Markstein 校正(两路径必须逐位一致):
+            // sqrt 校正 + NR+Markstein 除法校正, 均校正到正确舍入。
+            {
+                RegTensor<float> negS, eReg, q1Reg, halfReg, dReg, s1Reg;
+                Muls(negS, tmp, static_cast<float>(-1.0), m1);
+                Muls(dReg, tmp, static_cast<float>(1.0), m1);
+                FusedMulDstAdd(dReg, negS, tHi, m1); // d = t - s0*s0
+                Muls(halfReg, r0, static_cast<float>(0.5), m1);
+                Muls(s1Reg, dReg, static_cast<float>(1.0), m1);
+                FusedMulDstAdd(s1Reg, halfReg, tmp, m1); // s1 = 正确舍入 sqrt
+                Div(r0, oneReg, s1Reg, m1);              // q0' = 1/s1
+                Muls(negS, s1Reg, static_cast<float>(-1.0), m1);
+                Muls(eReg, r0, static_cast<float>(1.0), m1);
+                FusedMulDstAdd(eReg, negS, oneReg, m1); // e = 1 - s1*q0'
+                Muls(q1Reg, eReg, static_cast<float>(1.0), m1);
+                FusedMulDstAdd(q1Reg, r0, r0, m1); // NR
+                Muls(eReg, q1Reg, static_cast<float>(1.0), m1);
+                FusedMulDstAdd(eReg, negS, oneReg, m1);
+                FusedMulDstAdd(eReg, q1Reg, q1Reg, m1); // 正确舍入 rstd
+                Select(eReg, eReg, r0Keep, mFiniteT);   // t 非有限 -> 取未校正值
+                DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(rAddr, eReg, m1);
+            }
         }
     }
 
@@ -536,13 +959,18 @@ private:
             WaitFlag<HardEvent::MTE2_V>(eventMTE2V);
 
             SetOverflowMode<T_Y>(0);
+            // row_max 的规约元素数必须是真实 N(与 PERF 路径传 baseN_ 一致), 不能传 32B 对齐长度:
+            // 对齐段里 [realN, realNDtypeAlign) 是 padding —— x 的 padding 被 DataCopyPad 显式置 0,
+            // 但 gamma/smooth_scale 的搬入(CopyInQuant/CopyInGamma)不补零, padding 留着上一段残留值。
+            // 残留为有限值时 0*stale=0 无害, 残留为 ±inf 时 0*(±inf)=NaN, 再经 MergeMax 的 NaN
+            // 传播把整行 scale 变成 NaN(_180 实证: ss1 恒为 -inf, 设备 scale1=NaN 而 golden=+inf)。
             DispatchReduceMax<T_X, T_SMOOTH_SCALE, T_Y>(scale1Local, y1TmpLocal, xOutTmpLocal, rstdLocal, gammaLocal,
-                                                        betaLocal, smoothScale1Local, 0, realNDtypeAlign,
-                                                        hasSmoothScale1_, hasBeta_);
+                                                        betaLocal, smoothScale1Local, 0, realN, hasSmoothScale1_,
+                                                        hasBeta_);
             if (hasY2Scale2_) {
                 DispatchReduceMax<T_X, T_SMOOTH_SCALE, T_Y>(scale2Local, y2TmpLocal, xOutTmpLocal, rstdLocal,
-                                                            gammaLocal, betaLocal, smoothScale2Local, 0,
-                                                            realNDtypeAlign, hasSmoothScale2_, hasBeta_);
+                                                            gammaLocal, betaLocal, smoothScale2Local, 0, realN,
+                                                            hasSmoothScale2_, hasBeta_);
             }
             SetOverflowMode<T_Y>(oriOverflowMode_);
 
@@ -712,9 +1140,13 @@ private:
     TBuf<TPosition::VECCALC> y1TmpBuf_;
     TBuf<TPosition::VECCALC> y2TmpBuf_;
     TBuf<TPosition::VECCALC> xOutTmpBuf_;
-    TBuf<TPosition::VECCALC> x1AccBuf_;  // 增:multi-add Σx1 fp32 累加缓冲
-    TBuf<TPosition::VECCALC> x2Fp32Buf_; // 增:x2 fp32 缓冲(与 Σx1 同以 fp32 喂 reduce)
-    TBuf<TPosition::VECCALC> msAccBuf_;  // 增:Σx² 补偿累加(前 V_LENGTH lane=hi, 后 V_LENGTH=lo)
+    TBuf<TPosition::VECCALC> x1AccBuf_;   // 增:multi-add Σx1 fp32 累加缓冲
+    TBuf<TPosition::VECCALC> x2Fp32Buf_;  // 增:x2 fp32 缓冲(与 Σx1 同以 fp32 喂 reduce)
+    TBuf<TPosition::VECCALC> msAccBuf_;   // 增:Σx² 补偿累加(前 V_LENGTH lane=hi, 后 V_LENGTH=lo)
+    TBuf<TPosition::VECCALC> partOutBuf_; // 增:N-split 本核合并槽写出缓冲(64B)
+    TBuf<TPosition::VECCALC> partInBuf_;  // 增:N-split 他核合并槽读入缓冲(64B)
+    GlobalTensor<float> partGm_;          // 增:N-split 本核合并槽(写视图)
+    GlobalTensor<float> partGmAll_;       // 增:N-split 全部合并槽(读视图)
 
     // Tiling data
     uint64_t numN_{0};
@@ -739,6 +1171,16 @@ private:
     // Platform
     int64_t blockIdx_{0};
     int64_t blockNum_{0};
+    // N 维跨核切分(issue#43)
+    uint64_t nSplitNum_{1};
+    bool invalidTiling_{false}; // tiling 自洽校验失败: Process 空转返回, 不做任何 GM 写
+    uint64_t nSegLen_{0};
+    uint64_t nSegTail_{0};
+    uint64_t oriNumN_{0}; // 整行长度(split 前的 numN, 供 workspace 面积/合并槽寻址)
+    uint64_t segStart_{0};
+    uint64_t k2_{0};      // 二维: 每行列段数(=nSplitNum/numM; numM==1 时=nSplitNum)
+    uint64_t rowIdx_{0};  // 二维: 本核行号
+    uint64_t rowBase_{0}; // 二维: 本核行基址(=rowIdx_*oriNumN)
     // Cal params
     uint64_t mCore_;
     uint64_t nCnt_;
