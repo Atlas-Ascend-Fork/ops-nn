@@ -32,6 +32,7 @@ namespace optiling {
 
 using Ops::Base::CeilAlign;
 using Ops::Base::CeilDiv;
+using Ops::Base::ToString;
 
 constexpr uint32_t WS_SYS_SIZE = 0U;
 constexpr size_t WORKSPACE_NUM = 1;
@@ -107,7 +108,9 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     *totalElements = varShape.GetShapeSize();
 
     OP_CHECK_IF(varShape.GetDimNum() > MAX_RANK,
-                OP_LOGE(context, "InplaceApplyAddSign: var rank %zu exceeds max %u", varShape.GetDimNum(), MAX_RANK),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "var", std::to_string(varShape.GetDimNum()).c_str(),
+                    ("The rank of var must not exceed " + std::to_string(MAX_RANK) + ".").c_str()),
                 return ge::GRAPH_FAILED);
 
     auto inputDesc = context->GetInputDesc(0);
@@ -116,7 +119,9 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
 
     const std::set<ge::DataType> supportedDtypes = {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16};
     OP_CHECK_IF(supportedDtypes.count(*dataType) == 0,
-                OP_LOGE(context, "InplaceApplyAddSign: unsupported dtype %d", static_cast<int>(*dataType)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "var", ToString(*dataType).c_str(),
+                                                      "The dtype of var should be one of DT_FLOAT, DT_FLOAT16, "
+                                                      "DT_BF16."),
                 return ge::GRAPH_FAILED);
 
     constexpr int64_t TOTAL_INPUTS = 7;
@@ -127,16 +132,18 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
         ge::Format storageFormat = desc->GetFormat().GetStorageFormat();
         ge::Format originFormat = desc->GetOriginFormat();
         OP_CHECK_IF(storageFormat != ge::FORMAT_ND || originFormat != ge::FORMAT_ND,
-                    OP_LOGE(context, "InplaceApplyAddSign: input %s format %d/%d not supported, only ND", inputNames[i],
-                            static_cast<int>(storageFormat), static_cast<int>(originFormat)),
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                        context->GetNodeName(), inputNames[i],
+                        ge::GetFormatName(storageFormat != ge::FORMAT_ND ? storageFormat : originFormat),
+                        "The format of input must be ND."),
                     return ge::GRAPH_FAILED);
         if (i == 0) {
             continue;
         }
         auto dt = desc->GetDataType();
         OP_CHECK_IF(dt != *dataType,
-                    OP_LOGE(context, "InplaceApplyAddSign: input %s dtype %d mismatch with var dtype %d", inputNames[i],
-                            static_cast<int>(dt), static_cast<int>(*dataType)),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), inputNames[i], ToString(dt).c_str(),
+                                                          "The dtype of input must be the same as var."),
                     return ge::GRAPH_FAILED);
     }
 
@@ -144,18 +151,24 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     OP_CHECK_NULL_WITH_CONTEXT(context, mInput);
     auto mShape = EnsureNotScalar(mInput->GetStorageShape());
     OP_CHECK_IF(mShape.GetDimNum() > MAX_RANK,
-                OP_LOGE(context, "InplaceApplyAddSign: m rank %zu exceeds max %u", mShape.GetDimNum(), MAX_RANK),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "m", std::to_string(mShape.GetDimNum()).c_str(),
+                    ("The rank of m must not exceed " + std::to_string(MAX_RANK) + ".").c_str()),
                 return ge::GRAPH_FAILED);
     auto gradInput = context->GetInputShape(6);
     OP_CHECK_NULL_WITH_CONTEXT(context, gradInput);
     auto gradShape = EnsureNotScalar(gradInput->GetStorageShape());
     OP_CHECK_IF(gradShape.GetDimNum() > MAX_RANK,
-                OP_LOGE(context, "InplaceApplyAddSign: grad rank %zu exceeds max %u", gradShape.GetDimNum(), MAX_RANK),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "grad", std::to_string(gradShape.GetDimNum()).c_str(),
+                    ("The rank of grad must not exceed " + std::to_string(MAX_RANK) + ".").c_str()),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(!IsSameShape(varShape, mShape) || !IsSameShape(varShape, gradShape),
-                OP_LOGE(context, "InplaceApplyAddSign: var/m/grad shape mismatch, must be identical"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !IsSameShape(varShape, mShape) || !IsSameShape(varShape, gradShape),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "var, m, grad", ToString(varShape).c_str(),
+                                               "The shapes of var, m and grad must be identical."),
+        return ge::GRAPH_FAILED);
 
     const char* scalarNames[] = {"lr", "alpha", "sign_decay", "beta"};
     constexpr int64_t scalarIndices[] = {LR_INPUT_INDEX, ALPHA_INPUT_INDEX, SIGN_DECAY_INPUT_INDEX, BETA_INPUT_INDEX};
@@ -164,8 +177,9 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
         OP_CHECK_NULL_WITH_CONTEXT(context, scalarInput);
         auto scalarShape = EnsureNotScalar(scalarInput->GetStorageShape());
         OP_CHECK_IF(scalarShape.GetShapeSize() != SCALAR_ELEM_COUNT,
-                    OP_LOGE(context, "InplaceApplyAddSign: %s must be a scalar (shape_size=%ld), got %ld",
-                            scalarNames[i], static_cast<int64_t>(SCALAR_ELEM_COUNT), scalarShape.GetShapeSize()),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), scalarNames[i],
+                                                              std::to_string(scalarShape.GetShapeSize()).c_str(),
+                                                              "The input must be a scalar (shape size 1)."),
                     return ge::GRAPH_FAILED);
     }
 
@@ -243,21 +257,22 @@ static ge::graphStatus InplaceApplyAddSignTilingFunc(gert::TilingContext* contex
     uint64_t ubSize;
     int64_t coreNum;
     OP_CHECK_IF(GetPlatformInfo(context, &ubSize, &coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "InplaceApplyAddSign: GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "InplaceApplyAddSign: GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     int64_t totalElements;
     ge::DataType dataType;
     OP_CHECK_IF(GetShapeAttrsInfo(context, &totalElements, &dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "InplaceApplyAddSign: GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
+                OP_LOGE_WITHOUT_REPORT(context, "InplaceApplyAddSign: GetShapeAttrsInfo error"),
                 return ge::GRAPH_FAILED);
+
+    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
 
     InplaceApplyAddSignTilingData* tiling = context->GetTilingData<InplaceApplyAddSignTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     OP_CHECK_IF(
         memset_s(tiling, sizeof(InplaceApplyAddSignTilingData), 0, sizeof(InplaceApplyAddSignTilingData)) != EOK,
-        OP_LOGE(context, "InplaceApplyAddSign: memset tiling error"), return ge::GRAPH_FAILED);
+        OP_LOGE_WITHOUT_REPORT(context, "InplaceApplyAddSign: memset tiling error"), return ge::GRAPH_FAILED);
 
     uint32_t dtypeSize = (dataType == ge::DT_FLOAT) ? FP32_DTYPE_SIZE : HALF_DTYPE_SIZE;
     uint32_t minDtypeBits = dtypeSize * BITS_PER_BYTE;
@@ -272,10 +287,11 @@ static ge::graphStatus InplaceApplyAddSignTilingFunc(gert::TilingContext* contex
     CalcBlockTiling(tiling, totalElements, minDtypeBits, coreNum);
     CalcUbLoopInfo(tiling, totalElements);
 
-    OP_CHECK_IF(totalElements > static_cast<int64_t>(UINT32_MAX),
-                OP_LOGE(context, "InplaceApplyAddSign: totalElements(%ld) exceeds UINT32_MAX(%u), not supported",
-                        totalElements, UINT32_MAX),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        totalElements > static_cast<int64_t>(UINT32_MAX),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "var", std::to_string(totalElements).c_str(),
+                                              "The total element count exceeds UINT32_MAX and is not supported."),
+        return ge::GRAPH_FAILED);
     tiling->totalElements = static_cast<uint32_t>(totalElements);
     tiling->dtypeSize = static_cast<uint8_t>(dtypeSize);
 

@@ -54,8 +54,8 @@ static aclnnStatus CheckParams(const aclTensorList* x)
     const auto& dtypeSupportList = GetDtypeSupportList();
     CHECK_RET(dtypeSupportList.size() != 0, ACLNN_ERR_PARAM_INVALID);
     if (x->Size() > MAX_TENSOR_COUNT) {
-        OP_LOGE(ACLNN_ERR_INNER_TILING_ERROR, "The tensor list x must contain at most 256 tensors.");
-        return ACLNN_ERR_INNER_TILING_ERROR;
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The tensor list x must contain at most 256 tensors.");
+        return ACLNN_ERR_PARAM_INVALID;
     }
     if (x->Size() == 0) {
         return ACLNN_SUCCESS;
@@ -65,8 +65,8 @@ static aclnnStatus CheckParams(const aclTensorList* x)
     for (uint64_t i = 0; i < x->Size(); i++) {
         auto tensor = (*x)[i];
         OP_CHECK_DTYPE_NOT_SUPPORT(tensor, dtypeSupportList, return ACLNN_ERR_PARAM_INVALID);
-        OP_CHECK_DTYPE_NOT_MATCH(tensor, dtype, return ACLNN_ERR_INNER_TILING_ERROR);
-        OP_CHECK_MAX_DIM(tensor, MAX_SUPPORT_DIMS_NUMS, return ACLNN_ERR_INNER_TILING_ERROR);
+        OP_CHECK_DTYPE_NOT_MATCH(tensor, dtype, return ACLNN_ERR_PARAM_INVALID);
+        OP_CHECK_MAX_DIM(tensor, MAX_SUPPORT_DIMS_NUMS, return ACLNN_ERR_PARAM_INVALID);
         if (IsPrivateFormat(tensor->GetStorageFormat())) {
             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Private formats are not supported for x.");
             return ACLNN_ERR_PARAM_INVALID;

@@ -50,6 +50,7 @@
 #include "register/op_impl_registry.h"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "graph/types.h"
@@ -96,10 +97,8 @@ static ge::graphStatus CheckScalarInputShapes(const gert::InferShapeContext* con
         const size_t rank = shape->GetDimNum();
         const bool valid = (rank == 0) || (rank == 1 && (shape->GetDim(0) == 1 || shape->GetDim(0) == ge::UNKNOWN_DIM));
         if (!valid) {
-            OP_LOGE("InplaceApplyAdamWithAmsgrad",
-                    "InferShape failed: scalar input %s (index %zu) must be rank-0 or shape [1], "
-                    "got rank %zu (shape_mismatch).",
-                    scalarNames[i - kScalarInputFirst], i, rank);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("InplaceApplyAdamWithAmsgrad", scalarNames[i - kScalarInputFirst],
+                                                     std::to_string(rank), "scalar input must be rank-0 or shape [1].");
             return GRAPH_FAILED;
         }
     }
@@ -154,12 +153,12 @@ static ge::graphStatus CheckInputShapes(const gert::Shape* const* tensorShapes, 
 {
     // All element-wise inputs must share the same rank.
     rank = tensorShapes[0]->GetDimNum();
+    static const char* tensorNames[] = {"var", "m", "v", "vhat", "grad"};
     for (size_t i = 1; i < kTensorInputCount; ++i) {
         if (tensorShapes[i]->GetDimNum() != rank) {
-            OP_LOGE("InplaceApplyAdamWithAmsgrad",
-                    "InferShape failed: rank mismatch among element-wise inputs, "
-                    "var rank=%zu but input %zu rank=%zu.",
-                    rank, i, tensorShapes[i]->GetDimNum());
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                "InplaceApplyAdamWithAmsgrad", tensorNames[i], std::to_string(tensorShapes[i]->GetDimNum()),
+                "rank mismatch among element-wise inputs: var rank=" + std::to_string(rank) + ".");
             return GRAPH_FAILED;
         }
     }
@@ -167,10 +166,8 @@ static ge::graphStatus CheckInputShapes(const gert::Shape* const* tensorShapes, 
     // Rank upper bound: spec.yaml rank_range [0, 8] for var/m/v/vhat/grad.
     // A 9-D (or higher) tensor must be rejected here.
     if (rank > kMaxTensorRank) {
-        OP_LOGE("InplaceApplyAdamWithAmsgrad",
-                "InferShape failed: tensor rank %zu exceeds max rank %zu "
-                "(spec.yaml rank_range [0, 8]).",
-                rank, kMaxTensorRank);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("InplaceApplyAdamWithAmsgrad", "var", std::to_string(rank),
+                                                 "rank must be within [0, 8].");
         return GRAPH_FAILED;
     }
     return GRAPH_SUCCESS;
@@ -192,10 +189,10 @@ static ge::graphStatus ResolveOutputDims(const gert::Shape* const* tensorShapes,
             if (resolved == ge::UNKNOWN_DIM) {
                 resolved = dim;
             } else if (resolved != dim) {
-                OP_LOGE("InplaceApplyAdamWithAmsgrad",
-                        "InferShape failed: conflicting known dim %zu: "
-                        "resolved=%ld but input %zu has %ld.",
-                        d, static_cast<long>(resolved), i, static_cast<long>(dim));
+                static const char* tensorNames[] = {"var", "m", "v", "vhat", "grad"};
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    "InplaceApplyAdamWithAmsgrad", tensorNames[i], std::to_string(dim),
+                    "conflicting known dim " + std::to_string(d) + ": resolved=" + std::to_string(resolved) + ".");
                 return GRAPH_FAILED;
             }
         }

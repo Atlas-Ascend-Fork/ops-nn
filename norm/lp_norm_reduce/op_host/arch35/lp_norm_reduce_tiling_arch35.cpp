@@ -1249,7 +1249,10 @@ static ge::graphStatus TilingFuncLpNormReduce(gert::TilingContext* context)
                     return ge::GRAPH_FAILED);
         OP_LOGD(context->GetNodeName(), "Group: rGroupCnt=%ld usedCoreNum=%d", ctx.rGroupCnt, ctx.usedCoreNum);
         OP_CHECK_IF(context->SetScheduleMode(1) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(context->GetNodeName(), "Failed to set ScheduleMode!"), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "schedule_mode", "1",
+                                                          "failed to set group schedule mode; group split state may "
+                                                          "exceed the framework limit."),
+                    return ge::GRAPH_FAILED);
     }
     OP_CHECK_IF(CheckCacheCapacity(context, ctx) != ge::GRAPH_SUCCESS, , return ge::GRAPH_FAILED);
     ComputeUbSizes(ctx);

@@ -46,6 +46,18 @@ std::vector<int64_t> ShapeToVector(const gert::StorageShape* shp)
     return v;
 }
 
+static std::string ShapeVecToString(const std::vector<int64_t>& shape)
+{
+    std::string s = "[";
+    for (size_t d = 0; d < shape.size(); d++) {
+        if (d != 0) {
+            s += ", ";
+        }
+        s += std::to_string(shape[d]);
+    }
+    return s + "]";
+}
+
 // Precompute GM strides for a (squeezed) normal shape in the broadcast coord
 // system (PrecomputeInputStrides/PrecomputeOutputStrides).
 // stride[d] = 0 on broadcast axes (normal[d]==1 && bro[d]>1), else the row-major
@@ -142,12 +154,14 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
         OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
         auto dt = inputDesc->GetDataType();
         OP_CHECK_IF(SUPPORTED_DTYPES.count(dt) == 0,
-                    OP_LOGE(context, "LarsV2Update: input%d has incorrect dtype %s. It should be DT_FLOAT.",
-                            static_cast<int32_t>(i), ToString(dt).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), ("input" + std::to_string(i)).c_str(),
+                                                          ToString(dt).c_str(), "The dtype of input must be DT_FLOAT."),
                     return ge::GRAPH_FAILED);
         // format check: all 6 inputs must be FORMAT_ND (def.cpp:26-31)
         OP_CHECK_IF(inputDesc->GetStorageFormat() != ge::FORMAT_ND,
-                    OP_LOGE(context, "LarsV2Update: input%d format is not ND.", static_cast<int32_t>(i)),
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                        context->GetNodeName(), ("input" + std::to_string(i)).c_str(),
+                        ge::GetFormatName(inputDesc->GetStorageFormat()), "The format of input must be ND."),
                     return ge::GRAPH_FAILED);
     }
 
@@ -155,13 +169,17 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     for (int64_t i = 0; i < MAX_INPUT_SLOTS; i++) {
         in_shapes[i] = ShapeToVector(context->GetInputShape(static_cast<size_t>(i)));
         OP_CHECK_IF(in_shapes[i].size() > MAX_DIM_NUM,
-                    OP_LOGE(context, "LarsV2Update: input%d dim num %zu must be less than or equal to 8.",
-                            static_cast<int32_t>(i), in_shapes[i].size()),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                        context->GetNodeName(), ("input" + std::to_string(i)).c_str(),
+                        std::to_string(in_shapes[i].size()).c_str(),
+                        ("The dim num of input must not exceed " + std::to_string(MAX_DIM_NUM) + ".").c_str()),
                     return ge::GRAPH_FAILED);
         for (size_t d = 0; d < in_shapes[i].size(); d++) {
             OP_CHECK_IF(in_shapes[i][d] < 0,
-                        OP_LOGE(context, "LarsV2Update: input%d dim%zu is negative (%lld).", static_cast<int32_t>(i), d,
-                                static_cast<long long>(in_shapes[i][d])),
+                        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                            context->GetNodeName(), ("input" + std::to_string(i)).c_str(),
+                            std::to_string(in_shapes[i][d]).c_str(),
+                            ("Dim " + std::to_string(d) + " is negative; dimensions must be non-negative.").c_str()),
                         return ge::GRAPH_FAILED);
         }
     }
@@ -170,12 +188,19 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
 
     // --- step 1a: shape constraints (README 约束的代码实现) ---
     // 约束1: w 和 g 必须具有相同的形状 (kernel 按 max_bro 共享布局读写 w/g/g_new).
-    OP_CHECK_IF(in_shapes[0] != in_shapes[1], OP_LOGE(context, "LarsV2Update: w and g must have the same shape."),
+    OP_CHECK_IF(in_shapes[0] != in_shapes[1],
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "w, g",
+                    (ShapeVecToString(in_shapes[0]) + ", " + ShapeVecToString(in_shapes[1])).c_str(),
+                    "The shapes of w and g must be the same."),
                 return ge::GRAPH_FAILED);
     // 约束2: 输出 g_new 与 w 同形 (InferShape 为 broadcast(w, g), w==g 时等价; 此处兜底校验).
     if (!out_shapes[0].empty()) {
         OP_CHECK_IF(out_shapes[0] != in_shapes[0],
-                    OP_LOGE(context, "LarsV2Update: output g_new must have the same shape as w."),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), "w, g_new",
+                        (ShapeVecToString(in_shapes[0]) + ", " + ShapeVecToString(out_shapes[0])).c_str(),
+                        "The shape of output g_new must be the same as w."),
                     return ge::GRAPH_FAILED);
     }
     // 约束3: w_square_sum / g_square_sum / weight_decay / learning_rate 必须为标量 (元素数 1).
@@ -185,8 +210,9 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
             numel *= in_shapes[i][d];
         }
         OP_CHECK_IF(numel != 1,
-                    OP_LOGE(context, "LarsV2Update: input%d must be a scalar (1 element), got %lld elements.",
-                            static_cast<int32_t>(i), static_cast<long long>(numel)),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), ("input" + std::to_string(i)).c_str(),
+                                                          std::to_string(numel).c_str(),
+                                                          "The input must be a scalar (1 element)."),
                     return ge::GRAPH_FAILED);
     }
 

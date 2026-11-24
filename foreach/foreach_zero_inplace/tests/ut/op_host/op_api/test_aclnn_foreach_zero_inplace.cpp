@@ -124,7 +124,7 @@ TEST_P(L2ForeachZeroInplaceTest, maximum_list_length)
 TEST_P(L2ForeachZeroInplaceTest, excessive_list_length)
 {
     auto x = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
-    ExpectWorkspaceStatus(TensorListDesc(257, x), ACLNN_ERR_INNER_TILING_ERROR);
+    ExpectWorkspaceStatus(TensorListDesc(257, x), ACLNN_ERR_PARAM_INVALID);
 }
 
 TEST_P(L2ForeachZeroInplaceTest, null_list)
@@ -171,7 +171,7 @@ TEST_P(L2ForeachZeroInplaceTest, mixed_dtypes)
 {
     auto x0 = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
     auto x1 = TensorDesc({2, 3}, ACL_FLOAT16, ACL_FORMAT_ND);
-    ExpectWorkspaceStatus(TensorListDesc({x0, x1}), ACLNN_ERR_INNER_TILING_ERROR);
+    ExpectWorkspaceStatus(TensorListDesc({x0, x1}), ACLNN_ERR_PARAM_INVALID);
 }
 
 TEST_P(L2ForeachZeroInplaceTest, private_format)
@@ -189,7 +189,7 @@ TEST_P(L2ForeachZeroInplaceTest, non_private_format)
 TEST_P(L2ForeachZeroInplaceTest, excessive_rank)
 {
     auto x = TensorDesc(std::vector<int64_t>(9, 1), ACL_FLOAT, ACL_FORMAT_ND);
-    ExpectWorkspaceStatus(TensorListDesc({x}), ACLNN_ERR_INNER_TILING_ERROR);
+    ExpectWorkspaceStatus(TensorListDesc({x}), ACLNN_ERR_PARAM_INVALID);
 }
 
 INSTANTIATE_TEST_SUITE_P(A2AndA3AndA5, L2ForeachZeroInplaceTest,

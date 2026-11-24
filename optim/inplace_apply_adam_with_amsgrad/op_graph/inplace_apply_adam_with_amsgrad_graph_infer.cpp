@@ -35,6 +35,7 @@
 
 // op_impl_registry.h: provides IMPL_OP macro, gert::InferDataTypeContext.
 // log/log.h: provides OP_LOGE for error logging.
+#include <string>
 #include "log/log.h"
 #include "register/op_impl_registry.h"
 
@@ -66,11 +67,11 @@ static ge::graphStatus InferDataTypeForInplaceApplyAdamWithAmsgrad(gert::InferDa
     const ge::DataType vhatDtype = context->GetInputDataType(3);               // vhat
     const ge::DataType gradDtype = context->GetInputDataType(kGradInputIndex); // grad
     if (varDtype != mDtype || varDtype != vDtype || varDtype != vhatDtype || varDtype != gradDtype) {
-        OP_LOGE("InplaceApplyAdamWithAmsgrad",
-                "InferDataType failed: element-wise tensors must share one dtype, "
-                "got var=%d m=%d v=%d vhat=%d grad=%d.",
-                static_cast<int>(varDtype), static_cast<int>(mDtype), static_cast<int>(vDtype),
-                static_cast<int>(vhatDtype), static_cast<int>(gradDtype));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            "InplaceApplyAdamWithAmsgrad", "var", Ops::Base::ToString(varDtype),
+            "element-wise tensors var, m, v, vhat and grad must share one dtype: var=" + Ops::Base::ToString(varDtype) +
+                ", m=" + Ops::Base::ToString(mDtype) + ", v=" + Ops::Base::ToString(vDtype) +
+                ", vhat=" + Ops::Base::ToString(vhatDtype) + ", grad=" + Ops::Base::ToString(gradDtype) + ".");
         return ge::GRAPH_FAILED;
     }
     // The six scalar inputs must be DT_FLOAT per _def.cpp:78-107.
@@ -79,11 +80,8 @@ static ge::graphStatus InferDataTypeForInplaceApplyAdamWithAmsgrad(gert::InferDa
         if (scalarDtype != ge::DT_FLOAT) {
             const char* scalarNames[kScalarInputCount] = {"beta1_power", "beta2_power", "lr",
                                                           "beta1",       "beta2",       "epsilon"};
-            OP_LOGE("InplaceApplyAdamWithAmsgrad",
-                    "InferDataType failed: scalar input %s (index %zu) must be DT_FLOAT(%d), "
-                    "got dtype %d.",
-                    scalarNames[i - kScalarInputFirst], i, static_cast<int>(ge::DT_FLOAT),
-                    static_cast<int>(scalarDtype));
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("InplaceApplyAdamWithAmsgrad", scalarNames[i - kScalarInputFirst],
+                                                  Ops::Base::ToString(scalarDtype), "scalar input must be DT_FLOAT.");
             return ge::GRAPH_FAILED;
         }
     }

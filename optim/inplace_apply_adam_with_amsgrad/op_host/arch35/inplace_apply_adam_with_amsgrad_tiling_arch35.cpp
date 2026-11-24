@@ -48,6 +48,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <securec.h>
 
 #include "acl/acl.h"
@@ -149,14 +150,15 @@ static inline bool StorageShapesEqual(const gert::StorageShape* a, const gert::S
     const auto& sa = a->GetStorageShape();
     const auto& sb = b->GetStorageShape();
     if (sa.GetDimNum() != sb.GetDimNum()) {
-        OP_LOGE("InplaceApplyAdamWithAmsgrad", "StorageShapesEqual: rank mismatch (a=%zu, b=%zu).", sa.GetDimNum(),
-                sb.GetDimNum());
+        OP_LOGE_WITHOUT_REPORT("InplaceApplyAdamWithAmsgrad", "StorageShapesEqual: rank mismatch (a=%zu, b=%zu).",
+                               sa.GetDimNum(), sb.GetDimNum());
         return false;
     }
     for (size_t d = 0; d < sa.GetDimNum(); ++d) {
         if (sa.GetDim(d) != sb.GetDim(d)) {
-            OP_LOGE("InplaceApplyAdamWithAmsgrad", "StorageShapesEqual: dim %zu mismatch (a=%ld, b=%ld).", d,
-                    static_cast<long>(sa.GetDim(d)), static_cast<long>(sb.GetDim(d)));
+            OP_LOGE_WITHOUT_REPORT("InplaceApplyAdamWithAmsgrad",
+                                   "StorageShapesEqual: dim %zu mismatch (a=%ld, b=%ld).", d,
+                                   static_cast<long>(sa.GetDim(d)), static_cast<long>(sb.GetDim(d)));
             return false;
         }
     }
@@ -261,7 +263,8 @@ static ge::graphStatus ValidateInputs(const gert::TilingContext* context, DtypeP
     OP_CHECK_NULL_WITH_CONTEXT(context, varDesc);
     const ge::DataType dtype = varDesc->GetDataType();
     if (!ResolveDtypeParams(dtype, dp)) {
-        OP_LOGE(context->GetNodeName(), "Unsupported var dtype %d", static_cast<int>(dtype));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "var", Ops::Base::ToString(dtype),
+                                              "var dtype is not in the supported set {BF16, FLOAT16, FLOAT}.");
         return ge::GRAPH_FAILED;
     }
 
@@ -276,9 +279,8 @@ static ge::graphStatus ValidateInputs(const gert::TilingContext* context, DtypeP
         if (scalarDtype != ge::DT_FLOAT) {
             static const char* scalarNames[kScalarInputCount] = {"beta1_power", "beta2_power", "lr",
                                                                  "beta1",       "beta2",       "epsilon"};
-            OP_LOGE(context->GetNodeName(), "Scalar input %s (index %zu) must be DT_FLOAT(%d), got dtype %d.",
-                    scalarNames[i - kScalarInputFirst], i, static_cast<int>(ge::DT_FLOAT),
-                    static_cast<int>(scalarDtype));
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), scalarNames[i - kScalarInputFirst],
+                                                  Ops::Base::ToString(scalarDtype), "scalar input must be DT_FLOAT.");
             return ge::GRAPH_FAILED;
         }
     }
@@ -301,9 +303,9 @@ static ge::graphStatus ValidateInputs(const gert::TilingContext* context, DtypeP
         if (!valid) {
             static const char* scalarNames[kScalarInputCount] = {"beta1_power", "beta2_power", "lr",
                                                                  "beta1",       "beta2",       "epsilon"};
-            OP_LOGE(context->GetNodeName(),
-                    "Scalar input %s (index %zu) must be rank-0 or shape [1], got rank %zu (shape_mismatch).",
-                    scalarNames[i - kScalarInputFirst], i, scalarRank);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), scalarNames[i - kScalarInputFirst],
+                                                     std::to_string(scalarRank),
+                                                     "scalar input must be rank-0 or shape [1].");
             return ge::GRAPH_FAILED;
         }
     }
@@ -318,8 +320,8 @@ static ge::graphStatus ValidateInputs(const gert::TilingContext* context, DtypeP
     // here as well, so the tiling path rejects it even if InferShape is bypassed.
     const size_t varRank = varShape->GetStorageShape().GetDimNum();
     if (varRank > kMaxTensorRank) {
-        OP_LOGE(context->GetNodeName(), "Tensor rank %zu exceeds max rank %zu (spec.yaml rank_range [0, 8]).", varRank,
-                kMaxTensorRank);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "var", std::to_string(varRank),
+                                                 "rank must be within [0, 8].");
         return ge::GRAPH_FAILED;
     }
 
@@ -333,10 +335,12 @@ static ge::graphStatus ValidateInputs(const gert::TilingContext* context, DtypeP
     constexpr int64_t kInt64Max = INT64_MAX;
     const int64_t maxDim0 = (kInt64Max - kMinTilingBits + 1) / dp.dtypeBits;
     if (dim0 > maxDim0) {
-        OP_LOGE(context->GetNodeName(),
-                "Tensor element count %ld exceeds the int64 representable bound for the tiling arithmetic "
-                "(max %ld elements at dtypeBits %ld); rejected.",
-                static_cast<long>(dim0), static_cast<long>(maxDim0), static_cast<long>(dp.dtypeBits));
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "var", std::to_string(dim0),
+                                                  "element count exceeds the int64 representable bound "
+                                                  "(max " +
+                                                      std::to_string(maxDim0) +
+                                                      " elements) "
+                                                      "for the tiling arithmetic; rejected.");
         return ge::GRAPH_FAILED;
     }
 
@@ -355,7 +359,12 @@ static ge::graphStatus ValidateInputs(const gert::TilingContext* context, DtypeP
             return ge::GRAPH_FAILED;
         }
         if (!StorageShapesEqual(varShape, s)) {
-            OP_LOGE(context->GetNodeName(), "shape mismatch: var rank/shape != input %zu", inputIdx);
+            static const char* tensorNames[] = {"m", "v", "vhat", "grad"};
+            const char* inName = tensorNames[i - 1];
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), std::string("var, ") + inName,
+                                                   "var=" + Ops::Base::ToString(varShape->GetStorageShape()) + ", " +
+                                                       inName + "=" + Ops::Base::ToString(s->GetStorageShape()),
+                                                   "element-wise tensors must share the same shape.");
             return ge::GRAPH_FAILED;
         }
     }

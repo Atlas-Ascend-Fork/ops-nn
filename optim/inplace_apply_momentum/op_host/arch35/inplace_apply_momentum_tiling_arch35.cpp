@@ -16,6 +16,7 @@
  */
 
 #include <cstdint>
+#include <string>
 #include "register/op_def_registry.h"
 #include "op_common/log/log.h"
 #include "op_common/op_host/util/math_util.h"
@@ -87,7 +88,8 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     *totalElements = varShape.GetShapeSize();
 
     OP_CHECK_IF(varShape.GetDimNum() > MAX_RANK,
-                OP_LOGE(context, "InplaceApplyMomentum: rank %zu exceeds max %u", varShape.GetDimNum(), MAX_RANK),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "var", std::to_string(varShape.GetDimNum()), "rank must be within [0, 8]."),
                 return ge::GRAPH_FAILED);
 
     auto inputDesc = context->GetInputDesc(0);
@@ -96,7 +98,8 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
 
     const std::set<ge::DataType> supportedDtypes = {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16};
     OP_CHECK_IF(supportedDtypes.count(*dataType) == 0,
-                OP_LOGE(context, "InplaceApplyMomentum: unsupported dtype %d", static_cast<int>(*dataType)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "var", Ops::Base::ToString(*dataType),
+                                                      "var dtype is not in the supported set {FLOAT, FLOAT16, BF16}."),
                 return ge::GRAPH_FAILED);
 
     constexpr int64_t TOTAL_INPUTS = 5;
@@ -105,10 +108,11 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
         auto desc = context->GetInputDesc(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, desc);
         auto dt = desc->GetDataType();
-        OP_CHECK_IF(dt != *dataType,
-                    OP_LOGE(context, "InplaceApplyMomentum: input %s dtype %d mismatch with var dtype %d",
-                            inputNames[i], static_cast<int>(dt), static_cast<int>(*dataType)),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            dt != *dataType,
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), inputNames[i], Ops::Base::ToString(dt),
+                                                  "dtype must match var dtype " + Ops::Base::ToString(*dataType) + "."),
+            return ge::GRAPH_FAILED);
     }
 
     auto accumInput = context->GetInputShape(1);
@@ -119,8 +123,11 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     auto gradShape = EnsureNotScalar(gradInput->GetStorageShape());
     OP_CHECK_IF(
         varShape.GetShapeSize() != accumShape.GetShapeSize() || varShape.GetShapeSize() != gradShape.GetShapeSize(),
-        OP_LOGE(context, "InplaceApplyMomentum: var/accum/grad shape size mismatch: var=%ld accum=%ld grad=%ld",
-                varShape.GetShapeSize(), accumShape.GetShapeSize(), gradShape.GetShapeSize()),
+        OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(context->GetNodeName(), "var, accum, grad",
+                                                   "var=" + std::to_string(varShape.GetShapeSize()) +
+                                                       ", accum=" + std::to_string(accumShape.GetShapeSize()) +
+                                                       ", grad=" + std::to_string(gradShape.GetShapeSize()),
+                                                   "var, accum and grad must share the same shape size."),
         return ge::GRAPH_FAILED);
 
     const char* scalarNames[] = {"lr", "momentum"};
@@ -130,8 +137,9 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
         OP_CHECK_NULL_WITH_CONTEXT(context, scalarInput);
         auto scalarShape = EnsureNotScalar(scalarInput->GetStorageShape());
         OP_CHECK_IF(scalarShape.GetShapeSize() != SCALAR_ELEM_COUNT,
-                    OP_LOGE(context, "InplaceApplyMomentum: %s must be a scalar (shape_size=%ld), got %ld",
-                            scalarNames[i], static_cast<int64_t>(SCALAR_ELEM_COUNT), scalarShape.GetShapeSize()),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), scalarNames[i],
+                                                              std::to_string(scalarShape.GetShapeSize()),
+                                                              "input must be a scalar (shape size 1)."),
                     return ge::GRAPH_FAILED);
     }
 
@@ -242,7 +250,8 @@ static ge::graphStatus InplaceApplyMomentumTilingFunc(gert::TilingContext* conte
     CalcUbLoopInfo(tiling, totalElements);
 
     OP_CHECK_IF(totalElements > static_cast<int64_t>(UINT32_MAX),
-                OP_LOGE(context, "totalElements(%ld) exceeds UINT32_MAX(%u), not supported", totalElements, UINT32_MAX),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "var", std::to_string(totalElements),
+                                                      "element count exceeds UINT32_MAX and is not supported."),
                 return ge::GRAPH_FAILED);
     tiling->totalElements = static_cast<uint32_t>(totalElements);
     tiling->dtypeSize = static_cast<uint8_t>(dtypeSize);

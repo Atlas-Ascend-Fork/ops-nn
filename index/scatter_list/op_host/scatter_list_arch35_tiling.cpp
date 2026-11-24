@@ -277,16 +277,17 @@ ge::graphStatus ParseAxisAndShape(gert::TilingContext* context, Arch35Context& c
     ctx.updatesDims = static_cast<int64_t>(updatesShape.GetDimNum());
 
     // 校验顺序即语义顺序: 秩/张量数 -> 非空 -> axis 与 lead/trail -> dtype
+    // 各 Check 函数内部已用正式码首报（EZ0012/EZ0004/EZ0015 等），此处仅日志透传
     OP_CHECK_IF(CheckVarUpdatesRank(context, varShape, updatesShape, ctx) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "CheckVarUpdatesRank failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CheckVarUpdatesRank failed"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(CheckShapesNotEmpty(context, varShape, updatesShape, ctx) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "CheckShapesNotEmpty failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CheckShapesNotEmpty failed"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(NormalizeAxis(context, ctx) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "NormalizeAxis failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "NormalizeAxis failed"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(ResolveLeadTrail(context, varShape, updatesShape, ctx) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "ResolveLeadTrail failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "ResolveLeadTrail failed"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(CheckVarUpdatesDtype(context, ctx) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "CheckVarUpdatesDtype failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CheckVarUpdatesDtype failed"), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 

@@ -115,8 +115,11 @@ bool AdvanceStepTilingHelper::CheckAttrs()
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "block_size", std::to_string(this->blockSize_),
                                               "Non-positive attr block_size, tiling failed."),
         return false);
-    OP_CHECK_IF(this->numSeqs_ >= MAX_NUMSEQS,
-                OP_LOGE(context_, "numSeqs %ld should be smaller than 200000000.", this->numSeqs_), return false);
+    OP_CHECK_IF(
+        this->numSeqs_ >= MAX_NUMSEQS,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "num_seqs", std::to_string(this->numSeqs_),
+                                              "num_seqs should be smaller than 200000000."),
+        return false);
     OP_LOGD(context_, "End CheckAttr");
     return true;
 }
@@ -210,7 +213,10 @@ bool AdvanceStepTilingHelper::CheckInputOutputShape()
 {
     OP_LOGD(context_, "Enter CheckInputOutputShape");
     OP_CHECK_IF(this->numSeqs_ != this->numQueries_,
-                OP_LOGE(context_, "numSeqs %ld should be equal to numQueries %ld.", this->numSeqs_, this->numQueries_),
+                OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                    context_->GetNodeName(), "num_seqs, num_queries",
+                    std::to_string(this->numSeqs_) + ", " + std::to_string(this->numQueries_),
+                    "num_seqs should be equal to num_queries."),
                 return false);
     OP_CHECK_IF(this->inputTokensShape_->GetDimNum() != 1 ||
                     this->inputTokensShape_->GetDim(0) != this->numSeqs_ * this->tokenEachReqs_,
@@ -247,7 +253,9 @@ bool AdvanceStepTilingHelper::CheckInputOutputShape()
                 return false);
     this->blockTablesStride_ = this->blockTablesShape_->GetDim(1);
     OP_CHECK_IF(this->blockTablesStride_ < 1,
-                OP_LOGE(context_, "blockTables shape 2nd dim must be positive, empty tensor is not supported."),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "block_tables",
+                                                         std::to_string(this->blockTablesStride_),
+                                                         "2nd dim must be positive, empty tensor is not supported."),
                 return false);
     OP_LOGD(context_, "End CheckInputOutputShape");
     return true;
@@ -258,25 +266,53 @@ bool AdvanceStepTilingHelper::CheckInputOutputFormat() const
     OP_LOGD(context_, "Enter CheckInputOutputFormat");
     // need no more null check for InputDesc
     OP_CHECK_IF(context_->GetInputDesc(IDX_INPUT__INPUT_TOKENS)->GetStorageFormat() != ge::FORMAT_ND,
-                OP_LOGE(context_, "inputTokensFormat is not ND."), return false);
-    OP_CHECK_IF(context_->GetInputDesc(IDX_INPUT__SAMPLED_TOKEN_IDS)->GetStorageFormat() != ge::FORMAT_ND,
-                OP_LOGE(context_, "sampledTokenIdsFormat is not ND."), return false);
+                OP_LOGE_FOR_INVALID_FORMAT(
+                    context_->GetNodeName(), "input_tokens",
+                    Ops::Base::ToString(context_->GetInputDesc(IDX_INPUT__INPUT_TOKENS)->GetStorageFormat()), "ND"),
+                return false);
+    OP_CHECK_IF(
+        context_->GetInputDesc(IDX_INPUT__SAMPLED_TOKEN_IDS)->GetStorageFormat() != ge::FORMAT_ND,
+        OP_LOGE_FOR_INVALID_FORMAT(
+            context_->GetNodeName(), "sampled_token_ids",
+            Ops::Base::ToString(context_->GetInputDesc(IDX_INPUT__SAMPLED_TOKEN_IDS)->GetStorageFormat()), "ND"),
+        return false);
     OP_CHECK_IF(context_->GetInputDesc(IDX_INPUT__INPUT_POSITIONS)->GetStorageFormat() != ge::FORMAT_ND,
-                OP_LOGE(context_, "inputPositionsFormat is not ND."), return false);
+                OP_LOGE_FOR_INVALID_FORMAT(
+                    context_->GetNodeName(), "input_positions",
+                    Ops::Base::ToString(context_->GetInputDesc(IDX_INPUT__INPUT_POSITIONS)->GetStorageFormat()), "ND"),
+                return false);
     OP_CHECK_IF(context_->GetInputDesc(IDX_INPUT__SEQ_LENS)->GetStorageFormat() != ge::FORMAT_ND,
-                OP_LOGE(context_, "seqLensFormat is not ND."), return false);
+                OP_LOGE_FOR_INVALID_FORMAT(
+                    context_->GetNodeName(), "seq_lens",
+                    Ops::Base::ToString(context_->GetInputDesc(IDX_INPUT__SEQ_LENS)->GetStorageFormat()), "ND"),
+                return false);
     OP_CHECK_IF(context_->GetInputDesc(IDX_INPUT__SLOT_MAPPING)->GetStorageFormat() != ge::FORMAT_ND,
-                OP_LOGE(context_, "slotMappingFormat is not ND."), return false);
+                OP_LOGE_FOR_INVALID_FORMAT(
+                    context_->GetNodeName(), "slot_mapping",
+                    Ops::Base::ToString(context_->GetInputDesc(IDX_INPUT__SLOT_MAPPING)->GetStorageFormat()), "ND"),
+                return false);
     OP_CHECK_IF(context_->GetInputDesc(IDX_INPUT__BLOCK_TABLES)->GetStorageFormat() != ge::FORMAT_ND,
-                OP_LOGE(context_, "blockTablesFormat is not ND."), return false);
+                OP_LOGE_FOR_INVALID_FORMAT(
+                    context_->GetNodeName(), "block_tables",
+                    Ops::Base::ToString(context_->GetInputDesc(IDX_INPUT__BLOCK_TABLES)->GetStorageFormat()), "ND"),
+                return false);
     // check OptionalInputFormat if exist
-    OP_CHECK_IF(this->specTokenExist &&
-                    context_->GetOptionalInputDesc(IDX_OPTIONAL_INPUT__SPEC_TOKEN)->GetStorageFormat() != ge::FORMAT_ND,
-                OP_LOGE(context_, "specTokenFormat is not ND."), return false);
+    OP_CHECK_IF(
+        this->specTokenExist &&
+            context_->GetOptionalInputDesc(IDX_OPTIONAL_INPUT__SPEC_TOKEN)->GetStorageFormat() != ge::FORMAT_ND,
+        OP_LOGE_FOR_INVALID_FORMAT(
+            context_->GetNodeName(), "spec_token",
+            Ops::Base::ToString(context_->GetOptionalInputDesc(IDX_OPTIONAL_INPUT__SPEC_TOKEN)->GetStorageFormat()),
+            "ND"),
+        return false);
     OP_CHECK_IF(
         this->acceptedNumExist &&
             context_->GetOptionalInputDesc(IDX_OPTIONAL_INPUT__ACCEPTED_NUM)->GetStorageFormat() != ge::FORMAT_ND,
-        OP_LOGE(context_, "acceptedNumFormat is not ND."), return false);
+        OP_LOGE_FOR_INVALID_FORMAT(
+            context_->GetNodeName(), "accepted_num",
+            Ops::Base::ToString(context_->GetOptionalInputDesc(IDX_OPTIONAL_INPUT__ACCEPTED_NUM)->GetStorageFormat()),
+            "ND"),
+        return false);
     OP_LOGD(context_, "End CheckInputOutputFormat");
     return true;
 }

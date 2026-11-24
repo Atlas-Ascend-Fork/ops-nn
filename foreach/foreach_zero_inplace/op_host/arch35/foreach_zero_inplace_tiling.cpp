@@ -18,6 +18,9 @@
 #include "../../op_kernel/arch35/foreach_zero_inplace_tiling_key.h"
 
 namespace optiling {
+
+using Ops::Base::ToString;
+
 namespace {
 
 constexpr uint32_t kDataBlockBytes = 32;
@@ -65,7 +68,9 @@ ge::graphStatus GetTilingKey(gert::TilingContext* context, ge::DataType dtype, u
             elementBytes = sizeof(int16_t);
             return ge::GRAPH_SUCCESS;
         default:
-            OP_LOGE(context, "ForeachZeroInplace does not support dtype %d", static_cast<int32_t>(dtype));
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", ToString(dtype).c_str(),
+                                                  "The dtype of x should be one of DT_FLOAT16, DT_FLOAT, DT_INT32, "
+                                                  "DT_BF16, DT_INT16.");
             return ge::GRAPH_FAILED;
     }
 }
@@ -134,24 +139,30 @@ static ge::graphStatus Tiling4ForeachZeroInplace(gert::TilingContext* context)
     uint64_t ubSize = 0;
     int64_t availableCores = 0;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, availableCores) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo failed"), return ge::GRAPH_FAILED);
 
     auto computeNodeInfo = context->GetComputeNodeInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfo);
     auto instances = computeNodeInfo->GetInputInstanceInfo(kInputIndex);
     OP_CHECK_NULL_WITH_CONTEXT(context, instances);
     const uint64_t tensorNum = static_cast<uint64_t>(instances->GetInstanceNum());
-    OP_CHECK_IF(
-        tensorNum == 0 || tensorNum > FOREACH_ZERO_INPLACE_MAX_TENSOR_NUM,
-        OP_LOGE(context, "x tensor count %lu must be in [1, %d]", tensorNum, FOREACH_ZERO_INPLACE_MAX_TENSOR_NUM),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tensorNum == 0 || tensorNum > FOREACH_ZERO_INPLACE_MAX_TENSOR_NUM,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "x", std::to_string(tensorNum).c_str(),
+                                                      ("The tensor count of x must be in [1, " +
+                                                       std::to_string(FOREACH_ZERO_INPLACE_MAX_TENSOR_NUM) + "].")
+                                                          .c_str()),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(context->GetComputeNodeOutputNum() != tensorNum,
-                OP_LOGE(context, "x input and ref output counts must match"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_TENSORNUMS_WITH_REASON(
+                    context->GetNodeName(), "x, ref",
+                    (std::to_string(tensorNum) + ", " + std::to_string(context->GetComputeNodeOutputNum())).c_str(),
+                    "The input count of x and the output count of ref must match."),
+                return ge::GRAPH_FAILED);
 
     auto tiling = context->GetTilingData<ForeachZeroInplaceTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     OP_CHECK_IF(memset_s(tiling, sizeof(ForeachZeroInplaceTilingData), 0, sizeof(ForeachZeroInplaceTilingData)) != EOK,
-                OP_LOGE(context, "set tiling data failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "set tiling data failed"), return ge::GRAPH_FAILED);
 
     ge::DataType dtype = ge::DT_UNDEFINED;
     int64_t totalTensorElements = 0;
@@ -167,31 +178,60 @@ static ge::graphStatus Tiling4ForeachZeroInplace(gert::TilingContext* context)
         OP_CHECK_NULL_WITH_CONTEXT(context, outputShape);
         const ge::DataType currentDtype = desc->GetDataType();
         OP_CHECK_IF(outputDesc->GetDataType() != currentDtype,
-                    OP_LOGE(context, "x[%d] input and ref output dtypes must match", i), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        context->GetNodeName(), "x, ref",
+                        (ToString(currentDtype) + ", " + ToString(outputDesc->GetDataType())).c_str(),
+                        "The dtype of x[i] and the ref output must match."),
+                    return ge::GRAPH_FAILED);
         if (i == 0) {
             dtype = currentDtype;
         } else {
-            OP_CHECK_IF(currentDtype != dtype, OP_LOGE(context, "x tensor dtypes must match"), return ge::GRAPH_FAILED);
+            OP_CHECK_IF(currentDtype != dtype,
+                        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                            context->GetNodeName(), "x", (ToString(dtype) + ", " + ToString(currentDtype)).c_str(),
+                            "The dtypes of all tensors in x must match."),
+                        return ge::GRAPH_FAILED);
         }
         const auto& storageShape = shape->GetStorageShape();
         const auto& originShape = shape->GetOriginShape();
         const bool isScalarStorage = originShape.GetDimNum() == 0 && storageShape.GetDimNum() == 1 &&
                                      storageShape.GetDim(0) == 1;
-        OP_CHECK_IF(originShape != storageShape && !isScalarStorage,
-                    OP_LOGE(context, "x[%d] origin and storage shapes must match except for scalar storage [1]", i),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            originShape != storageShape && !isScalarStorage,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                context->GetNodeName(), ("x[" + std::to_string(i) + "]").c_str(), ToString(storageShape).c_str(),
+                "The origin and storage shapes of x[i] must match, except for scalar storage [1]."),
+            return ge::GRAPH_FAILED);
         OP_CHECK_IF(outputShape->GetStorageShape() != storageShape || outputShape->GetOriginShape() != originShape,
-                    OP_LOGE(context, "x[%d] input and ref output shapes must match", i), return ge::GRAPH_FAILED);
-        OP_CHECK_IF(originShape.GetDimNum() > kMaxTensorRank,
-                    OP_LOGE(context, "x[%d] rank must not exceed %zu", i, kMaxTensorRank), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), ("x[" + std::to_string(i) + "], ref"),
+                        (ToString(storageShape) + ", " + ToString(outputShape->GetOriginShape())).c_str(),
+                        "Each input x[i] and its ref output must share the same storage and origin shapes."),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            originShape.GetDimNum() > kMaxTensorRank,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                context->GetNodeName(), ("x[" + std::to_string(i) + "]").c_str(),
+                std::to_string(originShape.GetDimNum()).c_str(),
+                ("The rank of x[" + std::to_string(i) + "] must not exceed " + std::to_string(kMaxTensorRank) + ".")
+                    .c_str()),
+            return ge::GRAPH_FAILED);
         bool hasZeroDim = false;
         for (size_t dim = 0; dim < storageShape.GetDimNum(); ++dim) {
-            OP_CHECK_IF(storageShape.GetDim(dim) < 0, OP_LOGE(context, "x[%d] has a negative dimension", i),
+            OP_CHECK_IF(storageShape.GetDim(dim) < 0,
+                        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                            context->GetNodeName(), ("x[" + std::to_string(i) + "]").c_str(),
+                            std::to_string(storageShape.GetDim(dim)).c_str(),
+                            ("Dim " + std::to_string(dim) + " is negative; dimensions must be non-negative.").c_str()),
                         return ge::GRAPH_FAILED);
             hasZeroDim = hasZeroDim || storageShape.GetDim(dim) == 0;
         }
         const int64_t elements = hasZeroDim ? 0 : storageShape.GetShapeSize();
-        OP_CHECK_IF(elements < 0, OP_LOGE(context, "x[%d] has an invalid element count", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(elements < 0,
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        context->GetNodeName(), ("x[" + std::to_string(i) + "]").c_str(),
+                        std::to_string(elements).c_str(), "The element count of x[i] must be non-negative."),
+                    return ge::GRAPH_FAILED);
         OP_CHECK_IF(totalTensorElements > std::numeric_limits<int64_t>::max() - elements,
                     OP_LOGE(context, "x tensor element count overflows int64"), return ge::GRAPH_FAILED);
         tiling->tensorElements[i] = elements;
