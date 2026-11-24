@@ -683,7 +683,7 @@ void Conv2dTiling::CalcOptGroupParams(const ConvOriGroupInfo& oriGroupInfo, Conv
             Lcm(Lcm(oriGroupInfo.ciPerGroup, k0 * OPT_GROUP_ENLARGE_COEFF) / oriGroupInfo.ciPerGroup,
                 Lcm(oriGroupInfo.coPerGroup, n0) / oriGroupInfo.coPerGroup),
             static_cast<uint64_t>(oriGroupInfo.groups));
-        OP_LOGD(nodeType, "optGroup enlarge multiplied by 2");
+        OP_LOGD(nodeType, "Group's optimisation 'enlarge' multiplied by 2");
     } else {
         optGroupInfo.enlarge = std::min(Lcm(Lcm(oriGroupInfo.ciPerGroup, k0) / oriGroupInfo.ciPerGroup,
                                             Lcm(oriGroupInfo.coPerGroup, n0) / oriGroupInfo.coPerGroup),
