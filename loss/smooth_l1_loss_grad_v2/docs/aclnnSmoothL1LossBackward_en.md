@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Computes the backward propagation of the [aclnnSmoothL1Loss](../../smooth_l1_loss_v2/docs/aclnnSmoothL1Loss.md) API.
+- Description: Computes the backward propagation of the [aclnnSmoothL1Loss](../../smooth_l1_loss_v2/docs/aclnnSmoothL1Loss_en.md) API.
 - Formula:
 
   The backward propagation of SmoothL1Loss can be computed by derivation. For the first case of SmoothL1Loss, i.e., |x-y|<beta, its derivative is:
