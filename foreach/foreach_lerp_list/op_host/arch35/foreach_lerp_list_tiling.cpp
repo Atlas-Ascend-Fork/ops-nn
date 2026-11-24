@@ -19,6 +19,7 @@
 #include "platform/platform_info.h"
 #include "log/log.h"
 #include "foreach_lerp_list_tiling.h"
+#include "../../op_kernel/arch35/foreach_lerp_list_tiling_key.h"
 
 using namespace AscendC;
 
@@ -31,6 +32,7 @@ constexpr int64_t INPUT_IDX_SELF = 0;
 constexpr int64_t INPUT_IDX_END = 1;
 constexpr int64_t INPUT_IDX_WEIGHT = 2;
 constexpr int32_t MAX_SUPPORT_DIMS_NUMS = 8;
+constexpr int64_t PACKED_SCALAR_TENSORS_PER_LAUNCH = 4;
 
 static ge::graphStatus GetTilingKeyByDtype(gert::TilingContext* context, ge::DataType dtype, uint64_t& tilingKey)
 {
@@ -189,6 +191,8 @@ static ge::graphStatus ForeachLerpListTilingFunc(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, tilingData);
 
     int64_t totalElements = 0;
+    int64_t nonemptyCount = 0;
+    bool scalarList = true;
     ge::DataType dataType = ge::DT_FLOAT;
 
     for (int32_t i = 0; i < MAX_TENSOR_NUM_FOREACH_LERP_LIST_TILING; i++) {
@@ -206,6 +210,9 @@ static ge::graphStatus ForeachLerpListTilingFunc(gert::TilingContext* context)
         totalElements += numel;
         tilingData->cumulativeOffsets[i] = totalElements;
 
+        nonemptyCount += (numel > 0);
+        scalarList = scalarList && (numel <= 1);
+
         if (i == 0) {
             auto tensorDtypePtr = context->GetDynamicInputDesc(INPUT_IDX_SELF, i);
             if (tensorDtypePtr != nullptr) {
@@ -216,22 +223,46 @@ static ge::graphStatus ForeachLerpListTilingFunc(gert::TilingContext* context)
         }
     }
 
-    int64_t perCoreElements = std::max(SINGLE_CORE_MIN_ELEMENTS, Ops::Base::CeilDiv(totalElements, coreNum));
-    perCoreElements = Ops::Base::CeilAlign(perCoreElements, ALIGN_SIZE);
-    int64_t needCoreNum = Ops::Base::CeilDiv(totalElements, perCoreElements);
-    needCoreNum = std::max(needCoreNum, static_cast<int64_t>(1));
-    needCoreNum = std::min(needCoreNum, coreNum);
+    // A list made only of one-element (0-dim/scalar) tensors pays one VF_CALL per tensor in the
+    // generic path. Packing PACKED_SCALAR_TENSORS_PER_LAUNCH tensors into a single VF launch removes
+    // that per-tensor launch overhead, which dominates the runtime of long scalar lists.
+    const bool packedScalarRoute = (dataType == ge::DT_FLOAT16 || dataType == ge::DT_FLOAT ||
+                                    dataType == ge::DT_BF16) &&
+                                   scalarList && nonemptyCount == static_cast<int64_t>(tensorNum) &&
+                                   totalElements == static_cast<int64_t>(tensorNum) &&
+                                   tensorNum >= static_cast<uint64_t>(2);
+
+    int64_t needCoreNum = 0;
+    uint64_t tilingKey = 0;
+    if (packedScalarRoute) {
+        needCoreNum = Ops::Base::CeilDiv(static_cast<int64_t>(tensorNum), PACKED_SCALAR_TENSORS_PER_LAUNCH);
+        needCoreNum = std::max(needCoreNum, static_cast<int64_t>(1));
+        needCoreNum = std::min(needCoreNum, coreNum);
+        tilingData->perCoreElements = 0;
+        if (dataType == ge::DT_FLOAT16) {
+            tilingKey = FOREACH_LERP_LIST_TPL_SCH_MODE_PACKED_FLOAT16;
+        } else if (dataType == ge::DT_FLOAT) {
+            tilingKey = FOREACH_LERP_LIST_TPL_SCH_MODE_PACKED_FLOAT32;
+        } else {
+            tilingKey = FOREACH_LERP_LIST_TPL_SCH_MODE_PACKED_BFLOAT16;
+        }
+    } else {
+        int64_t perCoreElements = std::max(SINGLE_CORE_MIN_ELEMENTS, Ops::Base::CeilDiv(totalElements, coreNum));
+        perCoreElements = Ops::Base::CeilAlign(perCoreElements, ALIGN_SIZE);
+        needCoreNum = Ops::Base::CeilDiv(totalElements, perCoreElements);
+        needCoreNum = std::max(needCoreNum, static_cast<int64_t>(1));
+        needCoreNum = std::min(needCoreNum, coreNum);
+        tilingData->perCoreElements = perCoreElements;
+        if (GetTilingKeyByDtype(context, dataType, tilingKey) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+    }
 
     tilingData->needCoreNum = static_cast<int32_t>(needCoreNum);
     tilingData->tensorCount = static_cast<int32_t>(tensorNum);
     tilingData->totalElements = totalElements;
-    tilingData->perCoreElements = perCoreElements;
 
     context->SetBlockDim(needCoreNum);
-    uint64_t tilingKey = 0;
-    if (GetTilingKeyByDtype(context, dataType, tilingKey) != ge::GRAPH_SUCCESS) {
-        return ge::GRAPH_FAILED;
-    }
     context->SetTilingKey(tilingKey);
 
     auto res = context->SetLocalMemorySize(usableUbSize);

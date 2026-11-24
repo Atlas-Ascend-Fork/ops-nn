@@ -81,6 +81,27 @@ TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_multi_instan
     ExecuteTestCase(para, ge::GRAPH_SUCCESS, 0, EMPTY_EXPECT_TILING_DATA, {0});
 }
 
+// A list made only of 0-dim (one-element) tensors is routed to the packed-scalar kernel (key=3 for FP16),
+// which handles PACKED_SCALAR_TENSORS_PER_LAUNCH tensors per VF launch instead of one launch per tensor.
+TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_scalar_list_packed_route)
+{
+    ForeachLerpListCompileInfo compileInfo{48, 196608};
+    constexpr uint32_t tensorCount = 40;
+    gert::StorageShape scalarShape({}, {});
+    std::vector<gert::TilingContextPara::TensorDescription> inputs;
+    std::vector<gert::TilingContextPara::TensorDescription> outputs;
+    for (uint32_t i = 0; i < tensorCount * 3; ++i) {
+        inputs.emplace_back(scalarShape, ge::DT_FLOAT16, ge::FORMAT_ND);
+    }
+    for (uint32_t i = 0; i < tensorCount; ++i) {
+        outputs.emplace_back(scalarShape, ge::DT_FLOAT16, ge::FORMAT_ND);
+    }
+    gert::TilingContextPara para("ForeachLerpList", inputs, outputs,
+                                 std::vector<uint32_t>{tensorCount, tensorCount, tensorCount},
+                                 std::vector<uint32_t>{tensorCount}, &compileInfo, 48, 196608, 4096);
+    ExecuteTestCase(para, ge::GRAPH_SUCCESS, 3, EMPTY_EXPECT_TILING_DATA, {0});
+}
+
 // Negative 1: x2 list has one instance while x1/weight have two -> instance-count check fails.
 TEST_F(ForeachLerpListArch35Tiling, foreach_lerp_list_arch35_tiling_neg_x2_instance_num_mismatch)
 {
