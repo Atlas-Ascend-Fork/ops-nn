@@ -390,7 +390,8 @@ uint64_t MatMulV3TilingHelper::SelectSplitKBase(const gert::TilingContext* conte
     for (int i = 0; i < splitKBaseCount - 1; ++i) {
         uint64_t threshold = FP32_SPLIT_K_BASE_FACTOR * splitKBaseList[i] * splitKBaseList[i];
         if (kValue < threshold) {
-            return std::max(splitKBaseList[i], baseK);
+            // 一致性要求不能切k基准不受M/N影响
+            return context->GetDeterministicLevel() <= 1 ? std::max(splitKBaseList[i], baseK) : splitKBaseList[i];
         }
     }
     // K >= 3*4096^2
