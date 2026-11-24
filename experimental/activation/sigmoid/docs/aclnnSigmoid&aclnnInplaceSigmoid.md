@@ -99,8 +99,8 @@ aclnnStatus aclnnInplaceSigmoid(
       <td>self（aclTensor*）</td>
       <td>输入</td>
       <td>待进行Sigmoid计算的入参，公式中的input。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape需要与out一致。</li></ul></td>
-      <td>FLOAT、FLOAT16、BFLOAT16</td>
+      <td><ul><li>支持空Tensor。</li><li>shape需要与out一致。</li><li>self和out的数据类型可以不同，但均需位于各自支持列表中。</li></ul></td>
+      <td>FLOAT、FLOAT16、DOUBLE、INT8、INT16、INT32、INT64、BOOL、COMPLEX64、COMPLEX128、BFLOAT16、UINT8</td>
       <td>ND</td>
       <td>0-8</td>
       <td>√</td>
@@ -110,7 +110,7 @@ aclnnStatus aclnnInplaceSigmoid(
       <td>输出</td>
       <td>计算的出参。</td>
       <td>shape需要与self一致。</td>
-      <td>FLOAT、FLOAT16、BFLOAT16</td>
+      <td>FLOAT、FLOAT16、DOUBLE、COMPLEX64、COMPLEX128、BFLOAT16、INT16、INT8、UINT8</td>
       <td>ND</td>
       <td>0-8</td>
       <td>√</td>
@@ -139,7 +139,7 @@ aclnnStatus aclnnInplaceSigmoid(
   </table>
 
   <!-- npu="A3,910b" id7 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：数据类型支持FLOAT、FLOAT16、BFLOAT16、INT16、INT8、UINT8。
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：self数据类型支持FLOAT、FLOAT16、DOUBLE、INT8、INT16、INT32、INT64、BOOL、COMPLEX64、COMPLEX128、BFLOAT16、UINT8；out数据类型支持FLOAT、FLOAT16、DOUBLE、COMPLEX64、COMPLEX128、BFLOAT16、INT16、INT8、UINT8。
   <!-- end id7 -->
 
 - **返回值：**
