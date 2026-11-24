@@ -44,7 +44,7 @@ Each operator uses a [two-phase API](../../../docs/en/context/two_phase_api.md).
 ```Cpp
 aclnnStatus aclnnForeachSqrtGetWorkspaceSize(
   const aclTensorList    *x,
-  const aclTensorList    *out,
+  aclTensorList          *out,
   uint64_t               *workspaceSize,
   aclOpExecutor         **executor)
 ```
