@@ -162,20 +162,19 @@ __aicore__ inline void DeepNormGrad<T>::ComputeGammaBeta(LocalTensor<T>& dy, Loc
         RegTensor<float> normReg;
         RegTensor<float> dgammaReg;
         RegTensor<float> dbetaReg;
-        RegTensor<float> productReg;
         RegTensor<float> dgammaCompReg;
         RegTensor<float> dbetaCompReg;
-        RegTensor<float> adjustedReg;
+        RegTensor<float> productReg;
         RegTensor<float> newSumReg;
-        RegTensor<float> deltaReg;
-        RegTensor<float> guardAbsReg;
-        RegTensor<float> guardZeroReg;
+        RegTensor<float> errReg;
+        RegTensor<float> absSumReg;
+        RegTensor<float> absValueReg;
+        RegTensor<float> zeroReg;
         MaskReg mask;
-        MaskReg guardCmpMask;
-        MaskReg allMask = CreateMask<float, Reg::MaskPattern::ALL>();
+        MaskReg cmpMask;
+        MaskReg guardMask;
         DataCopy<float, LoadDist::DIST_BRC_B32>(meanReg, meanPtr);
         DataCopy<float, LoadDist::DIST_BRC_B32>(rstdReg, rstdPtr);
-        Duplicate(guardZeroReg, 0.0F, allMask);
         for (uint16_t i = 0; i < loops; ++i) {
             uint32_t valid = Min(remaining, VL_FP32);
             remaining -= valid;
@@ -193,23 +192,14 @@ __aicore__ inline void DeepNormGrad<T>::ComputeGammaBeta(LocalTensor<T>& dy, Loc
             Sub(normReg, normReg, meanReg, mask);
             Mul(normReg, normReg, rstdReg, mask);
             Mul(productReg, dyReg, normReg, mask);
-            // Kahan accumulate dgamma += product (fp64-level precision across rows)
-            Sub(adjustedReg, productReg, dgammaCompReg, mask);
-            Add(newSumReg, dgammaReg, adjustedReg, mask);
-            Sub(deltaReg, newSumReg, dgammaReg, mask);
-            Sub(dgammaCompReg, deltaReg, adjustedReg, mask);
-            KahanGuardComp(dgammaCompReg, guardAbsReg, guardZeroReg, guardCmpMask, mask);
-            AscendC::Reg::Copy<float, AscendC::Reg::MaskMergeMode::MERGING>(dgammaReg, newSumReg, mask);
-            // Kahan accumulate dbeta += dy
-            Sub(adjustedReg, dyReg, dbetaCompReg, mask);
-            Add(newSumReg, dbetaReg, adjustedReg, mask);
-            Sub(deltaReg, newSumReg, dbetaReg, mask);
-            Sub(dbetaCompReg, deltaReg, adjustedReg, mask);
-            KahanGuardComp(dbetaCompReg, guardAbsReg, guardZeroReg, guardCmpMask, mask);
-            AscendC::Reg::Copy<float, AscendC::Reg::MaskMergeMode::MERGING>(dbetaReg, newSumReg, mask);
+            Duplicate(zeroReg, 0.0F, mask);
+            NeumaierAdd(dgammaReg, dgammaCompReg, productReg, newSumReg, errReg, absSumReg, absValueReg, zeroReg,
+                        cmpMask, guardMask, mask);
+            NeumaierAdd(dbetaReg, dbetaCompReg, dyReg, newSumReg, errReg, absSumReg, absValueReg, zeroReg, cmpMask,
+                        guardMask, mask);
             DataCopy<float, StoreDist::DIST_NORM_B32>(dgammaPtr + offset, dgammaReg, mask);
-            DataCopy<float, StoreDist::DIST_NORM_B32>(dgammaCompPtr + offset, dgammaCompReg, mask);
             DataCopy<float, StoreDist::DIST_NORM_B32>(dbetaPtr + offset, dbetaReg, mask);
+            DataCopy<float, StoreDist::DIST_NORM_B32>(dgammaCompPtr + offset, dgammaCompReg, mask);
             DataCopy<float, StoreDist::DIST_NORM_B32>(dbetaCompPtr + offset, dbetaCompReg, mask);
         }
     }
@@ -317,7 +307,7 @@ __aicore__ inline void DeepNormGrad<T>::ComputeSmallDSecondPass(
 }
 
 template <typename T>
-template <uint32_t COLS>
+template <bool SINGLE_COLUMN>
 __aicore__ inline void DeepNormGrad<T>::ComputeTinyDBatch(LocalTensor<T>& dy, LocalTensor<T>& x, LocalTensor<T>& gx,
                                                           LocalTensor<T>& gamma, LocalTensor<float>& mean,
                                                           LocalTensor<float>& rstd, LocalTensor<T>& dx,
@@ -325,7 +315,6 @@ __aicore__ inline void DeepNormGrad<T>::ComputeTinyDBatch(LocalTensor<T>& dy, Lo
                                                           LocalTensor<float>& dbeta, LocalTensor<float>& dgammaComp,
                                                           LocalTensor<float>& dbetaComp, uint32_t rows)
 {
-    static_assert(COLS == 1 || COLS == 2, "tiny-D batch only supports one or two columns");
     __local_mem__ T* dyPtr = (__local_mem__ T*)dy.GetPhyAddr();
     __local_mem__ T* xPtr = (__local_mem__ T*)x.GetPhyAddr();
     __local_mem__ T* gxPtr = (__local_mem__ T*)gx.GetPhyAddr();
@@ -341,6 +330,7 @@ __aicore__ inline void DeepNormGrad<T>::ComputeTinyDBatch(LocalTensor<T>& dy, Lo
     uint32_t rowStride = tiling_->smallRowStride;
     float alpha = alpha_;
     float negInvCols = -invCols_;
+    uint32_t cols = static_cast<uint32_t>(tiling_->numCols);
     __VEC_SCOPE__
     {
         RegTensor<float> dyReg;
@@ -369,11 +359,28 @@ __aicore__ inline void DeepNormGrad<T>::ComputeTinyDBatch(LocalTensor<T>& dy, Lo
         RegTensor<float> valueReg;
         RegTensor<float> guardAbsReg;
         RegTensor<float> guardZeroReg;
-        uint32_t validCols = COLS;
+        uint32_t validCols = cols;
         MaskReg mask = UpdateMask<float>(validCols);
         MaskReg scalarMask = CreateMask<float, MaskPattern::VL1>();
         MaskReg guardCmpMask;
-        Duplicate(guardZeroReg, 0.0F, mask);
+        MaskReg all = CreateMask<float, MaskPattern::ALL>();
+        RegTensor<uint32_t> foldIndex;
+        if constexpr (IsSameType<T, half>::value && !SINGLE_COLUMN) {
+            // A bit-reversed lane order makes ReduceSum fold the two halves first.
+            // Build the permutation once for all rows in the batch.
+            RegTensor<int32_t> lane;
+            RegTensor<uint32_t> bit, one;
+            AscendC::Reg::Arange(lane, 0);
+            Duplicate(one, 1U, all);
+            Duplicate(foldIndex, 0U, all);
+            for (uint16_t width = VL_FP32; width > 1; width >>= 1) {
+                AscendC::Reg::And(bit, (RegTensor<uint32_t>&)lane, one, all);
+                AscendC::Reg::ShiftLefts(foldIndex, foldIndex, static_cast<int16_t>(1), all);
+                AscendC::Reg::Or(foldIndex, foldIndex, bit, all);
+                AscendC::Reg::ShiftRights(lane, lane, static_cast<int16_t>(1), all);
+            }
+        }
+        Duplicate(guardZeroReg, 0.0F, all);
 
         NormCommon::NormCommonRegbase::LoadRegForDtype<T>(gammaPtr, gammaReg, mask, 0);
         DataCopy(dgammaSumReg, dgammaPtr);
@@ -414,17 +421,27 @@ __aicore__ inline void DeepNormGrad<T>::ComputeTinyDBatch(LocalTensor<T>& dy, Lo
             Mul(productReg, productReg, rstdReg, mask);
             Mul(productReg, productReg, normReg, mask);
             Mul(productReg, productReg, dyGammaReg, mask);
-            if constexpr (COLS == 1) {
+            if constexpr (SINGLE_COLUMN) {
                 Muls(avgTmpReg, productReg, negInvCols, mask);
                 Muls(avgTmpNormReg, tmpNormReg, negInvCols, mask);
                 Mul(dgxReg, normReg, avgTmpReg, mask);
                 Add(dgxReg, tmpNormReg, dgxReg, mask);
                 Add(dgxReg, dgxReg, avgTmpNormReg, mask);
             } else {
-                ReduceSum(avgTmpReg, productReg, mask);
+                if constexpr (IsSameType<T, half>::value) {
+                    RegTensor<float> lanes;
+                    Select<float>(lanes, productReg, guardZeroReg, mask);
+                    AscendC::Reg::Gather(valueReg, lanes, foldIndex);
+                    ReduceSum(avgTmpReg, valueReg, all);
+                    Select<float>(lanes, tmpNormReg, guardZeroReg, mask);
+                    AscendC::Reg::Gather(valueReg, lanes, foldIndex);
+                    ReduceSum(avgTmpNormReg, valueReg, all);
+                } else {
+                    ReduceSum(avgTmpReg, productReg, mask);
+                    ReduceSum(avgTmpNormReg, tmpNormReg, mask);
+                }
                 Muls(avgTmpReg, avgTmpReg, negInvCols, scalarMask);
                 Duplicate(avgTmpDupReg, avgTmpReg, mask);
-                ReduceSum(avgTmpNormReg, tmpNormReg, mask);
                 Muls(avgTmpNormReg, avgTmpNormReg, negInvCols, scalarMask);
                 Duplicate(avgTmpNormDupReg, avgTmpNormReg, mask);
                 Mul(dgxReg, normReg, avgTmpDupReg, mask);

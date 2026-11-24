@@ -217,7 +217,7 @@ TEST(DeepNormGradTilingArch35, SmallDManyRows)
     EXPECT_GT(result.smallRowsPerTile, 0);
     EXPECT_EQ(result.smallColsAlign, 64);
     EXPECT_GT(result.workspaceSize,
-              static_cast<size_t>(result.backwardBlockDim) * 2 * result.smallColsAlign * sizeof(float) - 1);
+              static_cast<size_t>(result.backwardBlockDim) * 3 * result.smallColsAlign * sizeof(float) - 1);
 }
 
 TEST(DeepNormGradTilingArch35, BackwardCoreCountMatchesArch22)
@@ -238,15 +238,30 @@ TEST(DeepNormGradTilingArch35, SmallDThresholdKeepsGeneralPathAt500)
     EXPECT_EQ(result.workspaceSize, 0);
 }
 
-TEST(DeepNormGradTilingArch35, SmallDRowThresholdStartsAt1024)
+TEST(DeepNormGradTilingArch35, MultiVectorRowThresholdStartsAt1024)
 {
-    auto belowThreshold = RunTiling({1023}, {9}, ge::DT_FLOAT16);
+    auto belowThreshold = RunTiling({1023}, {65}, ge::DT_FLOAT16);
     EXPECT_EQ(belowThreshold.status, ge::GRAPH_SUCCESS);
     EXPECT_EQ(belowThreshold.key, 0);
     EXPECT_EQ(belowThreshold.gammaBetaRowSplit, 0);
     EXPECT_EQ(belowThreshold.workspaceSize, 0);
 
-    auto atThreshold = RunTiling({1024}, {9}, ge::DT_FLOAT16);
+    auto atThreshold = RunTiling({1024}, {65}, ge::DT_FLOAT16);
+    EXPECT_EQ(atThreshold.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(atThreshold.key, 1);
+    EXPECT_EQ(atThreshold.gammaBetaRowSplit, 1);
+    EXPECT_GT(atThreshold.workspaceSize, 0);
+}
+
+TEST(DeepNormGradTilingArch35, SingleVectorRowThresholdStartsAt512)
+{
+    auto belowThreshold = RunTiling({511}, {64}, ge::DT_FLOAT16);
+    EXPECT_EQ(belowThreshold.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(belowThreshold.key, 0);
+    EXPECT_EQ(belowThreshold.gammaBetaRowSplit, 0);
+    EXPECT_EQ(belowThreshold.workspaceSize, 0);
+
+    auto atThreshold = RunTiling({512}, {64}, ge::DT_FLOAT16);
     EXPECT_EQ(atThreshold.status, ge::GRAPH_SUCCESS);
     EXPECT_EQ(atThreshold.key, 1);
     EXPECT_EQ(atThreshold.gammaBetaRowSplit, 1);

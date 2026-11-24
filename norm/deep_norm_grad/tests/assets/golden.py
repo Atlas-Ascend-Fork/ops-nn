@@ -13,7 +13,6 @@
 
 import numpy as np
 import torch
-import ml_dtypes  # noqa: F401 - registers bfloat16 with NumPy
 
 
 __spec__ = {
@@ -34,16 +33,10 @@ __input__ = {
     "aclnn": {"aclnnDeepNormGrad": "deep_norm_grad_input"},
 }
 
-_KERNEL_TOLERANCE = {
+_TOLERANCE = {
     "float32": {"standard": "cross_check", "level": "L1"},
     "float16": {"standard": "cross_check", "level": "L1"},
     "bfloat16": {"standard": "cross_check", "level": "L1"},
-}
-
-_ACLNN_TOLERANCE = {
-    "float32": {"standard": "stat_rel_err"},
-    "float16": {"standard": "stat_rel_err"},
-    "bfloat16": {"standard": "stat_rel_err"},
 }
 
 VL_FP32 = 64
@@ -74,6 +67,8 @@ def _numel(value):
 def _numpy_dtype(value):
     if isinstance(value, torch.Tensor):
         if value.dtype == torch.bfloat16:
+            import ml_dtypes
+
             return np.dtype(ml_dtypes.bfloat16)
         if value.dtype == torch.float16:
             return np.float16
@@ -491,13 +486,13 @@ class DeepNormGradKernelSpec:
     golden = deep_norm_grad_golden
     input = deep_norm_grad_input
     third_party = {"torch": _DeepNormGradCompose}
-    tolerance = _KERNEL_TOLERANCE
+    tolerance = _TOLERANCE
 
 
 class DeepNormGradAclnnSpec:
     golden = deep_norm_grad_aclnn_golden
     third_party = {"torch": _DeepNormGradCompose}
-    tolerance = _ACLNN_TOLERANCE
+    tolerance = _TOLERANCE
 
 
 # 【不存在】e2e 通路: 未发现 torch_npu eager/aten 绑定到 aclnnDeepNormGrad.

@@ -54,6 +54,57 @@ __aicore__ inline void KahanGuardComp(RegTensor<float>& compReg, RegTensor<float
     Compares<float, AscendC::CMPMODE::GT>(cmpMask, absReg, KAHAN_GUARD_FLT_MAX, mask); // ±Inf → true
     Select<float>(compReg, zeroReg, compReg, cmpMask);                                 // ±Inf → 0
 }
+
+// Neumaier（TwoSum + 误差累积）补偿累加：跨行归约 dgamma/dbeta 时，设备原为纯 fp32
+// 顺序累加，而 golden 用 fp64 累加。每行项量级 O(1)，行间相消后部分元素结果仅 ~1e-6，
+// fp32 顺序累加的 O(1 ulp) 绝对误差在近零元素上被放大成 1e-2 级相对误差，超出
+// stat_rel_err 判据（mere<2^-13、mare<10*2^-13）。Neumaier 把 |sum|>=|value| 分支的
+// 舍入误差累积进 compReg，末次折叠（comp 加回 sum）后与 fp64 累加位级一致；
+// 经典 Kahan 只保留末项误差，无法在相消场景收敛到 fp64 水平。
+// sumReg 为当前和，compReg 为补偿项（跨调用保持），valueReg 为本轮增量。
+__aicore__ inline void NeumaierAdd(RegTensor<float>& sumReg, RegTensor<float>& compReg, RegTensor<float>& valueReg,
+                                   RegTensor<float>& newSumReg, RegTensor<float>& errReg, RegTensor<float>& absSumReg,
+                                   RegTensor<float>& absValueReg, RegTensor<float>& zeroReg, MaskReg& cmpMask,
+                                   MaskReg& guardMask, MaskReg& mask)
+{
+    Add(newSumReg, sumReg, valueReg, mask); // t = sum + value
+    Abs<float, AscendC::Reg::MaskMergeMode::ZEROING>(absSumReg, sumReg, mask);
+    Abs<float, AscendC::Reg::MaskMergeMode::ZEROING>(absValueReg, valueReg, mask);
+    Compare<float, AscendC::CMPMODE::GE>(cmpMask, absSumReg, absValueReg, mask);
+    Sub(errReg, sumReg, newSumReg, mask);        // (sum - t)
+    Add(errReg, errReg, valueReg, mask);         // (sum - t) + value     [|sum| >= |value|]
+    Sub(absValueReg, valueReg, newSumReg, mask); // (value - t)
+    Add(absValueReg, absValueReg, sumReg, mask); // (value - t) + sum     [|sum| <  |value|]
+    Select<float>(errReg, errReg, absValueReg, cmpMask);
+    Add(compReg, compReg, errReg, mask);
+    KahanGuardComp(compReg, absSumReg, zeroReg, guardMask, mask);
+    AscendC::Reg::Copy<float, AscendC::Reg::MaskMergeMode::MERGING>(sumReg, newSumReg, mask);
+}
+
+// 把补偿项折叠回累加和（sum += comp），折叠后即为正确舍入的行归约结果
+__aicore__ inline void FoldCompensation(__local_mem__ float* sumPtr, __local_mem__ float* compPtr, uint32_t count)
+{
+    uint16_t loops = static_cast<uint16_t>((count + VL_FP32 - 1) / VL_FP32);
+    uint32_t remaining = count;
+    __VEC_SCOPE__
+    {
+        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+        RegTensor<float> sumReg;
+        RegTensor<float> compReg;
+        RegTensor<float> foldedReg;
+        MaskReg mask;
+        for (uint16_t i = 0; i < loops; ++i) {
+            uint32_t valid = remaining < VL_FP32 ? remaining : VL_FP32;
+            remaining -= valid;
+            mask = UpdateMask<float>(valid);
+            uint32_t offset = static_cast<uint32_t>(i) * VL_FP32;
+            DataCopy(sumReg, sumPtr + offset);
+            DataCopy(compReg, compPtr + offset);
+            Add(foldedReg, sumReg, compReg, mask);
+            DataCopy<float, StoreDist::DIST_NORM_B32>(sumPtr + offset, foldedReg, mask);
+        }
+    }
+}
 constexpr AscendC::Reg::CastTrait CAST_TRAIT_B32_TO_F16 = {
     AscendC::Reg::RegLayout::ZERO,
     AscendC::Reg::SatMode::NO_SAT,
@@ -102,6 +153,7 @@ private:
                                                uint32_t offset);
     __aicore__ inline void InitScalar(LocalTensor<float>& scalar);
     __aicore__ inline void AccumulateScalar(LocalTensor<float>& dst, LocalTensor<float>& src);
+    __aicore__ inline void AccumulateTileSum(LocalTensor<float>& dst, LocalTensor<float>& src);
     __aicore__ inline void ScaleScalar(LocalTensor<float>& scalar, float scale);
     __aicore__ inline uint32_t GetPowerSplit(uint32_t count) const;
     __aicore__ inline void ComputeFirstPass(LocalTensor<T>& dy, LocalTensor<T>& x, LocalTensor<T>& gx,
@@ -123,7 +175,7 @@ private:
                                                    LocalTensor<T>& dgx, LocalTensor<float>& dgamma,
                                                    LocalTensor<float>& dbeta, LocalTensor<float>& dgammaComp,
                                                    LocalTensor<float>& dbetaComp, uint32_t count);
-    template <uint32_t COLS>
+    template <bool SINGLE_COLUMN>
     __aicore__ inline void ComputeTinyDBatch(LocalTensor<T>& dy, LocalTensor<T>& x, LocalTensor<T>& gx,
                                              LocalTensor<T>& gamma, LocalTensor<float>& mean, LocalTensor<float>& rstd,
                                              LocalTensor<T>& dx, LocalTensor<T>& dgx, LocalTensor<float>& dgamma,
@@ -135,6 +187,8 @@ private:
     __aicore__ inline void ProcessBackward();
     __aicore__ inline void ProcessGammaBeta();
     __aicore__ inline void ProcessSmallD();
+    __aicore__ inline void MergeDbetaPartial(LocalTensor<float>& sum, LocalTensor<float>& compensation,
+                                             LocalTensor<float>& partial, LocalTensor<float>& residual, uint32_t count);
     __aicore__ inline void ReduceSmallDPartials();
 
 private:
@@ -387,6 +441,27 @@ __aicore__ inline void DeepNormGrad<T>::AccumulateScalar(LocalTensor<float>& dst
         DataCopy<float, LoadDist::DIST_BRC_B32>(srcReg, srcPtr);
         Add(outReg, dstReg, srcReg, mask);
         DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstPtr, outReg, mask);
+    }
+}
+
+template <typename T>
+__aicore__ inline void DeepNormGrad<T>::AccumulateTileSum(LocalTensor<float>& dst, LocalTensor<float>& src)
+{
+    __local_mem__ float* dstPtr = (__local_mem__ float*)dst.GetPhyAddr();
+    __local_mem__ float* srcPtr = (__local_mem__ float*)src.GetPhyAddr();
+    __VEC_SCOPE__
+    {
+        LocalMemBar<MemType::VEC_STORE, MemType::VEC_LOAD>();
+        RegTensor<float> sum, compensation, tile, next, error, absSum, absTile, zero;
+        MaskReg compareMask, guardMask;
+        MaskReg mask = CreateMask<float, MaskPattern::VL1>();
+        DataCopy<float, LoadDist::DIST_BRC_B32>(sum, dstPtr);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(compensation, dstPtr + 1);
+        DataCopy<float, LoadDist::DIST_BRC_B32>(tile, srcPtr);
+        Duplicate(zero, 0.0f, mask);
+        NeumaierAdd(sum, compensation, tile, next, error, absSum, absTile, zero, compareMask, guardMask, mask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstPtr, sum, mask);
+        DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dstPtr + 1, compensation, mask);
     }
 }
 

@@ -77,7 +77,7 @@ void RunKernelCase(const KernelCase& testCase)
     auto dbeta = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(cols * sizeof(float)));
     auto dgamma = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(cols * sizeof(float)));
     uint32_t smallColsAlign = AlignUp(cols, VL_FP32);
-    uint64_t workspaceBytes = testCase.rowSplit ? static_cast<uint64_t>(testCase.maxBackwardCores) * 2 *
+    uint64_t workspaceBytes = testCase.rowSplit ? static_cast<uint64_t>(testCase.maxBackwardCores) * 3 *
                                                       smallColsAlign * sizeof(float) :
                                                   BLOCK_SIZE;
     auto workspace = reinterpret_cast<uint8_t*>(AscendC::GmAlloc(workspaceBytes));
