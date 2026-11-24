@@ -198,7 +198,7 @@ aclnnStatus aclnnMedian(
 - 确定性计算：
   - aclnnMedian默认确定性实现。
 
-- self的数据类型不为FLOAT、FLOAT16、BFLOAT16时，tensor size过大可能会导致算子执行超时（aicpu error类型报错，报错reason=[aicpu timeout]）具体类型最大size(与机器具体剩余内存强相关)限制如下：
+- self的数据类型不为FLOAT、FLOAT16、BFLOAT16时，Tensor size过大可能会导致算子执行超时（aicpu error类型报错，报错reason=[aicpu timeout]）具体类型最大size(与机器具体剩余内存强相关)限制如下：
    - INT64类型：150000000
    - UINT8、INT8、INT16、INT32类型：725000000
 - 当self为BFLOAT16数据类型时，不支持尾轴为1。
@@ -207,7 +207,7 @@ aclnnStatus aclnnMedian(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

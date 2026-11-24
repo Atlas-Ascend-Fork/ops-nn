@@ -34,7 +34,7 @@
   l_n = \left| x_n - y_n \right|,
   $$
 
-  其中$x$是self，$y$是target，$N$是batch的大小。如果`reduction`不是`'none'`,那么
+  其中$x$是self，$y$是target，$N$是batch的大小。如果`reduction`不是`'none'`，那么
 
   $$
   \ell(x, y) =
@@ -125,8 +125,8 @@ aclnnStatus aclnnL1Loss(
     <tr>
       <td class="tg-0pky">out（aclTensor*）</td>
       <td class="tg-0pky">输出</td>
-      <td class="tg-0pky">输出tensor，存放L1Loss计算结果。</td>
-      <td class="tg-0pky">输出tensor，存放L1Loss计算结果。out的数据类型需要是self与target推导之后可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。<br><b>注意</b>：本接口按PyTorch的torch.can_cast语义校验，当self与target推导结果为浮点类型时，out<b>不可</b>为整型（如INT64），否则返回161002。即INT64的out仅在推导结果同为整型时可用。<br>当reduction的值为0时，out的shape与self和target<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape一致；当reduction的值不为0时，out为0维tensor。<br>空Tensor场景（self或target含0元素）：reduction为0时out为空tensor；为1时out填充NaN；为2时out填充0。</td>
+      <td class="tg-0pky">输出Tensor，存放L1Loss计算结果。</td>
+      <td class="tg-0pky">输出Tensor，存放L1Loss计算结果。out的数据类型需要是self与target推导之后可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。<br><b>注意</b>：本接口按PyTorch的torch.can_cast语义校验，当self与target推导结果为浮点类型时，out<b>不可</b>为整型（如INT64），否则返回161002，即INT64的out仅在推导结果同为整型时可用。<br>当reduction的值为0时，out的shape与self和target<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape一致；当reduction的值不为0时，out为0维Tensor。<br>空Tensor场景（self或target含0元素）：reduction为0时out为空Tensor；为1时out填充NaN；为2时out填充0。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16、INT64、DOUBLE</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">0-8</td>

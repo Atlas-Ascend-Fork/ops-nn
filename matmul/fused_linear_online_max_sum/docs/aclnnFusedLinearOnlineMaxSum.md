@@ -25,7 +25,7 @@
 
 - 接口功能：
 
-  功能等价Megatron的matmul与fused\_vocab\_parallel\_cross\_entropy的实现，支持vocabulary\_size维度切卡融合matmul与celoss，中间根据通信拆分为[aclnnFusedLinearOnlineMaxSum](./aclnnFusedLinearOnlineMaxSum.md)、[aclnnFusedCrossEntropyLossWithMaxSum](../../../loss/fused_cross_entropy_loss_with_max_sum/docs/aclnnFusedCrossEntropyLossWithMaxSum.md)，需要依次调用实现完整功能。
+  功能等价于Megatron的matmul与fused\_vocab\_parallel\_cross\_entropy的实现，支持vocabulary\_size维度切卡融合matmul与celoss，中间根据通信拆分为[aclnnFusedLinearOnlineMaxSum](./aclnnFusedLinearOnlineMaxSum.md)、[aclnnFusedCrossEntropyLossWithMaxSum](../../../loss/fused_cross_entropy_loss_with_max_sum/docs/aclnnFusedCrossEntropyLossWithMaxSum.md)，需要依次调用实现完整功能。
 
 - 计算公式：
 
@@ -83,7 +83,7 @@
      targetMaskOut[k] = 0b(maskBit[8*k:8*k+8])
      $$
 
-  其中$0 \le b \lt input.size(0), 0 \le n \lt weight.size(0), 0 \le p \lt alignNum, 0 \le k \lt alignNum / 8$。padding 位以 pad target=0 参与与公式5相同的掩码比较：当$vocabStartIndex=0$且$vocabEndIndex>0$时 padding 位为 0，否则为 1。
+  其中$0 \le b \lt input.size(0), 0 \le n \lt weight.size(0), 0 \le p \lt alignNum, 0 \le k \lt alignNum / 8$。padding位以 pad target=0 参与与公式5相同的掩码比较：当$vocabStartIndex=0$且$vocabEndIndex>0$时padding位为0，否则为1。
 
 ## 函数原型
 
@@ -183,7 +183,7 @@ aclnnStatus aclnnFusedLinearOnlineMaxSum(
       <tr>
       <td>vocabEndIndex</td>
       <td>输入</td>
-      <td>表示分到本卡上的结束索引（不包含在分片内），公式中的vocabEndIndex，即本卡负责的编号为左闭右开区间 [vocabStartIndex, vocabEndIndex)。</td>
+      <td>表示分到本卡上的结束索引（不包含在分片内），公式中的vocabEndIndex，即本卡负责的编号范围为左闭右开区间 [vocabStartIndex, vocabEndIndex)。</td>
       <td><ul><li>取值范围为[vocabStartIndex, vocabStartIndex + weight.size(0)]，且不超过16777216。</li></ul></td>
       <td>INT64</td>
       <td>-</td>
@@ -244,7 +244,7 @@ aclnnStatus aclnnFusedLinearOnlineMaxSum(
       <td>vocabParallelLogitsOutOptional</td>
       <td>输出</td>
       <td>表示matmul计算结果，可选输出，公式中的vocabParallelLogitsOutOptional。</td>
-      <td><ul><li>数据类型需要input一致。</li><li>shape为[input.size(0), weight.size(0)]。</li><li>当vocabParallelLogitsOutOptional为nullptr时为省显存分支，否则为高性能分支。</li></ul></td>
+      <td><ul><li>数据类型需要与input一致。</li><li>shape为[input.size(0), weight.size(0)]。</li><li>当vocabParallelLogitsOutOptional为nullptr时为省显存分支，否则为高性能分支。</li></ul></td>
       <td>BFLOAT16、FLOAT16</td>
       <td>ND</td>
       <td>2</td>

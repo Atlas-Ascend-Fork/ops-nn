@@ -75,7 +75,7 @@ aclnnStatus aclnnBatchMatMulWeightNz(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -97,8 +97,8 @@ aclnnStatus aclnnBatchMatMulWeightNz(
       <td>输入</td>
       <td>表示矩阵乘的第二个矩阵，公式中的mat2。</td>
       <td><ul><li>数据类型需要与self满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。</li><li>mat2的Reduce维度需要与self的Reduce维度大小相等。</li>
-      <li>当B矩阵不转置时，NZ格式各个维度表示：（b, n1，k1，k0，n0），其中k0 = 16，n0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil(k, k0) = k1，mat2 shape中的n1与out的n满足以下关系: ceil(n, n0) = n1。</li>
-      <li>当B矩阵转置时，NZ格式各个维度表示：（b, k1，n1，n0，k0），其中n0 = 16，k0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil(k, k0) = k1，mat2 shape中的n1与out的n满足以下关系: ceil(n, n0) = n1。</li>
+      <li>当B矩阵不转置时，NZ格式各个维度表示：（b, n1，k1，k0，n0），其中k0 = 16，n0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil(k, k0) = k1，mat2 shape中的n1与out的n满足以下关系：ceil(n, n0) = n1。</li>
+      <li>当B矩阵转置时，NZ格式各个维度表示：（b, k1，n1，n0，k0），其中n0 = 16，k0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil(k, k0) = k1，mat2 shape中的n1与out的n满足以下关系：ceil(n, n0) = n1。</li>
       <li>mat2的第一个维度b需要与self第一个维度b满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>。</li>
       </ul></td>
       <td>BFLOAT16、FLOAT16</td>
@@ -243,7 +243,7 @@ aclnnStatus aclnnBatchMatMulWeightNz(
 
 <!-- end id7 -->
 - 不支持两个输入分别为BFLOAT16和FLOAT16的数据类型推导。
-- self只支持3维, mat2只支持昇腾私有格式，调用此接口之前，必须完成mat2从ND到昇腾私有格式的转换。
+- self只支持3维，mat2只支持昇腾私有格式，调用此接口之前，必须完成mat2从ND到昇腾私有格式的转换。
 - 不支持mat2最后两根轴其中一根轴为1，即k=1或者n=1。
 
 ## 调用示例
@@ -254,7 +254,7 @@ aclnnStatus aclnnBatchMatMulWeightNz(
 
 self和mat2数据类型为float16，mat2为NZ格式场景下的示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-  ```Cpp
+  ```cpp
   #include <iostream>
   #include <vector>
   #include <cmath>
@@ -480,7 +480,7 @@ self和mat2数据类型为float16，mat2为NZ格式场景下的示例代码如�
 - <term>Ascend 950PR&950DT系列产品</term>：
   self和mat2数据类型为float16，mat2为NZ格式场景下的示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-  ```Cpp
+  ```cpp
   #include <iostream>
   #include <memory>
   #include <vector>

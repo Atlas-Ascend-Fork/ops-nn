@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：对n维张量的指定维度进行反转（倒序）。
+- 接口功能：对n维张量的指定维度进行翻转（倒序）。
 - 计算公式：
 
   $$
@@ -102,7 +102,7 @@ aclnnStatus aclnnFlip(
       <tr>
         <td>out</td>
         <td>输出</td>
-        <td>执行翻转后的tensor。</td>
+        <td>执行翻转后的Tensor。</td>
         <td>维度与输入一致，shape和dtype与输入一致。</td>
         <td>与self一致</td>
         <td>ND</td>
@@ -142,7 +142,7 @@ aclnnStatus aclnnFlip(
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
-  第一段接口完成入参校验，出现以下场景时报错：
+  第一段接口会完成入参校验，出现以下场景时报错：
   <table style="undefined;table-layout: fixed; width: 1244px"><colgroup>
     <col style="width: 276px">
     <col style="width: 132px">
@@ -166,7 +166,7 @@ aclnnStatus aclnnFlip(
       <td>self和out的数据类型和数据格式不在支持的范围之内。</td>
       </tr>
       <tr>
-      <td>self和out数据类型不一致。</td>
+      <td>self和out的数据类型不一致。</td>
       </tr>
       <tr>
       <td>self和out的shape不一致。</td>

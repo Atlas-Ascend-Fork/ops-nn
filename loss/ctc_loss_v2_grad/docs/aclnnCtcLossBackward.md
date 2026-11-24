@@ -31,7 +31,7 @@
   p(π|x)=\prod_{t=1}^{T}y^{t}_{π_{t}} , \forall π \in L'^{T}. \tag{1}
   $$
 
-  定义多对一(many to one)映射B: $L^{'T} \to L^{\leq T}$，通过映射B计算得到$l \in L^{\leq T}$的条件概率，等于对应于$l$的所有可能路径的概率之和，公式(2):
+  定义多对一(many to one)映射B: $L^{'T} \to L^{\leq T}$，通过映射B计算得到$l \in L^{\leq T}$的条件概率，等于对应于$l$的所有可能路径的概率之和，公式(2)：
 
   $$
   p(l|x)=\sum_{π \in B^{-1}(l)}p(π|x).\tag{2}
@@ -43,7 +43,7 @@
   h(x)=^{arg \  max}_{l \in L^{ \leq T}} \ p(l|x).\tag{3}
   $$
 
-  当zeroInfinity为True时
+  当zeroInfinity为True时：
 
   $$
   h(x)=\begin{cases}0,&h(x) == inf \text{ or } h(x) == -inf \\h(x),&\text { else }\end{cases}
@@ -167,7 +167,7 @@ aclnnStatus aclnnCtcLossBackward(
       <td>logAlpha（aclTensor*）</td>
       <td>输入</td>
       <td>表示输入到目标的可能跟踪的概率。</td>
-      <td>数据类型必须和logProbs一致。shape必须为3维的非空Tensor, shape为(N,T,alpha),满足(alpha−1)/2>=maxTargetLength。</td>
+      <td>数据类型必须和logProbs一致。shape必须为3维的非空Tensor，shape为(N,T,alpha)，满足(alpha−1)/2>=maxTargetLength。</td>
       <td>与logProbs一致</td>
       <td>ND</td>
       <td>-</td>

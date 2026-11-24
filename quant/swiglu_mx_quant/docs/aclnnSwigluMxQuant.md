@@ -222,7 +222,7 @@ aclnnStatus aclnnSwigluMxQuant(
       <td>groupIndexOptional（aclTensor*）</td>
       <td>输入</td>
       <td>MoE分组需要的group_index。</td>
-      <td><ul><li>shape支持1维的Tensor，shape为[groupNum]，groupNum大于等于1且小于等于256。</li><li>data的每个值必须为大于等于0的整数，所有值的和必须大于0，且必须小于等于x经SwiGLU操作后的总行数（即SwiGLU输出yOut的总行数：activateDim为尾轴时等于x除尾轴之外剩余轴的乘积，activateDim为非尾轴时等于x总行数的一半）。</li><li>可选参数，支持传空指针。</li><li>不支持空Tensor（shape[0]=0会被拒绝，与不传该参数不同）。</li><li>当此输入存在，且activateDim 或者 axis 任一为非尾轴， 输入x的shape必须为2维</li></ul></td>
+      <td><ul><li>shape支持1维的Tensor，shape为[groupNum]，groupNum大于等于1且小于等于256。</li><li>data的每个值必须为大于等于0的整数，所有值的和必须大于0，且必须小于等于x经SwiGLU操作后的总行数（即SwiGLU输出yOut的总行数：activateDim为尾轴时等于x除尾轴之外剩余轴的乘积，activateDim为非尾轴时等于x总行数的一半）。</li><li>可选参数，支持传空指针。</li><li>不支持空Tensor（shape[0]=0会被拒绝，与不传该参数不同）。</li><li>当此输入存在，且activateDim或者axis任一为非尾轴，输入x的shape必须为2维</li></ul></td>
       <td>INT32、INT64</td>
       <td>ND</td>
       <td>1</td>
@@ -312,7 +312,7 @@ aclnnStatus aclnnSwigluMxQuant(
       <td>dstType（int64_t）</td>
       <td>输入</td>
       <td>表示指定输出y的数据类型。</td>
-      <td><ul><li>dstType的取值范围是:[35, 36, 40, 41]，分别对应FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、FLOAT4_E1M2。</li></ul></td>
+      <td><ul><li>dstType的取值范围是：[35, 36, 40, 41]，分别对应FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、FLOAT4_E1M2。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -332,7 +332,7 @@ aclnnStatus aclnnSwigluMxQuant(
       <td>scaleAlg（int64_t）</td>
       <td>输入</td>
       <td>表示mxscaleOut的计算方法，对应公式中的scaleAlg。</td>
-      <td><ul><li>scaleAlg的取值范围是:[0, 1, 2]，取值为0代表场景1，为1代表场景2。</li><li>当dstType为FLOAT4_E2M1/FLOAT4_E1M2时仅支持取值为0。</li><li>当前仅支持取值为0, 1。</li></ul></td>
+      <td><ul><li>scaleAlg的取值范围是：[0, 1, 2]，取值为0代表场景1，为1代表场景2。</li><li>当dstType为FLOAT4_E2M1/FLOAT4_E1M2时仅支持取值为0。</li><li>当前仅支持取值为0, 1。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -352,7 +352,7 @@ aclnnStatus aclnnSwigluMxQuant(
       <td>yOut（aclTensor*）</td>
       <td>输出</td>
       <td>表示输入x量化后的对应结果，对应公式中的Pi和di。</td>
-      <td><ul><li>当activateDim对应的x的尾轴时，shape为[X1,X2,...Xn,H]。</li><li>当activateDim对应的不是x的尾轴时，shape为[X1,X2,...,XactivateDim / 2,...,2H]。</li><li>当yOut的数据类型为FLOAT4_E2M1、FLOAT4_E1M2时，yOut的最后一维需要是2的倍数。</li><li>不支持空Tensor。</li></ul></td>
+      <td><ul><li>当activateDim对应的是x的尾轴时，shape为[X1,X2,...Xn,H]。</li><li>当activateDim对应的不是x的尾轴时，shape为[X1,X2,...,XactivateDim / 2,...,2H]。</li><li>当yOut的数据类型为FLOAT4_E2M1、FLOAT4_E1M2时，yOut的最后一维需要是2的倍数。</li><li>不支持空Tensor。</li></ul></td>
       <td>FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、FLOAT4_E1M2</td>
       <td>ND</td>
       <td>2-7</td>
@@ -506,7 +506,7 @@ aclnnStatus aclnnSwigluMxQuant(
 - 输入与输出的内存空间不能重叠，不支持原地修改（inplace）场景。
 - 算子执行过程中不修改任何输入数据。
 - 当activateDim为非last轴，或者axis为非last轴，groupIndexOptional存在时，x的输入必须为2维。
-- 当输出yOut的数据类型为FLOAT8_E4M3FN、FLOAT8_E5M2时，roundModeOptional必须为 rint。
+- 当输出yOut的数据类型为FLOAT8_E4M3FN、FLOAT8_E5M2时，roundModeOptional必须为rint。
 - 不支持空Tensor：x、groupIndexOptional、yOut、mxscaleOut的shape中任一维度为0（元素数为0）时，接口校验失败，返回ACLNN_ERR_PARAM_INVALID。
 - x必须为2-7维，不支持rank=0标量Tensor。
 

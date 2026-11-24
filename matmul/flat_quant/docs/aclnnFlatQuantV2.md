@@ -24,15 +24,15 @@
 ## 功能说明
 
 - **与V1版本的差异**：
-  - V2版本新增了`dstTypeMax`参数，用于在pergroup量化方式（对应float4_e2m1输出类型）中控制目标数据类型的最大值。
+  - V2版本新增了`dstTypeMax`参数，用于在perGroup量化方式（对应FLOAT4_E2M1输出类型）中控制目标数据类型的最大值。
   - V1版本不支持自定义目标数据类型最大值，默认使用目标精度能表示的最大值。
 
 - **用户选择建议**：
-  - 若需自定义float4_e2m1量化时的目标数据类型最大值（取值范围6.0-12.0），请选择V2版本。
+  - 若需自定义FLOAT4_E2M1量化时的目标数据类型最大值（取值范围6.0-12.0），请选择V2版本。
   - 若只需使用默认的目标精度最大值或使用INT4/INT32量化输出类型，V1和V2版本均可使用。
   - 对于需要更精细控制量化范围以优化模型性能或精度的场景，推荐使用V2版本。
 
-- 接口功能：该融合算子为输入矩阵x依次进行两次小矩阵乘法，即右乘输入矩阵kroneckerP2，左乘输入矩阵kroneckerP1，然后针对矩阵乘的结果进行量化处理。目前支持pertoken和pergroup量化方式，分别对应INT4和FLOAT4_E2M1量化输出类型。
+- 接口功能：该融合算子为输入矩阵x依次进行两次小矩阵乘法，即右乘输入矩阵kroneckerP2，左乘输入矩阵kroneckerP1，然后针对矩阵乘的结果进行量化处理。目前支持perToken和perGroup量化方式，分别对应INT4和FLOAT4_E2M1量化输出类型。
 
 - 矩阵乘计算公式：
 
@@ -41,7 +41,6 @@
      $$
      x' = x @ kroneckerP2
      $$
-
   2. kroneckerP1左乘x'：
 
      $$
@@ -57,7 +56,6 @@
      $$
      quantScale = [max(abs(x''[0,:,:])),max(abs(x''[1,:,:])),...,max(abs(x''[M-1,:,:]))]/(7 / clipRatio)
      $$
-
   2. 计算输出的out：
 
      $$
@@ -70,7 +68,7 @@
 
     1. 矩阵乘后x''的shape为[M,N1,N2]，在计算pergroup量化方式中的mx_quantize时，需reshape为[M,N1*N2]，记为x2
 
-    2. 在x2第二维上按照groupsize进行分组，包含元素e0,e1...e31。emax为目标量化格式（FLOAT4_E2M1）最大正规数的指数位，取值为2（FLOAT4_E2M1的最大正规数为6.0，即1.5×2^2）。
+    2. 在x2第二维上按照groupSize进行分组，包含元素e0,e1...e31。emax为目标量化格式（FLOAT4_E2M1）最大正规数的指数位，取值为2（FLOAT4_E2M1的最大正规数为6.0，即1.5×2^2）。
 
     3. 计算出sharedExp，即组内最大绝对值的指数减去emax
 
@@ -229,7 +227,7 @@ aclnnStatus aclnnFlatQuantV2(
       <td>dstTypeMax（double）</td>
       <td>输入</td>
       <td>表示maxType的取值，对应公式中的Amax(DType)。</td>
-      <td><ul><li>支持取值0.0，6.0-12.0，取值为0.0代表不使用该参数；取值为6.0-12.0代表目标数据类型的最大值。仅支持在FLOAT4_E2M1数据类型时设置该值。</li></ul></td>
+      <td><ul><li>支持取值0.0、6.0-12.0，取值为0.0代表不使用该参数；取值为6.0-12.0代表目标数据类型的最大值。仅支持在FLOAT4_E2M1数据类型时设置该值。</li></ul></td>
       <td>DOUBLE</td>
       <td>ND</td>
       <td>-</td>
@@ -249,7 +247,7 @@ aclnnStatus aclnnFlatQuantV2(
       <td>quantScale（aclTensor*）</td>
       <td>输出</td>
       <td>输出的量化因子，对应公式中的quantScale。</td>
-      <td><ul><li>不支持空Tensor。</li><li>量化输出类型为INT4或INT32时，shape为[M],M与x中M维度一致，数据类型为FLOAT32。</li><li>量化输出类型为FLOAT4_E2M1时，shape为[M,ceildiv(N1*N2,64),2]，数据类型为FLOAT8_E8M0。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>量化输出类型为INT4或INT32时，shape为[M]，M与x中M维度一致，数据类型为FLOAT32。</li><li>量化输出类型为FLOAT4_E2M1时，shape为[M,ceildiv(N1*N2,64),2]，数据类型为FLOAT8_E8M0。</li></ul></td>
       <td>FLOAT32、FLOAT8_E8M0</td>
       <td>ND</td>
       <td>1或3</td>

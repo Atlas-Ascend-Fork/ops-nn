@@ -52,7 +52,7 @@
   $$
 
 - 公式变量：B为batch维大小，H为隐藏维大小；gi、gh、b1、b2分别为input_gates、hidden_gates、input_bias、hidden_bias按门序三等分后的分段；hx为上一步隐状态；hy为新隐状态；storage为反向复用中间量，五段[rg、zg、ng、hx、gh_n+b2_n]沿最后一维拼接，每段H列。input_bias与hidden_bias缺省（传入空指针）时等价于全零bias。
-- 精度说明：FLOAT16、BFLOAT16输入在float32中间精度下完成sigmoid、tanh与乘加计算，计算结果舍回原数据类型；输出数据类型与输入一致。
+- 精度说明：FLOAT16、BFLOAT16输入在float32中间精度下完成sigmoid、tanh与乘加计算，计算结果舍入回原数据类型；输出数据类型与输入一致。
 
 ## 函数原型
 

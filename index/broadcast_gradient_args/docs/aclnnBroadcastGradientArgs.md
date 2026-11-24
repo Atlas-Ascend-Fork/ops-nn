@@ -224,7 +224,7 @@ aclnnStatus aclnnBroadcastGradientArgs(
       <td>x1、x2、y1或y2的shape不是1维。</td>
     </tr>
     <tr>
-      <td>y1或y2的容量小于max(x1长度, x2长度)，可能导致kernel写入越界。</td>
+      <td>y1或y2的容量小于max(x1长度, x2长度)，可能导致Kernel写入越界。</td>
     </tr>
     <tr>
       <td>当前设备不是Ascend 950PR&950DT系列产品，算子不支持该架构。</td>

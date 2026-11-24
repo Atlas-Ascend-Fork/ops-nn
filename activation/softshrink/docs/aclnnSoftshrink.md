@@ -21,7 +21,7 @@
 - <term>Atlas训练系列产品</term>：支持
 <!-- end id6 -->
 
-> 说明：Ascend 950PR/950DT 由本仓 Ascend C 实现提供；Atlas A3/A2、Atlas推理/训练由 canndev TBE 实现承接；Atlas 200I/500 A2 无对应二进制配置，不支持。Atlas推理/训练仅支持 FLOAT、FLOAT16，不支持 BFLOAT16。
+> 说明：Ascend 950PR/950DT由本仓Ascend C实现提供；Atlas A3/A2、Atlas推理/训练由canndev TBE实现承接；Atlas 200I/500 A2无对应二进制配置，不支持。Atlas推理/训练仅支持FLOAT、FLOAT16，不支持BFLOAT16。
 
 ## 功能说明
 

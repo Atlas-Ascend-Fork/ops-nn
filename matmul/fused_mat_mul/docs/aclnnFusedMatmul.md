@@ -32,46 +32,46 @@
 
   OP类型由fusedOpType输入定义，支持如下：
 
-  add运算:
+  add运算：
 
   $$
   y=(x1 @ x2 + bias) + x3
   $$
 
-  mul运算:
+  mul运算：
 
   $$
   y=(x1 @ x2 + bias) ∗ x3
   $$
 
-  gelu_tanh运算:
+  gelu_tanh运算：
 
   $$
   y = gelu\_tanh(x1 @ x2 + bias)
   $$
 
-  gelu_erf运算:
+  gelu_erf运算：
 
   $$
   y = gelu\_erf(x1 @ x2 + bias)
   $$
 
-  relu运算:
+  relu运算：
 
   $$
   y = relu(x1 @ x2 + bias)
   $$
 
-  sigmoid运算:
+  sigmoid运算：
 
   $$
   y = sigmoid(x1 @ x2 + bias) = \frac{1}{1 + \exp(-(x1 @ x2 + bias))}
   $$
 
-  16cast32运算:
+  16cast32运算：
 
   $$
-  y = cast\_float32(x1 @ x2 + bias)
+  y = cast\_FLOAT32(x1 @ x2 + bias)
   $$
 
 ## 函数原型
@@ -224,28 +224,28 @@ aclnnStatus aclnnFusedMatmul(
 
   <!-- npu="950" id7 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-    - cubeMathType=1，当输入数据类型为FLOAT32时不支持该选项；当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
+    - cubeMathType=1，当输入数据类型为FLOAT32时不支持该选项。当输入为其他数据类型时不做处理。
+    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项。
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
     - cubeMathType=4，仅当以下条件全部满足时使用高精度方式：
-      - fusedOpType取值为"add"或"mul"；
-      - x1和x2的维度数必须相同，且同时为2维或同时为3维；
+      - fusedOpType取值为"add"或"mul"。
+      - x1和x2的维度数必须相同，且同时为2维或同时为3维。
       - x1、x2、x3三者的数据类型完全一致，且同为BFLOAT16或同为FLOAT16。
 
   <!-- end id7 -->
   <!-- npu="A3,910b" id11 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
     - cubeMathType=0（KEEP_DTYPE），当输入数据类型为FLOAT32时按真FP32计算；
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
 
   <!-- end id11 -->
 
-- **返回值**
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
-  第一段接口完成入参校验，出现以下场景报错：
+  第一段接口完成入参校验，出现以下场景时报错：
   <table style="undefined;table-layout: fixed; width: 1030px"><colgroup>
     <col style="width: 250px">
     <col style="width: 130px">
@@ -296,7 +296,7 @@ aclnnStatus aclnnFusedMatmul(
         <td>传入bias时，矩阵乘的K轴长度为0。</td>
       </tr>
       <tr>
-        <td>当传入的fusedOpType属于""、"add"、"mul"、"relu"中的一种,且输入的数据类型为float32时, cubeMathType只支持3。</td>
+        <td>当传入的fusedOpType属于""、"add"、"mul"、"relu"中的一种，且输入的数据类型为FLOAT32时，cubeMathType只支持3。</td>
       </tr>
   </tbody></table>
 
@@ -362,7 +362,7 @@ aclnnStatus aclnnFusedMatmul(
   - <term>Atlas A2系列产品</term>：fusedOpType为relu时默认确定性实现。
   <!-- end id10 -->
 
-- 当fusedOpType取值为"gelu_erf"、"gelu_tanh"时，x1、x2的数据类型必须为BFLOAT16、FLOAT16，且x1、x2、y仅支持二维;当fusedOpType为""、"relu"时, x1、x2的数据类型必须为FLOAT32（cubeMathType只支持3）、BFLOAT16、FLOAT16；当fusedOpType取值为"16cast32"时，x1、x2的数据类型必须为BFLOAT16、FLOAT16，且x1、x2、y支持二维，或batch轴为1的三维；当fusedOpType为"add"、"mul"时, x1、x2、x3的数据类型必须为FLOAT32（cubeMathType只支持3）、BFLOAT16、FLOAT16。
+- 当fusedOpType取值为"gelu_erf"、"gelu_tanh"时，x1、x2的数据类型必须为BFLOAT16、FLOAT16，且x1、x2、y仅支持二维；当fusedOpType为""、"relu"时，x1、x2的数据类型必须为FLOAT32（cubeMathType只支持3）、BFLOAT16、FLOAT16；当fusedOpType取值为"16cast32"时，x1、x2的数据类型必须为BFLOAT16、FLOAT16，且x1、x2、y支持二维，或batch轴为1的三维；当fusedOpType为"add"、"mul"时，x1、x2、x3的数据类型必须为FLOAT32（cubeMathType只支持3）、BFLOAT16、FLOAT16。
 - 当fusedOpType取值为""、"relu"、"add"、"mul"时，在多维场景下不支持batch轴broadcast，batch维度需要一致；以下relu共享x2场景除外。
 <!-- npu="950" -->
 - 当fusedOpType取值为"relu"时，支持x1为3-6维、x1不转置且x2的所有batch轴均为1（包括x2为二维）的场景。此时x1和x2的维度数可以不同，输出shape按MatMul的batch轴广播规则确定；x1的所有batch轴与M轴长度的乘积不能超过INT32_MAX。

@@ -43,7 +43,7 @@
 - 示例：
 
   输入tensor $self = \begin{bmatrix} [1&2&3] \\ [4&5&6] \\ [7&8&9] \end{bmatrix}$，
-  索引tensor $index = \begin{bmatrix} [0&2&1] \\ [0&0&1] \end{bmatrix}$， dim = 1，
+  索引tensor $index = \begin{bmatrix} [0&2&1] \\ [0&0&1] \end{bmatrix}$，dim = 1，
   源tensor $src = \begin{bmatrix} [10&11&12] \\ [13&14&15] \end{bmatrix}$，
   输出tensor $output = \begin{bmatrix} [11&14&14] \\ [31&20&6] \\ [7&8&9] \end{bmatrix}$
 

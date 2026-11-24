@@ -187,7 +187,7 @@ aclnnStatus aclnnSwigluMxQuantWithDualAxis(
       <td>scaleAlg (int64_t)</td>
       <td>输入</td>
       <td>表示mxscale1Out和mxscale2Out的计算方法。</td>
-      <td><ul><li>取值范围：{1, 0}，1代表cuBLAS实现, 0代表OCP实现。</li><li>当dstType为40/41时仅支持scaleAlg为0。</li></ul></td>
+      <td><ul><li>取值范围：{1, 0}，1代表cuBLAS实现，0代表OCP实现。</li><li>当dstType为40/41时仅支持scaleAlg为0。</li></ul></td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>

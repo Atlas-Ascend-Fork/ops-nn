@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：计算[aclnnSmoothL1Loss](../../smooth_l1_loss_v2/docs/aclnnSmoothL1Loss.md) api的反向传播。
+- 接口功能：计算[aclnnSmoothL1Loss](../../smooth_l1_loss_v2/docs/aclnnSmoothL1Loss.md) API的反向传播。
 - 计算公式：
 
   SmoothL1Loss的反向传播可以通过求导计算。对于SmoothL1Loss的第一种情况，即|x-y|<beta，其导数为：
@@ -71,7 +71,7 @@ aclnnStatus aclnnSmoothL1LossBackward(
 
 ## aclnnSmoothL1LossBackwardGetWorkspaceSize
 
-- **参数说明**
+- **参数说明：**
 
   <table class="tg" style="undefined;table-layout: fixed; width: 1547px"><colgroup>
   <col style="width: 217px">
@@ -149,7 +149,7 @@ aclnnStatus aclnnSmoothL1LossBackward(
       <td class="tg-0pky">gradInput（aclTensor*）</td>
       <td class="tg-0pky">输出</td>
       <td class="tg-0pky">计算输出。</td>
-      <td class="tg-0pky">shape为gradOut，self，target的<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>结果</td>
+      <td class="tg-0pky">shape为gradOut、self、target的<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>结果</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">1-8</td>
@@ -267,12 +267,12 @@ aclnnStatus aclnnSmoothL1LossBackward(
 
 - 确定性计算：
     - aclnnSmoothL1LossBackward默认确定性实现。
-- 空 Tensor：
-    - aclnn API 通路：任一输入（gradOut、self、target）为空 Tensor 时，aclnnSmoothL1LossBackwardGetWorkspaceSize直接返回成功，workspaceSize为0，不执行计算。
-- 动态 Shape 与动态 Rank：
-    - 算子定义开启动态编译、动态 Rank 与动态 Shape 能力，Host推导阶段接受未知维（-1/-2）标记。
-    - tiling阶段要求各维度为正数，具体化后维度小于等于0的输入会被拒绝。
-- 维度上界：各输入/输出 Tensor 的维度（rank）上限为8；rank-0标量输入会被按{1}归一处理。
+- 空Tensor：
+    - aclnn API通路：任一输入（gradOut、self、target）为空Tensor时，aclnnSmoothL1LossBackwardGetWorkspaceSize直接返回成功，workspaceSize为0，不执行计算。
+- 动态Shape与动态Rank：
+    - 算子定义开启动态编译、动态Rank与动态Shape能力，Host推导阶段接受未知维度（-1/-2）标记。
+    - Tiling阶段要求各维度为正数，具体化后维度小于等于0的输入会被拒绝。
+- 维度上界：各输入/输出Tensor的维度（rank）上限为8；rank-0标量输入会被按{1}归一化处理。
 - 数据格式：仅支持ND。
 - 精度与特殊值：
     - FLOAT16、BFLOAT16输入在算子内部提升至FLOAT32计算后回写为输出数据类型。

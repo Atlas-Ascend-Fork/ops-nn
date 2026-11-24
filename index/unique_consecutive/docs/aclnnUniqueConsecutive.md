@@ -23,11 +23,11 @@
 
 ## 功能说明
 
-算子功能：去除每一个元素后的重复元素。当 dim 不为空时，去除对应维度上的每一个张量后的重复张量。
+算子功能：去除每一个元素后的重复元素。当dim不为空时，去除对应维度上的每一个张量后的重复张量。
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用 `aclnnUniqueConsecutiveGetWorkspaceSize` 接口获取计算所需 workspace 大小以及包含了算子计算流程的执行器，再调用 `aclnnUniqueConsecutive` 接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用 `aclnnUniqueConsecutiveGetWorkspaceSize` 接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用 `aclnnUniqueConsecutive` 接口执行计算。
 
 ```cpp
 aclnnStatus aclnnUniqueConsecutiveGetWorkspaceSize(
@@ -171,9 +171,9 @@ aclnnStatus aclnnUniqueConsecutive(
 <!-- npu="950" id7 -->
 - <term>Ascend 950PR&950DT系列产品</term>：
 
-  输入 `self` 不支持 DOUBLE、COMPLEX64、COMPLEX128、BOOL 类型
+  输入 `self` 不支持 DOUBLE、COMPLEX64、COMPLEX128、BOOL类型。
 
-  输入 `returnInverse` 仅支持 false
+  输入`returnInverse`仅支持false。
 
   输入 `dim` 仅支持 1000。
 
@@ -271,9 +271,9 @@ aclnnStatus aclnnUniqueConsecutive(
 ## 约束说明
 
 - 确定性计算：
-  - aclnnUniqueConsecutive 默认确定性实现。
+  - aclnnUniqueConsecutive默认确定性实现。
 - 性能：
-  - A2、A3 及训练系列产品上，当 self 在 dim 上的维度值超过 2 亿时，性能很差甚至是运行超时。
+  - A2、A3 及训练系列产品上，当self在dim上的维度值超过2亿时，性能很差甚至是运行超时。
 
 ## 调用示例
 

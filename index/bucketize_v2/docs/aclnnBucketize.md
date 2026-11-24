@@ -41,7 +41,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用"aclnnBucketizeGetWorkspaceSize"接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用"aclnnBucketize"接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnBucketizeGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnBucketize”接口执行计算。
 
 ```cpp
 aclnnStatus aclnnBucketizeGetWorkspaceSize(
@@ -217,8 +217,8 @@ aclnnStatus aclnnBucketize(
         <tbody>
             <tr><td>workspace</td><td>输入</td><td>在Device侧申请的workspace内存地址。</td></tr>
             <tr><td>workspaceSize </td><td>输入</td><td>在Device侧申请的workspace大小，由第一段接口aclnnBucketizeGetWorkspaceSize获取。</td></tr>
-            <tr><td>executor</td><td>输入</td><td> op执行器，包含了算子计算流程。 </td></tr>
-            <tr><td>stream </td><td>输入</td><td> 指定执行任务的Stream。 </td></tr>
+            <tr><td>executor</td><td>输入</td><td> op执行器，包含了算子计算流程。</td></tr>
+            <tr><td>stream </td><td>输入</td><td> 指定执行任务的Stream。</td></tr>
         </tbody>
     </table>
 
@@ -241,7 +241,7 @@ aclnnStatus aclnnBucketize(
 <!-- npu="950" id7 -->
 - <term>Ascend 950PR&950DT系列产品</term>：
 
-```Cpp
+```cpp
   #include <iostream>
   #include <vector>
   #include "acl/acl.h"
@@ -379,7 +379,7 @@ aclnnStatus aclnnBucketize(
 
 ### Pytorch AtenIR
 
-```Cpp
+```cpp
 - func: bucketize.Tensor_out(Tensor self, Tensor boundaries, *, bool outInt32=False, bool right=False, Tensor(a!) out) -> Tensor(a!)
   dispatch:
     CPU: bucketize_out_cpu
@@ -394,5 +394,5 @@ aclnnStatus aclnnBucketize(
 | 输入 | boundaries | 边界数组，必须是一维且单调递增 | FLOAT、FLOAT16、BFLOAT16、INT8、INT16、INT32、INT64、UINT8、DOUBLE | FLOAT、FLOAT16、BFLOAT16、INT8、INT16、INT32、INT64、UINT8、DOUBLE|
 | 属性 | outInt32 | 输出数据类型是否为int32 | bool | bool |
 | 属性 | right | 区间是否包含左边界 | bool | bool |
-| 输入 | out | 指定的输出tensor | INT32、INT64 |INT32、INT64|
-| 输出 | output | 输出tensor | INT32、INT64 |INT32、INT64|
+| 输入 | out | 指定的输出Tensor | INT32、INT64 |INT32、INT64|
+| 输出 | output | 输出Tensor | INT32、INT64 |INT32、INT64|

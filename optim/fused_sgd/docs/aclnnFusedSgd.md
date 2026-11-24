@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 算子功能：实现fusedSgd算子。将传统 SGD 更新过程中原本分散的多个细粒度操作（如梯度缩放、权重衰减、动量更新、参数赋值等）融合为单个NPU Kernel执行。
+- 算子功能：实现fusedSgd算子。将传统SGD更新过程中原本分散的多个细粒度操作（如梯度缩放、权重衰减、动量更新、参数赋值等）融合为单个NPU Kernel执行。
 - 计算公式：
 
   $$
@@ -196,7 +196,7 @@ aclnnStatus aclnnFusedSgd(
       <tr>
       <td>nesterov</td>
       <td>属性</td>
-      <td>是否启用 Nesterov 动量。</td>
+      <td>是否启用Nesterov动量。</td>
       <td>-</td>
       <td>BOOL</td>
       <td>-</td>
@@ -341,7 +341,7 @@ aclnnStatus aclnnFusedSgd(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include "acl/acl.h"
 #include "aclnnop/aclnn_fused_sgd.h"
 #include <iostream>

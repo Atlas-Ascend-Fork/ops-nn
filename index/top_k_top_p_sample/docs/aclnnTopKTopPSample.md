@@ -46,7 +46,7 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
 
   TopK采样
 
-  1. 按分段长度v采用分段topk归并排序，用{s-1}块的topK对当前{s}块的输入进行预筛选，渐进更新单batch的topK，减少冗余数据和计算。
+  1. 按分段长度v采用分段topK归并排序，用{s-1}块的topK对当前{s}块的输入进行预筛选，渐进更新单batch的topK，减少冗余数据和计算。
   2. topK[batch]对应当前batch采样的k值，有效范围为1≤topK[batch]≤min(voc_size[batch], 1024)，如果top[K]超出有效范围，则视为跳过当前batch的topK采样阶段，也同样会跳过当前batch的排序，将输入logits[batch]直接传入下一模块。
 
   * 对当前batch分割为若干子段，滚动计算topKValue[b]：
@@ -120,14 +120,14 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
   topPValue[b] = {Max(topKGuess)}_{s=1}^{\left \lceil \frac{S}{v} \right \rceil }\left \{ topPValue[b]\left \{s-1 \right \}  \cup \left \{ logitsValue[b][v] \ge topKMin[b][s-1] \right \} \right \}
   $$
 
-  * 如果在访问到logitsValue[b]的第1e4个元素之前，下条件得到满足，则视为topKGuess成功，
+  * 如果在访问到logitsValue[b]的第1e4个元素之前，以下条件得到满足，则视为topKGuess成功，
 
   $$
   \sum^{topKGuess}(topPValue[b]) \ge topP[b]\\
   topPMask[b][Index(topPValue[b])] = false
   $$
 
-  * 如果topKGuess失败，则对当前序logitsValue[b]进行全排序和cumsum，按topP[b]截断采样：
+  * 如果topKGuess失败，则对当前序列logitsValue[b]进行全排序和cumsum，按topP[b]截断采样：
 
   $$
   sortedLogits[b] = sort(logitsValue[b], descendant) \\
@@ -141,7 +141,7 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
     sortedValue[b][v] = \begin{cases} -Inf& \text{topPMask[b][v]=true}\\sortedValue[b][v]& \text{topPMask[b][v]=false}\end{cases}
     $$
 
-    取过滤后sortedValue[b][v]每行中前topK个元素，查找这些元素在输入中的原始索引，整合为`logitsIdx`:
+    取过滤后sortedValue[b][v]每行中前topK个元素，查找这些元素在输入中的原始索引，整合为`logitsIdx`：
 
     $$
     logitsIdx[b][v] = Index(sortedValue[b][v] \in logits)
@@ -231,8 +231,8 @@ aclnnStatus aclnnTopKTopPSample(
       <tr>
         <td>logits</td>
         <td>输入</td>
-        <td>表示待采样的输入词频，词频索引固定为最后一维,对应公式`logits`。</td>
-        <td><ul><li>不支持空tensor。</li></ul></td>
+        <td>表示待采样的输入词频，词频索引固定为最后一维，对应公式`logits`。</td>
+        <td><ul><li>不支持空Tensor。</li></ul></td>
         <td>FLOAT16、BFLOAT16</td>
         <td>ND</td>
         <td>2</td>

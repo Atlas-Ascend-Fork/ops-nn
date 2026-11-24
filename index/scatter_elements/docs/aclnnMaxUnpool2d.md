@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 算子功能：[aclnnMaxPool](../../../pooling/max_pool_v3/docs/aclnnMaxPool.md)在2d的逆运算，由outputSize决定out的H、W轴大小，并根据indices索引在out中填入self的元素值，其余位置都设置为0。
+- 算子功能：[aclnnMaxPool](../../../pooling/max_pool_v3/docs/aclnnMaxPool.md)在2d上的逆运算，由outputSize决定out的H、W轴大小，并根据indices索引在out中填入self的元素值，其余位置都设置为0。
 
 - 计算公式：
 
@@ -31,7 +31,7 @@
   out[n][c][indices[n][c][i]] = self[n][c][i]
   $$
 
-  其中out、indices和self是最后两轴合为一轴，经过reshape得到的，i ∈ [0, H*W)。
+  其中out、indices和self是将最后两轴合为一轴，经过reshape得到的，i ∈ [0, H*W)。
 
 ## 函数原型
 
@@ -89,7 +89,7 @@ aclnnStatus aclnnMaxUnpool2d(
         <ul>
           <li>数据类型与out的数据类型一致。</li>
           <li>shape与indices保持一致。</li>
-          <li>当维度为3时，各维度依次表示C、H、W，当维度为4时，各维度依次表示N、C、H、W，其中C代表channel, N代表Batch，H代表Height，W代表Width。</li>
+          <li>当维度为3时，各维度依次表示C、H、W，当维度为4时，各维度依次表示N、C、H、W，其中C代表channel，N代表Batch，H代表Height，W代表Width。</li>
         </ul>
       </td>
       <td class="tg-0pky">FLOAT、FLOAT16、INT16、INT32、INT64、INT8、UINT8、DOUBLE</td>
@@ -104,7 +104,7 @@ aclnnStatus aclnnMaxUnpool2d(
       <td class="tg-0pky">
         <ul>
           <li>shape与self保持一致。</li>
-          <li>当维度为3时，各维度依次表示C、H、W，当维度为4时，各维度依次表示N、C、H、W，其中C代表channel, N代表Batch，H代表Height，W代表Width。</li>
+          <li>当维度为3时，各维度依次表示C、H、W，当维度为4时，各维度依次表示N、C、H、W，其中C代表channel，N代表Batch，H代表Height，W代表Width。</li>
         </ul>
       </td>
       <td class="tg-0pky">INT64、INT32</td>
@@ -116,7 +116,7 @@ aclnnStatus aclnnMaxUnpool2d(
       <td class="tg-0pky">outputSize（aclIntArray*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">表示输出结果在H和W维度上的空间大小。</td>
-      <td class="tg-0pky">size大小为2,两个元素乘积值需大于等于self在H和W维度上的size乘积值。</td>
+      <td class="tg-0pky">size大小为2，两个元素乘积值需大于等于self在H和W维度上的size乘积值。</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">-</td>
@@ -129,7 +129,7 @@ aclnnStatus aclnnMaxUnpool2d(
       <td class="tg-0pky">
         <ul>
           <li>数据类型与self的数据类型一致。</li>
-          <li>当维度为3时，各维度依次表示C、H、W，当维度为4时，各维度依次表示N、C、H、W，其中C代表channel, N代表Batch，H代表Height，W代表Width。</li>
+          <li>当维度为3时，各维度依次表示C、H、W，当维度为4时，各维度依次表示N、C、H、W，其中C代表channel，N代表Batch，H代表Height，W代表Width。</li>
         </ul>
       </td>
       <td class="tg-0pky">FLOAT、FLOAT16、INT16、INT32、INT64、INT8、UINT8、DOUBLE</td>

@@ -35,7 +35,7 @@
   w_{c} = \text{weight}[c] \cdot \mathbb{1}\{c \not= \text{ignoreIndex}\},
   $$
 
-  其中$x$是self，$y$是target， $w$是weight，$N$是batch的大小。如果`reduction`不是`'none'` ，那么：
+  其中$x$是self，$y$是target， $w$是weight，$N$是batch的大小。如果`reduction`不是`'none'`，那么：
 
   $$
   \ell(x, y) = \begin{cases}
@@ -162,7 +162,7 @@ aclnnStatus aclnnNLLLoss2d(
         <td>totalWeightOut（aclTensor*）</td>
         <td>输出</td>
         <td>公式中的totalWeightOut。</td>
-        <td>在reduction为非0(非none)下输出值有效，shape为(1,)。</td>
+        <td>在reduction为非0（非none）下输出值有效，shape为(1,)。</td>
         <td>数据类型和self保持一致。</td>
         <td>ND</td>
         <td>-</td>
@@ -289,7 +289,7 @@ aclnnStatus aclnnNLLLoss2d(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

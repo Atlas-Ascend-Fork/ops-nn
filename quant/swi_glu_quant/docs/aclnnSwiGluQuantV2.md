@@ -180,7 +180,7 @@ aclnnStatus aclnnSwiGluQuantV2(
       <td>quantModeOptional（char*）</td>
       <td>输入</td>
       <td>计算输入。</td>
-      <td>用户必须传参，"static"表示静态量化、"dynamic"表示动态量化、"dynamic_msd"表示动态MSD量化。当前仅支持"dynamic"动态量化，"static"静态量化。静态量化仅支持per_tensor量化和per_channel量化。</td>
+      <td>用户必须传参，"static"表示静态量化、"dynamic"表示动态量化、"dynamic_msd"表示动态MSD量化。当前仅支持"dynamic"动态量化、"static"静态量化。静态量化仅支持per_tensor量化和per_channel量化。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -190,7 +190,7 @@ aclnnStatus aclnnSwiGluQuantV2(
       <td>groupListType（int64_t）</td>
       <td>输入</td>
       <td>计算输入。</td>
-      <td>用户必须传参，0表示cumsum模式、1表示count模式。当前仅支持0表示cumsum模式，1表示count模式。</td>
+      <td>用户必须传参，0表示cumsum模式、1表示count模式。当前仅支持0表示cumsum模式、1表示count模式。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

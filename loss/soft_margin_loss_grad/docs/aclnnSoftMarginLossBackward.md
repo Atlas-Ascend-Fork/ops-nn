@@ -50,7 +50,7 @@ aclnnStatus aclnnSoftMarginLossBackward(
 
 ## aclnnSoftMarginLossBackwardGetWorkspaceSize
 
-- **参数说明**
+- **参数说明：**
 
     <table class="tg" style="undefined;table-layout: fixed; width: 1547px"><colgroup>
     <col style="width: 217px">
@@ -118,7 +118,7 @@ aclnnStatus aclnnSoftMarginLossBackward(
         <td class="tg-0pky">out（aclTensor*）</td>
         <td class="tg-0pky">输出</td>
         <td class="tg-0pky">计算输出。</td>
-        <td class="tg-0pky">shape为gradOutput，self，target的<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>结果。</td>
+        <td class="tg-0pky">shape为gradOutput、self、target的<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>结果。</td>
         <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
         <td class="tg-0pky">ND</td>
         <td class="tg-0pky">1-8</td>
@@ -146,7 +146,7 @@ aclnnStatus aclnnSoftMarginLossBackward(
       </tr>
     </tbody></table>
 
-- **返回值**：
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
@@ -225,7 +225,7 @@ aclnnStatus aclnnSoftMarginLossBackward(
       </tbody>
     </table>
 
-- **返回值**
+- **返回值：**
 
   **aclnnStatus**：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 

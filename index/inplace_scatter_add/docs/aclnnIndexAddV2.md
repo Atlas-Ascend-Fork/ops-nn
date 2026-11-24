@@ -273,7 +273,7 @@ aclnnStatus aclnnIndexAddV2(
 - 确定性计算：
   - aclnnIndexAddV2默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 - 就地语义
-  - self在调用后被原地改写（见功能说明）；GE 图模式（GEIR）不在本算子支持范围内。
+  - self在调用后被原地改写（见功能说明）；GE图模式（GEIR）不在本算子支持范围内。
 - index取值范围
   - 期望index取值范围在[0, self.shape[dim])范围内；接口第一段不校验index的取值范围，负值索引在kernel侧被守卫静默跳过（不参与累加），越界索引行为未定义（经InplaceIndexAdd路径执行时可能触发执行期异常）。
 - 空Tensor

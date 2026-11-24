@@ -107,7 +107,7 @@ aclnnStatus aclnnInplaceAddbmm(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -338,7 +338,7 @@ aclnnStatus aclnnInplaceAddbmm(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -549,7 +549,7 @@ aclnnStatus aclnnInplaceAddbmm(
   <!-- end id12 -->
 
 <!-- npu="A3,910b" id13 -->
-- <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：不支持batch1和batch2两输入其中一个输入为BFLOAT16,另一个输入为FLOAT或FLOAT16的数据类型推导。
+- <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：不支持batch1和batch2两输入其中一个输入为BFLOAT16，另一个输入为FLOAT或FLOAT16的数据类型推导。
 <!-- end id13 -->
 <!-- npu="910,310p" id14 -->
 - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：Cube单元不支持FLOAT32计算。当输入为FLOAT32，可通过设置cubeMathType=1（ALLOW_FP32_DOWN_PRECISION）来允许接口内部cast到FLOAT16进行计算。

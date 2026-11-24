@@ -137,7 +137,7 @@ aclnnStatus aclnnEinsum(
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
-  第一段接口完成入参校验，出现以下场景时报错:
+  第一段接口完成入参校验，出现以下场景时报错：
   <table style="undefined;table-layout: fixed; width: 828px"><colgroup>
   <col style="width: 300px">
   <col style="width: 200px">
@@ -166,7 +166,7 @@ aclnnStatus aclnnEinsum(
     <tr>
       <td>当equation=='abcd,abced-&gt;abce':
       <ul><li>tensors中包含2个Tensor (i.e. tensors[0] & tensors[1]);</li>
-      <li>tensors[0] 、tensors[1]、output三者数据类型需保持一致;</li>
+      <li>tensors[0]、tensors[1]、output三者数据类型需保持一致;</li>
       <li>tensors[0] 必须为4维;</li>
       <li>tensors[1] 必须为5维;</li>
       <li>tensors[0] 前3维必须等于tensors[1] 前3维度;</li>
@@ -176,7 +176,7 @@ aclnnStatus aclnnEinsum(
     <tr>
       <td>当equation=='a,b-&gt;ab':
       <ul><li>tensorList中包含2个Tensor (i.e. tensors[0] & tensors[1]);</li>
-      <li>tensors[0] 、tensors[1]、output三者数据类型需保持一致;</li>
+      <li>tensors[0]、tensors[1]、output三者数据类型需保持一致;</li>
       <li>tensors[0] 必须为1维;</li>
       <li>tensors[1] 必须为1维。</li></ul>
       </td>

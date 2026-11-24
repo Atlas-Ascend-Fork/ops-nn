@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：融合算子，实现CLA（Cross-Layer Attention）gate merge的反向梯度计算。输入上游梯度G = ∂L/∂O、两路原始 Attention输出O_g/O_l与两路 gate logits z_g/z_l，一次性计算并返回四个梯度：两路Attention输出梯度（dO_g、dO_l）与两路 gate logits 梯度（dz_g、dz_l）。本接口不做梯度量化：输出保持输入精度（BF16/FP16），不生成FP8梯度。反向算子不接收前向sigmoid中间结果，s_g/s_l由算子内重新计算。
+- 接口功能：融合算子，实现CLA（Cross-Layer Attention）gate merge的反向梯度计算。输入上游梯度G = ∂L/∂O、两路原始Attention输出O_g/O_l与两路gate logits z_g/z_l，一次性计算并返回四个梯度：两路Attention输出梯度（dO_g、dO_l）与两路gate logits梯度（dz_g、dz_l）。本接口不做梯度量化：输出保持输入精度（BF16/FP16），不生成FP8梯度。反向算子不接收前向sigmoid中间结果，s_g/s_l由算子内重新计算。
 
 - 计算公式：
 
@@ -50,8 +50,8 @@
   dz\_l = \left( \sum_{d=0}^{D-1} G \odot O\_l \right) \odot s\_l \odot (1 - s\_l)
   $$
 
-  - G⊙O_g/G⊙O_l的乘积与沿D的归约均在 FP32域完成（一次pass内完成，无额外内存往返），以降低归约累积误差。
-  - 无除法/指数溢出路径；NaN/Inf 输入按IEEE语义传播（无特殊保护需求）。
+  - G⊙O_g/G⊙O_l的乘积与沿D的归约均在FP32域完成（一次pass内完成，无额外内存往返），以降低归约累积误差。
+  - 无除法/指数溢出路径；NaN/Inf输入按IEEE语义传播（无特殊保护需求）。
 
 ## 函数原型
 

@@ -81,19 +81,19 @@
       out = (x1@x2 + bias) * scale + offset
       $$
 
-    - 有pertokenScaleOptional、无bias
+    - 有pertokenScaleOptional、无bias：
 
       $$
       out = x1@x2 * scale * pertokenScaleOptional
       $$
 
-    - 有pertokenScaleOptional、bias INT32
+    - 有pertokenScaleOptional、bias INT32：
 
       $$
       out = (x1@x2 + bias) * scale * pertokenScaleOptional
       $$
 
-    - 有pertokenScaleOptional、bias FLOAT32
+    - 有pertokenScaleOptional、bias FLOAT32：
 
       $$
       out = x1@x2 * scale * pertokenScaleOptional + bias
@@ -171,7 +171,7 @@ aclnnStatus aclnnQuantMatmulV4(
         <td>x2（const aclTensor*）</td>
         <td>输入</td>
         <td>公式中的输入x2。</td>
-        <td><ul> <li>NZ格式下，shape支持4~8维。</li> <li>在transposeX2为true情况下各个维度表示：（batch，k1，n1，n0，k0），batch可不存在，其中k0 = 32， n0 = 16， x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil（k / 32） = k1。</li> <li>在transposeX2为false情况下各个维度表示：（batch，n1，k1，k0，n0），batch可不存在，其中k0 = 16，n0 = 32，x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil（k / 16） = k1。</li> <li>可使用aclnnCalculateMatmulWeightSizeV2接口以及aclnnTransMatmulWeight接口完成输入Format从ND到NZ格式的转换。</li> <li>ND格式支持<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续Tensor</a>；NZ格式的限制见下方产品说明。</li> <li>transposeX2为false时shape为：（batch，k，n）。</li> <li>transposeX2为true时shape为：（batch，n，k），batch可不存在，其中k与x1的shape中的k一致。</li> </ul></td>
+        <td><ul> <li>NZ格式下，shape支持4~8维。</li> <li>在transposeX2为true情况下各个维度表示：（batch，k1，n1，n0，k0），batch可不存在，其中k0 = 32，n0 = 16，x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil（k / 32） = k1。</li> <li>在transposeX2为false情况下各个维度表示：（batch，n1，k1，k0，n0），batch可不存在，其中k0 = 16，n0 = 32，x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil（k / 16） = k1。</li> <li>可使用aclnnCalculateMatmulWeightSizeV2接口以及aclnnTransMatmulWeight接口完成输入Format从ND到NZ格式的转换。</li> <li>ND格式支持<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续Tensor</a>；NZ格式的限制见下方产品说明。</li> <li>transposeX2为false时shape为：（batch，k，n）。</li> <li>transposeX2为true时shape为：（batch，n，k），batch可不存在，其中k与x1的shape中的k一致。</li> </ul></td>
         <td>INT8、INT32、INT4</td>
         <td>ND、FRACTAL_NZ</td>
         <td>2-6（ND）<br/>4-8（NZ）</td>
@@ -332,7 +332,7 @@ aclnnStatus aclnnQuantMatmulV4(
       <tr>
         <td>ACLNN_ERR_PARAM_INVALID</td>
         <td>161002</td>
-        <td><ul><li>x1、x2、bias、pertokenScaleOptional、scale、offset或out的数据类型和数据格式不在支持的范围之内。</li><li>x1、x2、bias、pertokenScaleOptional、scale、offset或out的shape不满足校验条件。</li><li>x1、x2、bias、pertokenScaleOptional、scale、offset或out是空tensor，且不属于上述支持的空Tensor场景。</li></ul></td>
+        <td><ul><li>x1、x2、bias、pertokenScaleOptional、scale、offset或out的数据类型和数据格式不在支持的范围之内。</li><li>x1、x2、bias、pertokenScaleOptional、scale、offset或out的shape不满足校验条件。</li><li>x1、x2、bias、pertokenScaleOptional、scale、offset或out是空Tensor，且不属于上述支持的空Tensor场景。</li></ul></td>
       </tr>
       <tr>
         <td>ACLNN_ERR_INNER_CREATE_EXECUTOR</td>

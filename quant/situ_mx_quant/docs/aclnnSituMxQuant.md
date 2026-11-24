@@ -52,7 +52,7 @@ shared\_exp = floor(log2(max(|situOut_i|))) - emax
 $$
 
 $$
-y\_scale = 2^{shared\_exp}  (E8M0)
+y\_scale = 2^{shared\_exp} (E8M0)
 $$
 
 $$
@@ -108,7 +108,7 @@ aclnnStatus aclnnSituMxQuant(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
    <tbody>

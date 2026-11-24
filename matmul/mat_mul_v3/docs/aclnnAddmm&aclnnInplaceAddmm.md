@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：计算α 乘以mat1与mat2的乘积，再与β和self的乘积求和。
+- 接口功能：计算α乘以mat1与mat2的乘积，再与β和self的乘积求和。
 - 计算公式：
 
   $$
@@ -31,10 +31,10 @@
   $$
 
 - 示例：
-  * 对于aclnnAddmm接口，self的shape是[1, n], mat1的shape是[m, k], mat2的shape是[k, n], mat1和mat2的矩阵乘的结果shape是[m, n], self的shape能broadcast到[m, n]。
-  * 对于aclnnAddmm接口，self的shape是[m, 1], mat1的shape是[m, k], mat2的shape是[k, n], mat1和mat2的矩阵乘的结果shape是[m, n], self的shape能broadcast到[m, n]。
-  * 对于aclnnAddmm接口，self的shape是[m, n], mat1的shape是[m, k], mat2的shape是[k, n], mat1和mat2的矩阵乘的结果shape是[m, n]。
-  * 对于aclnnInplaceAddmm接口，直接在输入张量selfRef的内存中存储计算结果，selfRef的shape是[m, n], mat1的shape是[m, k], mat2的shape是[k, n]。
+  * 对于aclnnAddmm接口，self的shape是[1, n]，mat1的shape是[m, k]，mat2的shape是[k, n]，mat1和mat2的矩阵乘的结果shape是[m, n]，self的shape能broadcast到[m, n]。
+  * 对于aclnnAddmm接口，self的shape是[m, 1]，mat1的shape是[m, k]，mat2的shape是[k, n]，mat1和mat2的矩阵乘的结果shape是[m, n]，self的shape能broadcast到[m, n]。
+  * 对于aclnnAddmm接口，self的shape是[m, n]，mat1的shape是[m, k]，mat2的shape是[k, n]，mat1和mat2的矩阵乘的结果shape是[m, n]。
+  * 对于aclnnInplaceAddmm接口，直接在输入张量selfRef的内存中存储计算结果，selfRef的shape是[m, n]，mat1的shape是[m, k]，mat2的shape是[k, n]。
 
 ## 函数原型
 
@@ -106,7 +106,7 @@ aclnnStatus aclnnInplaceAddmm(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -338,7 +338,7 @@ aclnnStatus aclnnInplaceAddmm(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -573,7 +573,7 @@ aclnnStatus aclnnInplaceAddmm(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

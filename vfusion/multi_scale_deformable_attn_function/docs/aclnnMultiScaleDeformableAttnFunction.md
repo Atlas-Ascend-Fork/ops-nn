@@ -138,7 +138,7 @@ aclnnStatus aclnnMultiScaleDeformableAttnFunction(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -155,7 +155,7 @@ aclnnStatus aclnnMultiScaleDeformableAttnFunction(
       <td>spatialShape（aclTensor*）</td>
       <td>输入</td>
       <td>存储每个尺度特征图的高和宽。对应公式中的`spatialShape`。</td>
-      <td>shape为(num_levels, 2)。其中num_levels为特征图的数量，2分别代表H，W。</td>
+      <td>shape为(num_levels, 2)。其中num_levels为特征图的数量，2分别代表H、W。</td>
       <td>INT32、INT64</td>
       <td>ND</td>
       <td>2</td>
@@ -174,8 +174,8 @@ aclnnStatus aclnnMultiScaleDeformableAttnFunction(
     <tr>
       <td>location（aclTensor*）</td>
       <td>输入</td>
-      <td>采样点位置tensor，存储每个采样点的坐标位置。对应公式中的`location`。</td>
-      <td><ul><li>数据类型与value保持一致。</li><li>shape为(bs, num_queries, num_heads, num_levels, num_points, 2)。其中num_queries为查询的数量，num_points为采样点的数量，2分别代表y，x。</li></ul></td>
+      <td>采样点位置Tensor，存储每个采样点的坐标位置。对应公式中的`location`。</td>
+      <td><ul><li>数据类型与value保持一致。</li><li>shape为(bs, num_queries, num_heads, num_levels, num_points, 2)。其中num_queries为查询的数量，num_points为采样点的数量，2分别代表y、x。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>6</td>
@@ -184,7 +184,7 @@ aclnnStatus aclnnMultiScaleDeformableAttnFunction(
     <tr>
       <td>attnWeight（aclTensor*）</td>
       <td>输入</td>
-      <td>采样点权重tensor。对应公式中的`attnWeight`。</td>
+      <td>采样点权重Tensor。对应公式中的`attnWeight`。</td>
       <td><ul><il>数据类型与value保持一致。</il><il>shape为(bs, num_queries, num_heads, num_levels, num_points)。</il></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -280,7 +280,7 @@ aclnnStatus aclnnMultiScaleDeformableAttnFunction(
       <td>location的最后一轴不是2。</td>
     </tr>
     <tr>
-      <td>不满足接口约束说明章节。</td>
+      <td>不满足接口约束说明中的约束。</td>
     </tr>
   </tbody>
   </table>
@@ -338,7 +338,7 @@ aclnnStatus aclnnMultiScaleDeformableAttnFunction(
 <!-- npu="310p" id10 -->
 - <term>Atlas推理系列产品</term>：
   - 通道数channels%32 = 0，且channels <= 256
-  - 查询的数量32 <= num_queries< 500000
+  - 查询的数量32 <= num_queries < 500000
   - 特征图的数量num_levels <= 16
   - 头的数量num_heads = [2, 4, 8]
   - 采样点的数量num_points = [4, 8]

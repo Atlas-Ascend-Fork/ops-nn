@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-实现[aclnnEmbedding](../../../index/embedding/docs/aclnnEmbedding.md)的反向计算,将相同索引`indices`对应`grad`的一行累加到`out`上。
+实现[aclnnEmbedding](../../../index/embedding/docs/aclnnEmbedding.md)的反向计算，将相同索引`indices`对应`grad`的一行累加到`out`上。
 
 ## 函数原型
 
@@ -97,7 +97,7 @@ aclnnStatus aclnnEmbeddingDenseBackward(
       <tr>
         <td>numWeights</td>
         <td>输入</td>
-        <td>输出tensor的首轴大小。</td>
+        <td>输出Tensor的首轴大小。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -190,7 +190,7 @@ aclnnStatus aclnnEmbeddingDenseBackward(
       <td>grad、indices、out的数据类型和数据格式不在支持的范围之内。</td>
       </tr>
       <tr>
-      <td>grad, indices的维度超过8维。</td>
+      <td>grad、indices的维度超过8维。</td>
       </tr>
       <tr>
       <td>grad与indices的shape不满足约束条件。</td>

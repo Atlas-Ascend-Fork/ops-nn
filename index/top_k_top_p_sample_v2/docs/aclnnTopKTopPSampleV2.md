@@ -204,7 +204,7 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
 
   可选输出
 
-  * 如果​入参属性IsNeedLogits=True，则使用topK-topP-minP联合采样后的logitsIndexMasked，进行`logits_top_kp_select`输出。
+  * 如果入参属性IsNeedLogits=True，则使用topK-topP-minP联合采样后的logitsIndexMasked，进行`logits_top_kp_select`输出。
     $$
     \text{logitsIndex}[b][v] = \text{Index}(\text{logitsMinpFiltered}[b][v] \in \text{Logits})
     $$
@@ -221,7 +221,7 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
     \end{cases}
     $$
 
-  后继处理
+  后续处理
 
   * 此阶段输入为前序topK-topP-minP采样的联合结果logitsSortMasked。<br>如果上述前序采样环节都未开启，则直接使用输入logits的归一化结果：
 
@@ -243,13 +243,13 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
     \end{cases}
     $$
 
-    使得
+    使得：
 
     $$
     \text{probs}[b] = \text{logitsMinpFiltered}[b, :]
     $$
 
-    接下来有三种模式：None，QSample，输出中间结果，通过入参约束属性isNeedSampleResult和是否输入q加以控制。
+    接下来有三种模式：None、QSample、输出中间结果，通过入参约束属性isNeedSampleResult和是否输入q加以控制。
 
   * None:
 
@@ -619,7 +619,7 @@ aclnnStatus aclnnTopKTopPSampleV2(
     - logits、topK、topP、minPs、logitsSelectIdx、logitsIdx、logitsSortMasked除最后一维以外的所有维度必须顺序和大小完全一致。目前logits只能是2维，topK、topP、logitsSelectIdx必须是1维非空Tensor。logits、topK、topP不允许空Tensor作为输入，如需跳过相应模块，需按相应规则设置输入。
 
   - Q-Sample约束：
-      - 输入张量q的索引，总是按元素逐一对齐到相应batch进行后继处理时输入的$\text{probs}[b]$。
+      - 输入张量q的索引，总是按元素逐一对齐到相应batch进行后续处理时输入的$\text{probs}[b]$。
       - $\text{probs}[b]$输入必定紧凑排布，即有效元素集中在当前batch前段。
       - 如果当前batch的前序topK或topP采样至少开启其一，则$\text{probs}[b]$的元素还将满足降序排列。
   - 其他限制：

@@ -26,7 +26,7 @@
 - 接口功能：将scalar value中的值按指定的轴和方向和对应的位置关系逐个填入tensor self中。value会被broadcast成和tensor index的shape一致的tensor src进行Scatter的计算。
 
 - 示例：
-  对于一个3D tensor， self会按照如下的规则进行更新：
+  对于一个3D tensor，self会按照如下的规则进行更新：
 
   ```text
   self[index[i][j][k]][j][k] = value # 如果dim == 0
@@ -36,7 +36,7 @@
 
   在计算时需要满足以下要求：
   - self、index维度数量必须相同。
-  - 对于每一个维度d，如果d != dim,有index.size(d) <= self.size(d)的限制。
+  - 对于每一个维度d，如果d != dim，有index.size(d) <= self.size(d)的限制。
   - dim的值的大小必须在 [-self的维度数量, self的维度数量-1] 之间。
   - self的维度数应该小于等于8。
   - index中对应维度dim的值大小必须在[0, self.size(dim)-1]之间。
@@ -241,12 +241,12 @@
       <td>self和out的shape不一致。</td>
     </tr>
     <tr>
-      <td>self、index的shape不符合以下限制：<br>对于每一个维度d，如果d != dim,有index.size(d) <= self.size(d)的限制。 </td>
+      <td>self、index的shape不符合以下限制：<br>对于每一个维度d，如果d != dim，有index.size(d) <= self.size(d)的限制。</td>
     </tr>
     <tr>
     </tr>
     <tr>
-      <td>dim的值不在[-self的维度数量， self的维度数量-1]之间。</td>
+      <td>dim的值不在[-self的维度数量，self的维度数量-1]之间。</td>
     </tr>
     <tr>
       <td>self的维度数超过8。</td>
@@ -350,7 +350,7 @@
         <td>index</td>
         <td>输入</td>
         <td>公式中的index。</td>
-        <td>索引张量。index的维度数量需要与selfRef相同。对于每一个维度d，如果d != dim,需保证index.size(d) &lt;= selfRef.size(d)。支持空tensor。</td>
+        <td>索引张量。index的维度数量需要与selfRef相同。对于每一个维度d，如果d != dim，需保证index.size(d) &lt;= selfRef.size(d)。支持空tensor。</td>
         <td>INT32、INT64</td>
         <td>ND</td>
         <td>0-8</td>
@@ -436,12 +436,12 @@
       <td>selfRef、index的维度数不一致</td>
     </tr>
     <tr>
-      <td rowspan="2">selfRef、index的shape不符合以下限制：<br>对于每一个维度d，如果d != dim,有index.size(d) <= selfRef.size(d)的限制。<br></td>
+      <td rowspan="2">selfRef、index的shape不符合以下限制：<br>对于每一个维度d，如果d != dim，有index.size(d) <= selfRef.size(d)的限制。<br></td>
     </tr>
     <tr>
     </tr>
     <tr>
-      <td>dim的值不在[-selfRef的维度数量， selfRef的维度数量-1]之间。</td>
+      <td>dim的值不在[-selfRef的维度数量，selfRef的维度数量-1]之间。</td>
     </tr>
     <tr>
       <td>selfRef的维度数超过8。</td>
@@ -497,10 +497,10 @@
 
 ## 约束说明
 
-确定性说明:
+确定性说明：
 
 <!-- npu="950" id7 -->
-- <term>Ascend 950PR&950DT系列产品</term>：默认非确定性,支持通过aclrtSetSysParamOpt开启确定性（当reduction为累乘场景，开启确定性也不生效，依旧为非确定性）。
+- <term>Ascend 950PR&950DT系列产品</term>：默认非确定性，支持通过aclrtSetSysParamOpt开启确定性（当reduction为累乘场景，开启确定性也不生效，依旧为非确定性）。
 <!-- end id7 -->
 <!-- npu="A3,910b" id8 -->
 - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：默认确定性。

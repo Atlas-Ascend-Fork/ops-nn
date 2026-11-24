@@ -25,7 +25,7 @@
 
 - 接口功能：
 计算α与batch1、batch2的矩阵乘结果的乘积，再与β和self的乘积求和。
-注意：batch1、batch2必须是三维Tensor，两个shape仅在aclnnBaddbmm支持做broadcast,两个shape在aclnnInplaceBaddbmm做broadcast则会被拦截；
+注意：batch1、batch2必须是三维Tensor，两个shape仅在aclnnBaddbmm支持做broadcast，两个shape在aclnnInplaceBaddbmm做broadcast则会被拦截。
 self必须能broadcast到batch1@batch2的结果shape，支持N方向、M方向、scalar及per-batch scalar等broadcast形式。broadcast是指较小的shape扩展至较大的shape，使两个Tensor的shape互相兼容，即对应的每一维度必须相同或其中一个为1。
 
 - 计算公式：
@@ -37,7 +37,7 @@ self必须能broadcast到batch1@batch2的结果shape，支持N方向、M方向�
 
 - 示例：
 
-  self的shape是[1, M, K], batch1@batch2的shape是[A, M, 1]，计算输出out的shape是[A, M, K]。每一维度的数字需要相同或其中一个为1。此处若self的shape是[2, M, K]，则不满足broadcast条件，报错。
+  self的shape是[1, M, K]，batch1@batch2的shape是[A, M, 1]，计算输出out的shape是[A, M, K]。每一维度的数字需要相同或其中一个为1。此处若self的shape是[2, M, K]，则不满足broadcast条件，报错。
 
 ## 函数原型
 
@@ -117,7 +117,7 @@ aclnnStatus aclnnInplaceBaddbmm(
       <td>输入</td>
       <td>公式中的输入self。</td>
       <td><ul><li>数据类型需要与out保持一致。</li>
-      <li>shape需要与batch1@batch2的后两维的shape满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>（注意：只能是self通过broadcast变成和batch1@batch2的后两维一样的shape，不可以batch1@batch2的后两维通过broadcast变成和self一样，举例：self：[2, 3, 5]，batch1@batch2：[1, 1, 1]，会报错。）。</li>
+      <li>shape需要与batch1@batch2的后两维的shape满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>（注意：只能是self通过broadcast变成和batch1@batch2的后两维一样的shape，不可以batch1@batch2的后两维通过broadcast变成和self一样，举例：self：[2, 3, 5]，batch1@batch2：[1, 1, 1]，会报错）。</li>
       <li>支持空Tensor。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>ND</td>
@@ -455,14 +455,14 @@ aclnnStatus aclnnInplaceBaddbmm(
   <!-- npu="A3,910b" id12 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型是FLOAT32，会转换为FLOAT16计算；当输入为其他数据类型时不做处理；
+    - cubeMathType=2，当输入数据类型是FLOAT32时，会转换为FLOAT16计算；当输入为其他数据类型时不做处理；
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
     - cubeMathType=4，当selfRef、batch1和batch2均为FLOAT16或均为BFLOAT16时，批量矩阵乘与bias相加过程使用FLOAT32中间结果计算。
   <!-- end id12 -->
   <!-- npu="950" id13 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型是FLOAT32，会转换为FLOAT16计算；当输入为其他数据类型时不做处理；
+    - cubeMathType=2，当输入数据类型是FLOAT32时，会转换为FLOAT16计算；当输入为其他数据类型时不做处理；
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
     - cubeMathType=4时不做处理。
 

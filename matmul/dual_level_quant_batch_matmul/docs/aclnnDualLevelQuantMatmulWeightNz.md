@@ -24,7 +24,7 @@
 ## 功能说明
 
 - 接口功能：完成二级量化mxfp4的矩阵乘计算，其中参数x2需为NZ格式，可通过[aclnnTransMatmulWeight](https://gitcode.com/cann/ops-math/blob/master/conversion/trans_data/docs/aclnnTransMatmulWeight.md)或[aclnnNpuFormatCast](https://gitcode.com/cann/ops-math/blob/master/conversion/npu_format_cast/docs/aclnnNpuFormatCast.md)对format为ND的x2处理得到NZ格式。
-- 计算公式
+- 计算公式：
 
   $$
   out =\sum_{i}^{level0GroupSize} x1Level0Scale @ x2Level0Scale \sum_{ij}^{level1GroupSize} ((x1Level1Scale @ x1_{ij})@ (x2Level1Scale @ x2_{ij})) + bias
@@ -308,7 +308,7 @@ aclnnStatus aclnnDualLevelQuantMatmulWeightNz(
       <tr>
         <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
         <td rowspan="4">161002</td>
-        <td>x1、x2、x1Level0Scale、x1Level1Scale、x2Level0Scale、x2Level1Scale是空tensor。</td>
+        <td>x1、x2、x1Level0Scale、x1Level1Scale、x2Level0Scale、x2Level1Scale是空Tensor。</td>
       </tr>
       <tr>
         <td>x1、x2、x1Level0Scale、x1Level1Scale、x2Level0Scale、x2Level1Scale或out的数据类型和数据格式不在支持的范围之内。</td>

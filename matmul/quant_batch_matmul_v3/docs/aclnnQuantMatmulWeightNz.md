@@ -209,7 +209,7 @@ aclnnStatus aclnnQuantMatmulWeightNz(
         <td>x2Scale（const aclTensor*）</td>
         <td>输入</td>
         <td>表示量化参数，公式中的输入x2Scale。</td>
-        <td><ul> <li>x2Scale是FLOAT8_E8M0且为ND格式时，各个维度表示：transposeX2为false时为(batch, ceil(k / 64), n, 2)，transposeX2为true时为(batch, n, ceil(k / 64), 2)，batch与x2的batch维度保持一致。</li> <li>x2Scale是FLOAT8_E8M0且为NZ格式时（ScaleNZ），逻辑shape固定为(batch, ceil(k / 64), n, 2)，存储shape为(batch, ceil(n / 16), ceil(k / 64), 16, 2)，不随transposeX2改变。支持范围及限制见<a href="#scalenz约束">ScaleNZ约束</a>。</li> <li>非分组量化中，x2Scale为其他数据类型时shape为(1,)或(n,)，n与x2的n一致；分组模式及T-CG场景的shape见<a href="#约束说明">约束说明</a>。</li> <li>当x1、x2的数据类型为HIFLOAT8且x2为NZ格式时，静态量化场景下x2Scale支持UINT64、INT64；动态量化场景下x1Scale和x2Scale均支持FLOAT32。</li> <li>当原始输入类型不满足<a href="#约束说明">约束说明</a>中组合时，需提前调用TransQuantParamV2算子的aclnn接口来将scale转成INT64、UINT64数据类型。</li> </ul></td>
+        <td><ul> <li>x2Scale是FLOAT8_E8M0且为ND格式时，各个维度表示：transposeX2为false时为(batch, ceil(k / 64), n, 2)，transposeX2为true时为(batch, n, ceil(k / 64), 2)，batch与x2的batch维度保持一致。</li> <li>x2Scale是FLOAT8_E8M0且为NZ格式时（ScaleNZ），逻辑shape固定为(batch, ceil(k / 64), n, 2)，存储shape为(batch, ceil(n / 16), ceil(k / 64), 16, 2)，不随transposeX2改变。支持范围及限制见<a href="#scalenz约束">ScaleNZ约束</a>。</li> <li>非分组量化中，x2Scale为其他数据类型时shape为(1,)或(n,)，n与x2的n一致；分组模式及T-CG场景的shape见<a href="#约束说明">约束说明</a>。</li> <li>当x1、x2的数据类型为HIFLOAT8且x2为NZ格式时，静态量化场景下x2Scale支持UINT64、INT64；动态量化场景下x1Scale和x2Scale均支持FLOAT32。</li> <li>当原始输入类型不满足<a href="#约束说明">约束说明</a>中类型组合时，需提前调用TransQuantParamV2算子的aclnn接口来将scale转成INT64、UINT64数据类型。</li> </ul></td>
         <td>UINT64、INT64、FLOAT32<sup>1</sup>、BFLOAT16<sup>1</sup>、FLOAT8_E8M0<sup>1、2</sup>、FLOAT16<sup>1、2</sup></td>
         <td>ND、FRACTAL_NZ</td>
         <td>1～7（ND）<br/>3～7（NZ逻辑shape）<br/>4～8（NZ存储shape）</td>
@@ -229,7 +229,7 @@ aclnnStatus aclnnQuantMatmulWeightNz(
         <td>x1Offset（const aclTensor*）</td>
         <td>可选输入</td>
         <td>预留参数。</td>
-        <td>当前版本不支持，需要传入nullptr或空tensor。</td>
+        <td>当前版本不支持，需要传入nullptr或空Tensor。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -289,7 +289,7 @@ aclnnStatus aclnnQuantMatmulWeightNz(
         <td>groupSize（int64_t）</td>
         <td>输入</td>
         <td>用于输入m、n、k方向上的量化分组大小。</td>
-        <td>由3个方向的groupSizeM，groupSizeN，groupSizeK三个值拼接组成，每个值占16位，共占用int64_t类型groupSize的低48位（高16位的数值无效），计算公式见表格下方公式一。不支持groupSize的场景，传入0。</td>
+        <td>由3个方向的groupSizeM、groupSizeN、groupSizeK三个值拼接组成，每个值占16位，共占用int64_t类型groupSize的低48位（高16位的数值无效），计算公式见表格下方公式一。不支持groupSize的场景，传入0。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -490,8 +490,8 @@ aclnnStatus aclnnQuantMatmulWeightNz(
     | INT4 | INT4 | null/FLOAT32 | FLOAT32 | null/FLOAT32 | null | null/INT32 | FLOAT16 |
     | INT8 | INT32 | FLOAT32 | UINT64 | null | FLOAT32 | null | FLOAT16/BFLOAT16 |
 
-- x1的约束：当数据类型为INT8时，且x2的数据类型为INT32时，transposeX1为false。维度为：（m，k），要求k为偶数，并小于29576。
-- yOffset的约束：shape支持1维（n）。为计算过程中离线计算的辅助结果，值要求为8\*x2\*x2Scale，并在第1维累加。
+- x1的约束：当数据类型为INT8时，且x2的数据类型为INT32时，transposeX1为false。维度为（m, k），要求k为偶数，并小于29576。
+- yOffset的约束：shape支持1维（n），为计算过程中离线计算的辅助结果，值要求为8\*x2\*x2Scale，并在第1维累加。
 
 </details>
 <!-- end id10 -->
@@ -512,7 +512,7 @@ aclnnStatus aclnnQuantMatmulWeightNz(
     | ---- | ---- | ------- | ------------ | ------------- | ------------------ | ------- |
     | INT8 | INT8 | null | UINT64/INT64 | null | null/INT32 | FLOAT16 |
     | INT8 | INT8 | null | UINT64/INT64 | null/FLOAT32 | null/INT32 | INT8 |
-    | INT8 | INT8 | FLOAT | FLOAT | null | null/INT32/FLOAT32 | FLOAT16 |
+    | INT8 | INT8 | FLOAT32 | FLOAT32 | null | null/INT32/FLOAT32 | FLOAT16 |
 
 - 当x1Scale不为null时，只支持K-C量化。
 
@@ -534,8 +534,8 @@ aclnnStatus aclnnQuantMatmulWeightNz(
 
       | x1 | x2 | x1Scale | x2Scale | x2Offset | yScale | bias | out |
       | --------------- | ----------- | ----------- | --------------- | ------------ | ------- | -------------------------- | ---------------------- |
-      | INT8 | INT8 | null | UINT64/ INT64 | null | null | null/INT32 | FLOAT16/ BFLOAT16 |
-      | INT8 | INT8 | null | UINT64/ INT64 | null/FLOAT32 | null | null/INT32 | INT8 |
+      | INT8 | INT8 | null | UINT64/INT64 | null | null | null/INT32 | FLOAT16/BFLOAT16 |
+      | INT8 | INT8 | null | UINT64/INT64 | null/FLOAT32 | null | null/INT32 | INT8 |
       | INT8 | INT8 | null | FLOAT32/BFLOAT16 | null | null | null/INT32/FLOAT32/BFLOAT16 | BFLOAT16 |
       | INT8 | INT8 | null | FLOAT32/BFLOAT16 | null | null | null/INT32 | INT32 |
       | HIFLOAT8 | HIFLOAT8 | null | UINT64/INT64 | null | null | null/FLOAT32 | FLOAT16/BFLOAT16/FLOAT32 |
@@ -568,8 +568,8 @@ aclnnStatus aclnnQuantMatmulWeightNz(
 
       | x1 | x2 | x1Scale | x2Scale | x2Offset | yScale | bias | out |
       | -------------------- | -------------------- | ------- | --------------- | -------- | ------- | ------------------------- | ------------------------- |
-      | FLOAT8_E4M3FN | FLOAT8_E4M3FN | FLOAT32 | FLOAT32 | null | null | null | FLOAT16/BFLOAT16/  FLOAT32 |
-      | HIFLOAT8 | HIFLOAT8 | FLOAT32 | FLOAT32 | null | null | null | FLOAT16/BFLOAT16/  FLOAT32 |
+      | FLOAT8_E4M3FN | FLOAT8_E4M3FN | FLOAT32 | FLOAT32 | null | null | null | FLOAT16/BFLOAT16/FLOAT32 |
+      | HIFLOAT8 | HIFLOAT8 | FLOAT32 | FLOAT32 | null | null | null | FLOAT16/BFLOAT16/FLOAT32 |
 
   - x1、x2、x1Scale、x2Scale和groupSize的取值关系：
 
@@ -579,7 +579,7 @@ aclnnStatus aclnnQuantMatmulWeightNz(
       | G-B量化 | <ul><li>非转置：(batch, m, k)</li></ul> | <ul><li>非转置：(batch, k, n)</li><li>转置：(batch, n, k)</li></ul> | <ul><li>非转置：(batch, m, ceil(k / 128))</li></ul> | <ul><li>非转置：(batch, ceil(k / 128), ceil(n / 128))</li><li>转置：(batch, ceil(n / 128), ceil(k / 128))</li></ul> | null | [1, 128, 128] | 4303356032 |
 
   - 注：上表中gsM、gsK和gsN分别表示groupSizeM、groupSizeK和groupSizeN。gsM、gsK和gsN为0的维度会自动推导，上表中是不用自动推导的情况。
-  - G-B量化和B-B量化场景下，x1只支持非转置，x2和x2Scale的转置属性需要保持一致(当shape轴里有1，并且非动态图NZ场景，x和scale的转置属性可以不一致)。
+  - G-B量化和B-B量化场景下，x1只支持非转置，x2和x2Scale的转置属性需要保持一致（当shape轴里有1，并且非动态图NZ场景，x和scale的转置属性可以不一致）。
   - Batch一致性说明：B-B量化场景不支持Batch一致性。即使开启Batch一致性开关，也不能保证输出满足Batch一致性要求。
 
 - **MX量化场景约束：**
@@ -600,7 +600,7 @@ aclnnStatus aclnnQuantMatmulWeightNz(
       | MX全量化 | FLOAT8_E4M3FN | FLOAT8_E4M3FN | <ul><li>非转置：(batch, m, k)</li><li>转置：(batch, k, m)</li></ul> | <ul><li>非转置：(batch, k, n)</li><li>转置：(batch, n, k)</li></ul> | <ul><li>非转置：(batch, m, ceil(k / 64), 2)</li><li>转置：(batch, ceil(k / 64), m, 2)</li></ul> | <ul><li>非转置：(batch, ceil(k / 64), n, 2)</li><li>转置：(batch, n, ceil(k / 64), 2)</li></ul> | (n,)或(batch, 1, n) | null | [1, 1, 32] | 4295032864 |
       | MX全量化 | FLOAT4_E2M1 | FLOAT4_E2M1 | <ul><li>非转置：(batch, m, k)</li></ul> | <ul><li>非转置：(batch, k, n)</li><li>转置：(batch, n, k)</li></ul> | <ul><li>非转置：(batch, m, ceil(k / 64), 2)</li></ul> | <ul><li>非转置：(batch, ceil(k / 64), n, 2)</li><li>转置：(batch, n, ceil(k / 64), 2)</li></ul> | (n,)或(batch, 1, n) | null | [1, 1, 32] | 4295032864 |
 
-  - 上表中x2Scale的shape适用于ND格式。MX全量化场景下，当x1与x2数据类型为FLOAT8_E4M3FN/FLOAT4_E2M1时，x1和x1Scale的转置属性需要保持一致；当x2Scale为ND格式时，x2和x2Scale的转置属性需要保持一致。ScaleNZ采用下述固定的shape约束。
+  - 上表中x2Scale的shape适用于ND格式。MX全量化场景下，当x1与x2数据类型为FLOAT8_E4M3FN/FLOAT4_E2M1时，x1和x1Scale的转置属性需要保持一致；当x2Scale为ND格式时，x2和x2Scale的转置属性需要保持一致。ScaleNZ遵循下述固定的shape约束。
   - MX全量化场景下，当x1与x2数据类型为FLOAT4_E2M1时，需满足以下条件：
     - x1和x2的内轴必须为偶数，且k必须大于2。
     - transposeX1必须为false。
@@ -630,7 +630,7 @@ aclnnStatus aclnnQuantMatmulWeightNz(
   - 约束说明：
     - MX量化模式下，k要求8对齐，n要求8对齐。
     - T-CG量化模式下，k要求32对齐且大于等于64，n要求8对齐。
-    - x1是FLOAT8_E4M3FN，x2是FLOAT32时，x2表示一个FLOAT32存储8个FLOAT4_E2M1的紧密排布的数据格式。
+    - x1是FLOAT8_E4M3FN，x2是FLOAT32时，x2表示一个FLOAT32存储8个FLOAT4_E2M1的紧密排布数据格式。
     - MX量化模式下，bias数据类型与out数据类型需要一致；T-CG量化模式下，x2Scale的数据类型和out的数据类型需要一致。
     - MX量化模式下，x2Scale支持NZ格式。ScaleNZ的逻辑shape固定为(ceil(k / 64), n, 2)，存储shape为(ceil(n / 16), ceil(k / 64), 16, 2)，不随transposeX2改变。x2必须为NZ格式（WeightNZ），不支持ND格式的x2搭配ScaleNZ；ND格式的x2Scale仍沿用上表shape约束。MXA8W4场景推荐先调用[aclnnWeightQuantPreprocess](https://gitcode.com/cann/ops-math/blob/master/conversion/weight_quant_preprocess/docs/aclnnWeightQuantPreprocess.md)预处理weight和weightScale，其outWeightScale即为ScaleNZ格式，可直接作为本接口的x2Scale输入；也可通过[aclnnNpuFormatCast](https://gitcode.com/cann/ops-math/blob/master/conversion/npu_format_cast/docs/aclnnNpuFormatCast.md)将ND格式的x2Scale转换为NZ格式，转换前须将数据按(ceil(k / 64), n, 2)排列并连续存储，即view shape与物理排布均为(ceil(k / 64), n, 2)；若数据按(n, ceil(k / 64), 2)排布，须先交换两轴并重排数据，不能仅修改shape。x1Scale保持ND格式。ScaleNZ采用与MX全量化一致的固定shape约束，详见<a href="#scalenz约束">ScaleNZ约束</a>。
 

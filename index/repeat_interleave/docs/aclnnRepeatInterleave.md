@@ -85,7 +85,7 @@ aclnnStatus aclnnRepeatInterleave(
       <tr>
         <td>self（aclTensor*）</td>
         <td>输入</td>
-        <td>功能说明中待被数据复制的输入tensor。</td>
+        <td>功能说明中待被数据复制的输入Tensor。</td>
         <td>支持空Tensor。</td>
         <td>UINT8、UINT16、UINT32、UINT64、INT8、INT16、INT32、INT64、BOOL、FLOAT16、BFLOAT16、FLOAT</td>
         <td>ND</td>
@@ -115,7 +115,7 @@ aclnnStatus aclnnRepeatInterleave(
       <tr>
         <td>out（aclTensor*）</td>
         <td>输出</td>
-        <td>功能说明中数据复制完成的输出tensor。</td>
+        <td>功能说明中数据复制完成的输出Tensor。</td>
         <td>数据类型需要与self一致。<br>shape为1D Tensor，shape大小与outputSize相同。</td>
         <td>UINT8、UINT16、UINT32、UINT64、INT8、INT16、INT32、INT64、BOOL、FLOAT16、BFLOAT16、FLOAT</td>
         <td>ND</td>
@@ -176,7 +176,7 @@ aclnnStatus aclnnRepeatInterleave(
         <td>self、out的数据类型不一样。</td>
       </tr>
       <tr>
-        <td>repeats不为0D/1D tensor。</td>
+        <td>repeats不为0D/1D Tensor。</td>
       </tr>
       <tr>
         <td>当repeats为1D tensor，repeats的size不为1，且不为self的元素个数。</td>
@@ -238,7 +238,7 @@ aclnnStatus aclnnRepeatInterleave(
 
 - 确定性计算：
   - aclnnRepeatInterleave默认确定性实现。
-- 输入shape限制：repeats只能为0D/1D tensor。如果为1D tensor，那么repeats的size必须为1或self的元素个数。
+- 输入shape限制：repeats只能为0D/1D Tensor。如果为1D Tensor，那么repeats的size必须为1或self的元素个数。
 - 输入值域限制：repeats tensor中的值必须为自然数。
 - 其他限制：outputSize的值必须符合以下计算结果：当repeats中只有一个元素时，outputSize = self的元素个数 * repeats的值。当repeats中有多个值时，outputSize = repeats的值之和。
 

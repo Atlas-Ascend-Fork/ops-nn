@@ -213,19 +213,19 @@ aclnnStatus aclnnNLLLoss2dBackward(
       <td> gradOutput、self、weight、totalWeight、out的数据类型不一致。</td>
       </tr>
       <tr>
-      <td> target非3维tensor，self非4维tensor。</td>
+      <td> target非3维Tensor，self非4维Tensor。</td>
       </tr>
        <tr>
       <td>weight的元素个数不是C。</td>
       </tr>
       <tr>
-      <td>self的第0，2，3维的元素个数和target的第0，1，2维元素个数不相等。</td>
+      <td>self的第0、2、3维的元素个数和target的第0、1、2维元素个数不相等。</td>
       </tr>
       <tr>
       <td> totalWeight的元素个数不是1。</td>
       </tr>
       <tr>
-      <td>reduction是none时，gradOutput的维数不是3或者gradOutput的第0，1，2维的元素个数和target的第0，1，2维元素个数不相等。</td>
+      <td>reduction是none时，gradOutput的维数不是3或者gradOutput的第0、1、2维的元素个数和target的第0、1、2维元素个数不相等。</td>
       </tr>
       <tr>
       <td>reduction不是none时，gradOutput的维数大于1或者元素个数不为1。</td>
@@ -288,7 +288,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

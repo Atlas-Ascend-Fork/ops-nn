@@ -28,7 +28,7 @@
 - 对固定的上游梯度，等价于对标量
   $S=\langle output,dy\rangle+\langle hy,dh\rangle+\langle cy,dc\rangle$
   求导，返回$(\partial S/\partial input,\partial S/\partial h_0,\partial S/\partial c_0,\partial S/\partial params)$。这里的内积表示对应元素乘积之和。
-- 七个保存列表来自同一次train=True正向，对应关系如下。列表内张量始终采用time-first的[time_step, batch_size, hidden_size]，不随batchFirst改变。
+- 七个保存列表来自同一次train=True正向，对应关系如下：列表内张量始终采用time-first的[time_step, batch_size, hidden_size]，不随batchFirst改变。
 
 | 正向输出列表 | 本接口输入列表 | 内容 |
 | --- | --- | --- |
@@ -89,13 +89,11 @@ $$
    $$
    \delta\mathbf{h}_t = \mathrm{dy}_t + \delta\mathbf{h}_{\text{next}}
    $$
-
 2. **当前细胞状态梯度**
 
    $$
    \delta\mathbf{c}_t = \delta\mathbf{h}_t \odot \mathbf{o}_t \odot (1 - \tanh^2(\mathbf{c}_t)) + \delta\mathbf{c}_{\text{next}}
    $$
-
 3. **门控梯度计算**
 
    $$
@@ -113,7 +111,6 @@ $$
    $$
    \delta\mathbf{f}_t = \delta\mathbf{c}_t \odot \mathbf{c}_{t-1} \odot \mathbf{f}_t \odot (1 - \mathbf{f}_t)
    $$
-
 4. **参数梯度累加**
 
    $$
@@ -147,7 +144,6 @@ $$
    $$
    \frac{\partial L}{\partial \mathbf{b}_o} \mathrel{+}= \delta\mathbf{o}_t
    $$
-
 5. **传播到前一时刻**
 
    $$
@@ -162,7 +158,6 @@ $$
    $$
    \delta\mathbf{c}_{\text{prev}} = \delta\mathbf{c}_t \odot \mathbf{f}_t
    $$
-
 6. **更新传播变量**
 
    $$
@@ -524,7 +519,7 @@ aclnnStatus aclnnLstmBackward(
     <tr>
       <td>outputMask</td>
       <td>输入</td>
-      <td>保留的四组梯度掩码参数。</td>
+      <td>预留的四组梯度掩码参数。</td>
       <td>可传空指针；非空时长度必须为4，依次对应dxOut、dhPrevOut、dcPrevOut、dparamsOut。当前不按元素值裁剪计算，四组梯度始终计算且四组输出均须提供。</td>
       <td>ACL_BOOL_ARRAY</td>
       <td>-</td>

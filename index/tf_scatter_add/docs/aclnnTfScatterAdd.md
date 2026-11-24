@@ -87,7 +87,7 @@ aclnnStatus aclnnTfScatterAdd(
       <td>输入/输出</td>
       <td>公式中的输入varRef，要进行更新的初始张量。</td>
       <td>-</td>
-      <td>FLOAT32，FLOAT16，BFLOAT16，INT32，INT8，UINT8</td>
+      <td>FLOAT32、FLOAT16、BFLOAT16、INT32、INT8、UINT8</td>
       <td>ND</td>
       <td>1-8</td>
       <td>√</td>
@@ -107,7 +107,7 @@ aclnnStatus aclnnTfScatterAdd(
       <td>输入</td>
       <td>公式中的输入updates，要添加到varRef中的更新值。</td>
       <td>-</td>
-      <td>FLOAT32，FLOAT16，BFLOAT16，INT32，INT8，UINT8</td>
+      <td>FLOAT32、FLOAT16、BFLOAT16、INT32、INT8、UINT8</td>
       <td>ND</td>
       <td>1-8</td>
       <td>√</td>

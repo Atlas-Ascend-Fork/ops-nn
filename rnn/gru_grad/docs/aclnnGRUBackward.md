@@ -112,7 +112,7 @@
        <td>FLOAT32、FLOAT16</td>
        <td>ND</td>
        <td><ul>
-       <li>若传入有效batchSizes，为[time_step * batch_size, input_size];</li>
+       <li>若传入有效batchSizes，为[time_step * batch_size, input_size]；</li>
        <li>若传入空指针batchSizes，为[time_step, batch_size, input_size] 或 [batch_size, time_step, input_size]</li>
        <li>不支持空tensor</li></ul></td>
        <td>√</td>
@@ -146,7 +146,7 @@
        <td>FLOAT32、FLOAT16</td>
        <td>ND</td>
        <td><ul>
-       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size * D];</li>
+       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size * D]；</li>
        <li>若传入空指针batchSizes，为[time_step, batch_size, hidden_size * D] 或 [batch_size, time_step, hidden_size * D]</li>
        <li>不支持空tensor</li></ul></td>
        <td>√</td>
@@ -169,7 +169,7 @@
        <td>FLOAT32、FLOAT16</td>
        <td>ND</td>
        <td><ul>
-       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size];</li>
+       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size]；</li>
        <li>若传入空指针batchSizes，为[time_step, batch_size, hidden_size]</li>
        <li>不支持空tensor</li></ul></td>
        <td>√</td>
@@ -182,7 +182,7 @@
        <td>FLOAT32、FLOAT16</td>
        <td>ND</td>
        <td><ul>
-       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size];</li>
+       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size]；</li>
        <li>若传入空指针batchSizes，为[time_step, batch_size, hidden_size]</li>
        <li>不支持空tensor</li></ul></td>
        <td>√</td>
@@ -195,7 +195,7 @@
        <td>FLOAT32、FLOAT16</td>
        <td>ND</td>
        <td><ul>
-       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size];</li>
+       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size]；</li>
        <li>若传入空指针batchSizes，为[time_step, batch_size, hidden_size]</li>
        <li>不支持空tensor</li></ul></td>
        <td>√</td>
@@ -208,7 +208,7 @@
        <td>FLOAT32、FLOAT16</td>
        <td>ND</td>
        <td><ul>
-       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size];</li>
+       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size]；</li>
        <li>若传入空指针batchSizes，为[time_step, batch_size, hidden_size]</li>
        <li>不支持空tensor</li></ul></td>
        <td>√</td>
@@ -221,7 +221,7 @@
        <td>FLOAT32、FLOAT16</td>
        <td>ND</td>
        <td><ul>
-       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size];</li>
+       <li>若传入有效batchSizes，为[time_step * batch_size, hidden_size]；</li>
        <li>若传入空指针batchSizes，为[time_step, batch_size, hidden_size]</li>
        <li>不支持空tensor</li></ul></td>
        <td>√</td>
@@ -284,7 +284,7 @@
        <td>FLOAT32、FLOAT16</td>
        <td>ND</td>
        <td><ul>
-        <li>若传入有效batchSizes，为[time_step * batch_size, input_size];</li>
+        <li>若传入有效batchSizes，为[time_step * batch_size, input_size]；</li>
         <li>若传入空指针batchSizes，为[time_step, batch_size, input_size] 或 [batch_size, time_step, input_size]</li>
         <li>不支持空tensor</li></ul></td>
        <td>√</td>
@@ -426,7 +426,7 @@
 
   - aclnnGRUBackward默认确定性实现。
   - 支持FP16/FP32，所有输入的数据类型需保持一致。
-  - 当 W = numLayers・D・T・B・H・(I+H)  ≥  9,622,080时，可能产生超时现象。
+  - 当 W = numLayers・D・T・B・H・(I+H) ≥ 9,622,080时，可能产生超时现象。
 
 ## 调用示例
 

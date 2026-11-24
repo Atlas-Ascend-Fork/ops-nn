@@ -157,8 +157,8 @@ aclnnStatus aclnnBatchMatMul(
 
   <!-- npu="950,A3,910b" id7 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>、<term>Ascend 950PR&950DT系列产品</term>：
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型是FLOAT32，会转换为FLOAT16计算；当输入为其他数据类型时不做处理；
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+    - cubeMathType=2，当输入数据类型是FLOAT32，会转换为FLOAT16计算；当输入为其他数据类型时不做处理。
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
   <!-- end id7 -->
   <!-- npu="910b" id12 -->
@@ -167,9 +167,9 @@ aclnnStatus aclnnBatchMatMul(
   <!-- end id12 -->
   <!-- npu="910,310p" id8 -->
   - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：
-    - 不支持BFLOAT16数据类型；
-    - 当输入数据类型为FLOAT32时不支持cubeMathType=0；
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理；
+    - 不支持BFLOAT16数据类型。
+    - 当输入数据类型为FLOAT32时不支持cubeMathType=0。
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理。
     - 不支持cubeMathType=3。
 
   <!-- end id8 -->
@@ -280,7 +280,7 @@ aclnnStatus aclnnBatchMatMul(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

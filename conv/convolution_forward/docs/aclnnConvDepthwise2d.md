@@ -191,7 +191,7 @@ aclnnStatus aclnnConvDepthwise2d(
 
 - **返回值**
 
-  `aclnnStatus`：返回状态码，具体参见 <a href="../../../docs/zh/context/aclnn_return_code.md">aclnn返回码</a>。
+  `aclnnStatus`：返回状态码，具体参见<a href="../../../docs/zh/context/aclnn_return_code.md">aclnn返回码</a>。
 
   第一段接口完成入参校验，出现以下场景时报错：
   <table style="undefined;table-layout: fixed; width: 1430px"><colgroup>
@@ -266,7 +266,7 @@ aclnnStatus aclnnConvDepthwise2d(
 
 - **返回值**
 
-  `aclnnStatus`：返回状态码，具体参见 <a href="../../../docs/zh/context/aclnn_return_code.md">aclnn返回码</a>。
+  `aclnnStatus`：返回状态码，具体参见<a href="../../../docs/zh/context/aclnn_return_code.md">aclnn返回码</a>。
 
 ## 约束说明
 

@@ -99,7 +99,6 @@
   - -2轴量化结果为y2Out和scale2Out。
   - scale1Out和scale2Out的数据类型均为FLOAT8_E8M0。
 
-- group场景的groupIndexOptional采用cumsum模式。设其元素为
   $\{t_0,t_1,\ldots,t_{G-1}\}$，必须满足：
 
   $$
@@ -114,7 +113,7 @@
 
 每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用aclnnSwigluBackwardGroupQuantWithDualAxisGetWorkspaceSize接口获取计算所需workspace大小以及包含算子计算流程的执行器，再调用aclnnSwigluBackwardGroupQuantWithDualAxis接口执行计算。
 
-```Cpp
+```cpp
 aclnnStatus aclnnSwigluBackwardGroupQuantWithDualAxisGetWorkspaceSize(
     const aclTensor *gradY,
     const aclTensor *x,
@@ -135,7 +134,7 @@ aclnnStatus aclnnSwigluBackwardGroupQuantWithDualAxisGetWorkspaceSize(
     aclOpExecutor   **executor)
 ```
 
-```Cpp
+```cpp
 aclnnStatus aclnnSwigluBackwardGroupQuantWithDualAxis(
     void          *workspace,
     uint64_t       workspaceSize,

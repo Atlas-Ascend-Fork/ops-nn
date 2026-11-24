@@ -23,14 +23,14 @@
 
 ## 功能说明
 
-- 接口功能：算子repeatInterleave的反向,将yGrad tensor的axis维度按repeats进行ReduceSum。
+- 接口功能：算子repeatInterleave的反向，将yGrad tensor的axis维度按repeats进行ReduceSum。
 
 - 示例：
     假设tensor yGrad是([[a<sub>1</sub>, b<sub>1</sub>, c<sub>1</sub>, d<sub>1</sub>, e<sub>1</sub>, f<sub>1</sub>], [a<sub>2</sub>, b<sub>2</sub>, c<sub>2</sub>, d<sub>2</sub>, e<sub>2</sub>, f<sub>2</sub>]]), repeats为([1, 2, 2, 1])，axis为1。
     那么最后生成的tensor为tensor([[a<sub>1</sub>, b<sub>1</sub> + c<sub>1</sub>, d<sub>1</sub> + e<sub>1</sub>, f<sub>1</sub>], [a<sub>2</sub>, b<sub>2</sub> + c<sub>2</sub>, d<sub>2</sub> + e<sub>2</sub>, f<sub>2</sub>]])。将tensor yGrad的axis轴按照repeats做ReduceSum。
 
     假设tensor yGrad是([[a<sub>1</sub>, b<sub>1</sub>, c<sub>1</sub>, d<sub>1</sub>, e<sub>1</sub>, f<sub>1</sub>], [a<sub>2</sub>, b<sub>2</sub>, c<sub>2</sub>, d<sub>2</sub>, e<sub>2</sub>, f<sub>2</sub>]]), repeats为([2])，axis为1。
-    那么最后生成的tensor为tensor([[a<sub>1</sub> + b<sub>1</sub>， c<sub>1</sub> + d<sub>1</sub>， e<sub>1</sub> + f<sub>1</sub>], [a<sub>2</sub> + b<sub>2</sub>, c<sub>2</sub> + d<sub>2</sub>, e<sub>2</sub> + f<sub>2</sub>]])。将tensor yGrad的axis轴按照repeats的值，每2根轴做ReduceSum。
+    那么最后生成的tensor为tensor([[a<sub>1</sub> + b<sub>1</sub>， c<sub>1</sub> + d<sub>1</sub>， e<sub>1</sub> + f<sub>1</sub>], [a<sub>2</sub> + b<sub>2</sub>, c<sub>2</sub> + d<sub>2</sub>, e<sub>2</sub> + f<sub>2</sub>]])。将tensor yGrad的axis轴按照repeats的值，每2个轴做ReduceSum。
     注意：该场景等效于repeats为(2)。
 
 ## 函数原型
@@ -95,7 +95,7 @@
       <td>repeats</td>
       <td>输入</td>
       <td>重复的次数。</td>
-      <td>repeats只能为0D / 1D Tensor。如果repeats为1D Tensor且size为1，那么repeats支持广播。如果repeats为1D Tensor且size大于1，那么repeats的元素之和等于yGrad的axis维数。不支持空tensor。</td>
+      <td>repeats只能为0D / 1D Tensor。如果repeats为1D Tensor且size为1，那么repeats支持广播。如果repeats为1D Tensor且size大于1，那么repeats的元素之和等于yGrad的axis维数。不支持空Tensor。</td>
       <td>INT32、INT64</td>
       <td>ND</td>
       <td></td>
@@ -105,7 +105,7 @@
       <td>axis</td>
       <td>输入</td>
       <td>ReduceSum作用的维度。</td>
-      <td>axis的取值范围为[-n, n),其中n为yGrad的维度。</td>
+      <td>axis的取值范围为[-n, n)，其中n为yGrad的维度。</td>
       <td></td>
       <td></td>
       <td></td>
@@ -144,7 +144,7 @@
   </tbody></table>
 
   <!-- npu="950" id7 -->
-  - <term>Ascend 950PR&950DT系列产品</term> :yGrad的数据类型支持FLOAT16、BFLOAT16、FLOAT。
+  - <term>Ascend 950PR&950DT系列产品</term>：yGrad的数据类型支持FLOAT16、BFLOAT16、FLOAT。
 
   <!-- end id7 -->
 
@@ -235,7 +235,7 @@
 
 在计算时需要满足以下要求：
 
-- 如果repeats为0D tensor或者size为1的1D tensor，那么repeats的元素值必须为yGrad在axis上维数的约数。
+- 如果repeats为0D Tensor或者size为1的1D Tensor，那么repeats的元素值必须为yGrad在axis上维数的约数。
     如果为1D tensor且size大于1，那么repeats的元素之和必须为yGrad在axis上的维数。
     repeats tensor中的值必须为自然数。
 - out的shape大小满足yGrad的axis轴ReduceSum后的shape大小。
@@ -245,7 +245,7 @@
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

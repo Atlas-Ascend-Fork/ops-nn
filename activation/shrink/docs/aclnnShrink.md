@@ -87,16 +87,16 @@ aclnnStatus aclnnShrink(
       <td>self（aclTensor*）</td>
       <td>输入</td>
       <td>表示待转换的目标张量，公式中的self。</td>
-      <td><ul><li>支持空Tensor。</li><li>支持动态 shape（-1 未知维）与动态秩（-2）标记，图模式下按输入透传，运行期按最终具体形状校验。</li><li>元素总数受 int64 与设备内存约束。</li><li>NaN 输入按死区输出 0（不传播 NaN）；±inf 输入分别按正区/负区处理，输出为 x∓bias 的 IEEE 算术结果（与 bias=±inf 组合时为 inf∓inf=NaN）。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>支持动态shape（-1未知维）与动态秩（-2）标记，图模式下按输入透传，运行期按最终具体形状校验。</li><li>元素总数受int64与设备内存约束。</li><li>NaN输入按死区输出0（不传播NaN）；±inf输入分别按正区/负区处理，输出为x∓bias的IEEE算术结果（与bias=±inf组合时为inf∓inf=NaN）。</li></ul></td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
-      <td>ND；支持空 Tensor 与 -1/-2 动态标记</td>
+      <td>ND；支持空Tensor与-1/-2动态标记</td>
       <td>√</td>
     </tr>
      <tr>
       <td>lambd（aclScalar*）</td>
       <td>输入</td>
-      <td>表示转换过程中用于判断self大小的阈值，公式中的lambd。dtype须为FLOAT（非FLOAT返回161002）；FLOAT16 输入时 lambd 先转为输入 dtype（`static_cast&lt;T&gt;`）再参与比较，阈值附近与实数公式可能不同（如 x=fp16(0.5009765625)、lambd=0.5008 时实数公式判正区、设备判死区输出 0）。取值为非负数（NaN 及负数含 -inf 返回161002——NaN 非数、不属非负数域）；lambd=+inf 时全部输入按死区输出 0（含 ±inf 输入，严格比较 inf>inf 为假）。</td>
+      <td>表示转换过程中用于判断self大小的阈值，公式中的lambd。dtype须为FLOAT（非FLOAT返回161002）；FLOAT16输入时lambd先转为输入dtype（`static_cast&lt;T&gt;`）再参与比较，阈值附近与实数公式可能不同（如x=fp16(0.5009765625)、lambd=0.5008时实数公式判正区、设备判死区输出0）。取值为非负数（NaN及负数含-inf返回161002——NaN非数、不属非负数域）；lambd=+inf时全部输入按死区输出0（含±inf输入，严格比较inf>inf为假）。</td>
       <td>取值为非负数。</td>
       <td>FLOAT</td>
       <td>-</td>
@@ -106,7 +106,7 @@ aclnnStatus aclnnShrink(
      <tr>
       <td>bias（aclScalar*）</td>
       <td>输入</td>
-      <td>表示转换过程中添加到目标张量的偏差值，公式中的bias。dtype须为FLOAT（非FLOAT返回161002）；FLOAT16 输入时 bias 同样先转为输入 dtype 后参与加减。bias=±inf 时活跃区按 IEEE 算术计算：有限输入输出相应 ±inf，±inf 输入构成 inf∓inf 时输出 NaN；死区仍输出 0。bias 为 NaN 时返回161002（NaN 非实数，不属任意实数域）。</td>
+      <td>表示转换过程中添加到目标张量的偏差值，公式中的bias。dtype须为FLOAT（非FLOAT返回161002）；FLOAT16输入时bias同样先转为输入dtype后参与加减。bias=±inf时活跃区按IEEE算术计算：有限输入输出相应±inf，±inf输入构成inf∓inf时输出NaN；死区仍输出0。bias为NaN时返回161002（NaN非实数，不属任意实数域）。</td>
       <td>取值为任意实数。</td>
       <td>FLOAT</td>
       <td>-</td>
@@ -120,7 +120,7 @@ aclnnStatus aclnnShrink(
       <td><ul><li>支持空Tensor。</li><li>shape需要与self一致。</li><li>dtype需要与self一致。</li><li>格式需要与self一致（不一致返回161002）。</li></ul></td>
       <td>FLOAT、FLOAT16</td>
       <td>ND</td>
-      <td>ND，shape 与 self 一致</td>
+      <td>ND，shape与self一致</td>
       <td>√</td>
     </tr>
        <tr>
@@ -191,7 +191,7 @@ aclnnStatus aclnnShrink(
       <td>lambd值为负数。</td>
     </tr>
     <tr>
-      <td>lambd或bias为NaN（NaN 非数，不属声明的取值域）。</td>
+      <td>lambd或bias为NaN（NaN非数，不属声明的取值域）。</td>
     </tr>
   </tbody></table>
 

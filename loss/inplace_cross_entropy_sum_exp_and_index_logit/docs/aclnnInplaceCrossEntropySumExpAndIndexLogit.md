@@ -47,7 +47,7 @@
   predictedLogits[i] = \begin{cases} 0, & targetMask[i] = 1 \\ vocabParallelLogits[i, targetOffset[i]] - globalLogitsMax[i], & targetMask[i] = 0 \end{cases}
   $$
 
-  **4. exp 计算（原地写回 vocabParallelLogits）：**
+  **4. exp计算（原地写回vocabParallelLogits）：**
 
   $$
   vocabParallelLogits[i, j] \leftarrow \exp\big(vocabParallelLogits[i, j] - globalLogitsMax[i]\big)
@@ -138,7 +138,7 @@ aclnnStatus aclnnInplaceCrossEntropySumExpAndIndexLogit(
       <td>globalLogitsMax (aclTensor*)</td>
       <td>输入</td>
       <td>all_reduce(MAX) 后得到的全局最大logit，公式中的globalLogitsMax。</td>
-      <td>不支持空Tensor。数据类型需与vocabParallelLogits一致。数值上需满足 globalLogitsMax[i] >= max_j(vocabParallelLogits[i, j])。</td>
+      <td>不支持空Tensor。数据类型需与vocabParallelLogits一致。数值上需满足globalLogitsMax[i] >= max_j(vocabParallelLogits[i, j])。</td>
       <td>同vocabParallelLogits</td>
       <td>ND</td>
       <td>shape与target完全一致。</td>
@@ -346,7 +346,7 @@ aclnnStatus aclnnInplaceCrossEntropySumExpAndIndexLogit(
     - V_local范围：[16, 200K]。
 
 - **非连续输入输出**：
-    - vocabParallelLogits支持非连续输入，exp_logits非连续输出。
+    - vocabParallelLogits支持非连续输入，exp_logits支持非连续输出。
     - 非连续vocabParallelLogits的行stride（stride[0] for 2D, stride[1] for 3D）必须 >= V_local，禁止行间重叠的as_strided视图。
 
 ## 调用示例

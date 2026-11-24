@@ -25,11 +25,11 @@
 
 - 接口功能：将tensor中的每个元素根据dim这个维度，重复Tensor repeats中对应位置的相应次数。
 
-- 示例：假设input tensor是 [[a, b], [c, d], [e, f]]。repeats为([1, 2, 3]), dim为0。
+- 示例：假设input tensor是 [[a, b], [c, d], [e, f]]。repeats为([1, 2, 3])，dim为0。
   那么最后生成的tensor为([[a, b], [c, d], [c, d], [e, f], [e, f], [e, f]])。
   在dim 0维度，对应的a、b会重复1次，对应的c、d会重复2次，对应的e、f会重复3次。
 
-  假设input tensor是([[a, b], [c, d], [e, f]])。repeats为([2]), dim为0。
+  假设input tensor是([[a, b], [c, d], [e, f]])。repeats为([2])，dim为0。
   那么最后生成的tensor为 [ [a, b], [a, b], [c, d], [c, d], [e, f], [e, f]]。
   在dim 0维度，对应的a、b会重复2次，对应的c、d会重复2次，对应的e、f会重复2次。
   注意：该场景等效于repeats为(2)。

@@ -139,7 +139,7 @@ aclnnStatus aclnnCrossEntropySumExpAndIndexLogit(
       <td>globalLogitsMax (aclTensor*)</td>
       <td>输入</td>
       <td>all_reduce(MAX) 后得到的全局最大logit，公式中的globalLogitsMax。</td>
-      <td>不支持空Tensor。数据类型需与vocabParallelLogits一致。数值上需满足 globalLogitsMax[i] >= max_j(vocabParallelLogits[i, j])（即大于等于同token在本rank内所有logits）。</td>
+      <td>不支持空Tensor。数据类型需与vocabParallelLogits一致。数值上需满足globalLogitsMax[i] >= max_j(vocabParallelLogits[i, j])（即大于等于同token在本rank内所有logits）。</td>
       <td>同vocabParallelLogits</td>
       <td>ND</td>
       <td>shape与target完全一致。</td>

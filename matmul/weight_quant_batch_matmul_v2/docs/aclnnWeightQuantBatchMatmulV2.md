@@ -753,7 +753,7 @@ A16W8调用示例：
 
 A16MxFp4调用示例，需要调用`aclnnConvertWeightToINT4Pack`接口辅助完成调用：
 
-  ``` cpp
+  ```cpp
   #include <iostream>
   #include <memory>
   #include <vector>

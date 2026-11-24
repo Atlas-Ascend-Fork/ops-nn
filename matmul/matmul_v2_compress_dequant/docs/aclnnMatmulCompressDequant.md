@@ -132,7 +132,7 @@ aclnnStatus aclnnMatmulCompressDequant(
       <td>tensor中的值为float通过下述示例中转换后的UINT64数据。</td>
       <td>UINT64</td>
       <td>ND</td>
-      <td>2维，shape支持(1, n)或者(1, 1),其中n为输出shape(m, n)中的n。</td>
+      <td>2维，shape支持(1, n)或者(1, 1)，其中n为输出shape(m, n)中的n。</td>
       <td>-</td>
     </tr>
     <tr>
@@ -158,7 +158,7 @@ aclnnStatus aclnnMatmulCompressDequant(
     <tr>
       <td>compressInfo</td>
       <td>输入</td>
-      <td>整型数据列表，数据类型为INT64。其中包括压缩块信息tilingN、tilingK（通过msModelSlim工具中weight_compression模块压缩后获取，分别表示压缩前shape(n, k)在n方向和k方向上一个基本压缩块的大小），压缩前x2矩阵原始shape（shape为2维，用(n, k)表示），以及压缩块遍历方向的标识。其中tilingN和tilingK仅支持取值为8。</td>
+      <td>整型数据列表，数据类型为INT64，其中包括压缩块信息tilingN、tilingK（通过msModelSlim工具中weight_compression模块压缩后获取，分别表示压缩前shape(n, k)在n方向和k方向上一个基本压缩块的大小），压缩前x2矩阵原始shape（shape为2维，用(n, k)表示），以及压缩块遍历方向的标识。其中tilingN和tilingK仅支持取值为8。</td>
       <td>-</td>
       <td>INT64</td>
       <td>-</td>
@@ -347,7 +347,7 @@ aclnnStatus aclnnMatmulCompressDequant(
 
   - **原始权重通过msModelSlim压缩工具生成压缩后的x2、compressIndex以及compressInfo**
 
-    使用以下接口时，需对CANN包中msModelSlim压缩工具进行编译，具体操作参考[Gitcode msmodelslim仓](https://gitcode.com/Ascend/msmodelslim)中docs/zh/user_guide/traditional_quantization_v0目录下的foundation_model_compression.md中第5条,权重压缩基本使用流程。
+    使用以下接口时，需对CANN包中msModelSlim压缩工具进行编译，具体操作参考[Gitcode msmodelslim仓](https://gitcode.com/Ascend/msmodelslim)中docs/zh/user_guide/traditional_quantization_v0目录下的foundation_model_compression.md中第5条，权重压缩基本使用流程。
 
     ```python
     from msmodelslim.pytorch.weight_compression import CompressConfig, Compressor
@@ -367,7 +367,7 @@ aclnnStatus aclnnMatmulCompressDequant(
 
   - **将原始float类型的反量化参数deqscale进行转换，得到aclnn接口需要的uint64数据**
 
-    deqScale原始为float类型，以int32读取并转换为int64
+    deqScale原始为float类型，以int32读取并转换为int64。
 
     ```python
     import numpy as np
@@ -379,7 +379,7 @@ aclnnStatus aclnnMatmulCompressDequant(
 
   示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include <acl/acl.h>

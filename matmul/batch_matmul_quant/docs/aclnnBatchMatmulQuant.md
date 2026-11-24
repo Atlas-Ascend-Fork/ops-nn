@@ -26,7 +26,7 @@
 ## 功能说明
 
 - 接口功能：
-实现输入Tensor的dtype是float16,输出的dtype是int8的矩阵乘计算。
+实现输入Tensor的dtype是FLOAT16，输出的dtype是int8的矩阵乘计算。
 
 - 计算公式：
 
@@ -119,7 +119,7 @@ aclnnStatus aclnnBatchMatmulQuant(
       <td>quantParam</td>
       <td>输入</td>
       <td>硬件完成量化计算的量化参数。</td>
-      <td>可以通过 <a href="../../../quant/trans_quant_param/docs/aclnnTransQuantParam.md">aclnnTransQuantParam</a> 接口获取。shape的大小（即元素个数）需要满足以下场景中任意一种:<ul><li>shape的大小为1。</li>
+      <td>可以通过 <a href="../../../quant/trans_quant_param/docs/aclnnTransQuantParam.md">aclnnTransQuantParam</a> 接口获取。shape的大小（即元素个数）需要满足以下场景中任意一种：<ul><li>shape的大小为1。</li>
       <li>shape的大小等于输出tensor(out)最后一个维度的大小向上对齐到16的倍数。</li></ul></td>
       <td>UINT64</td>
       <td>NC1HWC0</td>
@@ -210,7 +210,7 @@ aclnnStatus aclnnBatchMatmulQuant(
       <td>x1、x2、quantParam或out的数据格式不在支持的范围内。</td>
     </tr>
     <tr>
-      <td>quantParam的维度值不为1,或者不为输出tensor(out)最后一个维度的大小向上对齐到16的倍数。</td>
+      <td>quantParam的维度值不为1，或者不为输出tensor(out)最后一个维度的大小向上对齐到16的倍数。</td>
     </tr>
     <tr>
       <td>x1和x2的输入shape在根据输入transpose描述处理后不满足矩阵乘的关系。</td>
@@ -248,7 +248,7 @@ aclnnStatus aclnnBatchMatmulQuant(
     <tr>
       <td>workspaceSize</td>
       <td>输入</td>
-      <td>在Device侧申请的workspace大小，由第一段接口aclnnBatchMatmulQuantGetWorkspaceSize。</td>
+      <td>在Device侧申请的workspace大小，由第一段接口aclnnBatchMatmulQuantGetWorkspaceSize获取。</td>
     </tr>
     <tr>
       <td>executor</td>
@@ -280,7 +280,7 @@ aclnnStatus aclnnBatchMatmulQuant(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include <cmath>

@@ -227,7 +227,7 @@
       out[m,n] = \sum_{j=0}^{kLoops-1} ((\sum_{k=0}^{gsK-1} (x1Slice * x2Slice))* (x1Scale[m/gsM, j] * x2Scale[j, n/gsN]))+bias[n]
       $$
 
-      其中，gsM，gsN和gsK分别代表groupSizeM，groupSizeN和groupSizeK；x1Slice代表x1第m行长度为groupSizeK的向量，x2Slice代表x2第n列长度为groupSizeK的向量；K轴均从j*groupSizeK起始切片，j的取值范围[0, kLoops)，kLoops = ceil(K / groupSizeK)，K为K轴长度，支持最后的切片长度不足groupSizeK。MX量化模式以及INT8输入的G-B量化模式支持bias，其他G-B和B-B场景不支持bias。对于G-B，B-B和MX量化模式，[groupSizeM, groupSizeN, groupSizeK]取值组合仅分别支持[1, 128, 128]、[128, 128, 128]和[1, 1, 32]。
+      其中，gsM、gsN和gsK分别代表groupSizeM、groupSizeN和groupSizeK；x1Slice代表x1第m行长度为groupSizeK的向量，x2Slice代表x2第n列长度为groupSizeK的向量；K轴均从j*groupSizeK起始切片，j的取值范围[0, kLoops)，kLoops = ceil(K / groupSizeK)，K为K轴长度，支持最后的切片长度不足groupSizeK。MX量化模式以及INT8输入的G-B量化模式支持bias，其他G-B和B-B场景不支持bias。对于G-B、B-B和MX量化模式，[groupSizeM, groupSizeN, groupSizeK]取值组合仅分别支持[1, 128, 128]、[128, 128, 128]和[1, 1, 32]。
 
     </details>
 
@@ -358,7 +358,7 @@ aclnnStatus aclnnQuantMatmulV5(
         <td>x1Offset（const aclTensor*）</td>
         <td>可选输入</td>
         <td>公式中的输入x1Offset。</td>
-        <td><ul> <li> 预留参数，当前版本不支持，需要传入nullptr。 </li> </ul></td>
+        <td><ul> <li> 预留参数，当前版本不支持，需要传入nullptr。</li> </ul></td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -418,7 +418,7 @@ aclnnStatus aclnnQuantMatmulV5(
         <td>groupSize（int64_t）</td>
         <td>输入</td>
         <td>用于输入m、n、k方向上的量化分组大小。</td>
-        <td>由3个方向的groupSizeM，groupSizeN，groupSizeK三个值拼接组成，每个值占16位，共占用int64_t类型groupSize的低48位（groupSize中的高16位的数值无效），计算公式见表格下方。</td>
+        <td>由3个方向的groupSizeM、groupSizeN、groupSizeK三个值拼接组成，每个值占16位，共占用int64_t类型groupSize的低48位（groupSize中的高16位的数值无效），计算公式见表格下方。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -505,7 +505,7 @@ aclnnStatus aclnnQuantMatmulV5(
       <tr>
         <td>ACLNN_ERR_PARAM_INVALID</td>
         <td>161002</td>
-        <td><ul><li>x1、x2或out不满足<a href="#空tensor支持情况">空Tensor支持情况</a>中的约束，或bias、x1Scale、x2Scale、x2Offset传入了不支持的空Tensor。</li><li>yScale、x1Offset、x2Offset或yOffset传入了当前量化模式不支持的非空可选参数。</li><li>x1、x2、bias、x1Scale、x2Scale、x2Offset或out的数据类型和数据格式不在支持的范围之内。</li><li>x1、x2、bias、x1Scale、x2Scale、x2Offset或out的shape不满足校验条件。</li><li>传入的groupSize不满足校验条件，或传入的groupSize为0时，x1、x2与x1Scale，x2Scale的shape关系无法推断groupSize。</li></ul></td>
+        <td><ul><li>x1、x2或out不满足<a href="#空tensor支持情况">空Tensor支持情况</a>中的约束，或bias、x1Scale、x2Scale、x2Offset传入了不支持的空Tensor。</li><li>yScale、x1Offset、x2Offset或yOffset传入了当前量化模式不支持的非空可选参数。</li><li>x1、x2、bias、x1Scale、x2Scale、x2Offset或out的数据类型和数据格式不在支持的范围之内。</li><li>x1、x2、bias、x1Scale、x2Scale、x2Offset或out的shape不满足校验条件。</li><li>传入的groupSize不满足校验条件，或传入的groupSize为0时，x1、x2与x1Scale、x2Scale的shape关系无法推断groupSize。</li></ul></td>
       </tr>
       <tr>
         <td>ACLNN_ERR_INNER_CREATE_EXECUTOR</td>
@@ -599,7 +599,7 @@ aclnnStatus aclnnQuantMatmulV5(
     - x1的最后一维大小不能超过65535，transposeX1仅支持false。
   - x2的约束：
     - x2的最后一维大小不能超过65535，transposeX2仅支持true。
-    - 各个维度表示：(batch, k1, n1, n0, k0)，batch可不存在，其中k0 = 32， n0 = 16， x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil(k / 32) = k1。
+    - 各个维度表示：(batch, k1, n1, n0, k0)，batch可不存在，其中k0 = 32，n0 = 16，x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil(k / 32) = k1。
     - x2需要通过[aclnnTransMatmulWeight](https://gitcode.com/cann/ops-math/blob/master/conversion/trans_data/docs/aclnnTransMatmulWeight.md)对format为ND的x2处理得到AI处理器亲和数据排布格式。
   - x1Scale的约束：数据格式支持ND，shape是1维(t,)，t = m，其中m与x1的m一致。
   - x2Scale的约束：数据格式支持ND，shape是1维(t,)，t = n，其中n与x2的n一致。
@@ -882,7 +882,7 @@ aclnnStatus aclnnQuantMatmulV5(
   - 注：上表中gsM、gsK和gsN分别表示groupSizeM、groupSizeK和groupSizeN。gsM、gsK和gsN为0的维度会自动推导，上表中是不用自动推导的情况。
   - G-B量化和B-B量化场景下，x1和x1Scale的转置属性需要保持一致，x2和x2Scale的转置属性需要保持一致。
   - G-B量化场景下，仅INT8输入支持bias，其余场景不支持bias。
-  - B-B量化场景下，不支持int8输入，且不支持bias。
+  - B-B量化场景下，不支持INT8输入，且不支持bias。
   - Batch一致性说明：B-B量化场景不支持Batch一致性。即使开启Batch一致性开关，也不能保证输出满足Batch一致性要求。
 
   </details>
@@ -912,7 +912,7 @@ aclnnStatus aclnnQuantMatmulV5(
   - 注：上表中gsM、gsK和gsN分别表示groupSizeM、groupSizeK和groupSizeN。gsM、gsK和gsN为0的维度会自动推导，上表中是不用自动推导的情况。
   - MX全量化场景下，当x2数据类型为FLOAT8_E4M3FN/FLOAT8_E5M2时，x1和x1Scale的转置属性需要保持一致，x2和x2Scale的转置属性需要保持一致。
   - MX全量化场景下，当x2数据类型为FLOAT4_E2M1时，x1和x2的内轴必须为偶数，且k必须大于2。
-  - MX全量化场景下，x1Scale、x2Scale 仅最后三轴支持<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续的Tensor</a>。
+  - MX全量化场景下，x1Scale、x2Scale仅最后三轴支持<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续的Tensor</a>。
   - MX伪量化场景下，当x2数据类型为FLOAT4_E2M1时，不支持batch轴，且k必须为8的倍数。
     - x1的约束：仅支持非转置。数据格式仅支持ND格式。
     - x2的约束：仅支持转置。数据格式仅支持ND。

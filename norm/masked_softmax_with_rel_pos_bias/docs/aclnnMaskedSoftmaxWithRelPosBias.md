@@ -255,7 +255,7 @@ aclnnStatus aclnnMaskedSoftmaxWithRelPosBias(
   - x为4维 (B*W, N, S1, S2) 且提供attenMaskOptional时，mask的W轴须整除D=B*W（D%W==0）。
 
 - 属性值域约束：
-  - scaleValue须为float32可表示的有限值；NaN或 ±Inf报错。
+  - scaleValue须为float32可表示的有限值；NaN或±Inf报错。
   - innerPrecisionMode为保留字段，当前仅支持取值0；传入其他值时报错。
 
 - 非连续Tensor支持：

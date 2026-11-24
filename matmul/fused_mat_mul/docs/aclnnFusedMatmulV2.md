@@ -32,43 +32,43 @@
 
   OP类型由fusedOpType输入定义，支持如下：
 
-  add运算:
+  add运算：
 
   $$
   y=(x1 @ x2 + bias) + x3
   $$
 
-  mul运算:
+  mul运算：
 
   $$
   y=(x1 @ x2 + bias) ∗ x3
   $$
 
-  gelu_tanh运算:
+  gelu_tanh运算：
 
   $$
   y = gelu\_tanh(x1 @ x2 + bias)
   $$
 
-  gelu_erf运算:
+  gelu_erf运算：
 
   $$
   y = gelu\_erf(x1 @ x2 + bias)
   $$
 
-  relu运算:
+  relu运算：
 
   $$
   y = relu(x1 @ x2 + bias)
   $$
 
-  sigmoid运算:
+  sigmoid运算：
 
   $$
   y = sigmoid(x1 @ x2 + bias) = \frac{1}{1 + \exp(-(x1 @ x2 + bias))}
   $$
 
-  16cast32运算:
+  16cast32运算：
 
   $$
   y = cast\_float32(x1 @ x2 + bias)
@@ -255,28 +255,28 @@ aclnnStatus aclnnFusedMatmulV2(
 
   <!-- npu="950" id7 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-    - cubeMathType=1，当输入数据类型为FLOAT32时不支持该选项；当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
+    - cubeMathType=1，当输入数据类型为FLOAT32时不支持该选项。当输入为其他数据类型时不做处理。
+    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项。
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
     - cubeMathType=4，仅当以下条件全部满足时使用高精度方式：
-      - fusedOpType取值为"add"或"mul"；
-      - x1和x2的维度数必须相同，且同时为2维或同时为3维；
+      - fusedOpType取值为"add"或"mul"。
+      - x1和x2的维度数必须相同，且同时为2维或同时为3维。
       - x1、x2、x3三者的数据类型完全一致，且同为BFLOAT16或同为FLOAT16。
 
   <!-- end id7 -->
   <!-- npu="A3,910b" id11 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
     - cubeMathType=0（KEEP_DTYPE），当输入数据类型为FLOAT32时按真FP32计算；
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
 
   <!-- end id11 -->
 
-- **返回值**
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
-  第一段接口完成入参校验，出现以下场景报错：
+  第一段接口完成入参校验，出现以下场景时报错：
   <table style="undefined;table-layout: fixed; width: 1030px"><colgroup>
     <col style="width: 250px">
     <col style="width: 130px">
@@ -380,8 +380,8 @@ aclnnStatus aclnnFusedMatmulV2(
 
 ## 约束说明
 
-- 所有支持 bias 的融合模式均要求 bias 的 shape 为 (N,) 或 (1, N)，其中 N 为 x2 逻辑 shape 的最后一维。bias 的数据类型必须与矩阵输入一致或为 FLOAT32；传入 bias 时，矩阵乘的 K 轴必须大于 0。
-- GELU（gelu_erf、gelu_tanh）和 Sigmoid（sigmoid）的计算顺序为先计算矩阵乘并加 bias，再逐元素执行激活；未传入 bias 时不加偏置。
+- 所有支持bias的融合模式均要求bias的shape为(N,)或(1, N)，其中N为x2逻辑shape的最后一维。bias的数据类型必须与矩阵输入一致或为FLOAT32；传入bias时，矩阵乘的K轴必须大于0。
+- GELU（gelu_erf、gelu_tanh）和Sigmoid（sigmoid）的计算顺序为先计算矩阵乘并加bias，再逐元素执行激活；未传入bias时不加偏置。
 - 当fusedOpType取值为"sigmoid"时，仅支持Ascend 950PR&950DT系列产品，x1、x2和y必须为二维，数据类型必须同为FLOAT16或同为BFLOAT16；x1的shape为(M, K)，x2的shape为(K, N)，y的shape为(M, N)，M、N和K均必须大于0，x3必须传入空指针。
 - 当fusedOpType取值为"sigmoid"时，alphaOptional和betaOptional只能传入空指针或值为1的FLOAT16、BFLOAT16、FLOAT32 Scalar。
 <!-- npu="A3,910b" id12 -->

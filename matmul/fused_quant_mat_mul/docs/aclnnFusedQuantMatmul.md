@@ -411,7 +411,7 @@ aclnnStatus aclnnFusedQuantMatmul(
 
 x1为INT8，x2为INT8，x1Scale为FLOAT32，x2Scale为FLOAT32。
 
-  ```Cpp
+  ```cpp
   #include <iostream>
   #include <memory>
   #include <vector>

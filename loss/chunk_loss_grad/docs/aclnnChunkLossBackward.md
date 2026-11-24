@@ -40,7 +40,7 @@
 
 ## 功能说明
 
-- 接口功能：计算ChunkLoss中投影权重的梯度。根据隐藏状态hidden、投影权重weight、标签labels及正向保存的Softmax统计量，重算词表得分，输出经归一化和上游梯度缩放后的gradWeightOut。
+- 接口功能：计算ChunkLoss中投影权重的梯度，根据隐藏状态hidden、投影权重weight、标签labels及正向保存的Softmax统计量，重算词表得分，输出经归一化和上游梯度缩放后的gradWeightOut。
 - 计算公式：
 
   首先重新计算每个token对应的词表得分：
@@ -128,7 +128,7 @@ aclnnStatus aclnnChunkLossBackward(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr>
   </thead>
@@ -309,8 +309,6 @@ aclnnStatus aclnnChunkLossBackward(
 <tr><td>hidden、weight、gradWeightOut的数据类型不一致。</td></tr>
 <tr><td>alpha非有限、非正、超过FLOAT32最大有限值，或转换为FLOAT32后为0。</td></tr>
 </tbody></table>
-
-
 
 ## aclnnChunkLossBackward
 

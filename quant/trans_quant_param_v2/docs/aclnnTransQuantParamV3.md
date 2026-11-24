@@ -30,16 +30,14 @@
 
   2. 若`roundMode`为1，先将`scale`按最近偶数舍入到19位浮点表示（1位符号、8位指数、10位尾数）；中间值取尾数最低位为0的值，FLOAT32非规格化数保留符号并置零。`roundMode`为0时跳过本步。
 
-     $$
-     scale = Round(scale)
-     $$
+      $$
+      scale = Round(scale)
+      $$
+  3. 将处理后的`scale`按位重解释为UINT32，记为`scaleBits`。保留其高19位（bit 13~31，低13位清零），写入`out`的低32位，并将bit 46置1。位运算前扩展为UINT64，位编号从0开始。
 
-  3. 将处理后的`scale`按位重解释为UINT32，记为`scaleBits`。保留其高19位（bit 13～31，低13位清零），写入`out`的低32位，并将bit 46置1。位运算前扩展为UINT64，位编号从0开始。
-
-     $$
-     out = out\ |\ (scaleBits\ \&\ 0xFFFFE000)\ |\ (1\ll46)
-     $$
-
+      $$
+      out = out\ |\ (scaleBits\ \&\ 0xFFFFE000)\ |\ (1\ll46)
+      $$
   4. 根据`offset`取值进行后续计算：
      - 若`offset`不存在，不再进行后续计算。
      - 若`offset`存在：
@@ -49,7 +47,7 @@
           offset = Max(Min(INT(Round(offset)),255),-256)
           $$
 
-       2. 再将`offset`按bit位保留9位并存储于`out`的bit 37～45。
+       2. 再将`offset`按bit位保留9位并存储于`out`的bit 37~45。
 
           $$
           out = (out\ \&\ 0x4000FFFFFFFF)\ |\ ((offset\ \&\ 0x1FF)\ll37)
@@ -264,7 +262,7 @@ aclnnStatus aclnnTransQuantParamV3(
     - 若out作为grouped matmul类算子输入（如aclnnGroupedMatmulV4），仅在分组模式为m轴分组时使用（对应参数groupType为0），shape支持1维(g,)或2维(g, 1)、(g, n)，其中n与grouped matmul计算中右矩阵（对应参数x2）的shape n一致，g与grouped matmul计算中分组数（对应参数groupListOptional的shape大小）一致。
     <!-- end id10 -->
   - 当有offset时，仅作为matmul类算子输入（如[aclnnQuantMatmulV4](../../../matmul/quant_batch_matmul_v3/docs/aclnnQuantMatmulV4.md)）：
-    - offset，scale，out的shape支持1维(1,)、(n,)或2维(1, n)，其中n与matmul计算中右矩阵（对应参数x2）的shape n一致。
+    - offset、scale、out的shape支持1维(1,)、(n,)或2维(1, n)，其中n与matmul计算中右矩阵（对应参数x2）的shape n一致。
     - scale与offset均为一维时，out为一维，元素数为二者元素数的最大值；二者元素数都大于1时必须相等。
     - scale与offset均为二维时，out为(1,n)，与广播后的结果一致。建议先统一scale与offset的维数，避免混用(n,)与(1,n)。
 - 确定性计算：

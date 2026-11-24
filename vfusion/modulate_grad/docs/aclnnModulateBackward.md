@@ -26,7 +26,7 @@
 - 算子功能：完成ModulateBackward反向传播中参数的计算，进行梯度更新。
 - 计算公式：
 
-    设输入input的shape为[B, L, D]计算公式如下：
+    设输入input的shape为[B, L, D]，计算公式如下：
 
     $$
     \begin{cases}
@@ -39,7 +39,7 @@
     符号说明：
     - $\odot$: 表示逐元素乘法；
     - $\sum_{l=1}^{L}$: 求和操作，沿序列维度$L$(即dim=1)进行
-    - $b,l,d$：下标，表示张量的维度索引（通常为Batch，Length，Dimension）
+    - $b,l,d$：下标，表示张量的维度索引（通常为Batch、Length、Dimension）
     - $\text{scale}^{\uparrow L}$：表示将scale张量在序列维度 $L$ 上进行广播（扩展）
 
 ## 函数原型
@@ -284,10 +284,9 @@ aclnnStatus aclnnModulateBackward(
 - 支持动态shape（含-1维度）：tiling在运行期按实际shape计算多核与UB切分，无需重新编译；rank固定为3。
 - 输出tensor的视图stride不允许在非单例维上为0（如broadcast/expand得到的零stride输出视图）：多个逻辑位置映射到同一物理元素时回拷语义未定义，接口以ACLNN_ERR_PARAM_INVALID拒绝；需要写broadcast视图时请先clone出连续输出。
 
-
 - 精度说明：
-  - kernel 内部以 fp32 累加归约（grad_scale = Σ input·grad_output, grad_shift = Σ grad_output），结果经 RNE 舍回输出 dtype。
-  - 测试参考（golden）以 fp64 计算后同样经 RNE 舍回输出 dtype，与 kernel 舍入路径一致。
+  - kernel内部以fp32累加归约（grad_scale = Σ input·grad_output, grad_shift = Σ grad_output），结果经RNE舍回输出dtype。
+  - 测试参考（golden）以fp64计算后同样经RNE舍回输出dtype，与kernel舍入路径一致。
   - fp32 累加饱和行为与普通求和一致：同号上溢输出 ±Inf（与 torch 求和一致）；仅当 ±Inf 项与相反符号项相遇产生 NaN 时输出 NaN。
 
 ## 调用示例

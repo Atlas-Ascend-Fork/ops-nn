@@ -124,7 +124,7 @@ aclnnStatus aclnnScaledMaskedSoftmaxBackward(
     <tr>
       <td>out</td>
       <td>输出</td>
-      <td>表示y的梯度，公式中的out</td>
+      <td>表示y的梯度，公式中的out。</td>
       <td>数据类型与shape需要和gradOutput、y一致。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -231,7 +231,7 @@ aclnnStatus aclnnScaledMaskedSoftmaxBackward(
 
 ## 约束说明
 
-- 确定性计算
+- 确定性计算：
   - aclnnScaledMaskedSoftmaxBackward默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
 - 尾轴S2范围在(0,4096]。

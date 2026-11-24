@@ -108,7 +108,7 @@ aclnnStatus aclnnNLLLossBackward(
         <td>gradOutput（aclTensor*）</td>
         <td>输入</td>
         <td>输入aclTensor。</td>
-        <td>shape为(N)、一维（且元素个数为1）或()。<ul><li>当reduction为0，且self的shape为(N,C)时，shape支持(N)。</li><li>当reduction为0，且self的shape为(C)时，shape支持一维（且元素个数为1）或()。</li><li>当reduction不为0，shape支持一维（且元素个数为1）或()。</li></ul></td>
+        <td>shape为(N)、一维（且元素个数为1）或()。<ul><li>当reduction为0，且self的shape为(N,C)时，shape支持(N)。</li><li>当reduction为0，且self的shape为(C)时，shape支持一维（且元素个数为1）或()。</li><li>当reduction不为0时，shape支持一维（且元素个数为1）或()。</li></ul></td>
         <td>FLOAT、FLOAT16、BFLOAT16</td>
         <td>ND</td>
         <td>-</td>
@@ -118,7 +118,7 @@ aclnnStatus aclnnNLLLossBackward(
         <td>self（aclTensor*）</td>
         <td>输入</td>
         <td>输入aclTensor。</td>
-        <td>数据类型与出参out的数据类型一致，shape与出参out的shape一致。<ul><li>shape为(N,C)或者(C)，其中N表示batch size，C表示类别数。</li><li>当target的shape为(N)时，self的shape需为(N,C)。</li><li>当target的shape为()，self的shape需为(C)。</li></ul></td>
+        <td>数据类型与出参out的数据类型一致，shape与出参out的shape一致。<ul><li>shape为(N,C)或者(C)，其中N表示batch size，C表示类别数。</li><li>当target的shape为(N)时，self的shape需为(N,C)。</li><li>当target的shape为()时，self的shape需为(C)。</li></ul></td>
         <td>FLOAT、FLOAT16、BFLOAT16</td>
         <td>ND</td>
         <td>-</td>
@@ -300,7 +300,7 @@ aclnnStatus aclnnNLLLossBackward(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

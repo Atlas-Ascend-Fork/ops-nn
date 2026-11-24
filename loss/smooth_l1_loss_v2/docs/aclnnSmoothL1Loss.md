@@ -24,7 +24,7 @@
 ## 功能说明
 
 - 接口功能：计算SmoothL1损失函数。
-- 计算公式:
+- 计算公式：
 
   Batch为N的损失函数，当`reduction`为none时，此函数定义为：
 
@@ -261,7 +261,7 @@ aclnnStatus aclnnSmoothL1Loss(
 
 - **返回值：**
 
-  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 
@@ -280,7 +280,7 @@ aclnnStatus aclnnSmoothL1Loss(
 
 示例代码如下，仅供参考；该示例仅演示接口调用流程，不做数值正确性验证，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

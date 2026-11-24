@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-对输入张量 self 进行去重，返回 self 中的唯一元素。unique 功能的增强，新增返回值 countsOut，表示 valueOut 中各元素在输入 self 中出现的次数，用 returnCounts 参数控制。
+对输入张量self进行去重，返回self中的唯一元素，unique功能的增强，新增返回值countsOut，表示valueOut中各元素在输入self中出现的次数，用returnCounts参数控制。
 
 ## 函数原型
 
@@ -119,7 +119,7 @@ aclnnStatus aclnnUnique2(
     <tr>
       <td>valueOut</td>
       <td>输出</td>
-      <td>第一个输出张量，保存输入张量中的唯一元素，shape 仅支持 1 维度，元素个数小于等于 self。</td>
+      <td>第一个输出张量，保存输入张量中的唯一元素，shape仅支持1维，元素个数小于等于self。</td>
       <td>数据类型与 self 一致。</td>
       <td>BOOL、FLOAT、FLOAT16、DOUBLE、UINT8、INT8、UINT16、INT16、INT32、UINT32、UINT64、INT64、BFLOAT16</td>
       <td>-</td>
@@ -423,3 +423,4 @@ int main() {
   aclFinalize();
   return 0;
 }
+```

@@ -223,7 +223,7 @@ aclnnStatus aclnnLogit(
 - 确定性计算：
   - aclnnLogit默认确定性实现。
 
-- input取值范围不在[0, 1]，输出NaN，取值0时为-Inf，取值为1时为Inf。
+- input取值范围不在[0, 1]时，输出NaN，取值0时为-Inf，取值为1时为Inf。
 - eps大于1时，输出NaN，取值为1时为Inf。
 
 ## 调用示例

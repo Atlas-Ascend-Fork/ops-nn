@@ -235,7 +235,7 @@ aclnnStatus aclnnUnique(
   - aclnnUnique 默认确定性实现。
   <!-- npu="950" id7 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-      - 由于去重算法实现差异，当满足下列所有条件时，算子将无视sorted入参的值，固定对输出结果进行升序排序：
+      - 由于去重算法实现差异，当满足下列所有条件时，算子将无视 sorted 入参的值，固定对输出结果进行升序排序：
           - self 输入为 1D
           - self 的数据类型为下列类型：FLOAT、FLOAT16、UINT8、INT8、UINT16、INT16、INT32、UINT32、UINT64、INT64、BFLOAT16
   <!-- end id7 -->

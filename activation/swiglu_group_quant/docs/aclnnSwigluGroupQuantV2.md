@@ -25,7 +25,7 @@
 
 ### 接口功能
 
-`aclnnSwigluGroupQuantV2`是 [aclnnSwigluGroupQuant](aclnnSwigluGroupQuant.md) 的V2接口，
+`aclnnSwigluGroupQuantV2`是[aclnnSwigluGroupQuant](aclnnSwigluGroupQuant.md)的V2接口，
 对应**`quantMode=5`（mx_quant_v2）**这一独立量化模式，在V1的MX量化基础上新增：
 
 - 新增`alpha`、`bias`两个属性，支持变体ClippedSwiGLU激活

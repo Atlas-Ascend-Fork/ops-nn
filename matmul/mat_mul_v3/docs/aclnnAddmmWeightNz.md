@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：计算α 乘以mat1与mat2的乘积，再与β和self的乘积求和。相较于原有addmm接口，新接口mat2支持nz格式。
+- 接口功能：计算α乘以mat1与mat2的乘积，再与β和self的乘积求和。相较于原有addmm接口，新接口mat2支持nz格式。
 - 计算公式：
 
   $$
@@ -84,7 +84,7 @@ aclnnStatus aclnnAddmmWeightNz(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -192,23 +192,23 @@ aclnnStatus aclnnAddmmWeightNz(
 
   <!-- npu="A3,910b" id7 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
-      - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-      - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
-      - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项；
+      - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+      - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项。
+      - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
       - cubeMathType=4，当self、mat1和mat2均为FLOAT16或均为BFLOAT16时，矩阵乘与bias相加过程使用FLOAT32中间结果计算，支持self相对矩阵乘结果进行broadcast，输出数据类型由out指定。
   <!-- end id7 -->
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-      - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-      - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
+      - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+      - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项。
       - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
       - cubeMathType=4，当输入数据类型为FLOAT16/BFLOAT16时，addmm过程会升精度计算，该情况下当前不支持输入self与matmul计算结果矩阵做broadcast。
   <!-- end id8 -->
   <!-- npu="910,310p" id9 -->
   - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：
-    - 不支持BFLOAT16数据类型；
-    - 当输入数据类型为FLOAT32时不支持cubeMathType=0；
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理；
+    - 不支持BFLOAT16数据类型。
+    - 当输入数据类型为FLOAT32时不支持cubeMathType=0。
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理。
     - 不支持cubeMathType=3。
 
   <!-- end id9 -->
@@ -327,7 +327,7 @@ aclnnStatus aclnnAddmmWeightNz(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
   #include <iostream>
   #include <vector>
   #include <cmath>

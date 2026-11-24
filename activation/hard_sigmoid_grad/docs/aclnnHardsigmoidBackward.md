@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-接口功能：[aclnnHardsigmoid](../../hard_sigmoid/docs/aclnnHardsigmoid&aclnnInplaceHardsigmoid.md)的反向传播，计算 HardSigmoid 对输入的梯度。
+接口功能：[aclnnHardsigmoid](../../hard_sigmoid/docs/aclnnHardsigmoid&aclnnInplaceHardsigmoid.md)的反向传播，计算HardSigmoid对输入的梯度。
 
 计算公式：
 

@@ -35,7 +35,7 @@
   w_{c} = \text{weight}[c] \cdot \mathbb{1}\{c \not=   \text{ignoreIndex}\},
   $$
 
-  其中$x$是self, $y$是target, $w$是weight，$N$是batch的大小. 如果`reduction`不是`'none'`,那么：
+  其中$x$是self, $y$是target, $w$是weight，$N$是batch的大小。如果`reduction`不是`'none'`，那么：
 
   $$
   \ell(x, y) = \begin{cases}
@@ -155,7 +155,7 @@ aclnnStatus aclnnNLLLoss(
       <td>out（aclTensor*）</td>
       <td>输出</td>
       <td>公式中的out。</td>
-      <td>当reduction为0（none）且self的shape为2维时，out shape为(N,),否则为(1,)。</td>
+      <td>当reduction为0（none）且self的shape为2维时，out shape为(N,)，否则为(1,)。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>-</td>
@@ -292,7 +292,7 @@ aclnnStatus aclnnNLLLoss(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

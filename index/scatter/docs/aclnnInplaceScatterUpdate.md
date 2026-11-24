@@ -206,7 +206,7 @@ aclnnStatus aclnnInplaceScatterUpdate(
       <td>data、updates的维度数不一致。</td>
       </tr>
       <tr>
-      <td>indices的维度不是零维，一维或二维。</td>
+      <td>indices的维度不是零维、一维或二维。</td>
       </tr>
       <tr>
       <td>indices维度为0时，updates的第0轴不为1。</td>

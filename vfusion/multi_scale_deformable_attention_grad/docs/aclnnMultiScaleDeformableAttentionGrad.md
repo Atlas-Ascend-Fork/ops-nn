@@ -156,7 +156,7 @@ aclnnStatus aclnnMultiScaleDeformableAttentionGrad(
       <td>spatialShape</td>
       <td>输入</td>
       <td>存储每个尺度特征图的高和宽。对应公式中的`spatialShape`。</td>
-      <td>shape为(num_levels, 2)，其中：<ul><li>num_levels为特征图的数量。</li><li>2分别代表H，W。</li></ul></td>
+      <td>shape为(num_levels, 2)，其中：<ul><li>num_levels为特征图的数量。</li><li>2分别代表H、W。</li></ul></td>
       <td>INT32、INT64</td>
       <td>ND</td>
       <td>2</td>
@@ -176,7 +176,7 @@ aclnnStatus aclnnMultiScaleDeformableAttentionGrad(
       <td>location</td>
       <td>输入</td>
       <td>采样点位置tensor，存储每个采样点的坐标位置。对应公式中的`location`。</td>
-      <td>shape为(bs, num_queries, num_heads, num_levels, num_points, 2)，其中：<ul><li>num_queries为查询的数量。</li><li>num_points为采样点的数量。</li><li>2分别代表y，x。</li></ul></td>
+      <td>shape为(bs, num_queries, num_heads, num_levels, num_points, 2)，其中：<ul><li>num_queries为查询的数量。</li><li>num_points为采样点的数量。</li><li>2分别代表y、x。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>6</td>
@@ -330,7 +330,7 @@ aclnnStatus aclnnMultiScaleDeformableAttentionGrad(
 - 确定性计算
   - aclnnMultiScaleDeformableAttentionGrad默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
-- 通道数channels%8 = 0，且channels<=256
+- 通道数channels%8 = 0，且channels <= 256
 - 查询的数量num_queries < 500000
 - 特征图的数量num_levels <= 16
 - 头的数量num_heads <= 16

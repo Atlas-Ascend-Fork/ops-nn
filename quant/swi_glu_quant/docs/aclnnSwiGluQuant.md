@@ -146,7 +146,7 @@ aclnnStatus aclnnSwiGluQuant(
       <td>activateLeft（bool）</td>
       <td>输入</td>
       <td>计算输入。</td>
-      <td>true代表激活输入x的前半部分，false代表激活输入x后半部分。</td>
+      <td>true代表激活输入x的前半部分，false代表激活输入x的后半部分。</td>
       <td>BOOL</td>
       <td>-</td>
       <td>-</td>

@@ -29,7 +29,7 @@
 - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：将INT32类型的weight输入数据打包为紧密排布的INT4数据。
 <!-- end id7 -->
 <!-- npu="950" id8 -->
-- <term>Ascend 950PR&950DT系列产品</term> ：将INT32类型的weight打包为紧密排布的INT4类型，将FLOAT类型的weight打包为紧密排布的FLOAT4_E2M1类型。
+- <term>Ascend 950PR&950DT系列产品</term>：将INT32类型的weight打包为紧密排布的INT4类型，将FLOAT类型的weight打包为紧密排布的FLOAT4_E2M1类型。
 
 <!-- end id8 -->
 
@@ -93,8 +93,8 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
       <td>输出</td>
       <td>Matmul类算子的低比特量化后的权重，权重值为4bit且紧密排布</td>
       <td>-</td>
-      <td>INT4,INT32</td>
-      <td>ND,FRACTAL_NZ</td>
+      <td>INT4、INT32</td>
+      <td>ND、FRACTAL_NZ</td>
       <td>-</td>
       <td>-</td>
     </tr>
@@ -163,10 +163,10 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
     <tr>
       <td rowspan="2">ACLNN_ERR_RUNTIME_ERROR</td>
       <td rowspan="2">361001</td>
-      <td>数据从host侧拷贝到device侧异常。</td>
+      <td>数据从Host侧拷贝到Device侧异常。</td>
     </tr>
     <tr>
-      <td>数据从device侧拷贝到host侧异常。</td>
+      <td>数据从Device侧拷贝到Host侧异常。</td>
     </tr>
   </tbody>
   </table>

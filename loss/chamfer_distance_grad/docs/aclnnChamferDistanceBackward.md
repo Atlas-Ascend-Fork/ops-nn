@@ -24,10 +24,10 @@
 ## 功能说明
 
 - 接口功能：ChamferDistance（倒角距离）的反向算子，根据正向的输入对输出的贡献及初始梯度求出输入对应的梯度。
-- 与前向 `ChamferDistance` 配套调用时，前向 `xyz1`、`xyz2` 的 shape 为 `(2,B,N)`，本反向接口要求 `(B,N,2)`。调用反向接口前，需分别按轴序 `(1,2,0)` 转置两个前向输入后传入。
+- 与前向 `ChamferDistance` 配套调用时，前向 `xyz1`、`xyz2` 的shape为 `(2,B,N)`，本反向接口要求 `(B,N,2)`。调用反向接口前，需分别按轴序 `(1,2,0)` 转置两个前向输入后传入。
 - 计算公式：
 
-  假设有两个点集：  xyz1=[B,N,2], xyz2=[B,M,2]
+  假设有两个点集：xyz1=[B,N,2], xyz2=[B,M,2]
 
   - ChamferDistance（倒角距离）正向算子计算公式为：
 
@@ -139,7 +139,7 @@ aclnnStatus aclnnChamferDistanceBackward(
     <tr>
       <td class="tg-0pky">idx1（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
-      <td class="tg-0pky">算子正向输出的距离xyz1最小距离的xyz2中的点的索引tensor。</td>
+      <td class="tg-0pky">算子正向输出的距离xyz1最小距离的xyz2中的点的索引Tensor。</td>
       <td class="tg-0pky">shape为(B,N)。</td>
       <td class="tg-0pky">INT32</td>
       <td class="tg-0pky">ND</td>
@@ -149,7 +149,7 @@ aclnnStatus aclnnChamferDistanceBackward(
     <tr>
       <td class="tg-0pky">idx2（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
-      <td class="tg-0pky">算子正向输出的距离xyz2最小距离的xyz1中的点的索引tensor。</td>
+      <td class="tg-0pky">算子正向输出的距离xyz2最小距离的xyz1中的点的索引Tensor。</td>
       <td class="tg-0pky">shape为(B,N)。</td>
       <td class="tg-0pky">INT32</td>
       <td class="tg-0pky">ND</td>

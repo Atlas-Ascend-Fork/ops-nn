@@ -25,9 +25,9 @@
 
 - 接口功能 : SwigluGroupGrad算子实现SwiGLU激活函数反向传播计算。用于计算输入梯度`grad_x`和权重梯度`grad_weight`。
 
--  计算公式
+- 计算公式
 
--  基础计算流程
+- 基础计算流程
 
 ```text
 步骤〇：GroupIndex处理（可选）→ 计算trunc

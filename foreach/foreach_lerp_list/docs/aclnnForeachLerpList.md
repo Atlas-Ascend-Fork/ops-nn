@@ -243,9 +243,9 @@ aclnnStatus aclnnForeachLerpList(
 
 ## 约束说明
 
-- 数据格式：仅支持 ND 格式，不支持FRACTAL_Z、FRACTAL_NZ等私有格式。传入私有格式时，aclnnForeachLerpListGetWorkspaceSize接口返回161002（ACLNN_ERR_PARAM_INVALID）。
+- 数据格式：仅支持ND格式，不支持FRACTAL_Z、FRACTAL_NZ等私有格式。传入私有格式时，aclnnForeachLerpListGetWorkspaceSize接口返回161002（ACLNN_ERR_PARAM_INVALID）。
 - 维度与列表长度：每个Tensor的维度范围为0-8，超过8维时接口返回161002（ACLNN_ERR_PARAM_INVALID）；TensorList长度上限为256，超过上限时在内部tiling阶段返回561002（ACLNN_ERR_INNER_TILING_ERROR）。
-- out 的 shape 需与 x1 一致，且 storage shape size 不小于 x1。
+- out的shape需与x1一致，且storage shape size不小于x1。
 - 确定性计算：
   - aclnnForeachLerpList默认确定性实现。
 

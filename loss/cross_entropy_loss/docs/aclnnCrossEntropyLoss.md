@@ -133,7 +133,7 @@ aclnnStatus aclnnCrossEntropyLoss(
     <td>weightOptional（aclTensor*）</td>
     <td>输入</td>
     <td>表示为每个类别指定的缩放权重，公式中的weight。</td>
-    <td>如果不给定，则不对target加权.</td>
+    <td>如果不给定，则不对target加权。</td>
     <td>FLOAT</td>
     <td>ND</td>
     <td>(C)</td>

@@ -25,8 +25,8 @@
 
 - 接口功能：完成对称秩k更新（syrk，参考 cublas `syrk`），计算 α 乘以 A 与其转置的乘积，再与
   β 和 C 的乘积求和，结果原地写回 C（输出完整对称矩阵，上三角和下三角均写出，而非只写单个三角）。
-  支持通过 `cubeMathType` 指定Cube单元的计算逻辑；FLOAT32输入支持 HF32（cubeMathType=1/3）或 FP16（cubeMathType=2）计算路径。
-- 计算公式（transposeX = false，a 为 (…, m, k)，2-6 维，前面为 batch 轴）：
+  支持通过 `cubeMathType` 指定Cube单元的计算逻辑；FLOAT32输入支持HF32（cubeMathType=1/3）或FP16（cubeMathType=2）计算路径。
+- 计算公式（transposeX = false，a 为 (…, m, k)，2-6 维，前面为 batch轴）：
 
   <div>
   C = α × (A @ A<sup>T</sup>) + β × C
@@ -292,7 +292,7 @@ aclnnStatus aclnnGemmSyrk(
 - β为0时对齐cuBLAS语义：不读取C，输出为α × (A @ A<sup>T</sup>)。
 - m轴或batch轴乘积为0时，接口直接返回成功，不启动kernel。
 - 建议输入C为对称矩阵：β ≠ 0时输出矩阵的对称性依赖输入C对称。
-- a、cRef支持FLOAT16、BFLOAT16、FLOAT32，且两者数据类型需一致；FLOAT32输入可选择 HF32（cubeMathType=1/3，累加器与输出保持FLOAT32）或 FP16（cubeMathType=2，FP16计算后转回FLOAT32输出）路径。
+- a、cRef支持FLOAT16、BFLOAT16、FLOAT32，且两者数据类型需一致；FLOAT32输入可选择HF32（cubeMathType=1/3，累加器与输出保持FLOAT32）或FP16（cubeMathType=2，FP16计算后转回FLOAT32输出）路径。
 - cubeMathType仅支持取值0、1、2、3，传入其他值返回参数错误；FLOAT32输入不支持取0，FLOAT16、BFLOAT16输入推荐取0以保持原有精度行为。
 
 ## 调用示例

@@ -51,7 +51,7 @@
   slotMapping[i] = blockTablesFlat[blockTablesStride * i + ⌊pos_i / blockSize⌋] * blockSize + (pos_i \% blockSize)
   $$
 
-  padding 行为：numSeqs大于numQueries时，kernel对所有padding行 j ∈ [numQueries, numSeqs) 写入 inputTokens[j]=0、inputPositions[j]=0、slotMapping[j]=-1，seqLens的padding行保留输入原值；该写回作用于调用方输入Tensor的对应区域，调用方须保证其可写。
+  padding行为：numSeqs大于numQueries时，kernel对所有padding行 j ∈ [numQueries, numSeqs) 写入 inputTokens[j]=0、inputPositions[j]=0、slotMapping[j]=-1，seqLens的padding行保留输入原值；该写回作用于调用方输入Tensor的对应区域，调用方须保证其可写。
 
 ## 函数原型
 

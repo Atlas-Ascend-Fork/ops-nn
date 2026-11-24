@@ -123,7 +123,7 @@ aclnnStatus aclnnScaledMaskedSoftmax(
       <td>y</td>
       <td>输出</td>
       <td>scaledMaskedX的Softmax结果，公式中的y</td>
-      <td>数据类型与shape需要和x一致，且仅支持连续tensor。</td>
+      <td>数据类型与shape需要和x一致，且仅支持连续Tensor。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>[B,N,S1,S2]</td>
@@ -191,7 +191,7 @@ aclnnStatus aclnnScaledMaskedSoftmax(
       <td>x和y的shape不同。</td>
     </tr>
     <tr>
-      <td>y为非连续tensor。</td>
+      <td>y为非连续Tensor。</td>
     </tr>
     <tr>
       <td>mask不能broadcast成x的shape。</td>

@@ -347,7 +347,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulNz(
 
 - x为FLOAT16，weight为FLOAT32调用示例，需要调用`aclnnConvertWeightToINT4Pack`接口辅助完成调用：
 
-  ```Cpp
+  ```cpp
   #include <iostream>
   #include <memory>
   #include <vector>
@@ -686,7 +686,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulNz(
 
 - x为FLOAT16，weight为INT8调用示例，需要调用`aclnnTransMatmulWeight`接口辅助完成调用：
 
-  ```Cpp
+  ```cpp
   #include <cmath>
   #include <iostream>
   #include <memory>
@@ -950,7 +950,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulNz(
 <!-- npu="950" id8 -->
 - x为FLOAT16，weight为INT4且数据格式为FRACTAL_NZ_C0_16的调用示例（仅支持<term>Ascend 950PR&950DT系列产品</term>，FRACTAL_NZ_C0_16格式的weight由`aclnnWeightQuantPreprocess`接口的非转置路径产生，无需调用`aclnnConvertWeightToINT4Pack`接口转换，storage shape为(ceil(n/16), ceil(k/16), 16, 16)）：
 
-  ```Cpp
+  ```cpp
   #include <iostream>
   #include <memory>
   #include <vector>
@@ -1226,7 +1226,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulNz(
 <!-- npu="950" id9 -->
 - x为FLOAT16，weight为FLOAT4_E2M1且数据格式为FRACTAL_NZ_C0_16，antiquantScale为FLOAT8_E8M0的A16MXF4调用示例（仅支持<term>Ascend 950PR&950DT系列产品</term>；weight为4-bit紧凑排布，按16x16分块，块间按(n1, k1)排布，块内按(k0, n0)行主序且n0维连续，1个uint8存放2个fp4_e2m1数据、低4bit为偶数n，storage shape为(ceil(n/16), ceil(k/16), 16, 16)，实际场景中由`aclnnWeightQuantPreprocess`接口的非转置路径产生）：
 
-  ```Cpp
+  ```cpp
   #include <algorithm>
   #include <cmath>
   #include <cstdint>
@@ -1576,7 +1576,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulNz(
 <!-- npu="950" id10 -->
 - x为FLOAT16，weight为FLOAT4_E2M1且数据格式为FRACTAL_NZ_C0_16，antiquantScale为FLOAT16的A16F4 pergroup调用示例（仅支持<term>Ascend 950PR&950DT系列产品</term>；weight为4-bit紧凑排布，按16x16分块，块间按(n1, k1)排布，块内按(k0, n0)行主序且n0维连续，1个uint8存放2个fp4_e2m1数据、低4bit为偶数n，storage shape为(ceil(n/16), ceil(k/16), 16, 16)，实际场景中由`aclnnWeightQuantPreprocess`接口的非转置路径产生，无需调用`aclnnConvertWeightToINT4Pack`接口转换；antiquantScale的shape为(ceildiv(k, groupSize), n)）：
 
-  ```Cpp
+  ```cpp
   #include <algorithm>
   #include <cmath>
   #include <cstdint>

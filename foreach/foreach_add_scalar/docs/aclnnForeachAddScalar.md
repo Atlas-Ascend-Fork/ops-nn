@@ -208,7 +208,7 @@ aclnnStatus aclnnForeachAddScalar(
   <!-- npu="950" id13 -->
   > 说明：
   >
-  > <term>Ascend 950PR&950DT系列产品</term>：x的tensorList长度（包含的Tensor个数）小于out的tensorList长度（包含的Tensor个数），报错的返回码和错误码分别为：'ACLNN_ERR_INNER_TILING_ERROR 和 561002'。
+  > <term>Ascend 950PR&950DT系列产品</term>：x的tensorList长度（包含的Tensor个数）小于out的tensorList长度（包含的Tensor个数），报错的返回码和错误码分别为：'ACLNN_ERR_INNER_TILING_ERROR和561002'。
 
   <!-- end id13 -->
 

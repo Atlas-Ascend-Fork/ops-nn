@@ -25,7 +25,7 @@
 
 - 接口功能：沿输入self的给定轴dim，将index指定位置的值使用value进行替换。
 - 示例：
-输入self为:
+输入self为：
 
   &emsp;&emsp;[[1, 2, 3],
 

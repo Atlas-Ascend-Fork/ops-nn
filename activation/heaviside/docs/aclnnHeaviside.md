@@ -41,7 +41,7 @@
 
 每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnHeavisideGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnHeaviside”接口执行计算。
 
-```Cpp
+```cpp
 aclnnStatus aclnnHeavisideGetWorkspaceSize(
   const aclTensor *input,
   const aclTensor *values,
@@ -50,7 +50,7 @@ aclnnStatus aclnnHeavisideGetWorkspaceSize(
   aclOpExecutor  **executor)
 ```
 
-```Cpp
+```cpp
 aclnnStatus aclnnHeaviside(
   void            *workspace,
   uint64_t         workspaceSize,

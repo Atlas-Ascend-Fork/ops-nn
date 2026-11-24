@@ -83,7 +83,7 @@ aclnnStatus aclnnQuantize(
     <tr>
       <td>x（aclTensor*）</td>
       <td>输入</td>
-      <td>表示需要进行量化的源数据张量。对应公式中的`x`。</td>
+      <td>表示需要进行量化的源数据张量，对应公式中的`x`。</td>
       <td>支持空Tensor。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -93,7 +93,7 @@ aclnnStatus aclnnQuantize(
     <tr>
       <td>scales（aclTensor*）</td>
       <td>输入</td>
-      <td>表示量化过程中的缩放因子张量。对应公式中的`scales`。</td>
+      <td>表示量化过程中的缩放因子张量，对应公式中的`scales`。</td>
       <td><ul><li>支持空Tensor。</li><li>size需要为1或和输入x中axis轴的size相等。</li><li>如果`x`的dtype不是FLOAT32，scales的dtype需要和`x`的dtype一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>

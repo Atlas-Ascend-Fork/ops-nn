@@ -50,7 +50,7 @@ aclnnStatus aclnnL1LossBackward(
 
 ## aclnnL1LossBackwardGetWorkspaceSize
 
-- **参数说明**
+- **参数说明：**
 
   <table class="tg" style="undefined;table-layout: fixed; width: 1435px"><colgroup>
   <col style="width: 205px">

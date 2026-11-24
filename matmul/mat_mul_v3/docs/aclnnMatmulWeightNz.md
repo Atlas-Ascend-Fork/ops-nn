@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：完成张量self与张量mat2的矩阵乘计算，mat2仅支持NZ格式，只支持self为2维, mat2为4维。
+- 接口功能：完成张量self与张量mat2的矩阵乘计算，mat2仅支持NZ格式，只支持self为2维，mat2为4维。
   相似接口有aclnnMatmul（mat2仅支持ND）、aclnnMm（支持2维Tensor作为输入的矩阵乘）和aclnnBatchMatmul（仅支持3维的矩阵乘，其中第1维为batch）。
 - 计算公式：
 
@@ -75,7 +75,7 @@ aclnnStatus aclnnMatmulWeightNz(
         <th>数据类型</th>
         <th>数据格式</th>
         <th>维度(shape)</th>
-        <th>非连续tensor</th>
+        <th>非连续Tensor</th>
       </tr></thead>
     <tbody>
       <tr>
@@ -83,8 +83,8 @@ aclnnStatus aclnnMatmulWeightNz(
         <td>输入</td>
         <td>表示矩阵乘的第一个矩阵，公式中的self。</td>
         <td>数据类型需要与mat2满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。<br>
-        - 在self不转置的情况下各个维度表示:（m，k）<br>
-        - 在self转置的情况下各个维度表示:（k，m）<br></td>
+        - 在self不转置的情况下各个维度表示：（m，k）<br>
+        - 在self转置的情况下各个维度表示：（k，m）<br></td>
         <td>BFLOAT16、FLOAT16、FLOAT32</td>
         <td>ND</td>
         <td>2</td>
@@ -96,8 +96,8 @@ aclnnStatus aclnnMatmulWeightNz(
         <td>表示矩阵乘的第二个矩阵，公式中的mat2。</td>
         <td>数据类型需要与self满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。<br>
         mat2的Reduce维度需要与self的Reduce维度大小相等。<br>
-        当B矩阵不转置时，NZ格式各个维度表示：（n1，k1，k0，n0），其中k0 = 16，n0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil（k，k0） = k1, mat2 shape中的n1与out的n满足以下关系: ceil(n, n0) = n1。<br>
-        当B矩阵转置时，NZ格式各个维度表示：（k1，n1，n0，k0），其中n0 = 16，k0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil（k，k0） = k1, mat2 shape中的n1与out的n满足以下关系: ceil(n, n0) = n1。<br>
+        当B矩阵不转置时，NZ格式各个维度表示：（n1，k1，k0，n0），其中k0 = 16，n0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil（k，k0） = k1，mat2 shape中的n1与out的n满足以下关系：ceil(n, n0) = n1。<br>
+        当B矩阵转置时，NZ格式各个维度表示：（k1，n1，n0，k0），其中n0 = 16，k0为16。self shape中的k和mat2 shape中的k1需要满足以下关系：ceil（k，k0） = k1，mat2 shape中的n1与out的n满足以下关系：ceil(n, n0) = n1。<br>
         mat2的view strides只支持[N,1]（非转置）或[1,K]（转置），其余返回161002。<br>
         </td>
         <td>BFLOAT16、FLOAT16、FLOAT32</td>
@@ -162,10 +162,10 @@ aclnnStatus aclnnMatmulWeightNz(
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
     - 调用此接口之前，必须使用aclnnNpuFormatCast接口完成mat2的原始输入Format从ND到NZ格式的转换。
-    - 不支持 cubeMathType为1：ALLOW_FP32_DOWN_PRECISION 的选项
-    - 不支持 cubeMathType为3：USE_HF32 的选项
-    - 不支持 cubeMathType为4：USE_FP32_ADD 的选项
-    - 不支持 self，mat2 数据类型为 FLOAT32
+    - 不支持cubeMathType为1：ALLOW_FP32_DOWN_PRECISION的选项
+    - 不支持cubeMathType为3：USE_HF32的选项
+    - 不支持cubeMathType为4：USE_FP32_ADD的选项
+    - 不支持self，mat2数据类型为FLOAT32
 
   <!-- end id8 -->
 
@@ -287,7 +287,7 @@ aclnnStatus aclnnMatmulWeightNz(
 <!-- npu="310p" id12 -->
 - <term>Atlas推理系列产品</term>：aclnnMatmulWeightNz不支持输入数据类型为BFLOAT16。
 <!-- end id12 -->
-- 建议使用场景：建议在mte2 bound场景下使用，例如M轴较小，A矩阵存在重复搬运，B矩阵无重复搬运的情况。
+- 建议使用场景：建议在MTE2 bound场景下使用，例如M轴较小，A矩阵存在重复搬运，B矩阵无重复搬运的情况。
 
 ## 调用示例
 
@@ -520,7 +520,7 @@ aclnnStatus aclnnMatmulWeightNz(
 <!-- end id13 -->
 <!-- npu="A3,910b" id14 -->
 - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
-  线性层或输入权重转置场景（数学语义：`out = self @ mat2.T`）下的示例代码如下。本示例中 weight 物理布局为 `[N, K]`，通过 `aclCreateTensor` 同时配置 `view_shape=[K, N]`、对应 `view_strides` 与 `storage_shape=[N, K]` 后，再调用 `aclnnTransMatmulWeight` 与 `aclnnMatmulWeightNz`，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
+  线性层或输入权重转置场景（数学语义：`out = self @ mat2.T`）下的示例代码如下。本示例中weight物理布局为 `[N, K]`，通过 `aclCreateTensor` 同时配置 `view_shape=[K, N]`、对应 `view_strides` 与 `storage_shape=[N, K]` 后，再调用 `aclnnTransMatmulWeight` 与 `aclnnMatmulWeightNz`，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
   ```Cpp
   #include <iostream>

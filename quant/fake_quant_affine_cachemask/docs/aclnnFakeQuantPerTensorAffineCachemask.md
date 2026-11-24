@@ -40,7 +40,7 @@
   mask = (qval >= quant\_min)   \&  (qval <= quant\_max)
   $$
 
-- 特殊值语义（与 PyTorch `fake_quantize_per_tensor_affine_cachemask` 对齐）：
+- 特殊值语义（与PyTorch `fake_quantize_per_tensor_affine_cachemask`对齐）：
   - NaN：out = (quant\_min - zero\_point) * scale，mask = False
   - +Inf：out = (quant\_max - zero\_point) * scale，mask = False
   - -Inf：out = (quant\_min - zero\_point) * scale，mask = False

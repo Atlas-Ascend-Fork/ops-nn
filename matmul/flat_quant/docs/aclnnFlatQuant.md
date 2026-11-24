@@ -32,7 +32,6 @@
      $$
      x' = x @ kroneckerP2
      $$
-
   2. kroneckerP1左乘x'：
 
      $$
@@ -48,14 +47,13 @@
      $$
      quantScale = [max(abs(x''[0,:,:])),max(abs(x''[1,:,:])),...,max(abs(x''[M-1,:,:]))]/(7 / clipRatio)
      $$
-
   2. 计算输出的out：
 
      $$
      out = x'' / quantScale
      $$
 
-  pergroup量化方式
+  pergroup量化方式：
 
   1. 矩阵乘后x''的shape为[M,N1,N2]，在计算pergroup量化方式中的mx_quantize时，需reshape为[M,N1*N2]，记为x2
 
@@ -66,13 +64,11 @@
      $$
      sharedExp[M,N1*N2/32] = floor(log2(max(|e0|,|e1|,....,|e31|))) - emax
      $$
-
   4. 计算quantScale
 
      $$
      quantScale[M,N1*N2/32] = 2 ^ {sharedExp[M,N1*N2/32]}
      $$
-
   5. 每groupsize共享一个quantScale，计算out
 
      $$

@@ -192,7 +192,7 @@ aclnnStatus aclnnKthvalue(
       <tr>
       <td rowspan="3">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="3">161002</td>
-      <td>self、valuesOut或indicesOut的数据类型不在支持的范围之内,或shape不相互匹配。</td>
+      <td>self、valuesOut或indicesOut的数据类型不在支持的范围之内，或shape不相互匹配。</td>
       </tr>
       <tr>
       <td>dim的取值不在输入tensor self的维度范围中。</td>
