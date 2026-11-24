@@ -15,6 +15,7 @@
  */
 
 #include "bn_training_reduce_grad.h"
+#include "bn_training_reduce_grad_short_plane.h"
 
 using namespace BNTrainingReduceGradOps;
 
@@ -32,6 +33,16 @@ extern "C" __global__ __aicore__ void bn_training_reduce_grad(GM_ADDR grads, GM_
     GET_TILING_DATA_WITH_STRUCT(BNTrainingReduceGradTilingData, tilingData, tiling);
     TPipe pipe;
     if (TILING_KEY_IS(0)) {
+        using ShortPlane = BNTrainingReduceGradShortPlane<DTYPE_GRADS>;
+        const uint32_t indexCount = ShortPlane::GetIndexCount(tilingData);
+        const uint32_t tileSize = ShortPlane::GetTileSize(tilingData, indexCount);
+        if (tileSize != 0) {
+            ShortPlane op;
+            op.Init(grads, x, diff_scale, diff_offset, scale, batch_mean, batch_variance, y, tilingData, pipe,
+                    indexCount, tileSize);
+            op.Process();
+            return;
+        }
         BNTrainingReduceGradKernel<DTYPE_GRADS> op;
         op.Init(grads, x, diff_scale, diff_offset, scale, batch_mean, batch_variance, y, &tilingData, &pipe);
         op.Process();
