@@ -40,6 +40,8 @@
 using namespace op;
 namespace {
 
+inline bool IsArch35() { return GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_3510; }
+
 struct LstmDataParamsIn {
     const aclTensor* input;
     const aclTensorList* params;
@@ -304,27 +306,17 @@ LstmSingleLayerDirec(const aclTensor* input, const aclTensorList* params, const 
                                       std::get<SL_RESULT_O>(slResult), std::get<SL_RESULT_H>(slResult),
                                       std::get<SL_RESULT_C>(slResult), std::get<SL_RESULT_TANHC>(slResult));
     } else {
-        /* ON ascend950 THERE IS NO FALLBACK. DynamicRNN declares ascend950 and ships a binary config
-         * for it, but a call that lands there does not come back: measured on device, a single-layer
-         * fp32 call with input_size = 17 launched and then hung in aclrtSynchronizeStream -- the
-         * compute stream is WEDGED, not faulted, so nothing times out, nothing is reported, and the
-         * card needs a reset. Twenty-five minutes in, the backtrace was still
-         *   rtStreamSynchronize <- aclrtSynchronizeStreamImpl <- the caller.
+        /* ascend950 used to refuse here instead of falling back. That was added late in MR !10108,
+         * whose own dispatch table specified a fallback, on the strength of one observation: a
+         * single-layer fp32 call with input_size = 17 that launched and then hung in
+         * aclrtSynchronizeStream on CANN 9.1.0.
          *
-         * Falling through to that is strictly worse than refusing. A refusal costs the user an error
-         * message; the fallback costs them a card and tells them nothing about which argument did
-         * it. So on this SoC the refusal IS the answer, and it names the rule that was broken.
-         *
-         * Every other SoC keeps DynamicRNN untouched -- there it is the real implementation for
-         * these shapes, not a hole to fall into. */
-        if (GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND950) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                    "aclnnLSTM: no implementation on ascend950 for this (layer, direction) -- %s. "
-                    "DynamicRNN is not a fallback on this SoC: a call that reaches it hangs the "
-                    "compute stream rather than returning, so the call is refused here instead.",
-                    refusal != nullptr ? refusal : "reason unavailable");
-            return nullptrInner;
-        }
+         * Measured since, on an Ascend950PR with this repository's own opp: a two-layer
+         * bidirectional fp32 call runs ten forward and backward passes through here and matches a
+         * CPU reference to 2.3e-07 on both halves of the output. The input_size = 17 case itself
+         * has not been re-measured. */
+        OP_LOGI("aclnnLSTM: ascend950 leg declined by SingleLayerLstm, using DynamicRNN -- %s",
+                refusal != nullptr ? refusal : "reason unavailable");
         layerResult = l0op::DynamicRNN(input, weightTrans, bias, initH, initC, nullptr, direction, train, yOutDirec,
                                        iOutDirec, jOutDirec, fOutDirec, oOutDirec, hOutDirec, cOutDirec, tanhCOutDirec,
                                        executor);
@@ -443,8 +435,7 @@ static inline bool CheckDtypeValid(const aclTensor* input, const aclTensorList* 
                                    const aclTensorList* tanhCOut)
 {
     // 仅 Ascend950 的非 packed 输入路径（batchSizes == nullptr）支持 BF16；其他芯片及 packed 路径仅支持 FP32/FP16。
-    if (!(GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND950 &&
-          input->GetDataType() == DataType::DT_BF16)) {
+    if (!(IsArch35() && input->GetDataType() == DataType::DT_BF16)) {
         OP_CHECK_DTYPE_NOT_SUPPORT(input, DTYPE_SUPPORT_LIST, return false);
     }
     auto data_type = input->GetDataType();
@@ -791,8 +782,7 @@ static aclnnStatus CheckParams(const aclTensor* input, const aclTensorList* para
               ACLNN_ERR_PARAM_INVALID);
 
     // 6. 检查格式是否支持：A5平台不支持私有格式，直接报错；A2/A3平台仅做格式检查，记录告警不拦截
-    SocVersion socVersion = GetCurrentPlatformInfo().GetSocVersion();
-    if (socVersion == SocVersion::ASCEND950) {
+    if (IsArch35()) {
         CHECK_RET(CheckFormat(input, params, train, hx, output, hy, cy, iOut, jOut, fOut, oOut, hOut, cOut, tanhCOut),
                   ACLNN_ERR_PARAM_INVALID);
     } else {
@@ -1795,9 +1785,28 @@ aclnnStatus aclnnLSTMGetWorkspaceSize(const aclTensor* input, const aclTensorLis
                            iOut, jOut, fOut, oOut, hOut, cOut, tanhCOut);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
+    if (IsArch35()) {
+        // torch applies dropout to the output of every layer but the last, and only while training.
+        if (train && numLayers > 1 && !lstm_single_layer_adapter::IsDropoutZero(dropout)) {
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                    "ascend950 LSTM does not implement dropout; it must be zero when train is true and "
+                    "numLayers is greater than 1.");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        // Refused by name here, rather than as an operator-selection error once a leg is built.
+        if (bidirectional && input->GetDataType() == DataType::DT_BF16) {
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                    "ascend950 LSTM does not support bfloat16 together with bidirectional: the "
+                    "bidirectional path runs on DynamicRNN, which implements float16 and float32 only.");
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+    }
+
     // Before IsEmpty(): I=0 still has a nonempty recurrent result. All padding
     // and conversion belongs to this production API, never to the test caller.
-    if (GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND950) {
+    //
+    // This adapter drives one physical layer at a time and has no notion of a second direction.
+    if (IsArch35() && !bidirectional) {
         const lstm_single_layer_adapter::DenseInputs inputs = {input, params,        hx,         numLayers, hasBias,
                                                                train, bidirectional, batchFirst, dropout};
         const lstm_single_layer_adapter::DenseOutputs outputs = {

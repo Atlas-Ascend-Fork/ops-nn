@@ -478,11 +478,14 @@ aclnnStatus aclnnLSTM(
 
 <!-- npu="950" id7 -->
 - <term>Ascend 950PR&950DT系列产品</term>，非packed输入（batchSizes=nullptr）：
-  - 支持多层、hasBias=True/False、batchFirst=True/False和train=True/False；要求bidirectional=False、dropout=0，否则返回ACLNN_ERR_PARAM_INVALID。
-  - time_step必须大于0；batch_size、input_size、hidden_size允许为0。batch_size=0或hidden_size=0时公共输出为空，不启动SingleLayerLstm；input_size=0但batch_size和hidden_size非零时仍计算循环状态和bias贡献。
+  - 支持多层、双向、hasBias=True/False、batchFirst=True/False和train=True/False。
+  - dropout仅在它实际生效时受限：train=True且numLayers&gt;1时必须为0，否则返回ACLNN_ERR_PARAM_INVALID；train=False或numLayers=1时该参数不参与计算，取值不受限。
+  - 双向时两个方向均由DynamicRNN计算，两个方向的数值实现一致；单向由SingleLayerLstm逐层计算，与双向的数值实现不同。
+  - 双向仅支持FLOAT32、FLOAT16：双向所用的DynamicRNN不实现BFLOAT16，故bidirectional=True与BFLOAT16同时给出时返回ACLNN_ERR_PARAM_INVALID。
+  - time_step必须大于0；batch_size、input_size、hidden_size允许为0。batch_size=0或hidden_size=0时公共输出为空，不启动SingleLayerLstm；input_size=0但batch_size和hidden_size非零时仍计算循环状态和bias贡献。上述空形状与补齐规则描述的是单向路径；双向路径按其它产品的通用语义处理。
   - 调用方按逻辑shape提供张量，不要求input_size/hidden_size为8的倍数；物理补齐及输出裁剪由ACLNN完成。补齐后的维度、存储大小或片上资源需求超出支持范围时，会返回错误。
   - train=True时，七类保存状态须与input使用相同dtype，并传给对应的反向调用。
-  - 支持FLOAT32、FLOAT16、BFLOAT16，由SingleLayerLstm逐层计算。
+  - 单向支持FLOAT32、FLOAT16、BFLOAT16，由SingleLayerLstm逐层计算；双向的dtype范围见上。
   - 950系列非packed正向接受ND及NCL等非私有格式。若保存状态后续直接交给aclnnLstmBackward，应按该接口要求为三维输入、初始状态及七类保存状态使用NCL描述符，权重和偏置使用ND；逻辑shape仍按batchFirst解释。反向接口的三维描述符须为NCL，详见[反向接口格式要求](../../single_layer_lstm_grad/docs/aclnnLstmBackward.md#约束说明)。
 - <term>Ascend 950PR&950DT系列产品</term>，变长输入（batchSizes非空）：使用既有变长路径，仅支持FLOAT32、FLOAT16。
 <!-- end id7 -->

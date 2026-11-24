@@ -112,6 +112,116 @@ TEST_F(l2_dynamic_rnn_test, ascend910B_test_dynamic_rnn_params_dim_invalid)
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
 
+/* ascend950 planning. Planning only -- nothing here says whether a kernel executes. */
+namespace {
+struct Lstm950Case {
+    int timeStep = 2;
+    int batch = 1;
+    int hidden = 8;
+    int inputSize = 8;
+    int64_t layers = 1;
+    bool bidirectional = false;
+    bool train = true;
+    double dropout = 0.0;
+    aclDataType dtype = ACL_FLOAT;
+};
+
+aclnnStatus PlanLstm950(const Lstm950Case& c)
+{
+    const int64_t directions = c.bidirectional ? 2 : 1;
+    const int64_t legs = c.layers * directions;
+    const int gates = 4 * c.hidden;
+
+    auto input = TensorDesc({c.timeStep, c.batch, c.inputSize}, c.dtype, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto bias = TensorDesc({gates}, c.dtype, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto recurrent = TensorDesc({gates, c.hidden}, c.dtype, ACL_FORMAT_ND).ValueRange(-1, 1);
+    vector<TensorDesc> paramDescs;
+    for (int64_t layer = 0; layer < c.layers; ++layer) {
+        const int64_t fanIn = layer == 0 ? c.inputSize : c.hidden * directions;
+        for (int64_t direction = 0; direction < directions; ++direction) {
+            paramDescs.emplace_back(TensorDesc({gates, fanIn}, c.dtype, ACL_FORMAT_ND).ValueRange(-1, 1));
+            paramDescs.emplace_back(recurrent);
+            paramDescs.emplace_back(bias);
+            paramDescs.emplace_back(bias);
+        }
+    }
+    auto params = TensorListDesc(paramDescs);
+
+    auto output = TensorDesc({c.timeStep, c.batch, directions * c.hidden}, c.dtype, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto state = TensorDesc({legs, c.batch, c.hidden}, c.dtype, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto gate = TensorDesc({c.timeStep, c.batch, c.hidden}, c.dtype, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto gateList = TensorListDesc(static_cast<int>(legs), gate);
+
+    auto ut = OP_API_UT(
+        aclnnLSTM, INPUT(input, params, nullptr, nullptr, true, c.layers, c.dropout, c.train, c.bidirectional, false),
+        OUTPUT(output, state, state, gateList, gateList, gateList, gateList, gateList, gateList, gateList));
+    uint64_t workspaceSize = 0;
+    return ut.TestGetWorkspaceSize(&workspaceSize);
+}
+} // namespace
+
+TEST_F(l2_dynamic_rnn_test, ascend950_accepts_bidirectional)
+{
+    NpuArchManager arch(NpuArch::DAV_3510);
+    Lstm950Case plan;
+    plan.bidirectional = true;
+    EXPECT_EQ(PlanLstm950(plan), ACL_SUCCESS);
+}
+
+TEST_F(l2_dynamic_rnn_test, ascend950_rejects_dropout_that_applies)
+{
+    NpuArchManager arch(NpuArch::DAV_3510);
+    Lstm950Case plan;
+    plan.layers = 2;
+    plan.dropout = 0.5;
+    EXPECT_EQ(PlanLstm950(plan), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_dynamic_rnn_test, ascend950_accepts_dropout_on_single_layer)
+{
+    NpuArchManager arch(NpuArch::DAV_3510);
+    Lstm950Case plan;
+    plan.dropout = 0.5;
+    EXPECT_EQ(PlanLstm950(plan), ACL_SUCCESS);
+}
+
+TEST_F(l2_dynamic_rnn_test, ascend950_accepts_dropout_when_not_training)
+{
+    NpuArchManager arch(NpuArch::DAV_3510);
+    Lstm950Case plan;
+    plan.layers = 2;
+    plan.dropout = 0.5;
+    plan.train = false;
+    EXPECT_EQ(PlanLstm950(plan), ACL_SUCCESS);
+}
+
+TEST_F(l2_dynamic_rnn_test, ascend950_rejects_dropout_that_applies_bidirectional)
+{
+    NpuArchManager arch(NpuArch::DAV_3510);
+    Lstm950Case plan;
+    plan.bidirectional = true;
+    plan.layers = 2;
+    plan.dropout = 0.5;
+    EXPECT_EQ(PlanLstm950(plan), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_dynamic_rnn_test, ascend950_rejects_bf16_with_bidirectional)
+{
+    NpuArchManager arch(NpuArch::DAV_3510);
+    Lstm950Case plan;
+    plan.bidirectional = true;
+    plan.dtype = ACL_BF16;
+    EXPECT_EQ(PlanLstm950(plan), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_dynamic_rnn_test, ascend950_accepts_bf16_unidirectional)
+{
+    NpuArchManager arch(NpuArch::DAV_3510);
+    Lstm950Case plan;
+    plan.dtype = ACL_BF16;
+    EXPECT_EQ(PlanLstm950(plan), ACL_SUCCESS);
+}
+
 // 输入params的shape不合法拦截
 TEST_F(l2_dynamic_rnn_test, ascend910B_test_dynamic_rnn_params_shape_invalid)
 {

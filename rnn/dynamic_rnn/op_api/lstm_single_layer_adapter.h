@@ -199,10 +199,6 @@ inline aclnnStatus CopyPublic(const aclTensor* value, const aclTensor* output, a
 inline aclnnStatus BuildSingleLayerLstm(const DenseInputs& in, const DenseOutputs& out, aclOpExecutor* executor)
 {
     CHECK_RET(executor != nullptr && in.input != nullptr && in.params != nullptr, ACLNN_ERR_INNER_NULLPTR);
-    OP_CHECK(!in.bidirectional && IsDropoutZero(in.dropout),
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ascend950 LSTM currently requires unidirectional and dropout=0; "
-                                              "no DynamicRNN fallback is used."),
-             return ACLNN_ERR_PARAM_INVALID);
     const auto& shape = in.input->GetViewShape();
     const int64_t t = shape.GetDim(in.batchFirst ? 1 : 0);
     const int64_t batch = shape.GetDim(in.batchFirst ? 0 : 1);
