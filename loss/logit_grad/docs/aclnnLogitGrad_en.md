@@ -27,7 +27,7 @@
 
 - Description:
 
-  Performs backward propagation of [aclnnLogit](../../logit/docs/aclnnLogit.md).
+  Performs backward propagation of [aclnnLogit](../../logit/docs/aclnnLogit_en.md).
 
 - Formula:
 
