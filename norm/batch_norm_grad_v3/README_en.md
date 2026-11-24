@@ -55,7 +55,7 @@ The following parameters apply to the GE graph operator. C is the channel count.
 
 | Invocation Method | Sample Code | Description |
 | --- | --- | --- |
-| aclnn invocation | [test\_aclnn\_batch\_norm\_backward](./examples/test_aclnn_batch_norm_backward.cpp) | Invokes the batch_norm_grad_v3 operator through the [aclnnBatchNormBackward](./docs/aclnnBatchNormBackward_en.md) APIs |
-| aclnn invocation | [test\_aclnn\_fast\_batch\_norm\_backward](./examples/arch22/test_aclnn_fast_batch_norm_backward.cpp) | Invokes the batch_norm_grad_v3 operator through the [aclnnFastBatchNormBackward](./docs/aclnnFastBatchNormBackward_en.md) APIs |
-| GE graph invocation | [test_geir_batch_norm_grad_v3.cpp](./examples/test_geir_batch_norm_grad_v3.cpp) | Invokes BatchNormGradV3 by building a graph with the [operator IR](op_graph/batch_norm_grad_v3_proto.h). |
-| PyTorch API | [test_torch_batch_norm_grad_v3.py](./examples/test_torch_batch_norm_grad_v3.py) | Invokes PyTorch's `native_batch_norm_backward`. See the sample for the command. |
+| aclnn API | [test\_aclnn\_batch\_norm\_backward](./examples/test_aclnn_batch_norm_backward.cpp) | Invokes the batch_norm_grad_v3 operator through the [aclnnBatchNormBackward](./docs/aclnnBatchNormBackward_en.md) APIs |
+| aclnn API | [test\_aclnn\_fast\_batch\_norm\_backward](./examples/arch22/test_aclnn_fast_batch_norm_backward.cpp) | Invokes the batch_norm_grad_v3 operator through the [aclnnFastBatchNormBackward](./docs/aclnnFastBatchNormBackward_en.md) APIs |
+| GE graph invocation | [test_geir_batch_norm_grad_v3](./examples/test_geir_batch_norm_grad_v3.cpp) | Invokes BatchNormGradV3 by building a graph with the [operator IR](op_graph/batch_norm_grad_v3_proto.h). |
+| PyTorch API | [test_torch_batch_norm_grad_v3](./examples/test_torch_batch_norm_grad_v3.py) | Invokes PyTorch's `native_batch_norm_backward`. See the sample for the command. |

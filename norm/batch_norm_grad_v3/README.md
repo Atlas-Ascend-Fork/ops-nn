@@ -55,7 +55,7 @@ BatchNormGradV3用于计算批归一化的输入梯度、缩放参数梯度和�
 
 | 调用方式 | 样例代码 | 说明 |
 | --- | --- | --- |
-| aclnn调用 | [test_aclnn_batch_norm_backward.cpp](./examples/test_aclnn_batch_norm_backward.cpp) | 通过[aclnnBatchNormBackward](./docs/aclnnBatchNormBackward.md)接口方式调用batch_norm_grad_v3算子。 |
-| aclnn调用 | [test_aclnn_fast_batch_norm_backward.cpp](./examples/arch22/test_aclnn_fast_batch_norm_backward.cpp) | 通过[aclnnFastBatchNormBackward](./docs/aclnnFastBatchNormBackward.md)接口方式调用batch_norm_grad_v3算子。 |
-| GE图模式 | [test_geir_batch_norm_grad_v3.cpp](./examples/test_geir_batch_norm_grad_v3.cpp) | 通过[算子IR](op_graph/batch_norm_grad_v3_proto.h)构图方式调用BatchNormGradV3算子。 |
-| PyTorch API | [test_torch_batch_norm_grad_v3.py](./examples/test_torch_batch_norm_grad_v3.py) | 通过PyTorch的`native_batch_norm_backward`调用，运行命令见样例。 |
+| aclnn API | [test_aclnn_batch_norm_backward](./examples/test_aclnn_batch_norm_backward.cpp) | 通过[aclnnBatchNormBackward](./docs/aclnnBatchNormBackward.md)接口方式调用batch_norm_grad_v3算子。 |
+| aclnn API | [test_aclnn_fast_batch_norm_backward](./examples/arch22/test_aclnn_fast_batch_norm_backward.cpp) | 通过[aclnnFastBatchNormBackward](./docs/aclnnFastBatchNormBackward.md)接口方式调用batch_norm_grad_v3算子。 |
+| GE图模式 | [test_geir_batch_norm_grad_v3](./examples/test_geir_batch_norm_grad_v3.cpp) | 通过[算子IR](op_graph/batch_norm_grad_v3_proto.h)构图方式调用BatchNormGradV3算子。 |
+| PyTorch API | [test_torch_batch_norm_grad_v3](./examples/test_torch_batch_norm_grad_v3.py) | 通过PyTorch的`native_batch_norm_backward`调用，运行命令见样例。 |
