@@ -62,7 +62,7 @@ __aicore__ inline void ProcessSmallWholeBlockTask(int64_t outer)
     CopyOutSmallPadded(base, rowElements, rowStride);
 }
 
-__aicore__ inline void ProcessSmallWholeBlockBatchTask(int64_t outerStart, int64_t outerCount)
+__aicore__ inline void ProcessSmallWholeBlockBatchTask(int64_t outerStart, int64_t outerCount, bool packed)
 {
     const int64_t reduceCount = tiling_->reduceCount;
     const int64_t innerCount = tiling_->contiguousInnerCount;
@@ -71,9 +71,32 @@ __aicore__ inline void ProcessSmallWholeBlockBatchTask(int64_t outerStart, int64
     const int64_t base = ContiguousBase(outerStart, 0);
     CopyInContiguous(base, totalElements);
     LocalTensor<T> input = inQueue_.DeQue<T>();
+    LocalTensor<T> output = outQueue_.AllocTensor<T>();
+    if (packed) {
+        LocalTensor<float> values = input.template ReinterpretCast<float>();
+        LocalTensor<float> centered = output.template ReinterpretCast<float>();
+        if constexpr (IsSameType<T, half>::value) {
+            // Once converted, the input buffer can hold the FP32 result for the final cast.
+            values = sumBuf_.Get<float>();
+            centered = input.template ReinterpretCast<float>();
+            Cast(values, input, RoundMode::CAST_NONE, static_cast<uint32_t>(totalElements));
+            PipeBarrier<PIPE_V>();
+        }
+        for (uint32_t col = 0; col < static_cast<uint32_t>(innerCount); ++col) {
+            CenterPackedRows(values, centered, static_cast<uint32_t>(outerCount), static_cast<uint16_t>(reduceCount),
+                             static_cast<uint32_t>(innerCount), col);
+        }
+        if constexpr (IsSameType<T, half>::value) {
+            PipeBarrier<PIPE_V>();
+            Cast(output, centered, RoundMode::CAST_RINT, static_cast<uint32_t>(totalElements));
+        }
+        outQueue_.EnQue(output);
+        inQueue_.FreeTensor(input);
+        CopyOutContiguous(base, totalElements);
+        return;
+    }
     SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
     WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
-    LocalTensor<T> output = outQueue_.AllocTensor<T>();
     for (int64_t outer = 0; outer < outerCount; ++outer) {
         const int64_t outerBase = outer * blockElements;
         for (int64_t inner = 0; inner < innerCount; ++inner) {
@@ -120,12 +143,28 @@ __aicore__ inline void ProcessSmallContiguous(uint32_t core, uint32_t cores)
     } else if (targetBatch > maxBatch) {
         targetBatch = maxBatch;
     }
-    const int64_t outerBatch = targetBatch;
+    const int64_t blockRows = 32 / sizeof(T);
+    const int64_t width = tiling_->reduceCount;
+    const bool packedWidth = (IsSameType<T, float>::value && (width <= 4 || width == 6)) ||
+                             (IsSameType<T, half>::value && width <= 8);
+    if constexpr (IsSameType<T, half>::value) {
+        if (packedWidth && blockElements <= 2 * V_LENGTH) {
+            // Both the converted input and the centered tile occupy FP32 storage.
+            const int64_t floatBatch = Min(tiling_->genericInputBufferBytes, tiling_->genericSumBufferBytes) /
+                                       static_cast<int64_t>(sizeof(float)) / blockElements;
+            const int64_t outerPerCore = (tiling_->contiguousOuterCount + cores - 1) / cores;
+            targetBatch = Min(targetBatch, Min(floatBatch, AlignToBlock(outerPerCore)));
+            targetBatch = targetBatch > 0 ? targetBatch : 1;
+        }
+    }
+    const bool packed = packedWidth && blockElements <= 2 * V_LENGTH && tiling_->contiguousOuterCount >= V_LENGTH &&
+                        targetBatch >= blockRows;
+    const int64_t outerBatch = packed ? targetBatch / blockRows * blockRows : targetBatch;
     const int64_t taskCount = (tiling_->contiguousOuterCount + outerBatch - 1) / outerBatch;
     for (int64_t task = core; task < taskCount; task += cores) {
         const int64_t outerStart = task * outerBatch;
         const int64_t outerCount = Min(outerBatch, tiling_->contiguousOuterCount - outerStart);
-        ProcessSmallWholeBlockBatchTask(outerStart, outerCount);
+        ProcessSmallWholeBlockBatchTask(outerStart, outerCount, packed);
     }
 }
 
@@ -175,8 +214,7 @@ __aicore__ inline void CentralizeRowsSmallInner(LocalTensor<T>& input, LocalTens
     }
 }
 
-// colOffset：行内列起始偏移（宽 tile >64 列时按 64-lane 列块轮转调用，
-// 寄存器驻留 Neumaier 覆盖全行分块，替代逐行慢路径）。每列的行序不变，结果逐位相同。
+// colOffset 指向本批的起始列。每个向量通道沿行序累加一列。
 __aicore__ inline void AccumulateRowsSmallInnerKahan(LocalTensor<T>& input, LocalTensor<float>& sum, int64_t sumOffset,
                                                      int64_t corrOffset, int64_t validRows, int64_t innerCount,
                                                      int64_t rowStride, int64_t colOffset = 0)
@@ -246,11 +284,11 @@ __aicore__ inline void CentralizeRowsSmallInnerHiLo(LocalTensor<T>& input, Local
         MaskReg preg = activeCount == V_LENGTH ? pregFull : UpdateMask<float>(activeCount);
         LoadRegForDtype<float>(meanAddr, hiReg, preg, static_cast<uint32_t>(meanOffset));
         LoadRegForDtype<float>(meanAddr, loReg, preg, static_cast<uint32_t>(meanLowOffset));
+        Muls(hiReg, hiReg, -1.0f, preg);
         for (uint16_t r = 0; r < rowLoops; ++r) {
             const uint32_t rowOffset = static_cast<uint32_t>(colOffset + r * rowStride);
             LoadRegForDtype<T>(inputAddr, xReg, preg, rowOffset);
-            Sub(xReg, xReg, hiReg, preg);
-            Sub(xReg, xReg, loReg, preg);
+            SubtractMeanWithResidual(xReg, hiReg, loReg, preg);
             StoreRegForDtype<T>(outputAddr, xReg, preg, rowOffset);
         }
     }
@@ -316,7 +354,6 @@ __aicore__ inline void AccumulateContiguousRows(LocalTensor<T>& input, LocalTens
         slot = static_cast<uint16_t>((slot + 1 == numSlots) ? 0 : (slot + 1));
         return;
     }
-    // 宽 tile：按 64-lane 列块轮转寄存器驻留累加（每列行序不变，结果与逐行路径逐位相同）
     const int64_t colChunks = (validElements + V_LENGTH - 1) / V_LENGTH;
     for (int64_t cc = 0; cc < colChunks; ++cc) {
         const int64_t chunkValid = Min(V_LENGTH, validElements - cc * V_LENGTH);
@@ -359,8 +396,7 @@ __aicore__ inline void ProcessContiguousTask(int64_t outer, int64_t innerOffset,
     const int64_t innerCount = tiling_->contiguousInnerCount;
     const int64_t rowStride = OptimalRowStride(validElements);
     const int64_t bufferElements = static_cast<int64_t>(tiling_->genericInputBufferBytes / sizeof(T));
-    // 行批条件：UB 能放下整行即可。GM 侧行缝用字节粒度 srcStride 表达（DataCopyPad
-    // GM 侧单位为字节，无对齐约束）；UB 侧 gap 由 rowStride(64 元素对齐)保证 32B 整除。
+    // UB 能放下一个对齐行时使用行批搬运。GM 行间空隙以字节计，UB 行间空隙以 32 字节块计。
     const bool batchRows = bufferElements >= rowStride;
     constexpr int64_t kMaxAbiRows = 65535;
     const int64_t rowsPerBatch = batchRows ? Min(Min(bufferElements / rowStride, kMaxAbiRows), tiling_->reduceCount) :

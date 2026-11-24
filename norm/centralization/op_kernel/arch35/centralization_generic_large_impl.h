@@ -12,6 +12,16 @@
 
 __aicore__ inline void ProcessLarge(uint32_t core, uint32_t cores)
 {
+    if (tiling_->largePath == kInterleavedColumnsPath) {
+        ProcessInterleavedColumns(core, cores);
+        return;
+    }
+    if (tiling_->largePath == kStridedSuffixPath) {
+        for (int64_t task = core; task < tiling_->groupCount * tiling_->coresPerRow; task += cores) {
+            ProcessStridedSuffix(task);
+        }
+        return;
+    }
     if (tiling_->largePlane != 0) {
         ProcessLargePlane(core, cores);
         return;
@@ -37,6 +47,14 @@ __aicore__ inline void ProcessLargeRowParallel(uint32_t core, uint32_t cores)
     ProcessOutputBlocks(core, cores, true);
 }
 
+// Boundary indices range from zero to irregularReduceChunks, inclusive; the last boundary is reduceSegmentCount.
+__aicore__ inline int64_t SuffixSegmentBoundary(int64_t part) const
+{
+    const int64_t segments = tiling_->reduceSegmentCount;
+    const int64_t parts = tiling_->irregularReduceChunks;
+    return segments / parts * part + Min(part, segments % parts);
+}
+
 __aicore__ inline void ProcessLargeMultiCoreReduce(uint32_t core, uint32_t cores)
 {
     const uint32_t coresPerRow = static_cast<uint32_t>(tiling_->coresPerRow);
@@ -47,7 +65,10 @@ __aicore__ inline void ProcessLargeMultiCoreReduce(uint32_t core, uint32_t cores
         const int64_t base = GroupBase(group);
         LargeCompensatedSum partial{0.0f, 0.0f};
         const int64_t lastReduceDim = tiling_->reduceDims[tiling_->reduceRank - 1];
-        if (lastReduceDim > 1 && tiling_->reduceStrides[tiling_->reduceRank - 1] == 1) {
+        if (tiling_->irregularReduceChunks > 1) {
+            AccumulateIrregularReduceSuffixTile(base, 0, 1, &partial, SuffixSegmentBoundary(localCore),
+                                                SuffixSegmentBoundary(localCore + 1));
+        } else if (lastReduceDim > 1 && tiling_->reduceStrides[tiling_->reduceRank - 1] == 1) {
             const int64_t outerCount = tiling_->reduceCount / lastReduceDim;
             for (int64_t outer = static_cast<int64_t>(localCore); outer < outerCount;
                  outer += static_cast<int64_t>(coresPerRow)) {
@@ -429,6 +450,19 @@ __aicore__ inline void PreloadMeanTable()
 
 __aicore__ inline void ProcessLargeOutputTile(int64_t offset, int64_t validElements)
 {
+    if (tiling_->irregularReduceChunks > 1) {
+        // Each core owns complete output blocks, even when two groups share a 32-byte boundary.
+        const int64_t suffix = tiling_->irregularReduceSuffixElements;
+        const LocalTensor<float> table = sumBuf_.Get<float>();
+        for (int64_t pos = 0; pos < validElements;) {
+            const int64_t start = offset + pos;
+            const int64_t group = GroupFromOffset(start);
+            const int64_t run = Min(validElements - pos, suffix - start % suffix);
+            WriteCenteredSuffix(start, run, table.GetValue(group * 2), table.GetValue(group * 2 + 1));
+            pos += run;
+        }
+        return;
+    }
     LocalTensor<T> input = inQueue_.AllocTensor<T>();
     DataCopyExtParams copy{1, static_cast<uint32_t>(validElements * sizeof(T)), 0, 0, 0};
     const int64_t alignedElements = AlignToBlock(validElements);
@@ -499,7 +533,7 @@ __aicore__ inline void ProcessOutputBlocks(uint32_t core, uint32_t cores, bool u
     }
 }
 
-__aicore__ inline void LoadWorkspacePair(int64_t offset, float& first, float& second)
+__aicore__ inline void LoadWorkspacePair(int64_t offset, float& first, float& second, uint32_t pair = 0)
 {
     constexpr int64_t kWorkspaceElements = 32 / sizeof(float);
     LocalTensor<float> input = inQueue_.AllocTensor<float>();
@@ -509,20 +543,23 @@ __aicore__ inline void LoadWorkspacePair(int64_t offset, float& first, float& se
     input = inQueue_.DeQue<float>();
     SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
     WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
-    first = input.GetValue(0);
-    second = input.GetValue(1);
+    first = input.GetValue(2 * pair);
+    second = input.GetValue(2 * pair + 1);
     inQueue_.FreeTensor(input);
 }
 
-__aicore__ inline void StoreWorkspacePair(int64_t offset, float first, float second)
+__aicore__ inline void StoreWorkspacePair(int64_t offset, float first, float second, float scaledFirst = 0.0f,
+                                          float scaledSecond = 0.0f)
 {
     constexpr int64_t kWorkspaceElements = 32 / sizeof(float);
     LocalTensor<float> output = outQueue_.AllocTensor<float>();
-    for (int64_t i = 0; i < kWorkspaceElements; ++i) {
-        output.SetValue(i, 0.0f);
-    }
     output.SetValue(0, first);
     output.SetValue(1, second);
+    output.SetValue(2, scaledFirst);
+    output.SetValue(3, scaledSecond);
+    for (int64_t i = 4; i < kWorkspaceElements; ++i) {
+        output.SetValue(i, 0.0f);
+    }
     outQueue_.EnQue(output);
     output = outQueue_.DeQue<float>();
     SetFlag<HardEvent::S_MTE3>(eventSToMte3_);
@@ -535,8 +572,8 @@ __aicore__ inline void StoreWorkspacePair(int64_t offset, float first, float sec
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Plane 模式（largePlane=1，key 7020 向量子路径）：单 reduce 段、inner ∈ (1,256]，
-// 布局 [K_outer, R, K_inner]——归一化后固定 outer 的 R×inner 平面 GM 连续。
+// Plane 模式按物理连续行切片。单段归约布局为 [K_outer, R, K_inner]；
+// 对首维归约且组号周期重复的多段布局，物理行含整数个周期，合并阶段按逻辑组折叠各列。
 // 三阶段（SyncAll 分隔）：
 //   1. partial 归约：task=(outer, localCore)，localCore 按 reduce 行切片，
 //      行批搬运 + 列向补偿累加，partial 按 (outer, localCore) 落 workspace；
@@ -544,8 +581,8 @@ __aicore__ inline void StoreWorkspacePair(int64_t offset, float first, float sec
 //      hi/lo 均值，按 outer 分块落 workspace；
 //   3. 输出：task=(outer, rowChunk) 全核轮转，均值按 outer 缓存复用，
 //      行批中心化后整批写回（替代逐元素 32B 标量 gather/写）。
-// workspace（float 偏移）：partial [(o*coresPerRow+c)*2*inner]{sum,corr}；
-//   mean [o*2*inner]{hi[0..inner), lo[0..inner)}。
+// workspace 先存所有 partial 块，步长为 PlanePartialStride(inner) 个 float；
+// 随后每个 outer 存一块均值，高、低两部分相隔 rowStride 个 float。
 // ─────────────────────────────────────────────────────────────────────────
 __aicore__ inline int64_t PlaneAlignedFloats(int64_t floats) const
 {
@@ -698,8 +735,8 @@ __aicore__ inline void StorePlanePartials(int64_t o, int64_t localCore, LocalTen
 }
 
 // 合并 plane o 的 coresPerRow 份 partial，写 hi/lo 均值块到 workspace。
-// 块布局 [hi @0, lo @rowStride]：lo 起点对齐到 AlignToVector(inner)，VEC 读取要求 32B 对齐。
-__aicore__ inline void MergePlaneMeans(int64_t o, int64_t inner, int64_t coresPerRow, int64_t rc)
+// 高位从块首写入，低位从 OptimalRowStride(inner) 个 float 处写入。
+__aicore__ inline void MergePlaneMeans(int64_t o, int64_t inner, int64_t coresPerRow)
 {
     LocalTensor<float> sum = sumBuf_.Get<float>();
     const int64_t rowStride = OptimalRowStride(inner);
@@ -731,9 +768,25 @@ __aicore__ inline void MergePlaneMeans(int64_t o, int64_t inner, int64_t coresPe
     for (int64_t i = 0; i < meanFloats; ++i) {
         output.SetValue(i, 0.0f);
     }
+    if (tiling_->reduceRank > 1) {
+        // Fold physical lanes belonging to the same logical group, then broadcast back to the row layout.
+        for (int64_t i = 0; i < inner; ++i) {
+            const int64_t group = GroupFromOffset(i);
+            LargeCompensatedSum acc{output.GetValue(group), output.GetValue(rowStride + group)};
+            AddLargeCompensated(acc, sum.GetValue(i));
+            AddLargeCompensated(acc, sum.GetValue(corrOffset + i));
+            output.SetValue(group, acc.sum);
+            output.SetValue(rowStride + group, acc.correction);
+        }
+        for (int64_t i = 0; i < inner; ++i) {
+            const int64_t group = GroupFromOffset(i);
+            sum.SetValue(i, output.GetValue(group));
+            sum.SetValue(corrOffset + i, output.GetValue(rowStride + group));
+        }
+    }
     for (int64_t i = 0; i < inner; ++i) {
         const LargeCompensatedSum acc{sum.GetValue(i), sum.GetValue(corrOffset + i)};
-        const MeanHiLo m = FinalizeMeanHiLo(acc, rc);
+        const MeanHiLo m = FinalizeMeanHiLo(acc, tiling_->reduceCount);
         output.SetValue(i, m.hi);
         output.SetValue(rowStride + i, m.lo);
     }
@@ -753,7 +806,7 @@ __aicore__ inline void ProcessLargePlane(uint32_t core, uint32_t cores)
 {
     const int64_t outer = tiling_->contiguousOuterCount;
     const int64_t inner = tiling_->contiguousInnerCount;
-    const int64_t rc = tiling_->reduceCount;
+    const int64_t rc = tiling_->totalCount / outer / inner;
     const int64_t coresPerRow = tiling_->coresPerRow;
     const int64_t rowStride = OptimalRowStride(inner);
     const int64_t bufferElements = static_cast<int64_t>(tiling_->genericInputBufferBytes / sizeof(T));
@@ -809,7 +862,7 @@ __aicore__ inline void ProcessLargePlane(uint32_t core, uint32_t cores)
 
     // ---- 阶段 2：合并均值（按 outer 轮转）----
     for (int64_t o = static_cast<int64_t>(core); o < outer; o += nCores) {
-        MergePlaneMeans(o, inner, coresPerRow, rc);
+        MergePlaneMeans(o, inner, coresPerRow);
     }
     SyncAll();
 

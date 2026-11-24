@@ -15,8 +15,7 @@
 namespace Centralization {
 using namespace AscendC;
 
-// Key 9000 writes zeros without reading x. The host uses Fast for singleton reductions
-// so that nonfinite inputs retain their x - x semantics.
+// Key 9000 writes zeros without reading x. Singleton reductions must read x to preserve x - x for nonfinite inputs.
 template <typename T>
 class ZeroFill {
 public:

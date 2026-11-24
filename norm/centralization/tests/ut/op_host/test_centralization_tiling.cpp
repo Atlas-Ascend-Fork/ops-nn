@@ -44,6 +44,7 @@ static const char* kCompileInfoStr = R"({
 
 struct TilingResult {
     uint64_t key{UINT64_MAX};
+    uint32_t blocks{};
     bool ok{false};
     size_t workspace{0};
     CentralizationTilingData td{};
@@ -139,6 +140,7 @@ static TilingResult RunTilingWithUb(const std::vector<int64_t>& dims, ge::DataTy
         return result;
     }
     result.key = tiling_context->GetTilingKey();
+    result.blocks = tiling_context->GetBlockDim();
     if (auto* ws = tiling_context->GetWorkspaceSizes(1); ws != nullptr) {
         result.workspace = ws[0];
     }
@@ -250,7 +252,7 @@ TEST(CentralizationTiling, UbBudgetPathMatrix)
         const char* name;
     };
     const std::vector<Case> cases = {
-        // FP32 trailing widths above 64 use LargeTrailing when its buffers fit.
+        // Wide FP32 rows with few output groups use LargeTrailing when its buffers fit.
         {{2, 512, 1}, {1}, ge::DT_FLOAT, 7030, 0, 1, 16, "normalized_trailing_512_fp32"},
         {{2, 64, 4}, {1}, ge::DT_FLOAT, 0, 0, 1, 16, "small_mode2_fp32"},
         {{2, 300, 8}, {1}, ge::DT_FLOAT, 0, 0, 1, 16, "contiguous_fp32"},
@@ -297,7 +299,7 @@ TEST(CentralizationTiling, UbBudgetFallbackMatrix)
         {{8, 4096}, {1}, ge::DT_FLOAT, 65536, 7030, 0, "fast_to_large_trailing_fp32"},
         {{8, 4096}, {1}, ge::DT_FLOAT, 32768, 7020, 0, "fast_to_generic_large_fp32"},
         {{8, 20000}, {1}, ge::DT_FLOAT, 32768, 7020, 0, "large_trailing_to_generic_fp32"},
-        // 布局归一后 (2,512,1) 是尾轴：FP32 宽归约不走 Fast；小 UB 放不下 LargeTrailing 时走 7020
+        // 归一后只剩两个宽度为 512 的 FP32 行；LargeTrailing 缓冲区放不下时回退到 7020。
         {{2, 512, 1}, {1}, ge::DT_FLOAT, 12288, 7020, 0, "trailing_one_to_large_7020_fp32"},
         {{2, 64, 4}, {1}, ge::DT_FLOAT, 24576, 0, 0, "small_to_contiguous_fp32"},
         {{64, 20000, 8}, {1}, ge::DT_FLOAT, 16384, 0, 10, "lcsi_tiny_ub_fp32"},
@@ -352,6 +354,25 @@ TEST(CentralizationTiling, UbBudgetMinimumFit)
     EXPECT_FALSE(e.ok);
 }
 
+TEST(CentralizationTiling, PackedFp32TrailingRows)
+{
+    const std::vector<int64_t> shape{71, 76, 94, 76};
+    const auto packed = RunTiling(shape, ge::DT_FLOAT, {3});
+    ASSERT_TRUE(packed.ok);
+    EXPECT_EQ(packed.key, 7000U);
+    EXPECT_EQ(packed.td.groupCount, 507224);
+    EXPECT_EQ(packed.td.reduceCount, 76);
+    EXPECT_GE(packed.td.rowsPerLoop, 64);
+
+    const auto limited = RunTilingWithUb(shape, ge::DT_FLOAT, {3}, 65536);
+    ASSERT_TRUE(limited.ok);
+    EXPECT_EQ(limited.key, 7000U);
+    EXPECT_GE(limited.td.rowsPerLoop, 16);
+    const auto fallback = RunTilingWithUb(shape, ge::DT_FLOAT, {3}, 32768);
+    ASSERT_TRUE(fallback.ok);
+    EXPECT_NE(fallback.key, 7000U);
+}
+
 TEST(CentralizationTiling, UbBudgetFallbackFlags)
 {
     auto checkLargeFallback = [](const TilingResult& r, uint64_t expectedKey) {
@@ -383,7 +404,7 @@ TEST(CentralizationTiling, UbBudgetFallbackFlags)
     EXPECT_EQ(c.td.rowParallel, 0);
     EXPECT_EQ(c.td.coresPerRow, 8);
 
-    // 布局归一后 (2,512,1) 的 FP32 尾轴宽度超过 64，小 UB 下使用 7020（rowParallel）
+    // 12 KiB UB 下，两行宽度为 512 的 FP32 输入走 7020 行并行路径。
     auto d = RunTilingWithUb({2, 512, 1}, ge::DT_FLOAT, {1}, 12288);
     ASSERT_TRUE(d.ok);
     checkLargeFallback(d, 7020);
@@ -473,6 +494,94 @@ TEST(CentralizationTiling, LayoutNormalizeMultiSegmentStaysIrregular)
     EXPECT_EQ(r.td.irregularKeepOuterRank, 1);
     EXPECT_EQ(r.td.irregularVectorizable, 1);
     EXPECT_EQ(r.key, 0U);
+}
+
+TEST(CentralizationTiling, SplitsUnalignedSuffixAcrossCores)
+{
+    auto r = RunTiling({151, 2, 159}, ge::DT_FLOAT16, {0, 2});
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.key, 7020U);
+    EXPECT_EQ(r.td.groupCount, 2);
+    EXPECT_EQ(r.td.reduceSegmentCount, 151);
+    EXPECT_GT(r.td.irregularReduceChunks, 1);
+    EXPECT_EQ(r.td.irregularReduceChunks, r.td.coresPerRow);
+    EXPECT_GT(r.workspace, 0U);
+}
+
+TEST(CentralizationTiling, RepeatingGroupsUseWholePhysicalPeriods)
+{
+    auto r = RunTiling({16386, 2, 4}, ge::DT_FLOAT, {0, 2});
+    ASSERT_TRUE(r.ok);
+    ASSERT_EQ(r.td.largePlane, 1);
+    EXPECT_EQ(r.td.groupCount, 2);
+    EXPECT_EQ(r.td.reduceCount, 16386 * 4);
+    ASSERT_GT(r.td.contiguousInnerCount, 0);
+    EXPECT_EQ(r.td.contiguousInnerCount % r.td.reduceStrides[0], 0);
+    EXPECT_EQ(r.td.totalCount % r.td.contiguousInnerCount, 0);
+    EXPECT_GT(r.td.coresPerRow, 1);
+}
+
+TEST(CentralizationTiling, BatchesStridedReductionAlongLongestOuterAxis)
+{
+    auto r = RunTiling({2, 1201, 2, 3, 2, 3}, ge::DT_FLOAT16, {1, 3, 5});
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.key, 7020U);
+    EXPECT_EQ(r.td.largePath, Centralization::kStridedSuffixPath);
+    EXPECT_EQ(r.td.stridedReduceAxis, 0U);
+    EXPECT_EQ(r.td.irregularReduceSuffixElements, 3);
+    EXPECT_GT(r.td.coresPerRow, 1);
+    EXPECT_EQ(r.blocks, r.td.groupCount * r.td.coresPerRow);
+
+    auto inner = RunTiling({3, 2, 3001, 3, 3}, ge::DT_FLOAT, {0, 2, 4});
+    ASSERT_TRUE(inner.ok);
+    EXPECT_EQ(inner.td.largePath, Centralization::kStridedSuffixPath);
+    EXPECT_EQ(inner.td.stridedReduceAxis, 1U);
+
+    const auto many = RunTiling({3872, 111, 64}, ge::DT_FLOAT, {0, 2});
+    ASSERT_TRUE(many.ok);
+    EXPECT_EQ(many.td.largePath, Centralization::kStridedSuffixPath);
+    EXPECT_EQ(many.td.coresPerRow, 1);
+    EXPECT_LT(many.blocks, many.td.groupCount);
+    EXPECT_EQ(many.workspace, 0U);
+}
+
+TEST(CentralizationTiling, DividesLongSuffixWithinEachPhysicalSegment)
+{
+    auto r = RunTiling({2, 2, 131073}, ge::DT_FLOAT, {0, 2});
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.key, 7020U);
+    EXPECT_EQ(r.td.largePath, Centralization::kStridedSuffixPath);
+    EXPECT_EQ(r.td.stridedReduceAxis, 0U);
+    EXPECT_GT(r.td.coresPerRow, r.td.reduceSegmentCount);
+}
+
+TEST(CentralizationTiling, DistributesInterleavedKeptColumns)
+{
+    auto r = RunTiling({2, 149, 2, 71, 2}, ge::DT_FLOAT, {1, 3});
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.td.largePath, Centralization::kInterleavedColumnsPath);
+    EXPECT_EQ(r.td.stridedReduceAxis, 1U);
+    EXPECT_GT(r.td.coresPerRow, 1);
+    EXPECT_EQ(r.blocks, 4 * r.td.coresPerRow);
+    EXPECT_EQ(r.workspace, 16UL * 1024 * 1024 + r.blocks * 2 * 32);
+
+    const auto many = RunTiling({128, 16254, 3}, ge::DT_FLOAT, {1});
+    ASSERT_TRUE(many.ok);
+    EXPECT_EQ(many.td.largePath, Centralization::kInterleavedColumnsPath);
+    EXPECT_EQ(many.td.coresPerRow, 1);
+    EXPECT_EQ(many.workspace, 0U);
+}
+
+TEST(CentralizationTiling, SplitsSegmentsOutsideInterleavedColumnRange)
+{
+    const auto r = RunTiling({2, 149, 2, 71, 33}, ge::DT_FLOAT, {1, 3});
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.td.irregularVectorizable, 1);
+    EXPECT_GT(r.td.irregularReduceChunks, 1);
+    EXPECT_EQ(r.td.useReduceOffsetTable, 0);
+    EXPECT_EQ(r.td.reduceSegmentCount, 149);
+    EXPECT_GE(r.td.irregularPartialStride, 2 * r.td.irregularVectorInnerCount);
+    EXPECT_GT(r.workspace, 0U);
 }
 
 TEST(CentralizationTiling, EmptyAxesNoReduce)

@@ -278,7 +278,7 @@ static ge::graphStatus ConfigureBufferBytes(gert::TilingContext* context, Centra
         if (tiling->smallContiguousMode == 2) {
             inputElements = tiling->reduceCount * alignedMean;
             sumElements = alignedMean;
-            sumFactor = 1; // ProcessSmallWholeBlockTask 只维护 sum
+            sumFactor = 1;
         } else {
             inputElements = AlignToVectorElements(tiling->smallContiguousBlockElements);
             sumElements = alignedMean;
@@ -415,7 +415,7 @@ static ge::graphStatus ResolveAxes(gert::TilingContext* context, int64_t rank, s
         return GRAPH_SUCCESS;
     }
     if (attr->GetSize() == 0) {
-        // 显式空列表：不归约（canndev DSL 下 reduce_sum(axis=[]) 为 identity）。
+        // 显式空列表保留空轴集，每个输出元素计算 x - x。
         return GRAPH_SUCCESS;
     }
     const auto* data = reinterpret_cast<const int64_t*>(attr->GetData());
@@ -824,13 +824,7 @@ static ge::graphStatus ConfigureLargePath(gert::TilingContext* context, Centrali
                                           uint32_t& key, uint32_t& blockDim)
 {
     key = trailing ? kLargeTrailingKey : kLargeKey;
-    // 7030 行并行偏好（仅 trailing：7020 generic large 的 row-parallel 是标量实现，
-    // 且其多核路径已有任务循环；此处不得触碰 largeRowParallel——它还门控 lcsi 资格，
-    // ConfigurePath 层改它会抢走 plane 的 shape）。
-    // 判定：多核分片轮数 ceil(taskCount/coreNum) >= coresPerRow 时，分片不再缩短分
-    // 带来并行收益（每核串行时长回到整行），改行并行省 workspace 往返与两次 SyncAll。
-    // （如 72 核 (64,200000)：C=2、128 任务 2 轮=2×行/2=整行 -> 行并行；
-    //   (32,200000)：C=3、96 任务 2 轮 < 3 -> 保留多核，2/3 行时长更优。）
+    // 尾轴多核分片若需至少 coresPerRow 轮才能遍历所有任务，改为每行由单核归约。
     if (trailing && largeCoresPerRow > 1) {
         const int64_t taskCount = tiling->groupCount * largeCoresPerRow;
         const int64_t rounds = CeilDiv(taskCount, coreNum);
@@ -844,7 +838,7 @@ static ge::graphStatus ConfigureLargePath(gert::TilingContext* context, Centrali
     tiling->rowParallel = (coresPerRow <= 1) ? 1 : 0;
     if (tiling->rowParallel != 0) {
         blockDim = static_cast<uint32_t>(std::max<int64_t>(1, std::min<int64_t>(coreNum, tiling->groupCount)));
-        // 行并行：先把每个 group 的 mean 落 workspace，再按 32B block 并行写输出。
+        // 7020 的行并行路径在 workspace 缓存均值；7030 的单核行归约直接使用本行均值。
         if (CalcLargeWorkspaceBytes(context, tiling->groupCount, tiling->alignedCoresPerRow, workspace[0]) !=
             GRAPH_SUCCESS) {
             return GRAPH_FAILED;
@@ -878,11 +872,25 @@ static bool LargePlaneRowFits(uint64_t ubSize, size_t elementBytes, int64_t inne
     return perBuffer >= static_cast<size_t>(AlignToVectorElements(inner)) * elementBytes;
 }
 
-// Plane 模式（key 7020 的向量子路径，largePlane=1）：布局 [K_outer, R, K_inner]，
-// 固定 outer 后 R×inner 平面 GM 连续，按行批归约/输出替代逐元素 gather。
-// task = (outer, localCore)：localCore 按 reduce 行分片（每核 >=1 行批切片）。
-// workspace（float 偏移）：partial [(o*coresPerRow+c)*2*inner]{sum,corr}；
-// mean [o*2*inner]{hi[0..inner),lo[0..inner)}（按 outer 分块，输出单次加载）。
+// A reduced leading dimension repeats the same output groups at each physical period.
+static int64_t RepeatingPlaneWidth(const CentralizationTilingData* tiling, int64_t blockElems)
+{
+    if (tiling->reduceRank < 2 || tiling->reduceMask[0] == 0 || tiling->dims[0] <= kLargeReduceThreshold) {
+        return 0;
+    }
+    const int64_t period = tiling->reduceStrides[0];
+    if (period <= 1 || kRegbaseVectorElements % period != 0) {
+        return 0;
+    }
+    int64_t width = kRegbaseVectorElements;
+    while (tiling->totalCount % width != 0) {
+        width /= 2;
+    }
+    return width >= blockElems ? width : 0;
+}
+
+// Plane 按物理行分配归约任务。单段归约中每列对应一个输出组；
+// 多段布局中每行含完整的组号周期，同组各列在合并阶段折叠。
 static ge::graphStatus ApplyLargePlanePath(gert::TilingContext* context, CentralizationTilingData* tiling,
                                            int64_t coreNum, size_t* workspace, uint32_t& key, uint32_t& blockDim)
 {
@@ -893,7 +901,8 @@ static ge::graphStatus ApplyLargePlanePath(gert::TilingContext* context, Central
     tiling->rowParallel = 0;
     const int64_t outer = tiling->contiguousOuterCount;
     const int64_t inner = tiling->contiguousInnerCount;
-    int64_t coresPerRow = std::min(coreNum, std::max<int64_t>(1, CeilDiv(tiling->reduceCount, kPlaneMinRowsPerCore)));
+    const int64_t rows = tiling->totalCount / outer / inner;
+    int64_t coresPerRow = std::min(coreNum, std::max<int64_t>(1, CeilDiv(rows, kPlaneMinRowsPerCore)));
     tiling->coresPerRow = coresPerRow;
     tiling->alignedCoresPerRow = AlignToVectorElements(coresPerRow);
     int64_t taskCount = 0;
@@ -902,8 +911,8 @@ static ge::graphStatus ApplyLargePlanePath(gert::TilingContext* context, Central
         return GRAPH_FAILED;
     }
     blockDim = static_cast<uint32_t>(std::max<int64_t>(1, std::min<int64_t>(coreNum, taskCount)));
-    // workspace（float）：partial 块 = {sum,corr} 各 inner 个 + 32B 补齐；
-    // mean 块 = [hi @0, lo @AlignToVector(inner)]（lo 起点 32B 对齐，VEC 读取要求）
+    // 每个 partial 块保存两组各 inner 个 float，块大小向上对齐到 32 字节。
+    // 每个 outer 为均值的高、低两部分各预留 AlignToVectorElements(inner) 个 float。
     const int64_t partialBlockFloats = CeilDiv(inner * 2, static_cast<int64_t>(32 / sizeof(float))) *
                                        static_cast<int64_t>(32 / sizeof(float));
     int64_t groupCount = 0;
@@ -999,8 +1008,7 @@ static void ApplyIrregularVectorPath(CentralizationTilingData* tiling, int64_t c
 static bool SmallContiguousFitsUb(const CentralizationTilingData* tiling, int64_t blockElements, size_t elementBytes,
                                   uint64_t ubSize)
 {
-    // depth=1：in + out + sum 三个存活节点。mode 由 contiguousInnerCount 决定：
-    // inner==1 走整块标量均值（mode 1），否则整块 padded 向量均值（mode 2）。
+    // in、out、sum 均分 UB。mode 2 按对齐后的 inner 核算每个归约块的容量。
     const size_t perBuffer = AlignDownBytes(UbUsableBytes(ubSize) / 3);
     if (perBuffer == 0) {
         return false;
@@ -1039,6 +1047,82 @@ static bool ContiguousUbFits(const CentralizationTilingData* tiling, size_t elem
            perBuffer >= static_cast<size_t>(kGenericContiguousTileElements) * sizeof(float) * 2;
 }
 
+// Batch short suffixes along a long reduced axis; a very long suffix can itself be split between cores.
+static int64_t StridedSuffixAxis(const CentralizationTilingData* tiling, int64_t coreNum, size_t elementBytes)
+{
+    if (tiling->reduceRank < 2 || tiling->reduceCount <= kLargeReduceThreshold ||
+        tiling->reduceStrides[tiling->reduceRank - 1] != 1) {
+        return -1;
+    }
+    const int64_t suffix = tiling->reduceDims[tiling->reduceRank - 1];
+    int64_t axis = 0;
+    for (int64_t i = 1; i < tiling->reduceRank - 1; ++i) {
+        if (tiling->reduceDims[i] > tiling->reduceDims[axis]) {
+            axis = i;
+        }
+    }
+    constexpr int64_t kMinStridedRows = 512;
+    const bool manyGroups = tiling->groupCount > coreNum;
+    const bool shortRows = (manyGroups ?
+                                suffix <= kKernelTileElements && tiling->reduceDims[axis] >= 32 :
+                                suffix <= kRegbaseVectorElements && tiling->reduceDims[axis] >= kMinStridedRows) &&
+                           static_cast<uint64_t>(tiling->reduceStrides[axis]) <= UINT32_MAX / elementBytes;
+    const bool splitWithinSuffix = suffix >= kLargeReduceThreshold &&
+                                   (manyGroups ? tiling->reduceCount / suffix <= 16 :
+                                                 tiling->reduceCount / suffix < coreNum / tiling->groupCount);
+    return shortRows || splitWithinSuffix ? axis : -1;
+}
+
+// Process all kept columns of a physical reduction row together. Each prefix owns its workspace slots.
+static bool CanInterleaveColumns(const CentralizationTilingData* tiling, size_t perBuffer)
+{
+    if (tiling->keepRank == 0 || tiling->reduceCount <= kLargeReduceThreshold) {
+        return false;
+    }
+    const int64_t groups = tiling->keepDims[tiling->keepRank - 1];
+    const int64_t suffix = tiling->irregularReduceSuffixElements;
+    const int64_t axis = tiling->reduceRank - (suffix > 1 ? 2 : 1);
+    if (tiling->reduceRank == 1 && groups % kWorkspaceAlignElements == 0) {
+        return false;
+    }
+    if (axis < 0 || groups < 2 || groups > Centralization::kMaxInterleavedGroups ||
+        (suffix != 1 && suffix != 2 && suffix != 4) || tiling->reduceCount / suffix < kLargeReduceThreshold) {
+        return false;
+    }
+    return tiling->reduceStrides[axis] == groups * suffix && perBuffer >= 4096;
+}
+
+// For split groups, callers keep groups * parts <= coreNum so every launched core reaches SyncAll once.
+// With one part per group, cores can process several groups without a cross-core barrier.
+static void ConfigurePartitionedGroups(gert::TilingContext* context, CentralizationTilingData* tiling, int64_t coreNum,
+                                       int64_t groups, int64_t parts, int64_t slotElements, size_t* workspace,
+                                       uint32_t& blockDim)
+{
+    tiling->coresPerRow = parts;
+    const int64_t tasks = groups * parts;
+    blockDim = static_cast<uint32_t>(std::min(coreNum, tasks));
+    if (parts > 1) {
+        workspace[0] = kSystemWorkspaceBytes + static_cast<size_t>(tasks * slotElements) * sizeof(float);
+        context->SetScheduleMode(1);
+    }
+}
+
+static void ApplyInterleavedColumns(gert::TilingContext* context, CentralizationTilingData* tiling, int64_t coreNum,
+                                    size_t perBuffer, size_t* workspace, uint32_t& blockDim)
+{
+    const int64_t groups = tiling->keepDims[tiling->keepRank - 1];
+    const int64_t prefixes = tiling->groupCount / groups;
+    const int64_t slot = 2 * CeilDiv(groups, kWorkspaceAlignElements) * kWorkspaceAlignElements;
+    // The final vector load can start at the last half-slot. Reserve room for its inactive lanes.
+    const int64_t maxParts = (static_cast<int64_t>(perBuffer / sizeof(float)) - kRegbaseVectorElements) / slot;
+    const int64_t rows = tiling->reduceCount / tiling->irregularReduceSuffixElements;
+    const int64_t parts = std::min({std::max<int64_t>(1, coreNum / prefixes), maxParts, CeilDiv(rows, int64_t{128})});
+    tiling->largePath = Centralization::kInterleavedColumnsPath;
+    tiling->stridedReduceAxis = static_cast<uint32_t>(tiling->reduceRank -
+                                                      (tiling->irregularReduceSuffixElements > 1 ? 2 : 1));
+    ConfigurePartitionedGroups(context, tiling, coreNum, prefixes, parts, slot, workspace, blockDim);
+}
+
 static bool IrregularUbFits(const CentralizationTilingData* tiling, size_t elementBytes, uint64_t ubSize)
 {
     // depth=2：in/out 各 2 份 + sum 1 份；不规则 vector 的 sum 按 keepTile 的 sum/correction 双区分配
@@ -1053,8 +1137,8 @@ static bool IrregularUbFits(const CentralizationTilingData* tiling, size_t eleme
            perBuffer >= static_cast<size_t>(keepTile) * kGenericContiguousTileElements * sizeof(float) * 2;
 }
 
-static bool FastUbFits(const CentralizationTilingData* tiling, size_t elementBytes, uint64_t ubSize,
-                       size_t& perBufferBytes)
+static bool CanUseFastPath(const CentralizationTilingData* tiling, ge::DataType dtype, size_t elementBytes,
+                           uint64_t ubSize, int64_t coreNum, size_t& perBufferBytes)
 {
     const int64_t liveBuffers = 2 * (tiling->bufNum > 0 ? tiling->bufNum : 2);
     if (liveBuffers <= 0) {
@@ -1064,7 +1148,14 @@ static bool FastUbFits(const CentralizationTilingData* tiling, size_t elementByt
     if (perBufferBytes == 0) {
         return false;
     }
-    return static_cast<size_t>(AlignToVectorElements(tiling->reduceCount)) * elementBytes <= perBufferBytes;
+    const size_t rowBytes = static_cast<size_t>(AlignToVectorElements(tiling->reduceCount)) * elementBytes;
+    if (dtype == DT_FLOAT && tiling->reduceCount > kRegbaseVectorElements) {
+        // Each packed block carries several independent rows through the compensated reduction.
+        return tiling->reduceCount <= Centralization::kMaxPackedFp32Columns &&
+               tiling->groupCount / coreNum >= kRegbaseVectorElements / 2 &&
+               perBufferBytes / rowBytes >= kRegbaseVectorElements / 4;
+    }
+    return rowBytes <= perBufferBytes;
 }
 
 static bool LargeTrailingUbFits(size_t elementBytes, uint64_t ubSize)
@@ -1225,13 +1316,60 @@ static ge::graphStatus ConfigurePath(gert::TilingContext* context, Centralizatio
                                     ((tiling->irregularVectorInnerCount > 1 && tiling->irregularVectorTaskCount > 0) ||
                                      tiling->irregularReduceSuffixElements > 1) &&
                                     irregularFits;
+    // Split long suffix reductions when the output groups alone cannot fill the cores.
+    const bool splitSuffix = useIrregularVector && tiling->largePath != 0 && tiling->groupCount <= coreNum / 2 &&
+                             tiling->irregularReduceOuterCount > 1 && tiling->irregularVectorInnerCount == 1 &&
+                             tiling->irregularReduceSuffixElements >= blockElems;
+    const int64_t planeWidth = RepeatingPlaneWidth(tiling, blockElems);
+    const size_t genericPerBuffer = AlignDownBytes(UbUsableBytes(ubSize) / 5);
+    const bool stridedUbFits = genericPerBuffer >= kRegbaseVectorElements * sizeof(float);
+    const int64_t stridedAxis = stridedUbFits && (dtype == DT_FLOAT || dtype == DT_FLOAT16) ?
+                                    StridedSuffixAxis(tiling, coreNum, elementBytes) :
+                                    -1;
     size_t fastPerBufferBytes = 0;
-    if (useSmallContiguous) {
+    if (planeWidth > 0 && LargePlaneRowFits(ubSize, elementBytes, planeWidth)) {
+        tiling->contiguousOuterCount = 1;
+        tiling->contiguousInnerCount = planeWidth;
+        if (ApplyLargePlanePath(context, tiling, coreNum, workspace, key, blockDim) != GRAPH_SUCCESS) {
+            return GRAPH_FAILED;
+        }
+    } else if ((dtype == DT_FLOAT || dtype == DT_FLOAT16) && CanInterleaveColumns(tiling, genericPerBuffer)) {
+        key = kLargeKey;
+        ApplyInterleavedColumns(context, tiling, coreNum, genericPerBuffer, workspace, blockDim);
+        return FinalizePath(context, tiling, dtype, key, blockDim, ubSize);
+    } else if (useSmallContiguous) {
         ApplySmallContiguousPath(tiling, coreNum, smallContiguousBlockElements, workspace, key, blockDim);
     } else if (useContiguousGeneric) {
         ApplyContiguousGenericPath(tiling, coreNum, contiguousTaskCount, lcsiFits, workspace, key, blockDim);
+    } else if (stridedAxis >= 0) {
+        const int64_t chunks = std::max<int64_t>(1, std::min(largeCoresPerRow, coreNum / tiling->groupCount));
+        key = kLargeKey;
+        ConfigurePartitionedGroups(context, tiling, coreNum, tiling->groupCount, chunks, kWorkspaceAlignElements,
+                                   workspace, blockDim);
+        tiling->largePath = Centralization::kStridedSuffixPath;
+        tiling->stridedReduceAxis = static_cast<uint32_t>(stridedAxis);
+        return FinalizePath(context, tiling, dtype, key, blockDim, ubSize);
+    } else if (splitSuffix) {
+        const int64_t chunks = std::min(largeCoresPerRow, tiling->irregularReduceOuterCount);
+        if (ConfigureLargePath(context, tiling, coreNum, false, chunks, workspace, key, blockDim) != GRAPH_SUCCESS) {
+            return GRAPH_FAILED;
+        }
+        tiling->irregularReduceChunks = chunks;
     } else if (useIrregularVector) {
         ApplyIrregularVectorPath(tiling, coreNum, workspace, key, blockDim);
+        const int64_t tasks = tiling->irregularVectorTaskCount;
+        if (dtype == DT_FLOAT && tiling->irregularVectorInnerCount > 1 &&
+            tiling->irregularVectorInnerCount <= kRegbaseVectorElements && tiling->irregularKeepTileElements == 1 &&
+            tiling->reduceCount > kLargeReduceThreshold && tasks <= coreNum / 2 &&
+            tiling->reduceSegmentCount >= coreNum) {
+            const int64_t chunks = coreNum / tasks;
+            const int64_t stride = 2 * AlignToVectorElements(tiling->irregularVectorInnerCount);
+            tiling->irregularReduceChunks = chunks;
+            tiling->irregularPartialStride = stride;
+            workspace[0] = kSystemWorkspaceBytes + static_cast<size_t>(tasks * (chunks + 1) * stride) * sizeof(float);
+            blockDim = static_cast<uint32_t>(tasks * chunks);
+            context->SetScheduleMode(1);
+        }
     } else if (tiling->largePath) {
         // LargeTrailing 的 tile 固定 1024 元素；放不下时回退到 Generic large（7020）。
         const bool useLargeTrailing = trailing && LargeTrailingUbFits(elementBytes, ubSize);
@@ -1248,11 +1386,10 @@ static ge::graphStatus ConfigurePath(gert::TilingContext* context, Centralizatio
             return GRAPH_FAILED;
         }
     } else if (trailing && tiling->reduceCount <= kFastReduceLimit) {
-        if ((dtype != DT_FLOAT || tiling->reduceCount <= kRegbaseVectorElements) &&
-            FastUbFits(tiling, elementBytes, ubSize, fastPerBufferBytes)) {
+        if (CanUseFastPath(tiling, dtype, elementBytes, ubSize, coreNum, fastPerBufferBytes)) {
             ApplyFastPath(tiling, coreNum, workspace, key, blockDim, fastPerBufferBytes, elementBytes);
         } else {
-            // FP32 宽度超过一个向量或 Fast 缓冲区放不下时，改用分块归约。
+            // 分批处理不合适或 Fast 缓冲区不足时，改用分块归约。
             tiling->largePath = 1;
             tiling->ubFactor = 0; // 清理 Fast 残留配置，最终路径不消费这两个字段
             tiling->alignedReduce = 0;
@@ -1306,7 +1443,6 @@ static ge::graphStatus CentralizationTilingFunc(gert::TilingContext* context)
     if (GetPlatform(context, ubSize, coreNum) != GRAPH_SUCCESS) {
         return GRAPH_FAILED;
     }
-    // Singleton reductions use the normal one-column path, including x - x for nonfinite inputs.
     return ConfigurePath(context, tiling, dtype, coreNum, ubSize, trailing, continuousAxes, totalCount);
 }
 

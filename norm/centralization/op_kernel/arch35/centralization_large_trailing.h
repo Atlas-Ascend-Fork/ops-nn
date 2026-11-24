@@ -63,9 +63,8 @@ private:
         float correction;
     };
 
-    // 通用 2 的幂输入缩放：z = x * inputScale, y = ((z - mean_z) - meanLow_z) * outputScale
-    // power 取 >= 2*reduceCount 的 2 的幂，保证 sum(z) <= max|x| < FLT_MAX，永不溢出。
-    // power 使用 uint64_t，避免 reduceCount 接近 int64 上限时有符号左移溢出。
+    // 用 2 的幂缩小输入，在缩放后的单位下求均值并中心化，最后恢复输出尺度。
+    // 向上取整到 2 的幂后再增加一位，给有限输入的部分和留出余量。
     float inputScale_ = 1.0f;
     float outputScale_ = 1.0f;
 
@@ -497,10 +496,7 @@ private:
         }
     }
 
-    // 修正存量 bug：原实现无任务循环，假设 blockDim == groupCount*coresPerRow
-    // 恰好相等（core/coresPerRow 直接当行号）。taskCount 超过核数时 blockDim 被
-    // clamp，尾部 (row, localCore) 整组静默丢失、输出保持全零（如 72 核上
-    // (64,200000)：taskCount=128>72，行 36-63 全零）。三阶段均改为按 task 轮转。
+    // 每个核以实际启动核数为步长遍历 (row, localCore) 任务，覆盖所有行的归约分片。
     __aicore__ inline void ProcessMultiCoreReduce(uint32_t core, uint32_t cores)
     {
         const uint32_t coresPerRow = static_cast<uint32_t>(tiling_->coresPerRow);

@@ -26,14 +26,14 @@ $$
 | Name | Input/Output/Attribute | Description | Data type | Data format |
 | :--- | :--- | :--- | :--- | :--- |
 | `x` | Input | Tensor to center, with rank 1 to 8. | FLOAT, FLOAT16 | ND |
-| `axes` | Attribute | List of reduction axes. Each axis must be in `[-rank(x), rank(x))`. Repeated axes count once. GE graphs use the last axis by default when this attribute is omitted. | LIST_INT | - |
 | `y` | Output | Centered tensor with the same shape and data type as `x`. | FLOAT, FLOAT16 | ND |
+| `axes` | Attribute (optional in GE graphs) | List of reduction axes. Each axis must be in `[-rank(x), rank(x))`. Repeated axes count once. GE graphs use the last axis by default when this attribute is omitted. | LIST_INT | - |
 
-Passing `axes=[]` explicitly gives `x - x`. The result is zero for finite elements and NaN for NaN or infinite elements.
+When `axes=[]` is passed explicitly, the output is zero for each finite input element and NaN for each NaN or infinite input element.
 
 ## Constraints
 
-<term>Ascend 950PR&950DT products</term> support empty tensors and allow dynamic shapes or ranks at graph construction. All input dimensions must be known at execution time.
+- <term>Ascend 950PR&950DT products</term> support empty tensors and allow dynamic shapes or ranks at graph construction. All input dimensions must be known at execution time.
 
 ## Invocation Description
 

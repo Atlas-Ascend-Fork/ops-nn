@@ -124,10 +124,7 @@ private:
         return (elements + blockElements - 1) / blockElements * blockElements;
     }
 
-    // 窄列行距：valid < 64 lane 时从向量对齐（64 元素）压到 32B 块对齐（4-16 元素），
-    // UB 密度提升 4-16x——每批多处理 4-16x 行，队列操作次数同比例减少。
-    // AccumulateRowsSmallInnerKahan / CentralizeRowsSmallInnerHiLo 的掩码向量加载
-    // 不依赖 64-lane 对齐（preg 按 activeCount 截断），仅要求地址可寻址。
+    // 不足一个向量的行按 32 字节对齐，其余按 V_LENGTH 个元素对齐。
     __aicore__ inline int64_t OptimalRowStride(int64_t validElements) const
     {
         return validElements < V_LENGTH ? AlignToBlock(validElements) : AlignToVector(validElements);
@@ -165,13 +162,16 @@ private:
         return base;
     }
 
-    __aicore__ inline int64_t IrregularReduceOuterOffset(int64_t reduceOuter) const
+    __aicore__ inline int64_t IrregularReduceOuterOffset(int64_t reduceOuter, int64_t* coords = nullptr) const
     {
         int64_t offset = 0;
         int64_t value = reduceOuter;
         for (int64_t i = 0; i < tiling_->irregularReduceOuterRank; ++i) {
             const int64_t coord = value / tiling_->irregularReduceOuterIndexStrides[i];
             value %= tiling_->irregularReduceOuterIndexStrides[i];
+            if (coords != nullptr) {
+                coords[i] = coord;
+            }
             offset += coord * tiling_->reduceStrides[i];
         }
         return offset;
@@ -253,6 +253,16 @@ private:
         AccumulateContiguousAt(input, sum, 0, validElements);
     }
 
+    __aicore__ inline uint16_t FoldLevelCount(uint16_t slots) const
+    {
+        uint16_t levels = 0;
+        while (slots > 1) {
+            slots >>= 1;
+            ++levels;
+        }
+        return levels;
+    }
+
     // 把 numSlots 个独立的 fp32 部分和按两两折叠归并到槽 0（通用树形归约）。
     // 与 norm_common 的 DichotomyAdd 同一思路，对所有 dtype 生效。
     __aicore__ inline void FoldAccumulatorSlots(LocalTensor<float>& sum, uint16_t numSlots, int64_t stride,
@@ -263,6 +273,7 @@ private:
         }
         __local_mem__ float* sumAddr = (__local_mem__ float*)sum.GetPhyAddr();
         const uint16_t loops = static_cast<uint16_t>((validElements + V_LENGTH - 1) / V_LENGTH);
+        const uint16_t levels = FoldLevelCount(numSlots);
         __VEC_SCOPE__
         {
             RegTensor<float> lhsReg;
@@ -270,7 +281,7 @@ private:
             RegTensor<float> outReg;
             MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
             uint16_t active = numSlots;
-            for (uint16_t pass = 0; pass < 16 && active > 1; ++pass) {
+            for (uint16_t pass = 0; pass < levels; ++pass) {
                 const uint16_t half = static_cast<uint16_t>(active / 2);
                 for (uint16_t g = 0; g < half; ++g) {
                     for (uint16_t loop = 0; loop < loops; ++loop) {
@@ -351,7 +362,7 @@ private:
                 LoadRegForDtype<T>(inputAddr, xReg, pregLoop, static_cast<uint32_t>(inputOffset) + offset);
                 LoadRegForDtype<float>(sumAddr, sumReg, pregLoop, static_cast<uint32_t>(sumOffset) + offset);
                 LoadRegForDtype<float>(sumAddr, corrReg, pregLoop, static_cast<uint32_t>(corrOffset) + offset);
-                // Neumaier: t = sum + x; corr += (sum - t) + x（真值 = sum + corr）
+                // 按 sum 和 x 的绝对值选择补偿公式，保留本次加法的舍入残差。
                 Add(tReg, sumReg, xReg, pregLoop);
                 Abs(absSum, sumReg, pregLoop);
                 Abs(absX, xReg, pregLoop);
@@ -361,7 +372,7 @@ private:
                 Sub(c2Reg, xReg, tReg, pregLoop);
                 Add(c2Reg, c2Reg, sumReg, pregLoop);
                 Select(addReg, c1Reg, c2Reg, dom);
-                // inf/NaN 保护：t 非有限时补偿置 0，避免 inf-inf=NaN 污染
+                // t 非有限时，本次加法的残差取零。
                 Abs(absSum, tReg, pregLoop);
                 Compares<float, CMPMODE::LE>(fin, absSum, 3.4028235e38f, pregLoop);
                 Select(addReg, addReg, zeroReg, fin);
@@ -380,6 +391,7 @@ private:
         }
         __local_mem__ float* sumAddr = (__local_mem__ float*)sum.GetPhyAddr();
         const uint16_t loops = static_cast<uint16_t>((validElements + V_LENGTH - 1) / V_LENGTH);
+        const uint16_t levels = FoldLevelCount(numSlots);
         __VEC_SCOPE__
         {
             RegTensor<float> lhsS;
@@ -395,7 +407,7 @@ private:
             MaskReg dom;
             MaskReg pregFull = CreateMask<float, MaskPattern::ALL>();
             uint16_t active = numSlots;
-            for (uint16_t pass = 0; pass < 16 && active > 1; ++pass) {
+            for (uint16_t pass = 0; pass < levels; ++pass) {
                 const uint16_t half = static_cast<uint16_t>(active / 2);
                 for (uint16_t g = 0; g < half; ++g) {
                     for (uint16_t loop = 0; loop < loops; ++loop) {
@@ -689,10 +701,9 @@ private:
                 uint32_t activeCount = remaining < V_LENGTH ? remaining : V_LENGTH;
                 MaskReg pregLoop = activeCount == V_LENGTH ? pregFull : UpdateMask<float>(activeCount);
                 LoadRegForDtype<T>(inputAddr, xReg, pregLoop, static_cast<uint32_t>(inputOffset) + offset);
-                Duplicate(hiReg, meanHi, pregLoop);
+                Duplicate(hiReg, -meanHi, pregLoop);
                 Duplicate(loReg, meanLo, pregLoop);
-                Sub(xReg, xReg, hiReg, pregLoop);
-                Sub(xReg, xReg, loReg, pregLoop);
+                SubtractMeanWithResidual(xReg, hiReg, loReg, pregLoop);
                 StoreRegForDtype<T>(outputAddr, xReg, pregLoop, static_cast<uint32_t>(outputOffset) + offset);
             }
         }
@@ -701,6 +712,8 @@ private:
 #include "centralization_generic_contiguous_impl.h"
 #include "centralization_generic_large_impl.h"
 #include "centralization_generic_irregular_impl.h"
+#include "centralization_generic_strided_impl.h"
+#include "centralization_generic_interleaved_impl.h"
 #include "centralization_generic_group_vector_impl.h"
 
     TPipe* pipe_;

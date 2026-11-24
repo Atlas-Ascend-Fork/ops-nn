@@ -11,6 +11,13 @@
 #define OPS_NORM_CENTRALIZATION_TILING_DATA_H_
 #include <cstdint>
 
+namespace Centralization {
+constexpr int64_t kMaxPackedFp32Columns = 320;
+constexpr int64_t kStridedSuffixPath = 2;
+constexpr int64_t kInterleavedColumnsPath = 3;
+constexpr int64_t kMaxInterleavedGroups = 32;
+} // namespace Centralization
+
 struct CentralizationTilingData {
     int64_t reduceRank = 0;
     int64_t keepRank = 0;
@@ -68,6 +75,8 @@ struct CentralizationTilingData {
     uint32_t largeTrailingOutputBufferBytes = 0;
     uint32_t largeTrailingCalcBufferBytes = 0;
     uint32_t largeTrailingMeanBufferBytes = 0;
+    // Reduction axis used by the strided-suffix and interleaved-column paths.
+    uint32_t stridedReduceAxis = 0;
     int64_t irregularKeepOuterIndexStrides[8] = {};
     int64_t irregularReduceOuterIndexStrides[8] = {};
     int64_t reduceSegmentOffsets[128] = {};

@@ -39,7 +39,7 @@ public:
         cols_ = tiling_->reduceCount;
         const int64_t alignedReduce = (tiling_->ubFactor > 0) ? tiling_->ubFactor : tiling_->alignedReduce;
         copyAlignedCols_ = AlignToBlock(cols_);
-        alignedCols_ = UseNarrowVector() ? copyAlignedCols_ : AlignToVLength(alignedReduce);
+        alignedCols_ = AlignToVLength(alignedReduce);
         batchRows_ = (tiling_->rowsPerLoop > 1) ? tiling_->rowsPerLoop : tiling_->rowsPerBatch;
         bufNum_ = (tiling_->bufNum > 0) ? static_cast<uint32_t>(tiling_->bufNum) : 2U;
         const uint32_t core = GetBlockIdx();
@@ -47,8 +47,23 @@ public:
         end_ = (rows_ < start_ + tiling_->blockFactor) ? rows_ : start_ + tiling_->blockFactor;
         const uint32_t rowBytes = static_cast<uint32_t>(cols_ * sizeof(T));
         const uint32_t batchBytes = static_cast<uint32_t>(batchRows_ * alignedCols_ * sizeof(T));
+        // Reuse the host's per-queue budget for contiguous rows and FP32 intermediates.
+        const int64_t blockRows = 32 / sizeof(T);
+        const int64_t packedRowBytes = cols_ * (cols_ == 1 ? sizeof(T) : sizeof(float));
+        if (UsePackedRows() && batchBytes >= blockRows * packedRowBytes) {
+            packedRows_ = true;
+            batchRows_ = batchBytes / (blockRows * packedRowBytes) * blockRows;
+            // Adjacent cores must never update the same 32-byte output block.
+            if (start_ < rows_) {
+                start_ -= start_ % blockRows;
+            }
+            if (end_ < rows_) {
+                end_ -= end_ % blockRows;
+            }
+        }
         pipe_->InitBuffer(inQueue_, bufNum_, batchBytes);
         pipe_->InitBuffer(outQueue_, bufNum_, batchBytes);
+        eventVToS_ = pipe_->FetchEventID(HardEvent::V_S);
         eventMte2ToS_ = pipe_->FetchEventID(HardEvent::MTE2_S);
         eventSToMte3_ = pipe_->FetchEventID(HardEvent::S_MTE3);
         rowBytes_ = rowBytes;
@@ -77,7 +92,7 @@ public:
     }
 
 private:
-    // Small reductions use scalar compensation except for the FP32 widths handled by UseNarrowVector().
+    // Other short rows use scalar compensated summation.
     static constexpr int64_t kScalarReduceLimit = 128;
 
     __aicore__ inline int64_t GetBatchStart(int64_t batch) const { return start_ + batch * batchRows_; }
@@ -91,10 +106,15 @@ private:
     __aicore__ inline void CopyIn(int64_t batchStart, int64_t rowCount)
     {
         LocalTensor<T> input = inQueue_.AllocTensor<T>();
-        const uint32_t dstStride = static_cast<uint32_t>((alignedCols_ - copyAlignedCols_) * sizeof(T) / 32);
-        DataCopyExtParams copy{static_cast<uint16_t>(rowCount), rowBytes_, 0, dstStride, 0};
-        DataCopyPadExtParams<T> pad{true, 0, static_cast<uint8_t>(copyAlignedCols_ - cols_), static_cast<T>(0)};
-        DataCopyPad(input, xGm_[batchStart * cols_], copy, pad);
+        if (packedRows_) {
+            DataCopyExtParams copy{1, static_cast<uint32_t>(rowCount * rowBytes_), 0, 0, 0};
+            DataCopyPad(input, xGm_[batchStart * cols_], copy, DataCopyPadExtParams<T>{});
+        } else {
+            const uint32_t dstStride = static_cast<uint32_t>((alignedCols_ - copyAlignedCols_) * sizeof(T) / 32);
+            DataCopyExtParams copy{static_cast<uint16_t>(rowCount), rowBytes_, 0, dstStride, 0};
+            DataCopyPadExtParams<T> pad{true, 0, static_cast<uint8_t>(copyAlignedCols_ - cols_), static_cast<T>(0)};
+            DataCopyPad(input, xGm_[batchStart * cols_], copy, pad);
+        }
         inQueue_.EnQue(input);
     }
 
@@ -110,9 +130,14 @@ private:
     __aicore__ inline void CopyOut(int64_t batchStart, int64_t rowCount)
     {
         LocalTensor<T> output = outQueue_.DeQue<T>();
-        const uint32_t srcStride = static_cast<uint32_t>((alignedCols_ - copyAlignedCols_) * sizeof(T) / 32);
-        DataCopyExtParams copy{static_cast<uint16_t>(rowCount), rowBytes_, srcStride, 0, 0};
-        DataCopyPad(yGm_[batchStart * cols_], output, copy);
+        if (packedRows_) {
+            DataCopyExtParams copy{1, static_cast<uint32_t>(rowCount * rowBytes_), 0, 0, 0};
+            DataCopyPad(yGm_[batchStart * cols_], output, copy);
+        } else {
+            const uint32_t srcStride = static_cast<uint32_t>((alignedCols_ - copyAlignedCols_) * sizeof(T) / 32);
+            DataCopyExtParams copy{static_cast<uint16_t>(rowCount), rowBytes_, srcStride, 0, 0};
+            DataCopyPad(yGm_[batchStart * cols_], output, copy);
+        }
         outQueue_.FreeTensor(output);
     }
 
@@ -150,11 +175,7 @@ private:
     __aicore__ inline void RecomputeScaledMean(LocalTensor<T>& input, int64_t base, int64_t count, float& meanHi,
                                                float& meanLo) const
     {
-        uint32_t power = 1;
-        while (power < count) {
-            power <<= 1;
-        }
-        const float restore = static_cast<float>(2 * power);
+        const float restore = ShortRowRestoreFactor(count);
         const float scale = 1.0f / restore;
         float sum = 0.0f;
         float corr = 0.0f;
@@ -168,7 +189,7 @@ private:
     {
         SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
         WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
-        const int64_t rowStride = alignedCols_;
+        const int64_t rowStride = packedRows_ ? cols_ : alignedCols_;
         const int64_t count = cols_;
         for (int64_t row = 0; row < rowCount; ++row) {
             float sum = 0.0f;
@@ -187,96 +208,86 @@ private:
             }
             for (int64_t col = 0; col < count; ++col) {
                 const float value = static_cast<float>(input.GetValue(base + col));
-                output.SetValue(base + col, static_cast<T>((value - meanHi) - meanLo));
+                float centered = value;
+                float residual = 0.0f;
+                AddNeumaier(centered, residual, -meanHi);
+                if (centered <= kMaxFinite && centered >= -kMaxFinite) {
+                    centered += residual - meanLo;
+                }
+                output.SetValue(base + col, static_cast<T>(centered));
             }
         }
         SetFlag<HardEvent::S_MTE3>(eventSToMte3_);
         WaitFlag<HardEvent::S_MTE3>(eventSToMte3_);
     }
 
-    __aicore__ inline bool UseNarrowVector() const { return IsSameType<T, float>::value && (cols_ == 4 || cols_ == 6); }
-
-    // One lane per row. Gather a column at a time so each TwoSum correction
-    // is carried through the entire reduction, then scatter the centered values.
-    __aicore__ inline void ComputeBatchNarrowFloat(LocalTensor<T>& input, LocalTensor<T>& output, uint32_t rowCount)
+    // Vector FP32 arithmetic can flush subnormals. Keep the scalar path for tiles
+    // whose magnitudes can overflow a short sum or leave a subnormal mean.
+    __aicore__ inline bool NeedsScalarRange(LocalTensor<float>& input, LocalTensor<float>& output, uint32_t elements)
     {
-        __local_mem__ float* inputAddr = (__local_mem__ float*)input.GetPhyAddr();
-        __local_mem__ float* outputAddr = (__local_mem__ float*)output.GetPhyAddr();
-        const uint32_t stride = static_cast<uint32_t>(alignedCols_);
-        const uint16_t cols = static_cast<uint16_t>(cols_);
-        const uint16_t blocks = static_cast<uint16_t>((rowCount + V_LENGTH - 1) / V_LENGTH);
-        // Keep headroom for the sum and the residual calculation even at FLT_MAX.
-        const float restoreFactor = cols == 4 ? 8.0f : 16.0f;
-        const float scaleFactor = 1.0f / restoreFactor;
+        using namespace AscendC::Reg;
+        auto* src = (__local_mem__ uint32_t*)input.GetPhyAddr();
+        auto* flag = (__local_mem__ uint32_t*)output.GetPhyAddr();
+        const uint16_t blocks = static_cast<uint16_t>((elements + V_LENGTH - 1) / V_LENGTH);
         __VEC_SCOPE__
         {
-            RegTensor<uint32_t> rowOffsets;
-            RegTensor<uint32_t> offsets;
-            RegTensor<float> count;
-            RegTensor<float> zero;
-            MaskReg full = CreateMask<float, MaskPattern::ALL>();
-            AscendC::Reg::Arange(reinterpret_cast<RegTensor<int32_t>&>(rowOffsets), 0);
-            Muls(rowOffsets, rowOffsets, stride, full);
-            Duplicate(count, static_cast<float>(cols), full);
-            Duplicate(zero, 0.0f, full);
-            uint32_t remaining = rowCount;
+            RegTensor<uint32_t> bits, magnitudeMask, found, one;
+            MaskReg full = CreateMask<uint32_t, MaskPattern::ALL>();
+            Duplicate(magnitudeMask, 0x7fffffffU, full);
+            Duplicate(found, 0U, full);
+            Duplicate(one, 1U, full);
+            uint32_t remaining = elements;
             for (uint16_t block = 0; block < blocks; ++block) {
-                MaskReg active = UpdateMask<float>(remaining);
-                const uint32_t base = block * V_LENGTH * stride;
-                RegTensor<float> sum;
-                RegTensor<float> correction;
-                RegTensor<float> value;
-                RegTensor<float> meanHi;
-                RegTensor<float> meanLo;
-                RegTensor<float> scale;
-                RegTensor<float> divisor;
-                RegTensor<float> one;
-                // Probe in the same column order as the compensated sum, one lane per row.
-                Duplicate(sum, 0.0f, active);
-                for (uint16_t col = 0; col < cols; ++col) {
-                    Adds(offsets, rowOffsets, static_cast<uint32_t>(col), active);
-                    AscendC::Reg::Gather(value, inputAddr + base, offsets, active);
-                    Add(sum, sum, value, active);
-                }
-                Abs(value, sum, active);
-                MaskReg unscaled;
-                Compares<float, CMPMODE::LE>(unscaled, value, 0x1.fffffep127f, active);
-                Duplicate(one, 1.0f, active);
-                Duplicate(scale, scaleFactor, active);
-                Select(scale, one, scale, unscaled);
-                Mul(divisor, count, scale, active);
-                Duplicate(sum, 0.0f, active);
-                Duplicate(correction, 0.0f, active);
-                for (uint16_t col = 0; col < cols; ++col) {
-                    Adds(offsets, rowOffsets, static_cast<uint32_t>(col), active);
-                    AscendC::Reg::Gather(value, inputAddr + base, offsets, active);
-                    Mul(value, value, scale, active);
-                    AddWithResidual(sum, correction, value, active);
-                }
-                Div(meanHi, sum, divisor, active);
-                Muls(meanLo, meanHi, -1.0f, active);
-                MulDstAdd<float, AscendC::Reg::MaskMergeMode::ZEROING>(meanLo, divisor, sum, active);
-                Add(meanLo, meanLo, correction, active);
-                Div(meanLo, meanLo, divisor, active);
-                Abs(value, meanHi, active);
-                MaskReg finite;
-                Compares<float, CMPMODE::LE>(finite, value, 3.4028235e38f, active);
-                Select(meanLo, meanLo, zero, finite);
-                for (uint16_t col = 0; col < cols; ++col) {
-                    Adds(offsets, rowOffsets, static_cast<uint32_t>(col), active);
-                    AscendC::Reg::Gather(value, inputAddr + base, offsets, active);
-                    Sub(value, value, meanHi, active);
-                    Sub(value, value, meanLo, active);
-                    AscendC::Reg::Scatter(outputAddr + base, value, offsets, active);
-                }
+                MaskReg active = UpdateMask<uint32_t>(remaining);
+                LoadAlign(bits, src + block * V_LENGTH);
+                And(bits, bits, magnitudeMask, active);
+                MaskReg nonzero, small, large, finite;
+                Compares<uint32_t, CMPMODE::GT>(nonzero, bits, 0U, active);
+                // Compare magnitude bits so the range check itself preserves subnormal inputs.
+                Compares<uint32_t, CMPMODE::LT>(small, bits, 0x0f800000U, active); // 2^-96
+                Compares<uint32_t, CMPMODE::GE>(large, bits, 0x7b800000U, active); // 2^120
+                Compares<uint32_t, CMPMODE::LT>(finite, bits, 0x7f800000U, active);
+                And(large, large, finite, active);
+                And(small, small, nonzero, active);
+                Or(large, large, small, active);
+                Select(found, one, found, large);
             }
+            Reduce<ReduceType::MAX>(bits, found, full);
+            MaskReg first = CreateMask<uint32_t, MaskPattern::VL1>();
+            StoreAlign(flag, bits, first);
         }
+        SetFlag<HardEvent::V_S>(eventVToS_);
+        WaitFlag<HardEvent::V_S>(eventVToS_);
+        return output.template ReinterpretCast<uint32_t>().GetValue(0) != 0;
+    }
+
+    __aicore__ inline bool UsePackedRows() const
+    {
+        return cols_ <= (IsSameType<T, float>::value ? kMaxPackedFp32Columns : V_LENGTH);
     }
 
     __aicore__ inline void ComputeBatch(LocalTensor<T>& input, LocalTensor<T>& output, int64_t rowCount)
     {
-        if (UseNarrowVector()) {
-            ComputeBatchNarrowFloat(input, output, static_cast<uint32_t>(rowCount));
+        if (packedRows_) {
+            const uint32_t elements = static_cast<uint32_t>(rowCount * cols_);
+            if (cols_ == 1) {
+                Sub(output, input, input, elements);
+            } else if constexpr (IsSameType<T, float>::value) {
+                if (NeedsScalarRange(input, output, elements)) {
+                    ComputeBatchScalar(input, output, rowCount);
+                    return;
+                }
+                CenterPackedRows(input, output, static_cast<uint32_t>(rowCount), static_cast<uint16_t>(cols_));
+            } else {
+                // Cast across buffers so the expanded FP32 rows never overlap their FP16 source.
+                auto values = output.template ReinterpretCast<float>();
+                auto centered = input.template ReinterpretCast<float>();
+                Cast(values, input, RoundMode::CAST_NONE, elements);
+                PipeBarrier<PIPE_V>();
+                CenterPackedRows(values, centered, static_cast<uint32_t>(rowCount), static_cast<uint16_t>(cols_));
+                PipeBarrier<PIPE_V>();
+                Cast(output, centered, RoundMode::CAST_RINT, elements);
+            }
             return;
         }
         if (cols_ > 1 && cols_ <= kScalarReduceLimit) {
@@ -411,6 +422,8 @@ private:
     int64_t batchRows_ = 1;
     uint32_t bufNum_ = 2;
     uint32_t rowBytes_ = 0;
+    bool packedRows_ = false;
+    TEventID eventVToS_{};
     TEventID eventMte2ToS_{};
     TEventID eventSToMte3_{};
     int64_t start_ = 0;
