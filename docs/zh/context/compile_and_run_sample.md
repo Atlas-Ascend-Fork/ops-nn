@@ -17,7 +17,7 @@
 
     CMake文件示例如下，请根据实际情况修改：
 
-    ```bash
+    ```cmake
     # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
     # CMake lowest version requirement
@@ -64,7 +64,7 @@
 
     对于集合通信和MatMul计算融合、并行的算子，统称为通算融合算子（简称MC2算子），包括AllGatherMatmul、AlltoAllAllGatherBatchMatMul、BatchMatMulReduceScatterAlltoAll、MatmulAllReduce、MatmulAllReduceAddRmsNorm、MatmulReduceScatter等。调用该类算子API时，一般会涉及多线程和HCCL（Huawei Collective Communication Library，集合通信库），因此CMake文件需要额外导入如下内容，否则无法成功编译。
 
-  ```bash
+  ```cmake
   # 设置链接的库文件路径
   find_package(Threads REQUIRED)
   target_link_libraries(opapi_test PRIVATE
@@ -118,7 +118,7 @@
 
           以AddMatMul算子的运行结果为例，运行后的结果示例如下：
 
-          ```bash
+          ```text
           result[0] is: 7.200000
           result[1] is: 9.400000
           result[2] is: 11.600000
@@ -132,7 +132,7 @@
           若执行结果报错，未出现预期结果，可以使用aclGetRecentErrMsg接口获取报错具体信息。
           调用aclnnAddmmGetWorkspaceSize报错获取异常信息示例如下：
 
-          ```bash
+          ```cpp
           // self is nullptr
           ret = aclnnAddmmGetWorkspaceSize(self, mat1, mat2, beta, alpha, out, cubeMathType, &workspaceSize, &executor);
           CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnAddmmGetWorkspaceSize failed. ERROR: %d\n[ERROR msg]%s", ret, aclGetRecentErrMsg()); return ret);
@@ -140,7 +140,7 @@
 
           上述构造空指针问题获取报错信息示例如下：
 
-          ```bash
+          ```text
           aclnnAddmmGetWorkspaceSize failed. ERROR: 161001
           [ERROR msg][PID:xxxx] xxx(timestamp) AclNN_Parameter_Error(EZ1001): Expected a proper Tensor but got null for argument addmmTensor.self.
           ```
