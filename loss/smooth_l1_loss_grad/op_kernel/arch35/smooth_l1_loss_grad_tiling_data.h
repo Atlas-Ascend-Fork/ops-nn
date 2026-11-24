@@ -21,7 +21,7 @@
  * 字段职责：
  *   totalLength   展平元素总数 = ∏(predict.shape)；rank=0 → 1，空 Tensor → 0
  *   coreNum       求 blockFormer 的除数（上限 GetCoreNumAiv()），非最终工作核数
- *   blockFormer   每核基础元素数（对齐到 512 元素 ELEM_ALIGN_FACTOR）
+ *   blockFormer   每核基础元素数（对齐到 64 或 512 元素，按域选取）
  *   blockNum      真正发起 GM 读写的工作核数 = ⌈totalLength/blockFormer⌉
  *   blockTail     尾核处理元素数 = totalLength - blockFormer*(blockNum-1)（int64 防 uint32 回绕）
  *   ubFormer      每个 UB 块基础元素数（对齐到 256B）
@@ -36,7 +36,7 @@ struct SmoothL1LossGradTilingData {
     // === 多核切分参数 ===
     int64_t totalLength = 0; // 展平元素总数
     int32_t coreNum = 0;     // 求 blockFormer 的除数（非工作核数）
-    int64_t blockFormer = 0; // 每核基础元素数（512 元素对齐）
+    int64_t blockFormer = 0; // 每核基础元素数（64/512 元素对齐，按域）
     int64_t blockNum = 0;    // 工作核数 = ⌈totalLength/blockFormer⌉
     int64_t blockTail = 0;   // 尾核处理元素数（int64 防 uint32 回绕）
 
@@ -46,6 +46,10 @@ struct SmoothL1LossGradTilingData {
     // === 标量参数（Host 预计算） ===
     float sigma = 1.0f;     // 平滑阈值 σ（σ > 0；Step 2 Mins 上截断 / Step 4 Div 分母）
     float negSigma = -1.0f; // -σ（Step 3 Maxs 下截断）
+    // host 预计算 1/σ 与守卫标志：useRecip=1 仅当 σ≥2^-125 且 1/σ 有限（1/σ≤2^125<FLT_MAX），
+    //   此时 kernel 以 Muls(c×invSigma) 替代 Div(c,σ)；域外（0<σ<2^-125，含次正规）保持 Div。
+    float invSigma = 1.0f; // 1/σ（useRecip=1 时有效；域外值不被 kernel 消费）
+    uint8_t useRecip = 0;  // 1=Muls 倒数乘，0=Div（守卫域外）
 };
 
 #endif // _SMOOTH_L1_LOSS_GRAD_TILING_DATA_H_

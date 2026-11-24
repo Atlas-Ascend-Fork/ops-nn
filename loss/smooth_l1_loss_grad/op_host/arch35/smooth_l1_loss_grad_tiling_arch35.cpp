@@ -16,9 +16,10 @@
  *
  * Tiling 流程：
  *   1. 获取平台信息（ubSize, coreNum；PlatformAscendC，禁止硬编码）
- *   2. 获取 shape / 属性信息（totalLength, dtype, sigma → negSigma=-sigma；kernel 侧 Step 4 真除法，不预计算 1/σ）
+ *   2. 获取 shape / 属性信息（totalLength, dtype, sigma → negSigma=-sigma；守卫域内预计算 1/σ
+ *     （Muls），域外真除法（Div））
  *   3. 空 Tensor 短路（totalLength=0 → blockNum=0，避免除零；SetBlockDim(1)）
- *   4. 多核切分（coreNum/blockFormer/blockNum 两步，512 对齐后反推 blockNum）
+ *   4. 多核切分（coreNum/blockFormer/blockNum 两步，useOpt?64:512 双因子对齐后反推 blockNum）
  *   5. UB 切分（byte 量纲 maxElemNum 无 ×8；alignFactor = 256/elemBytes；ubFormer 256B 对齐）
  *
  * elemBytes 由
@@ -49,10 +50,19 @@ using Ops::Base::CeilDiv;
 constexpr uint32_t WS_SYS_SIZE = 0U;                     // workspace 恒为 0
 constexpr size_t WORKSPACE_NUM = 1;                      // 即使为 0 也须声明 slot
 constexpr int64_t MIN_TILING_BITS_SIZE_PER_CORE = 32768; // 每核 ≥ 4KB，单位 bits
-constexpr int64_t ELEM_ALIGN_FACTOR = 512;               // 多核切分元素对齐因子
-constexpr int64_t ALIGN_256 = 256;                       // UB 对齐字节数（亦作 extraSize 预留）
-constexpr int64_t BUFFER_NUM = 8;                        // double buffer：(3 VECIN + 1 VECOUT) × 2
-constexpr float DEFAULT_SIGMA = 1.0f;                    // sigma 默认值
+// 多核切分元素对齐因子（守卫域内；不低于 GM 32B 对齐所需 16 元素界）
+constexpr int64_t ELEM_ALIGN_FACTOR = 64;
+// 多核切分元素对齐因子（守卫域外）
+constexpr int64_t ELEM_ALIGN_FACTOR_LEGACY = 512;
+// 微工作量阈值：totalLength ≤ 此值（不足单一 VF repeat）时走域外路径
+constexpr int64_t SUB_VECTOR_MIN_ELEMENTS = 34;
+// ubFormer 缩除开关：1=减半（减半后仍满足 DataCopy 32B 与 VF Load/Store 步进约束）
+constexpr int64_t UB_TILE_HALF = 1;
+// 倒数守卫判定界：σ≥2^-125 ⟹ 1/σ≤2^125<FLT_MAX 有限
+constexpr float MIN_RECIP_SIGMA = 0x1.0p-125f;
+constexpr int64_t ALIGN_256 = 256;    // UB 对齐字节数（亦作 extraSize 预留）
+constexpr int64_t BUFFER_NUM = 8;     // double buffer：(3 VECIN + 1 VECOUT) × 2
+constexpr float DEFAULT_SIGMA = 1.0f; // sigma 默认值
 
 static const gert::Shape g_vec_1_shape = {1};
 
@@ -204,24 +214,30 @@ static ge::graphStatus GetWorkspaceSize(gert::TilingContext* context)
 
 // 多核 + UB 切分
 static void ComputeTilingParams(int64_t totalLength, ge::DataType dataType, uint64_t ubSize, int64_t availableCoreNum,
-                                int64_t* coreNum, int64_t* blockFormer, int64_t* blockNum, int64_t* blockTail,
-                                int64_t* ubFormer)
+                                bool useOpt, int64_t* coreNum, int64_t* blockFormer, int64_t* blockNum,
+                                int64_t* blockTail, int64_t* ubFormer)
 {
     int64_t elemBytes = static_cast<int64_t>(ge::GetSizeByDataType(dataType)); // fp16/bf16 → 2, fp32 → 4
     int64_t minDtypeBits = elemBytes * 8;                                      // fp16/bf16 → 16, fp32 → 32
 
-    // 多核切分（coreNum/blockFormer/blockNum 两步，512 对齐后反推）
+    // 多核切分（coreNum/blockFormer/blockNum 两步，64 对齐后反推）
     *coreNum = (totalLength * minDtypeBits + MIN_TILING_BITS_SIZE_PER_CORE - 1) / MIN_TILING_BITS_SIZE_PER_CORE;
     *coreNum = std::min(*coreNum, availableCoreNum);
-    *blockFormer = CeilAlign(CeilDiv(totalLength, *coreNum), ELEM_ALIGN_FACTOR); // 512 元素对齐
-    *blockNum = CeilDiv(totalLength, *blockFormer);                              // 工作核数（恒 ≤ coreNum）
-    *blockTail = totalLength - (*blockNum - 1) * *blockFormer;                   // int64 防回绕
+    // 对齐因子按域选取：守卫域内 64，域外 512
+    const int64_t elemAlignFactor = useOpt ? ELEM_ALIGN_FACTOR : ELEM_ALIGN_FACTOR_LEGACY;
+    *blockFormer = CeilAlign(CeilDiv(totalLength, *coreNum), elemAlignFactor);
+    *blockNum = CeilDiv(totalLength, *blockFormer);            // 工作核数（恒 ≤ coreNum）
+    *blockTail = totalLength - (*blockNum - 1) * *blockFormer; // int64 防回绕
 
     // UB 切分（byte 量纲无 ×8，extraSize=ALIGN_256 预留）
     int64_t bufferDivisor = BUFFER_NUM * elemBytes; // fp16/bf16 → 16, fp32 → 32
     int64_t maxElemNum = (static_cast<int64_t>(ubSize) - ALIGN_256) / bufferDivisor;
     int64_t alignFactor = ALIGN_256 / elemBytes;          // = 256/elemBytes
     *ubFormer = (maxElemNum / alignFactor) * alignFactor; // 256B 对齐
+    // UB_TILE_HALF=1 时 ubFormer 减半，减半后仍满足 DataCopy 32B 与 VF 步进约束
+    if (useOpt && UB_TILE_HALF == 1) {
+        *ubFormer /= 2;
+    }
 }
 
 static ge::graphStatus SmoothL1LossGradTilingFunc(gert::TilingContext* context)
@@ -249,6 +265,13 @@ static ge::graphStatus SmoothL1LossGradTilingFunc(gert::TilingContext* context)
     tiling->totalLength = totalLength;
     tiling->sigma = sigma;
     tiling->negSigma = -sigma;
+    // 预计算 invSigma 与守卫标志：σ≥2^-125 ⟹ 1/σ≤2^125<FLT_MAX 有限 → useRecip=1（kernel Muls
+    // 倒数乘路径）；域外（0<σ<2^-125，含次正规，1/σ 上溢 Inf）→ useRecip=0（kernel Div 路径）
+    const float invSigma = 1.0f / sigma;
+    const bool useOpt = (sigma >= MIN_RECIP_SIGMA) && std::isfinite(invSigma) &&
+                        (totalLength > SUB_VECTOR_MIN_ELEMENTS);
+    tiling->invSigma = invSigma;
+    tiling->useRecip = useOpt ? 1U : 0U;
 
     // 3. 空 Tensor 短路（blockNum=0，kernel 守卫 return）
     if (totalLength == 0) {
@@ -279,8 +302,8 @@ static ge::graphStatus SmoothL1LossGradTilingFunc(gert::TilingContext* context)
                         "bits-per-element must fit in int64",
                         totalLength, maxTotalLength),
                 return ge::GRAPH_FAILED);
-    ComputeTilingParams(totalLength, dataType, ubSize, availableCoreNum, &coreNum, &blockFormer, &blockNum, &blockTail,
-                        &ubFormer);
+    ComputeTilingParams(totalLength, dataType, ubSize, availableCoreNum, useOpt, &coreNum, &blockFormer, &blockNum,
+                        &blockTail, &ubFormer);
     OP_CHECK_IF(ubFormer <= 0,
                 OP_LOGE(context, "SmoothL1LossGrad: available UB cannot hold one aligned tile, ubSize=%lu", ubSize),
                 return ge::GRAPH_FAILED);
