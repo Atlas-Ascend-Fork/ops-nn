@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Backward operation of [aclnnGroupNormSwish](../../group_norm_swish/docs/aclnnGroupNormSwish.md).
+- Description: Backward operation of [aclnnGroupNormSwish](../../group_norm_swish/docs/aclnnGroupNormSwish_en.md).
 - Formula:
 
 $$
