@@ -281,7 +281,7 @@ static __aicore__ inline bool CalB1HiCopyParamsSplitKernelHW(Intf* self, uint64_
     }
     uint32_t ho = CalRows2Copy(kbl1Tmp, self->ctx.singleShapeWo_);
     // hk采用循环，每次只循环一个hk,filterH=1
-    uint32_t hiCopyLen = (ho - 1) * self->ctx.tiling_->strideH + 1;
+    int64_t hiCopyLen = (static_cast<int64_t>(ho) - 1) * static_cast<int64_t>(self->ctx.tiling_->strideH) + 1;
     int64_t b1SrcHiGmDown = b1SrcHiGm + hiCopyLen;
     // 当拷贝的行完全处于padUp部分或是padDown部分时跳出搬运, 注意此处的hicopyLen包含pad行
     if ((b1SrcHiGmDown < 0) || (b1SrcHiGm >= self->ctx.tiling_->hi)) {
@@ -289,7 +289,7 @@ static __aicore__ inline bool CalB1HiCopyParamsSplitKernelHW(Intf* self, uint64_
     }
 
     if (b1SrcHiGm < 0) {
-        //起始地址计算
+        // 起始地址计算
         hiParams.padUp = -b1SrcHiGm;
         hiParams.hiUpValidOffset = Ceil(hiParams.padUp, self->ctx.tiling_->strideH) * self->ctx.tiling_->strideH -
                                    hiParams.padUp;
@@ -300,8 +300,9 @@ static __aicore__ inline bool CalB1HiCopyParamsSplitKernelHW(Intf* self, uint64_
         padDown = b1SrcHiGmDown - self->ctx.tiling_->hi;
     }
 
-    hiCopyLen = ho - Ceil(hiParams.padUp, self->ctx.tiling_->strideH) - Ceil(padDown, self->ctx.tiling_->strideH);
-    hiParams.hiCopyLen = hiCopyLen < 0 ? 0 : hiCopyLen;
+    hiCopyLen = static_cast<int64_t>(ho) - static_cast<int64_t>(Ceil(hiParams.padUp, self->ctx.tiling_->strideH)) -
+                static_cast<int64_t>(Ceil(padDown, self->ctx.tiling_->strideH));
+    hiParams.hiCopyLen = hiCopyLen < 0 ? 0 : static_cast<uint32_t>(hiCopyLen);
     if (hiParams.hiCopyLen == 0) {
         return true;
     }
