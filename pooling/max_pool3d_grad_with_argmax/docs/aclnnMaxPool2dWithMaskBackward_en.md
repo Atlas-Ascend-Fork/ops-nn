@@ -25,7 +25,7 @@
 
 ## Function
 
-Backward propagation of forward max pooling [aclnnMaxPool2dWithMask](../../max_pool3d_with_argmax_v2/docs/aclnnMaxPool2dWithMask.md).
+Backward propagation of forward max pooling [aclnnMaxPool2dWithMask](../../max_pool3d_with_argmax_v2/docs/aclnnMaxPool2dWithMask_en.md).
 
 ## Function Prototype
 
