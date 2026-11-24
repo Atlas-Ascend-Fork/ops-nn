@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Backward propagation of the mean squared error function [aclnnMseLoss](../../mse_loss/docs/aclnnMseLoss.md).
+- Description: Backward propagation of the mean squared error function [aclnnMseLoss](../../mse_loss/docs/aclnnMseLoss_en.md).
 
 - Formula:
 
