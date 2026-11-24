@@ -753,11 +753,6 @@ __aicore__ inline void AdaptiveAvgPool2dSplitH<T, ID_T, NC_FACTOR>::AccumulateRo
     uint16_t rStart = static_cast<uint16_t>(rowLoStart);
     uint16_t rEnd = static_cast<uint16_t>(rowLoEnd);
 
-    // IS_FIRST is a template parameter, so this resolves at compile time into two
-    // branch-free straight-line paths: keeping the if inside __VEC_SCOPE__
-    // breaks the software-pipeline scheduling of the vector loop.
-    // [RegBase-native] Observed with the CANN 9.0.0 (V100R001C10SPC001B250) compiler;
-    // re-measure before assuming it still holds on a newer toolchain.
     SplitHAccumulateRowsToHoVf<T, NC_FACTOR, IS_FIRST>(inputAddr, outAddr, wStartAddr, wKerSizeAddr, outBase, woNum,
                                                        rStart, rEnd, this->vlNum_, this->wInAlign_, vfLenFp32);
 }

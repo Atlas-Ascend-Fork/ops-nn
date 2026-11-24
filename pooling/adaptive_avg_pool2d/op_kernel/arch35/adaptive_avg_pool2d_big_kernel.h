@@ -61,6 +61,19 @@ protected:
     TBuf<QuePosition::VECCALC> storeAddUB_;
 };
 
+template <typename U, typename T, uint64_t COPY_MODE>
+__simd_vf__ void InitStoreOutBufferVf(uint16_t repeatMaxTimes, uint32_t maxOutCount, uint32_t maxVfCount,
+                                      __ubuf__ U* avgStoreOutAddr)
+{
+    Reg::RegTensor<U> avgStoreOutReg;
+    Reg::Duplicate(avgStoreOutReg, static_cast<U>(0));
+    for (uint16_t i = 0; i < repeatMaxTimes; i++) {
+        Reg::MaskReg avgStoreOutMask = Reg::UpdateMask<U>(maxOutCount);
+        Reg::AddrReg offsetStoreReg = Reg::CreateAddrReg<U>(i, maxVfCount);
+        Reg::StoreAlign(avgStoreOutAddr, avgStoreOutReg, offsetStoreReg, avgStoreOutMask);
+    }
+}
+
 template <typename T, uint64_t COPY_MODE>
 template <typename U>
 __aicore__ inline void AdaptiveAvgPool2dBigKernel<T, COPY_MODE>::InitStoreOutBuffer()
@@ -72,15 +85,18 @@ __aicore__ inline void AdaptiveAvgPool2dBigKernel<T, COPY_MODE>::InitStoreOutBuf
     uint32_t maxVfCount = platform::GetVRegSize() / sizeof(T);
     uint16_t repeatMaxTimes = ops::CeilDiv(static_cast<uint32_t>(maxOutCount), maxVfCount);
 
-    __VEC_SCOPE__
-    {
-        Reg::RegTensor<U> avgStoreOutReg;
-        Reg::Duplicate(avgStoreOutReg, static_cast<U>(0));
-        for (uint16_t i = 0; i < repeatMaxTimes; i++) {
-            Reg::MaskReg avgStoreOutMask = Reg::UpdateMask<U>(maxOutCount);
-            Reg::AddrReg offsetStoreReg = Reg::CreateAddrReg<U>(i, maxVfCount);
-            Reg::StoreAlign(avgStoreOutAddr, avgStoreOutReg, offsetStoreReg, avgStoreOutMask);
-        }
+    InitStoreOutBufferVf<U, T, COPY_MODE>(repeatMaxTimes, maxOutCount, maxVfCount, avgStoreOutAddr);
+}
+template <typename T, uint64_t COPY_MODE>
+__simd_vf__ void InitOutputBufferVf(uint16_t repeatMaxTimes, uint32_t maxOutCount, uint32_t maxVfCount,
+                                    __ubuf__ T* avgOutAddr)
+{
+    Reg::RegTensor<T> avgOutReg;
+    Reg::Duplicate(avgOutReg, static_cast<T>(0));
+    for (uint16_t i = 0; i < repeatMaxTimes; i++) {
+        Reg::MaskReg avgOutMask = Reg::UpdateMask<T>(maxOutCount);
+        Reg::AddrReg offsetReg = Reg::CreateAddrReg<T>(i, maxVfCount);
+        Reg::StoreAlign(avgOutAddr, avgOutReg, offsetReg, avgOutMask);
     }
 }
 
@@ -97,16 +113,20 @@ __aicore__ inline void AdaptiveAvgPool2dBigKernel<T, COPY_MODE>::InitOutputBuffe
     uint32_t maxVfCount = platform::GetVRegSize() / sizeof(T);
     uint16_t repeatMaxTimes = ops::CeilDiv(static_cast<uint32_t>(maxOutCount), maxVfCount);
 
-    __VEC_SCOPE__
-    {
-        Reg::RegTensor<T> avgOutReg;
-        Reg::Duplicate(avgOutReg, static_cast<T>(0));
-        for (uint16_t i = 0; i < repeatMaxTimes; i++) {
-            Reg::MaskReg avgOutMask = Reg::UpdateMask<T>(maxOutCount);
-            Reg::AddrReg offsetReg = Reg::CreateAddrReg<T>(i, maxVfCount);
-            Reg::StoreAlign(avgOutAddr, avgOutReg, offsetReg, avgOutMask);
-        }
-    }
+    InitOutputBufferVf<T, COPY_MODE>(repeatMaxTimes, maxOutCount, maxVfCount, avgOutAddr);
+}
+template <typename U, typename T, uint64_t COPY_MODE>
+__simd_vf__ void ComputeAvgVf(U divNum_, __ubuf__ U* storeLocalAddr, __ubuf__ T* dstLocalAddr, int32_t curIdx)
+{
+    Reg::MaskReg pregOne = Reg::CreateMask<U, Reg::MaskPattern::VL1>();
+    Reg::RegTensor<U> disiv;
+    Reg::RegTensor<U> lastRes;
+
+    Reg::Duplicate(disiv, divNum_);
+    PoolUtils::Compute::LoadOneValue<U>(storeLocalAddr, lastRes, pregOne, 0);
+    Reg::Div(lastRes, lastRes, disiv, pregOne);
+
+    PoolUtils::Compute::StoreOneValue<T, U>(dstLocalAddr, lastRes, pregOne, curIdx);
 }
 
 template <typename T, uint64_t COPY_MODE>
@@ -119,18 +139,7 @@ __aicore__ inline void AdaptiveAvgPool2dBigKernel<T, COPY_MODE>::ComputeAvg(Loca
     __ubuf__ T* dstLocalAddr = (__ubuf__ T*)outputLocal.GetPhyAddr();
     U divNum_ = static_cast<U>(this->curkHW_);
 
-    __VEC_SCOPE__
-    {
-        Reg::MaskReg pregOne = Reg::CreateMask<U, Reg::MaskPattern::VL1>();
-        Reg::RegTensor<U> disiv;
-        Reg::RegTensor<U> lastRes;
-
-        Reg::Duplicate(disiv, divNum_);
-        PoolUtils::Compute::LoadOneValue<U>(storeLocalAddr, lastRes, pregOne, 0);
-        Reg::Div(lastRes, lastRes, disiv, pregOne);
-
-        PoolUtils::Compute::StoreOneValue<T, U>(dstLocalAddr, lastRes, pregOne, curIdx);
-    }
+    ComputeAvgVf<U, T, COPY_MODE>(divNum_, storeLocalAddr, dstLocalAddr, static_cast<int32_t>(curIdx));
 }
 
 template <typename T, uint64_t COPY_MODE>

@@ -28,6 +28,11 @@ namespace AdaptivePool3d {
 using namespace AscendC;
 using namespace ops;
 
+template <typename T>
+using GatherRangeType = typename std::conditional<sizeof(T) <= sizeof(int16_t), int16_t, int32_t>::type;
+template <typename T>
+using GatherIdxType = typename std::conditional<sizeof(T) <= sizeof(int16_t), uint16_t, uint32_t>::type;
+
 constexpr AscendC::MicroAPI::CastTrait castTraitGatherI32Fp32 = {
     AscendC::MicroAPI::RegLayout::UNKNOWN,
     AscendC::MicroAPI::SatMode::UNKNOWN,
@@ -132,6 +137,29 @@ __aicore__ inline void AdaptiveAvgPool3dGatherTrans<T>::Init(GM_ADDR x, GM_ADDR 
     pipe_.InitBuffer(idxChBuf_, indexBufSize);
     pipe_.InitBuffer(idxScatterBuf_, indexBufSize);
 }
+template <typename T>
+__simd_vf__ void GenChannelIndicesInt32Vf(GatherRangeType<T> chStride, __ubuf__ GatherRangeType<T>* idxChAddr)
+{
+    AscendC::MicroAPI::RegTensor<GatherRangeType<T>> srcReg;
+    AscendC::MicroAPI::RegTensor<GatherRangeType<T>> dstReg;
+    AscendC::MicroAPI::MaskReg genMask = AscendC::MicroAPI::CreateMask<GatherRangeType<T>>();
+
+    AscendC::Reg::Arange(srcReg, 0);
+    AscendC::Reg::Muls(dstReg, srcReg, chStride, genMask);
+    AscendC::Reg::DataCopy(idxChAddr, dstReg, genMask);
+}
+
+template <typename T>
+__simd_vf__ void GenChannelIndicesUint16Vf(uint16_t chStride, __ubuf__ GatherIdxType<T>* idxChAddr)
+{
+    AscendC::MicroAPI::RegTensor<GatherRangeType<T>> srcReg;
+    AscendC::MicroAPI::RegTensor<GatherIdxType<T>> dstReg;
+    AscendC::MicroAPI::MaskReg genMask = AscendC::MicroAPI::CreateMask<GatherIdxType<T>>();
+
+    AscendC::Reg::Arange(srcReg, 0);
+    AscendC::MicroAPI::Muls(dstReg, (AscendC::MicroAPI::RegTensor<GatherIdxType<T>>&)srcReg, chStride, genMask);
+    AscendC::MicroAPI::DataCopy(idxChAddr, dstReg, genMask);
+}
 
 template <typename T>
 __aicore__ inline void AdaptiveAvgPool3dGatherTrans<T>::GenChannelIndices(int64_t spatialBlock)
@@ -140,31 +168,28 @@ __aicore__ inline void AdaptiveAvgPool3dGatherTrans<T>::GenChannelIndices(int64_
     if constexpr (twoHalf) {
         LocalTensor<IdxType_> idxChLocal = idxChBuf_.Get<IdxType_>();
         __local_mem__ IdxType_* idxChAddr = (__local_mem__ IdxType_*)idxChLocal.GetPhyAddr();
-        IdxType_ chStride = static_cast<IdxType_>(spatialBlock);
-        __VEC_SCOPE__
-        {
-            AscendC::MicroAPI::RegTensor<RangeType_> srcReg;
-            AscendC::MicroAPI::RegTensor<IdxType_> dstReg;
-            AscendC::MicroAPI::MaskReg genMask = AscendC::MicroAPI::CreateMask<IdxType_>();
-
-            AscendC::Reg::Arange(srcReg, 0);
-            AscendC::MicroAPI::Muls(dstReg, (AscendC::MicroAPI::RegTensor<IdxType_>&)srcReg, chStride, genMask);
-            AscendC::MicroAPI::DataCopy(idxChAddr, dstReg, genMask);
-        }
+        uint16_t chStride = static_cast<uint16_t>(spatialBlock);
+        GenChannelIndicesUint16Vf<T>(chStride, idxChAddr);
     } else {
         LocalTensor<RangeType_> idxChLocal = idxChBuf_.Get<RangeType_>();
         __local_mem__ RangeType_* idxChAddr = (__local_mem__ RangeType_*)idxChLocal.GetPhyAddr();
-        RangeType_ chStride = static_cast<RangeType_>(spatialBlock);
-        __VEC_SCOPE__
-        {
-            AscendC::MicroAPI::RegTensor<RangeType_> srcReg;
-            AscendC::MicroAPI::RegTensor<RangeType_> dstReg;
-            AscendC::MicroAPI::MaskReg genMask = AscendC::MicroAPI::CreateMask<RangeType_>();
+        GatherRangeType<T> chStride = static_cast<GatherRangeType<T>>(spatialBlock);
+        GenChannelIndicesInt32Vf<T>(chStride, idxChAddr);
+    }
+}
+__simd_vf__ void GenScatterIndicesVf(uint16_t scatterLoop, int32_t scatterStride, __ubuf__ int32_t* idxScatterAddr,
+                                     uint32_t vfLenFp32)
+{
+    AscendC::MicroAPI::RegTensor<int32_t> srcScatter;
+    AscendC::MicroAPI::RegTensor<int32_t> dstScatter;
+    AscendC::MicroAPI::MaskReg scatterMask = AscendC::MicroAPI::CreateMask<int32_t>();
 
-            AscendC::Reg::Arange(srcReg, 0);
-            AscendC::Reg::Muls(dstReg, srcReg, chStride, genMask);
-            AscendC::Reg::DataCopy(idxChAddr, dstReg, genMask);
-        }
+    AscendC::Reg::Arange(srcScatter, 0);
+
+    for (uint16_t i = 0; i < scatterLoop; ++i) {
+        AscendC::MicroAPI::Muls(dstScatter, srcScatter, scatterStride, scatterMask);
+        AscendC::MicroAPI::DataCopy(idxScatterAddr + static_cast<uint32_t>(i) * vfLenFp32, dstScatter, scatterMask);
+        AscendC::MicroAPI::Adds(srcScatter, srcScatter, static_cast<int32_t>(vfLenFp32), scatterMask);
     }
 }
 
@@ -176,21 +201,8 @@ __aicore__ inline void AdaptiveAvgPool3dGatherTrans<T>::GenIndices(int64_t spati
     __local_mem__ int32_t* idxScatterAddr = (__local_mem__ int32_t*)idxScatterLocal.GetPhyAddr();
     int32_t scatterStride = static_cast<int32_t>(outBlock);
     uint16_t scatterLoop = static_cast<uint16_t>(ops::CeilDiv(vfLen_, vfLenFp32_));
-    __VEC_SCOPE__
-    {
-        AscendC::MicroAPI::RegTensor<int32_t> srcScatter;
-        AscendC::MicroAPI::RegTensor<int32_t> dstScatter;
-        AscendC::MicroAPI::MaskReg scatterMask = AscendC::MicroAPI::CreateMask<int32_t>();
-
-        AscendC::Reg::Arange(srcScatter, 0);
-
-        for (uint16_t i = 0; i < scatterLoop; ++i) {
-            AscendC::MicroAPI::Muls(dstScatter, srcScatter, scatterStride, scatterMask);
-            AscendC::MicroAPI::DataCopy(idxScatterAddr + static_cast<uint32_t>(i) * vfLenFp32_, dstScatter,
-                                        scatterMask);
-            AscendC::MicroAPI::Adds(srcScatter, srcScatter, static_cast<int32_t>(vfLenFp32_), scatterMask);
-        }
-    }
+    uint32_t vfLenFp32 = vfLenFp32_;
+    GenScatterIndicesVf(scatterLoop, scatterStride, idxScatterAddr, vfLenFp32);
 }
 
 template <typename T>
@@ -219,6 +231,40 @@ __aicore__ inline void AdaptiveAvgPool3dGatherTrans<T>::CopyIn(int64_t ncTotal, 
     SetFlag<HardEvent::MTE2_V>(eventMte2ToV);
     WaitFlag<HardEvent::MTE2_V>(eventMte2ToV);
 }
+template <typename T>
+__simd_vf__ void GatherTransposeVf(uint32_t ncMask, __ubuf__ GatherRangeType<T>* idxAddr, uint16_t mainLoop,
+                                   __ubuf__ T* xInAddr, __ubuf__ T* transAddr, uint32_t vfLen, uint16_t tailLoop,
+                                   uint32_t tailStart)
+{
+    AscendC::MicroAPI::RegTensor<T> xReg0;
+    AscendC::MicroAPI::RegTensor<T> xReg1;
+    AscendC::MicroAPI::RegTensor<T> xReg2;
+    AscendC::MicroAPI::RegTensor<T> xReg3;
+    AscendC::MicroAPI::RegTensor<GatherRangeType<T>> idxReg;
+    AscendC::MicroAPI::MaskReg mask = AscendC::MicroAPI::UpdateMask<T>(ncMask);
+    AscendC::MicroAPI::DataCopy(idxReg, idxAddr);
+    for (uint16_t i = 0; i < mainLoop; ++i) {
+        uint32_t s = static_cast<uint32_t>(i) * GT_UNROLL;
+        AscendC::MicroAPI::DataCopyGather((AscendC::MicroAPI::RegTensor<T>&)xReg0, xInAddr + s,
+                                          (AscendC::MicroAPI::RegTensor<GatherIdxType<T>>&)idxReg, mask);
+        AscendC::MicroAPI::DataCopyGather((AscendC::MicroAPI::RegTensor<T>&)xReg1, xInAddr + s + 1,
+                                          (AscendC::MicroAPI::RegTensor<GatherIdxType<T>>&)idxReg, mask);
+        AscendC::MicroAPI::DataCopyGather((AscendC::MicroAPI::RegTensor<T>&)xReg2, xInAddr + s + 2,
+                                          (AscendC::MicroAPI::RegTensor<GatherIdxType<T>>&)idxReg, mask);
+        AscendC::MicroAPI::DataCopyGather((AscendC::MicroAPI::RegTensor<T>&)xReg3, xInAddr + s + 3,
+                                          (AscendC::MicroAPI::RegTensor<GatherIdxType<T>>&)idxReg, mask);
+        AscendC::MicroAPI::DataCopy(transAddr + s * vfLen, xReg0, mask);
+        AscendC::MicroAPI::DataCopy(transAddr + (s + 1) * vfLen, xReg1, mask);
+        AscendC::MicroAPI::DataCopy(transAddr + (s + 2) * vfLen, xReg2, mask);
+        AscendC::MicroAPI::DataCopy(transAddr + (s + 3) * vfLen, xReg3, mask);
+    }
+    for (uint16_t t = 0; t < tailLoop; ++t) {
+        uint32_t s = tailStart + t;
+        AscendC::MicroAPI::DataCopyGather((AscendC::MicroAPI::RegTensor<T>&)xReg0, xInAddr + s,
+                                          (AscendC::MicroAPI::RegTensor<GatherIdxType<T>>&)idxReg, mask);
+        AscendC::MicroAPI::DataCopy(transAddr + s * vfLen, xReg0, mask);
+    }
+}
 
 template <typename T>
 __aicore__ inline void AdaptiveAvgPool3dGatherTrans<T>::GatherTranspose(const LocalTensor<T>& xLocal, int64_t groupIdx,
@@ -235,36 +281,58 @@ __aicore__ inline void AdaptiveAvgPool3dGatherTrans<T>::GatherTranspose(const Lo
     uint16_t mainLoop = static_cast<uint16_t>(spatial / GT_UNROLL);
     uint16_t tailLoop = static_cast<uint16_t>(spatial - mainLoop * GT_UNROLL);
     uint32_t tailStart = static_cast<uint32_t>(mainLoop) * GT_UNROLL;
-    __VEC_SCOPE__
-    {
-        AscendC::MicroAPI::RegTensor<T> xReg0;
-        AscendC::MicroAPI::RegTensor<T> xReg1;
-        AscendC::MicroAPI::RegTensor<T> xReg2;
-        AscendC::MicroAPI::RegTensor<T> xReg3;
-        AscendC::MicroAPI::RegTensor<RangeType_> idxReg;
-        AscendC::MicroAPI::MaskReg mask = AscendC::MicroAPI::UpdateMask<T>(ncMask);
-        AscendC::MicroAPI::DataCopy(idxReg, idxAddr);
-        for (uint16_t i = 0; i < mainLoop; ++i) {
-            uint32_t s = static_cast<uint32_t>(i) * GT_UNROLL;
-            AscendC::MicroAPI::DataCopyGather((AscendC::MicroAPI::RegTensor<T>&)xReg0, xInAddr + s,
-                                              (AscendC::MicroAPI::RegTensor<IdxType_>&)idxReg, mask);
-            AscendC::MicroAPI::DataCopyGather((AscendC::MicroAPI::RegTensor<T>&)xReg1, xInAddr + s + 1,
-                                              (AscendC::MicroAPI::RegTensor<IdxType_>&)idxReg, mask);
-            AscendC::MicroAPI::DataCopyGather((AscendC::MicroAPI::RegTensor<T>&)xReg2, xInAddr + s + 2,
-                                              (AscendC::MicroAPI::RegTensor<IdxType_>&)idxReg, mask);
-            AscendC::MicroAPI::DataCopyGather((AscendC::MicroAPI::RegTensor<T>&)xReg3, xInAddr + s + 3,
-                                              (AscendC::MicroAPI::RegTensor<IdxType_>&)idxReg, mask);
-            AscendC::MicroAPI::DataCopy(transAddr + s * vfLen_, xReg0, mask);
-            AscendC::MicroAPI::DataCopy(transAddr + (s + 1) * vfLen_, xReg1, mask);
-            AscendC::MicroAPI::DataCopy(transAddr + (s + 2) * vfLen_, xReg2, mask);
-            AscendC::MicroAPI::DataCopy(transAddr + (s + 3) * vfLen_, xReg3, mask);
+    uint32_t vfLen = vfLen_;
+    GatherTransposeVf<T>(ncMask, idxAddr, mainLoop, xInAddr, transAddr, vfLen, tailLoop, tailStart);
+}
+template <typename T>
+__simd_vf__ void ComputeAvgPoolWindowVf(__ubuf__ int32_t* idxScatterAddr, int32_t cnt, int32_t d1, int32_t d0,
+                                        int64_t dLo, int32_t h1, int32_t h0, int32_t w1, int32_t w0, int32_t hIn,
+                                        int32_t wIn, __ubuf__ T* transAddr, uint32_t vfLen, uint32_t half2Off,
+                                        __ubuf__ float* yTransAddr, int32_t outIdx, int32_t outBlock)
+{
+    constexpr bool twoHalf = !IsSameType<T, float>::value;
+    AscendC::MicroAPI::RegTensor<float> sumLo;
+    AscendC::MicroAPI::RegTensor<float> sumHi;
+    AscendC::MicroAPI::RegTensor<float> inLo;
+    AscendC::MicroAPI::RegTensor<float> inHi;
+    AscendC::MicroAPI::RegTensor<float> avgReg;
+    AscendC::MicroAPI::RegTensor<float> cntReg;
+    AscendC::MicroAPI::RegTensor<int32_t> cntRegInt;
+    AscendC::MicroAPI::RegTensor<int32_t> idxScatterReg;
+    AscendC::MicroAPI::MaskReg mask = AscendC::MicroAPI::CreateMask<int32_t>();
+    AscendC::MicroAPI::DataCopy(idxScatterReg, idxScatterAddr);
+    AscendC::MicroAPI::Duplicate(cntRegInt, cnt);
+    AscendC::MicroAPI::Cast<float, int32_t, castTraitGatherI32Fp32>(cntReg, cntRegInt, mask);
+    AscendC::MicroAPI::Duplicate(sumLo, static_cast<float>(0));
+    if constexpr (twoHalf) {
+        AscendC::MicroAPI::Duplicate(sumHi, static_cast<float>(0));
+    }
+    for (uint16_t dd = 0; dd < static_cast<uint16_t>(d1 - d0); ++dd) {
+        int32_t d = d0 + dd - dLo;
+        for (uint16_t hh = 0; hh < static_cast<uint16_t>(h1 - h0); ++hh) {
+            int32_t h = h0 + hh;
+            for (uint16_t ww = 0; ww < static_cast<uint16_t>(w1 - w0); ++ww) {
+                int32_t w = w0 + ww;
+                uint32_t s = static_cast<uint32_t>((d * hIn + h) * wIn + w);
+                if constexpr (twoHalf) {
+                    ops_vf::LoadTwoTensorForDtypeT<T>(transAddr, transAddr, inLo, inHi, mask, mask, s * vfLen,
+                                                      s * vfLen + half2Off);
+                    AscendC::MicroAPI::Add(sumLo, inLo, sumLo, mask);
+                    AscendC::MicroAPI::Add(sumHi, inHi, sumHi, mask);
+                } else {
+                    ops_vf::LoadOneTensorForDtypeT<T>(transAddr, inLo, mask, s * vfLen);
+                    AscendC::MicroAPI::Add(sumLo, inLo, sumLo, mask);
+                }
+            }
         }
-        for (uint16_t t = 0; t < tailLoop; ++t) {
-            uint32_t s = tailStart + t;
-            AscendC::MicroAPI::DataCopyGather((AscendC::MicroAPI::RegTensor<T>&)xReg0, xInAddr + s,
-                                              (AscendC::MicroAPI::RegTensor<IdxType_>&)idxReg, mask);
-            AscendC::MicroAPI::DataCopy(transAddr + s * vfLen_, xReg0, mask);
-        }
+    }
+    AscendC::MicroAPI::Div(avgReg, sumLo, cntReg, mask);
+    AscendC::MicroAPI::DataCopyScatter(yTransAddr + outIdx, avgReg,
+                                       (AscendC::MicroAPI::RegTensor<uint32_t>&)idxScatterReg, mask);
+    if constexpr (twoHalf) {
+        AscendC::MicroAPI::Div(avgReg, sumHi, cntReg, mask);
+        AscendC::MicroAPI::DataCopyScatter(yTransAddr + outIdx + half2Off * static_cast<uint32_t>(outBlock), avgReg,
+                                           (AscendC::MicroAPI::RegTensor<uint32_t>&)idxScatterReg, mask);
     }
 }
 
@@ -288,6 +356,7 @@ __aicore__ inline void AdaptiveAvgPool3dGatherTrans<T>::Compute(int64_t groupIdx
     int64_t wOut = tilingData_.wOut;
     constexpr bool twoHalf = !IsSameType<T, float>::value;
     uint32_t half2Off = vfLenFp32_;
+    uint32_t vfLen = vfLen_;
     for (int32_t od = odStart; od < odStart + odNum; ++od) {
         int32_t d0 = od * dIn / dOut;
         int32_t d1 = ((od + 1) * dIn + dOut - 1) / dOut;
@@ -299,55 +368,23 @@ __aicore__ inline void AdaptiveAvgPool3dGatherTrans<T>::Compute(int64_t groupIdx
                 int32_t w1 = ((ow + 1) * wIn + wOut - 1) / wOut;
                 int32_t cnt = static_cast<int32_t>((d1 - d0) * (h1 - h0) * (w1 - w0));
                 int32_t outIdx = ((od - odStart) * hOut + oh) * wOut + ow;
-                __VEC_SCOPE__
-                {
-                    AscendC::MicroAPI::RegTensor<float> sumLo;
-                    AscendC::MicroAPI::RegTensor<float> sumHi;
-                    AscendC::MicroAPI::RegTensor<float> inLo;
-                    AscendC::MicroAPI::RegTensor<float> inHi;
-                    AscendC::MicroAPI::RegTensor<float> avgReg;
-                    AscendC::MicroAPI::RegTensor<float> cntReg;
-                    AscendC::MicroAPI::RegTensor<int32_t> cntRegInt;
-                    AscendC::MicroAPI::RegTensor<int32_t> idxScatterReg;
-                    AscendC::MicroAPI::MaskReg mask = AscendC::MicroAPI::CreateMask<int32_t>();
-                    AscendC::MicroAPI::DataCopy(idxScatterReg, idxScatterAddr);
-                    AscendC::MicroAPI::Duplicate(cntRegInt, cnt);
-                    AscendC::MicroAPI::Cast<float, int32_t, castTraitGatherI32Fp32>(cntReg, cntRegInt, mask);
-                    AscendC::MicroAPI::Duplicate(sumLo, static_cast<float>(0));
-                    if constexpr (twoHalf) {
-                        AscendC::MicroAPI::Duplicate(sumHi, static_cast<float>(0));
-                    }
-                    for (uint16_t dd = 0; dd < static_cast<uint16_t>(d1 - d0); ++dd) {
-                        int32_t d = d0 + dd - dLo;
-                        for (uint16_t hh = 0; hh < static_cast<uint16_t>(h1 - h0); ++hh) {
-                            int32_t h = h0 + hh;
-                            for (uint16_t ww = 0; ww < static_cast<uint16_t>(w1 - w0); ++ww) {
-                                int32_t w = w0 + ww;
-                                uint32_t s = static_cast<uint32_t>((d * hIn + h) * wIn + w);
-                                if constexpr (twoHalf) {
-                                    ops::LoadTwoTensorForDtypeT<T>(transAddr, transAddr, inLo, inHi, mask, mask,
-                                                                   s * vfLen_, s * vfLen_ + half2Off);
-                                    AscendC::MicroAPI::Add(sumLo, inLo, sumLo, mask);
-                                    AscendC::MicroAPI::Add(sumHi, inHi, sumHi, mask);
-                                } else {
-                                    ops::LoadOneTensorForDtypeT<T>(transAddr, inLo, mask, s * vfLen_);
-                                    AscendC::MicroAPI::Add(sumLo, inLo, sumLo, mask);
-                                }
-                            }
-                        }
-                    }
-                    AscendC::MicroAPI::Div(avgReg, sumLo, cntReg, mask);
-                    AscendC::MicroAPI::DataCopyScatter(yTransAddr + outIdx, avgReg,
-                                                       (AscendC::MicroAPI::RegTensor<uint32_t>&)idxScatterReg, mask);
-                    if constexpr (twoHalf) {
-                        AscendC::MicroAPI::Div(avgReg, sumHi, cntReg, mask);
-                        AscendC::MicroAPI::DataCopyScatter(yTransAddr + outIdx + half2Off * outBlock, avgReg,
-                                                           (AscendC::MicroAPI::RegTensor<uint32_t>&)idxScatterReg,
-                                                           mask);
-                    }
-                }
+                ComputeAvgPoolWindowVf<T>(idxScatterAddr, cnt, d1, d0, dLo, h1, h0, w1, w0, static_cast<int32_t>(hIn),
+                                          static_cast<int32_t>(wIn), transAddr, vfLen, half2Off, yTransAddr, outIdx,
+                                          static_cast<int32_t>(outBlock));
             }
         }
+    }
+}
+template <typename T>
+__simd_vf__ void CastOutputToDtypeVf(uint16_t castLoop, uint32_t remain, __ubuf__ float* srcAddr, uint32_t vfLenFp32,
+                                     __ubuf__ T* dstAddr)
+{
+    AscendC::MicroAPI::RegTensor<float> srcReg;
+    AscendC::MicroAPI::MaskReg castMask;
+    for (uint16_t i = 0; i < castLoop; ++i) {
+        castMask = AscendC::MicroAPI::UpdateMask<float>(remain);
+        AscendC::MicroAPI::DataCopy(srcReg, srcAddr + static_cast<uint32_t>(i) * vfLenFp32);
+        ops_vf::StoreOneTensorForDtypeT<T>(dstAddr, srcReg, castMask, static_cast<uint32_t>(i) * vfLenFp32);
     }
 }
 
@@ -387,16 +424,8 @@ __aicore__ inline void AdaptiveAvgPool3dGatherTrans<T>::CopyOut(int64_t ncTotal,
         __local_mem__ T* dstAddr = (__local_mem__ T*)castLocal.GetPhyAddr();
         uint16_t castLoop = static_cast<uint16_t>(ops::CeilDiv(total, static_cast<int64_t>(vfLenFp32_)));
         uint32_t remain = static_cast<uint32_t>(total);
-        __VEC_SCOPE__
-        {
-            AscendC::MicroAPI::RegTensor<float> srcReg;
-            AscendC::MicroAPI::MaskReg castMask;
-            for (uint16_t i = 0; i < castLoop; ++i) {
-                castMask = AscendC::MicroAPI::UpdateMask<float>(remain);
-                AscendC::MicroAPI::DataCopy(srcReg, srcAddr + static_cast<uint32_t>(i) * vfLenFp32_);
-                ops::StoreOneTensorForDtypeT<T>(dstAddr, srcReg, castMask, static_cast<uint32_t>(i) * vfLenFp32_);
-            }
-        }
+        uint32_t vfLenFp32 = vfLenFp32_;
+        CastOutputToDtypeVf<T>(castLoop, remain, srcAddr, vfLenFp32, dstAddr);
         SetFlag<HardEvent::V_MTE3>(eventVToMte3);
         WaitFlag<HardEvent::V_MTE3>(eventVToMte3);
         if (isSplit) {

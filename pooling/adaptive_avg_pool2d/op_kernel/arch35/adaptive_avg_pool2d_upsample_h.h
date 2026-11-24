@@ -132,7 +132,7 @@ template <typename T, const uint32_t NC_FACTOR>
 __simd_vf__ inline void UpsampleHWReduceAndScatterVf(__ubuf__ T* inputAddr, __ubuf__ float* outAddr,
                                                      __ubuf__ int32_t* wStartAddr, __ubuf__ int32_t* wKerSizeAddr,
                                                      uint32_t rowBase, uint16_t woNum, uint16_t hoCnt, uint32_t vlNum,
-                                                     uint32_t wOutAlign, uint32_t vfLenFp32, int64_t hoStart)
+                                                     uint32_t wOutAlign, uint32_t vfLenFp32, int32_t hoStart)
 {
     Reg::RegTensor<float> inputReg;
     Reg::RegTensor<float> sumReg;
@@ -180,7 +180,7 @@ template <typename T, const uint32_t NC_FACTOR>
 __simd_vf__ inline void UpsampleHWReduceAndScatterBulkVf(__ubuf__ T* inputAddr, __ubuf__ float* outAddr,
                                                          uint32_t rowBase, uint32_t rowStride, uint16_t woNum,
                                                          uint16_t hoCnt, uint32_t vlNum, uint32_t vfLenFp32,
-                                                         int64_t hoStart)
+                                                         int32_t hoStart)
 {
     Reg::RegTensor<float> inputReg;
     Reg::RegTensor<float> sumReg;
@@ -412,7 +412,8 @@ __aicore__ inline void AdaptiveAvgPool2dUpsampleH<T, ID_T, NC_FACTOR>::WReduceAn
     uint16_t hoCnt = static_cast<uint16_t>(hoCount);
 
     UpsampleHWReduceAndScatterVf<T, NC_FACTOR>(inputAddr, outAddr, wStartAddr, wKerSizeAddr, rowBase, woNum, hoCnt,
-                                               this->vlNum_, this->wOutAlign_, vfLenFp32, hoStart);
+                                               this->vlNum_, this->wOutAlign_, vfLenFp32,
+                                               static_cast<int32_t>(hoStart));
 }
 
 template <typename T, typename ID_T, const uint32_t NC_FACTOR>
@@ -433,7 +434,7 @@ __aicore__ inline void AdaptiveAvgPool2dUpsampleH<T, ID_T, NC_FACTOR>::WReduceAn
         uint16_t hoCnt = static_cast<uint16_t>(hoCount);
 
         UpsampleHWReduceAndScatterBulkVf<T, NC_FACTOR>(inputAddr, outAddr, rowBase, rowStride, woNum, hoCnt,
-                                                       this->vlNum_, vfLenFp32, hoStart);
+                                                       this->vlNum_, vfLenFp32, static_cast<int32_t>(hoStart));
     } else {
         WReduceAndScatter(rowOffset, hoStart, hoCount);
     }

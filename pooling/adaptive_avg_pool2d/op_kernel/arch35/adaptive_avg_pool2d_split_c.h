@@ -18,7 +18,7 @@
  *        scalar BigKernel path.
  *
  *        For H-downsampling with hiFactor > 1, uses AccumulateWBatchedReg to
- *        batch multiple hi rows per ho in a single VEC_SCOPE, reducing
+ *        batch multiple hi rows per ho in a single vectorized pass, reducing
  *        repeated outBuf loads/stores.
  *
  *        For H-upsampling (hOut > hIn, hoNum > 1), uses a two-phase approach:
