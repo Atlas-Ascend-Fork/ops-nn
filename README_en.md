@@ -17,6 +17,7 @@ English | [简体中文](./README.md)
 
 ## 🔥Latest News
 
+- [2026/10] Added PyPTO operator compilation support: kernels are written in the PyPTO DSL, and the host and kernel share the same tiling layout; added the sample operator [add_example_pypto](examples/add_example_pypto/) ([!9638](https://gitcode.com/cann/ops-nn/pull/9638)).
 - [2026/08] Introduced the torch_extension framework, which bridges PyTorch interfaces with the ACLNN operator library through JIT compilation and supports standalone single-operator compilation and packaging ([!5910](https://gitcode.com/cann/ops-nn/pull/5910)).
 - [2026/08] Added new operators [SituGlu](activation/situ_glu/), [SituGluGrad](activation/situ_glu_grad/), and [SituMxQuant](quant/situ_mx_quant/).
 - [2026/05] Optimized the kernel compilation configuration items and reduced the simplified_key and ascendc_config configuration files ([!3330](https://gitcode.com/cann/ops-nn/pull/3330)).

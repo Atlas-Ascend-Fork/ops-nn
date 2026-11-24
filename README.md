@@ -15,6 +15,7 @@
 
 ## 🔥Latest News
 
+- [2026/10] 支持PyPTO算子编译接入，kernel由PyPTO DSL编写，host与kernel共享tiling布局；新增示例算子[add_example_pypto](examples/add_example_pypto/)（[!9638](https://gitcode.com/cann/ops-nn/pull/9638)）。
 - [2026/08] 新增torch_extension框架，通过JIT编译桥接PyTorch接口与ACLNN算子库，支持单算子独立编译与打包（[!5910](https://gitcode.com/cann/ops-nn/pull/5910)）。
 - [2026/08] 新支持算子[SituGlu](activation/situ_glu/)、[SituGluGrad](activation/situ_glu_grad/)与[SituMxQuant](quant/situ_mx_quant/)。
 - [2026/05] 优化kernel编译配置项，减少simplified_key和ascendc_config配置文件（[!3330](https://gitcode.com/cann/ops-nn/pull/3330)）。
