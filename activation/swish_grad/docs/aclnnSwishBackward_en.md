@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: aclnnSwishBackward is the backward propagation of the [aclnnSwish](../../swish/docs/aclnnSwish.md) activation function, used to compute the gradient of the Swish activation function.
+- Description: aclnnSwishBackward is the backward propagation of the [aclnnSwish](../../swish/docs/aclnnSwish_en.md) activation function, used to compute the gradient of the Swish activation function.
 - Formula:
 
   - Swish function formula
