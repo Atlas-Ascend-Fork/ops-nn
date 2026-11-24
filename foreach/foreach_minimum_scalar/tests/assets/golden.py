@@ -16,16 +16,22 @@ foreach_minimum_scalar 两方 Golden（无 GPU 版）
 来源: /data/w50064389/SIMT-LongTails/ForeachMinimumScalar/deliverables/thirdparty_golden/golden.py
 
 适配内容（相对原文件）：
-1. tolerance: cross_check/L1 → mix_tolerance（生态混合容差标准；无需三方参考即可出 PASS/FAIL）
-   保留整型 binary_equal
+1. tolerance: 浮点 cross_check/L1（生态统一口径，需三方参考），整型 binary_equal
 2. kernel golden 增加 bf16 (ml_dtypes 载体 / numpy 'V' dtype) 处理：
    view 还原 → fp32 计算 → 输出按用例 output_dtypes 转回；修复原版 bf16 TypeError
 3. 补充 aclnnForeachMinimumScalarV2 注册（原版只注册 V1）
 4. third_party 保留并按名绑定类形式声明（Kernel/ACLNN/E2E 三通路均有 torch 第三方参考；
-   两方 mix_tolerance 不消费 third_party，仅在具备 XPU endpoint 的 cross_check 轮次中启用）
-5. E2E 参考增加超范围标量回退：bf16/低精度张量 + 超出该精度的标量时 torch CPU 直接调用会
-   RuntimeError（a5-torch-route L0_019 已复现），回退为 fp32 上采样计算后按原 dtype 回写，
-   与 kernel 的 fp32 计算路径一致；正常可调用场景行为不变
+   浮点 cross_check 轮次消费三方输出，需具备 XPU endpoint）
+5. golden 统一超范围标量回退（Kernel/ACLNN/E2E）：低精度张量叠加超出该精度的标量时 torch
+   直接调用会 RuntimeError，回退为 fp32 计算后按原 dtype 回写；仅对“浮点标量转换溢出”回退，
+   整数溢出/长度/形状/其它错误原样抛出。third_party 保持 torch 原语义、不做回退（三方参考独立）
+6. E2E 类形态 third_party 按池中参数分派 torch._foreach_minimum 的三种重载：bare api 名下
+   torchapi/torchair 用例同时覆盖 Scalar（attributes.scalar）/ ScalarList（attributes.scalars）
+   / List.List（第二输入 other）；原先 __init__ 强制要求 scalar，另两种重载在远端按名绑定时
+   直接 400（parameter 'scalar' of __init__ has no value，仅 int32 因 binary_equal 不走三方
+   而通过）。函数形态 golden 与 E2E 三方统一经 _foreach_minimum_dispatch 按实参类型分派；
+   E2E 三方 __init__ 显式接收 scalar/scalars/other，避免 **kwargs 静默吞掉重载参数；
+   空 TensorList 返回空输出；ScalarList 回退前校验等长，长度不一致时重抛。
 
 公式: y[i] = minimum(x[i], scalar)
 """
@@ -98,12 +104,29 @@ def _cast_out(tensor, target):
     return tensor.numpy().astype(target)
 
 
+def _is_scalar_overflow_error(exc):
+    """torch 把标量转换到低精度 dtype 失败（超出可表示范围）时的固定报错。"""
+    return "without overflow" in str(exc)
+
+
+def _all_float_tensors(x):
+    """回退只对浮点张量生效：整数标量超范围不是精度问题，不能编造 f32 参考值。"""
+    return all(isinstance(t, torch.Tensor) and t.is_floating_point() for t in x)
+
+
 def _foreach_minimum_safe(x, scalar_value):
-    """E2E 参考用的稳健调用：低精度张量叠加超范围标量时（torch CPU 直接调用抛 RuntimeError）
-    回退为 f32 标量取最近可表示值 + fp32 上采样计算并按原 dtype 回写；正常可调用场景行为不变。"""
+    """Golden 用 Scalar 参考：超范围标量（低精度张量）回退 fp32 计算后按原 dtype 回写。
+
+    仅重试“标量转换溢出”这一类 RuntimeError；长度/形状/其它错误原样抛出，
+    避免把非法输入静默算成结果；空 TensorList 返回空输出。
+    """
+    if isinstance(x, (list, tuple)) and not x:
+        return []
     try:
         return list(torch._foreach_minimum(x, scalar_value))
-    except RuntimeError:
+    except RuntimeError as exc:
+        if not _is_scalar_overflow_error(exc) or not _all_float_tensors(x):
+            raise
         scalar_f32 = float(np.float32(scalar_value))
         results = []
         for tensor in x:
@@ -118,24 +141,106 @@ def _foreach_minimum_safe(x, scalar_value):
         return results
 
 
+def _foreach_minimum_scalars_safe(x, scalars):
+    """Golden 用 ScalarList 参考：逐张量对标量；超范围标量同样回退 fp32 后回写。
+
+    回退前校验标量列表与张量列表等长：长度不一致时原样重抛（zip 会把短列表静默
+    截断，导致比对按缺失项判过）；仅重试“标量转换溢出”，其它 RuntimeError 原样抛出。
+    两侧同为空列表（合法空 TensorList）返回空输出。
+    """
+    if isinstance(x, (list, tuple)) and not x:
+        return []
+    values = [_to_scalar(value) for value in scalars]
+    try:
+        return list(torch._foreach_minimum(x, values))
+    except RuntimeError as exc:
+        if (
+            len(values) != len(x)
+            or not _is_scalar_overflow_error(exc)
+            or not _all_float_tensors(x)
+        ):
+            raise
+        results = []
+        for tensor, value in zip(x, values):
+            source_dtype = tensor.dtype
+            result = torch._foreach_minimum(
+                [tensor.to(torch.float32)], [float(np.float32(value))]
+            )[0].to(source_dtype)
+            results.append(result)
+        return results
+
+
+def _foreach_minimum_dispatch(x, value=None, *, safe=True):
+    """按第二个实参的类型分派 torch._foreach_minimum 的三种重载。
+
+    value 为标量 → Scalar；标量列表 → ScalarList；张量列表 → List.List。
+    safe=True（golden）对超范围标量走 fp32 回退；safe=False（third_party）保持
+    torch 原语义、不做回退，确保三方参考独立。空 TensorList 返回空输出。
+    """
+    if isinstance(x, (list, tuple)) and not x:
+        return []
+    if isinstance(value, (list, tuple)):
+        if value and torch.is_tensor(value[0]):
+            return list(torch._foreach_minimum(x, value))
+        if safe:
+            return _foreach_minimum_scalars_safe(x, value)
+        return list(torch._foreach_minimum(x, [_to_scalar(v) for v in value]))
+    if value is None:
+        raise TypeError(
+            "foreach_minimum: none of 'scalar'/'scalars'/'other' is available "
+            "(Scalar / ScalarList / List.List overload cannot be determined)"
+        )
+    if safe:
+        return _foreach_minimum_safe(x, _to_scalar(value))
+    return list(torch._foreach_minimum(x, _to_scalar(value)))
+
+
 class _TorchForeachMinimumScalarImpl:
-    """Kernel/ACLNN 通路三方参考：按 TTK 具名绑定（__init__ 取 scalar，__call__ 取 x）。"""
+    """Kernel/ACLNN 通路三方参考：按 TTK 具名绑定（__init__ 取 scalar，__call__ 取 x）。
 
-    def __init__(self, scalar, **kwargs):
-        self._scalar = _to_scalar(scalar)
+    scalar 在 Kernel/GEIR 经 attributes、ACLNN V1 经同名张量输入、V2 经 aclScalar
+    属性到达，恒在绑定池内；__init__ 给默认值只为避免远端按名绑定时无默认值即 400，
+    真缺参在 __call__ 以显式错误暴露。third_party 保持 torch 原语义，不做超范围回退。
+    """
 
-    def __call__(self, x, **kwargs):
-        return list(torch._foreach_minimum(x, self._scalar))
+    def __init__(self, scalar=None, **kwargs):
+        self._scalar = None if scalar is None else _to_scalar(scalar)
+
+    def __call__(self, x, scalar=None, **kwargs):
+        value = self._scalar if self._scalar is not None else scalar
+        if value is None:
+            raise TypeError("_TorchForeachMinimumScalarImpl: 'scalar' is not provided")
+        return list(torch._foreach_minimum(x, _to_scalar(value)))
 
 
 class _TorchForeachMinimumScalarE2EImpl:
-    """E2E 通路三方参考：*args 按池顺序取首参（torch API 首参名为 self），scalar 按名绑定。"""
+    """E2E 通路三方参考：*args 按池顺序取首参（torch API 首参名为 self），
+    scalar/scalars/other 按名绑定后分派对应重载。__init__ 不得强制要求只属于
+    某一重载的参数，且须显式接收 scalars/other，避免 **kwargs 静默吞掉重载参数。"""
 
-    def __init__(self, scalar, **kwargs):
-        self._scalar = _to_scalar(scalar)
+    def __init__(self, scalar=None, scalars=None, other=None, **kwargs):
+        self._scalar = None if scalar is None else _to_scalar(scalar)
+        self._scalars = scalars
+        self._other = other
 
-    def __call__(self, *args, scalar=None, **kwargs):
-        return _foreach_minimum_safe(args[0], self._scalar)
+    def __call__(self, *args, scalar=None, scalars=None, other=None, **kwargs):
+        x = args[0] if args else kwargs.pop("x", None)
+        if x is None:
+            raise TypeError("_TorchForeachMinimumScalarE2EImpl: first input is missing")
+        scalar = self._scalar if self._scalar is not None else scalar
+        scalars = self._scalars if scalars is None else scalars
+        other = self._other if other is None else other
+        if scalar is not None:
+            value = scalar
+        elif scalars is not None:
+            value = scalars
+        elif other is not None:
+            value = other
+        else:
+            raise TypeError(
+                "_TorchForeachMinimumScalarE2EImpl: none of 'scalar'/'scalars'/'other' is provided"
+            )
+        return _foreach_minimum_dispatch(x, value, safe=False)
 
 
 _THIRD_PARTY = {"torch": _TorchForeachMinimumScalarImpl}
@@ -151,7 +256,7 @@ class ForeachMinimumScalarKernelSpec:
         results = []
         for index, a in enumerate(x):
             ta = _to_torch_tensor(a)
-            out = torch._foreach_minimum([ta], s)[0]
+            out = _foreach_minimum_safe([ta], s)[0]
             target = None
             if output_dtypes is not None and index < len(output_dtypes):
                 target = _target_dtype(output_dtypes[index])
@@ -169,7 +274,7 @@ class AclnnForeachMinimumScalarSpec:
 
     def golden(x, scalar, out=None, **kwargs):
         s = _to_scalar(scalar)
-        result = list(torch._foreach_minimum(x, s))
+        result = _foreach_minimum_safe(x, s)
         if out is not None:
             for o, r in zip(out, result):
                 o.copy_(r)
@@ -185,8 +290,12 @@ class TorchForeachMinimumScalarSpec:
 
     def golden(x=None, scalar=None, self=None, **kwargs):
         actual_x = self if self is not None else x
-        s = _to_scalar(scalar)
-        return _foreach_minimum_safe(actual_x, s)
+        value = scalar
+        if value is None:
+            value = kwargs.get("scalars")
+        if value is None:
+            value = kwargs.get("other")
+        return _foreach_minimum_dispatch(actual_x, value, safe=True)
 
     third_party = _E2E_THIRD_PARTY
     tolerance = _TOLERANCE
