@@ -59,8 +59,8 @@ private:
 
     __aicore__ inline void AccumulateOutputRowsForInputPointRegFp32(LocalTensor<COMPUTE_TYPE> srcLocal,
                                                                     LocalTensor<COMPUTE_TYPE> dstLocal, int64_t inBase,
-                                                                    COMPUTE_TYPE scale, int64_t stD, int64_t edD,
-                                                                    int64_t stH, int64_t edH, int64_t stW, int64_t edW);
+                                                                    float scale, int64_t stD, int64_t edD, int64_t stH,
+                                                                    int64_t edH, int64_t stW, int64_t edW);
 
     __aicore__ inline void ComputeFp32Core(LocalTensor<COMPUTE_TYPE> srcLocal, LocalTensor<COMPUTE_TYPE> dstLocal,
                                            uint32_t dstElemCount);
@@ -278,16 +278,79 @@ __aicore__ inline void AdaptiveAvgPool3dGradNCDHWSmallKernel<T, INDEX>::CalcOutp
     edLocal = edClamped - tileStart;
     coverCount = edGlobal - stGlobal;
 }
+__simd_vf__ inline void AccumulateOutputRowsTailVf(uint32_t tail, __ubuf__ COMPUTE_TYPE* srcAddr, uint16_t dLoopCount,
+                                                   int32_t dRowBase0, int32_t hOutputActual, int32_t wOutputAligned,
+                                                   uint16_t hLoopCount, int32_t stH, uint16_t wLoopCount, int32_t stW,
+                                                   int32_t highAxisAligned, __ubuf__ COMPUTE_TYPE* dstBase,
+                                                   uint32_t processed, float scale)
+{
+    Reg::RegTensor<COMPUTE_TYPE> srcReg;
+    Reg::RegTensor<COMPUTE_TYPE> scaledReg;
+    Reg::RegTensor<COMPUTE_TYPE> dstReg;
+    Reg::MaskReg computeMask = Reg::UpdateMask<uint32_t>(tail);
+
+    Reg::LoadAlign(srcReg, srcAddr);
+    Reg::Muls(scaledReg, srcReg, scale, computeMask);
+
+    for (uint16_t od = 0; od < dLoopCount; ++od) {
+        const int32_t dRowBase = dRowBase0 + static_cast<int32_t>(od) * hOutputActual * wOutputAligned;
+        for (uint16_t oh = 0; oh < hLoopCount; ++oh) {
+            const int32_t hRowBase = dRowBase + static_cast<int32_t>(stH + oh) * wOutputAligned;
+            for (uint16_t ow = 0; ow < wLoopCount; ++ow) {
+                const int32_t outRow = hRowBase + static_cast<int32_t>(stW + ow);
+                const int32_t outBase = outRow * highAxisAligned;
+
+                Reg::LoadAlign(dstReg, dstBase + outBase + processed);
+                Reg::Add(dstReg, dstReg, scaledReg, computeMask);
+                Reg::StoreAlign(dstBase + outBase + processed, dstReg, computeMask);
+            }
+        }
+    }
+}
+
+__simd_vf__ inline void AccumulateOutputRowsFullVf(uint32_t fullMaskCount, __ubuf__ COMPUTE_TYPE* srcAddr,
+                                                   uint16_t dLoopCount, int32_t dRowBase0, int32_t hOutputActual,
+                                                   int32_t wOutputAligned, uint16_t hLoopCount, int32_t stH,
+                                                   uint16_t wLoopCount, int32_t stW, int32_t highAxisAligned,
+                                                   __ubuf__ COMPUTE_TYPE* dstBase, uint32_t processed, float scale)
+{
+    Reg::RegTensor<COMPUTE_TYPE> srcReg;
+    Reg::RegTensor<COMPUTE_TYPE> scaledReg;
+    Reg::RegTensor<COMPUTE_TYPE> dstReg;
+    Reg::MaskReg computeMask = Reg::UpdateMask<uint32_t>(fullMaskCount);
+
+    Reg::LoadAlign(srcReg, srcAddr);
+    Reg::Muls(scaledReg, srcReg, scale, computeMask);
+
+    for (uint16_t od = 0; od < dLoopCount; ++od) {
+        const int32_t dRowBase = dRowBase0 + static_cast<int32_t>(od) * hOutputActual * wOutputAligned;
+        for (uint16_t oh = 0; oh < hLoopCount; ++oh) {
+            const int32_t hRowBase = dRowBase + static_cast<int32_t>(stH + oh) * wOutputAligned;
+            for (uint16_t ow = 0; ow < wLoopCount; ++ow) {
+                const int32_t outRow = hRowBase + static_cast<int32_t>(stW + ow);
+                const int32_t outBase = outRow * highAxisAligned;
+
+                Reg::LoadAlign(dstReg, dstBase + outBase + processed);
+                Reg::Add(dstReg, dstReg, scaledReg, computeMask);
+                Reg::StoreAlign(dstBase + outBase + processed, dstReg, computeMask);
+            }
+        }
+    }
+}
 
 template <typename T, typename INDEX>
 __aicore__ inline void AdaptiveAvgPool3dGradNCDHWSmallKernel<T, INDEX>::AccumulateOutputRowsForInputPointRegFp32(
-    LocalTensor<COMPUTE_TYPE> srcLocal, LocalTensor<COMPUTE_TYPE> dstLocal, int64_t inBase, COMPUTE_TYPE scale,
-    int64_t stD, int64_t edD, int64_t stH, int64_t edH, int64_t stW, int64_t edW)
+    LocalTensor<COMPUTE_TYPE> srcLocal, LocalTensor<COMPUTE_TYPE> dstLocal, int64_t inBase, float scale, int64_t stD,
+    int64_t edD, int64_t stH, int64_t edH, int64_t stW, int64_t edW)
 {
     const uint16_t dLoopCount = static_cast<uint16_t>(edD - stD);
     const uint16_t hLoopCount = static_cast<uint16_t>(edH - stH);
     const uint16_t wLoopCount = static_cast<uint16_t>(edW - stW);
     const int64_t dRowBase0 = stD * hOutputActual_ * wOutputAligned_;
+    const int64_t hOutputActual = hOutputActual_;
+    const int64_t wOutputAligned = wOutputAligned_;
+    const int64_t highAxisAligned = highAxisAligned_;
+    __ubuf__ COMPUTE_TYPE* dstBase = (__ubuf__ COMPUTE_TYPE*)dstLocal.GetPhyAddr();
 
     uint32_t total = static_cast<uint32_t>(highAxisActual_);
     uint32_t fullLoops = total / static_cast<uint32_t>(COMPUTE_VF_LEN);
@@ -298,33 +361,10 @@ __aicore__ inline void AdaptiveAvgPool3dGradNCDHWSmallKernel<T, INDEX>::Accumula
     for (uint32_t loop = 0; loop < fullLoops; ++loop) {
         __ubuf__ COMPUTE_TYPE* srcAddr = (__ubuf__ COMPUTE_TYPE*)srcLocal[inBase + processed].GetPhyAddr();
 
-        __VEC_SCOPE__
-        {
-            Reg::RegTensor<COMPUTE_TYPE> srcReg;
-            Reg::RegTensor<COMPUTE_TYPE> scaledReg;
-            Reg::RegTensor<COMPUTE_TYPE> dstReg;
-            Reg::MaskReg computeMask = Reg::UpdateMask<uint32_t>(fullMaskCount);
-
-            Reg::LoadAlign(srcReg, srcAddr);
-            Reg::Muls(scaledReg, srcReg, scale, computeMask);
-
-            for (uint16_t od = 0; od < dLoopCount; ++od) {
-                const int64_t dRowBase = dRowBase0 + static_cast<int64_t>(od) * hOutputActual_ * wOutputAligned_;
-                for (uint16_t oh = 0; oh < hLoopCount; ++oh) {
-                    const int64_t hRowBase = dRowBase + static_cast<int64_t>(stH + oh) * wOutputAligned_;
-                    for (uint16_t ow = 0; ow < wLoopCount; ++ow) {
-                        const int64_t outRow = hRowBase + static_cast<int64_t>(stW + ow);
-                        const int64_t outBase = outRow * highAxisAligned_;
-                        __ubuf__ COMPUTE_TYPE* dstAddr = (__ubuf__ COMPUTE_TYPE*)dstLocal[outBase + processed]
-                                                             .GetPhyAddr();
-
-                        Reg::LoadAlign(dstReg, dstAddr);
-                        Reg::Add(dstReg, dstReg, scaledReg, computeMask);
-                        Reg::StoreAlign(dstAddr, dstReg, computeMask);
-                    }
-                }
-            }
-        }
+        AccumulateOutputRowsFullVf(fullMaskCount, srcAddr, dLoopCount, static_cast<int32_t>(dRowBase0),
+                                   static_cast<int32_t>(hOutputActual), static_cast<int32_t>(wOutputAligned),
+                                   hLoopCount, static_cast<int32_t>(stH), wLoopCount, static_cast<int32_t>(stW),
+                                   static_cast<int32_t>(highAxisAligned), dstBase, processed, scale);
 
         processed += static_cast<uint32_t>(COMPUTE_VF_LEN);
     }
@@ -332,34 +372,15 @@ __aicore__ inline void AdaptiveAvgPool3dGradNCDHWSmallKernel<T, INDEX>::Accumula
     if (tail > 0) {
         __ubuf__ COMPUTE_TYPE* srcAddr = (__ubuf__ COMPUTE_TYPE*)srcLocal[inBase + processed].GetPhyAddr();
 
-        __VEC_SCOPE__
-        {
-            Reg::RegTensor<COMPUTE_TYPE> srcReg;
-            Reg::RegTensor<COMPUTE_TYPE> scaledReg;
-            Reg::RegTensor<COMPUTE_TYPE> dstReg;
-            Reg::MaskReg computeMask = Reg::UpdateMask<uint32_t>(tail);
-
-            Reg::LoadAlign(srcReg, srcAddr);
-            Reg::Muls(scaledReg, srcReg, scale, computeMask);
-
-            for (uint16_t od = 0; od < dLoopCount; ++od) {
-                const int64_t dRowBase = dRowBase0 + static_cast<int64_t>(od) * hOutputActual_ * wOutputAligned_;
-                for (uint16_t oh = 0; oh < hLoopCount; ++oh) {
-                    const int64_t hRowBase = dRowBase + static_cast<int64_t>(stH + oh) * wOutputAligned_;
-                    for (uint16_t ow = 0; ow < wLoopCount; ++ow) {
-                        const int64_t outRow = hRowBase + static_cast<int64_t>(stW + ow);
-                        const int64_t outBase = outRow * highAxisAligned_;
-                        __ubuf__ COMPUTE_TYPE* dstAddr = (__ubuf__ COMPUTE_TYPE*)dstLocal[outBase + processed]
-                                                             .GetPhyAddr();
-
-                        Reg::LoadAlign(dstReg, dstAddr);
-                        Reg::Add(dstReg, dstReg, scaledReg, computeMask);
-                        Reg::StoreAlign(dstAddr, dstReg, computeMask);
-                    }
-                }
-            }
-        }
+        AccumulateOutputRowsTailVf(tail, srcAddr, dLoopCount, static_cast<int32_t>(dRowBase0),
+                                   static_cast<int32_t>(hOutputActual), static_cast<int32_t>(wOutputAligned),
+                                   hLoopCount, static_cast<int32_t>(stH), wLoopCount, static_cast<int32_t>(stW),
+                                   static_cast<int32_t>(highAxisAligned), dstBase, processed, scale);
     }
+}
+__simd_vf__ inline void BarrierVecStoreToLoad(void)
+{
+    Reg::LocalMemBar<Reg::MemType::VEC_STORE, Reg::MemType::VEC_LOAD>();
 }
 
 template <typename T, typename INDEX>
@@ -367,7 +388,7 @@ __aicore__ inline void AdaptiveAvgPool3dGradNCDHWSmallKernel<T, INDEX>::ComputeF
     LocalTensor<COMPUTE_TYPE> srcLocal, LocalTensor<COMPUTE_TYPE> dstLocal, uint32_t dstElemCount)
 {
     Duplicate(dstLocal, static_cast<COMPUTE_TYPE>(0), dstElemCount);
-    __VEC_SCOPE__ { Reg::LocalMemBar<Reg::MemType::VEC_STORE, Reg::MemType::VEC_LOAD>(); }
+    BarrierVecStoreToLoad();
 
     for (int64_t sdLocal = 0; sdLocal < dGradInputActual_; ++sdLocal) {
         int64_t stD = 0;
@@ -413,7 +434,7 @@ __aicore__ inline void AdaptiveAvgPool3dGradNCDHWSmallKernel<T, INDEX>::ComputeF
                 }
 
                 const int64_t inBase = (hBase + swLocal) * highAxisAligned_;
-                const COMPUTE_TYPE scale = static_cast<COMPUTE_TYPE>(1.0f / static_cast<float>(kernelSize));
+                const float scale = static_cast<COMPUTE_TYPE>(1.0f / static_cast<float>(kernelSize));
 
                 AccumulateOutputRowsForInputPointRegFp32(srcLocal, dstLocal, inBase, scale, stD, edD, stH, edH, stW,
                                                          edW);

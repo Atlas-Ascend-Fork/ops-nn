@@ -27,8 +27,9 @@ namespace Compute {
  * 功能：把当前输入点的梯度标量累加到已 gather 到寄存器的输出梯度上。
  */
 template <typename COMPUTE_TYPE>
-__aicore__ inline void DoGradRegAdds(AscendC::Reg::RegTensor<COMPUTE_TYPE>& gradOutputUbValue,
-                                     COMPUTE_TYPE& gradInputValue, __ubuf__ COMPUTE_TYPE* yAddr, uint32_t& maskCount)
+__simd_callee__ __aicore__ inline void DoGradRegAdds(AscendC::Reg::RegTensor<COMPUTE_TYPE>& gradOutputUbValue,
+                                                     COMPUTE_TYPE& gradInputValue, __ubuf__ COMPUTE_TYPE* yAddr,
+                                                     uint32_t& maskCount)
 {
     uint32_t maskCountTemp = maskCount;
     AscendC::Reg::MaskReg pregU32 = AscendC::Reg::UpdateMask<uint32_t>(maskCountTemp);

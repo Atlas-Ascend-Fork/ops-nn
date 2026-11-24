@@ -37,9 +37,9 @@ constexpr AscendC::Reg::CastTrait ADAPTIVE_GRAD_CAST_I64I32 = {
  * 说明：INDEX 为 int64_t 时先降位到 int32_t 并做 Pack，再按 uint32_t 索引 gather。
  */
 template <typename INDEX, typename COMPUTE_TYPE>
-__aicore__ inline void GatherCopyGradUb2Reg(AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx,
-                                            AscendC::Reg::RegTensor<COMPUTE_TYPE>& gradOutputUbValue,
-                                            __ubuf__ COMPUTE_TYPE* yAddr, uint32_t& maskCount)
+__simd_callee__ __aicore__ inline void GatherCopyGradUb2Reg(AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx,
+                                                            AscendC::Reg::RegTensor<COMPUTE_TYPE>& gradOutputUbValue,
+                                                            __ubuf__ COMPUTE_TYPE* yAddr, uint32_t& maskCount)
 {
     uint32_t maskCountTemp = maskCount;
     AscendC::Reg::MaskReg pregU32 = AscendC::Reg::UpdateMask<uint32_t>(maskCountTemp);
@@ -60,9 +60,9 @@ __aicore__ inline void GatherCopyGradUb2Reg(AscendC::Reg::RegTensor<INDEX>& grad
  * 说明：INDEX 为 int64_t 时先降位到 int32_t 并做 Pack，再按 uint32_t 索引 scatter。
  */
 template <typename INDEX, typename COMPUTE_TYPE>
-__aicore__ inline void ScatterCopyGradReg2Ub(AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx,
-                                             AscendC::Reg::RegTensor<COMPUTE_TYPE>& gradOutputUbValue,
-                                             __ubuf__ COMPUTE_TYPE* yAddr, uint32_t& maskCount)
+__simd_callee__ __aicore__ inline void ScatterCopyGradReg2Ub(AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx,
+                                                             AscendC::Reg::RegTensor<COMPUTE_TYPE>& gradOutputUbValue,
+                                                             __ubuf__ COMPUTE_TYPE* yAddr, uint32_t& maskCount)
 {
     uint32_t maskCountTemp = maskCount;
     AscendC::Reg::MaskReg pregU32 = AscendC::Reg::UpdateMask<uint32_t>(maskCountTemp);

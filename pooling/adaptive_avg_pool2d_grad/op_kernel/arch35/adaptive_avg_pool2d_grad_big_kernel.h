@@ -72,6 +72,34 @@ constexpr AscendC::Reg::CastTrait castTraitI64TF32 = {
     AscendC::RoundMode::CAST_RINT,
 };
 
+template <typename INDEX>
+__simd_callee__ __aicore__ inline void CalGradInputGMHW(
+    AscendC::Reg::RegTensor<INDEX>& gradInputUbIdx, AscendC::Reg::RegTensor<INDEX>& gradInputHigh,
+    AscendC::Reg::RegTensor<INDEX>& gradInputH, AscendC::Reg::RegTensor<INDEX>& gradInputW,
+    AscendC::Reg::RegTensor<INDEX>& gradInputHWValueConstReg, AscendC::Reg::RegTensor<INDEX>& gradInputWValueConstReg,
+    AscendC::Reg::MaskReg& allMaskIndex, INDEX hStLeftCornerIdx, INDEX wStLeftCornerIdx);
+
+template <typename INDEX>
+__simd_callee__ __aicore__ inline void CalAndCopyGradInputStAndEdSingle(
+    AscendC::Reg::RegTensor<INDEX>& gradKernelRegConstBig, AscendC::Reg::RegTensor<INDEX>& gradKernelRegConstSmall,
+    AscendC::Reg::RegTensor<INDEX>& gradKernelKernelStIdx, AscendC::Reg::RegTensor<INDEX>& gradKernelKernelEdIdx,
+    AscendC::Reg::RegTensor<INDEX>& gradInputIdxValue, AscendC::Reg::RegTensor<INDEX>& gradKernelKernelMulTemp,
+    AscendC::Reg::RegTensor<INDEX>& gradKernelSize, __ubuf__ INDEX* gmStAddr, __ubuf__ INDEX* gmEdAddr, INDEX idxOutput,
+    INDEX idxGradInput, INDEX idxAxisIndex, INDEX idxInner, INDEX idxOutputActual, AscendC::Reg::MaskReg& allMaskIndex);
+
+template <typename INDEX>
+__simd_callee__ __aicore__ inline void ComputeGradIndexHW(AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx,
+                                                          INDEX gradKernelW, INDEX gradStHIdxOffset, INDEX gradStWIdx,
+                                                          INDEX highHOffset, AscendC::Reg::MaskReg& pregU32MaskAll,
+                                                          INDEX wOutputAligned);
+
+template <typename INDEX>
+__simd_callee__ __aicore__ inline void ComputeGradIndexEntireHW(AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx,
+                                                                INDEX gradKernelW, INDEX outputHWAlign,
+                                                                INDEX gradStHIdx, INDEX gradStWIdx, INDEX highOffset,
+                                                                AscendC::Reg::MaskReg& pregU32MaskAll,
+                                                                INDEX wOutputAligned);
+
 template <typename T, typename INDEX>
 class AdaptiveAvgPool2dGradBigKernel {
 public:
@@ -85,20 +113,6 @@ public:
     __aicore__ inline void CopyIn();
     __aicore__ inline void Compute();
     __aicore__ inline void CopyOut();
-    __aicore__ inline void CalGradInputGMHW(AscendC::Reg::RegTensor<INDEX>& gradInputUbIdx,
-                                            AscendC::Reg::RegTensor<INDEX>& gradInputHigh,
-                                            AscendC::Reg::RegTensor<INDEX>& gradInputH,
-                                            AscendC::Reg::RegTensor<INDEX>& gradInputW,
-                                            AscendC::Reg::RegTensor<INDEX>& gradInputHWValueConstReg,
-                                            AscendC::Reg::RegTensor<INDEX>& gradInputWValueConstReg,
-                                            AscendC::Reg::MaskReg& allMaskIndex);
-    __aicore__ inline void CalAndCopyGradInputStAndEdSingle(
-        AscendC::Reg::RegTensor<INDEX>& gradKernelRegConstBig, AscendC::Reg::RegTensor<INDEX>& gradKernelRegConstSmall,
-        AscendC::Reg::RegTensor<INDEX>& gradKernelKernelStIdx, AscendC::Reg::RegTensor<INDEX>& gradKernelKernelEdIdx,
-        AscendC::Reg::RegTensor<INDEX>& gradInputIdxValue, AscendC::Reg::RegTensor<INDEX>& gradKernelKernelMulTemp,
-        AscendC::Reg::RegTensor<INDEX>& gradKernelSize, __ubuf__ INDEX* gmStAddr, __ubuf__ INDEX* gmEdAddr,
-        INDEX idxOutput, INDEX idxGradInput, INDEX idxAxisIndex, INDEX idxInner, INDEX idxOutputActual,
-        AscendC::Reg::MaskReg& allMaskIndex);
     __aicore__ inline void CalAndCopyGradInputInfo(uint32_t gradInputUbIdxValue, __ubuf__ INDEX* gmStHAddr,
                                                    __ubuf__ INDEX* gmEdHAddr, __ubuf__ INDEX* gmStWAddr,
                                                    __ubuf__ INDEX* gmEdWAddr, __ubuf__ INDEX* gmHighIdxAddr,
@@ -115,12 +129,6 @@ public:
                                                  __ubuf__ INDEX* gmStWAddr, __ubuf__ INDEX* gmEdWAddr,
                                                  __ubuf__ INDEX* gmHighIdxAddr, __ubuf__ INDEX* gmKernelSizeAddr,
                                                  __ubuf__ COMPUTE_TYPE* gmGradInputF32Addr);
-    __aicore__ inline void ComputeGradIndexHW(AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx, INDEX gradKernelW,
-                                              INDEX gradStHIdxOffset, INDEX gradStWIdx, INDEX highHOffset,
-                                              AscendC::Reg::MaskReg& pregU32MaskAll);
-    __aicore__ inline void ComputeGradIndexEntireHW(AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx, INDEX gradKernelW,
-                                                    INDEX outputHWAlign, INDEX gradStHIdx, INDEX gradStWIdx,
-                                                    INDEX highOffset, AscendC::Reg::MaskReg& pregU32MaskAll);
     TPipe& pipe_;
     const AdaptiveAvgPool2dGradBigKernelTiling& tilingData_;
     TQue<QuePosition::VECIN, BUFFER_NUM> gradInputQue_;
@@ -314,12 +322,12 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::ProcessPerLoop(
     CopyOut();
 }
 
-template <typename T, typename INDEX>
-__aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::CalGradInputGMHW(
+template <typename INDEX>
+__simd_callee__ __aicore__ inline void CalGradInputGMHW(
     AscendC::Reg::RegTensor<INDEX>& gradInputUbIdx, AscendC::Reg::RegTensor<INDEX>& gradInputHigh,
     AscendC::Reg::RegTensor<INDEX>& gradInputH, AscendC::Reg::RegTensor<INDEX>& gradInputW,
     AscendC::Reg::RegTensor<INDEX>& gradInputHWValueConstReg, AscendC::Reg::RegTensor<INDEX>& gradInputWValueConstReg,
-    AscendC::Reg::MaskReg& allMaskIndex)
+    AscendC::Reg::MaskReg& allMaskIndex, INDEX hStLeftCornerIdx, INDEX wStLeftCornerIdx)
 {
     AscendC::Reg::RegTensor<INDEX> gradInputUbCalTemp;
     AscendC::Reg::Div(gradInputHigh, gradInputUbIdx, gradInputHWValueConstReg, allMaskIndex);
@@ -328,12 +336,12 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::CalGradInputGMH
     AscendC::Reg::Div(gradInputH, gradInputUbIdx, gradInputWValueConstReg, allMaskIndex);
     AscendC::Reg::Mul(gradInputUbCalTemp, gradInputH, gradInputWValueConstReg, allMaskIndex);
     AscendC::Reg::Sub(gradInputW, gradInputUbIdx, gradInputUbCalTemp, allMaskIndex);
-    AscendC::Reg::Adds(gradInputH, gradInputH, INDEX(hStLeftCornerIdx_), allMaskIndex);
-    AscendC::Reg::Adds(gradInputW, gradInputW, INDEX(wStLeftCornerIdx_), allMaskIndex);
+    AscendC::Reg::Adds(gradInputH, gradInputH, INDEX(hStLeftCornerIdx), allMaskIndex);
+    AscendC::Reg::Adds(gradInputW, gradInputW, INDEX(wStLeftCornerIdx), allMaskIndex);
 }
 
-template <typename T, typename INDEX>
-__aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::CalAndCopyGradInputStAndEdSingle(
+template <typename INDEX>
+__simd_callee__ __aicore__ inline void CalAndCopyGradInputStAndEdSingle(
     AscendC::Reg::RegTensor<INDEX>& gradKernelRegConstBig, AscendC::Reg::RegTensor<INDEX>& gradKernelRegConstSmall,
     AscendC::Reg::RegTensor<INDEX>& gradKernelKernelStIdx, AscendC::Reg::RegTensor<INDEX>& gradKernelKernelEdIdx,
     AscendC::Reg::RegTensor<INDEX>& gradInputIdxValue, AscendC::Reg::RegTensor<INDEX>& gradKernelKernelMulTemp,
@@ -362,6 +370,81 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::CalAndCopyGradI
     AscendC::Reg::StoreAlign(gmStAddr, gradKernelKernelStIdx, allMaskIndex);
     AscendC::Reg::StoreAlign(gmEdAddr, gradKernelKernelEdIdx, allMaskIndex);
 }
+template <typename T, typename INDEX>
+__simd_vf__ void CalAndCopyGradInputWVf(__ubuf__ INDEX* gmStWAddr, __ubuf__ INDEX* gmKernelSizeAddr,
+                                        __ubuf__ INDEX* gmEdWAddr, INDEX wOutput, INDEX wGradInput, INDEX wAxisIndex,
+                                        INDEX wOutputInner, INDEX wOutputActual)
+{
+    AscendC::Reg::MaskReg allMaskIndex = AscendC::Reg::CreateMask<INDEX, AscendC::Reg::MaskPattern::ALL>();
+
+    AscendC::Reg::RegTensor<INDEX> gradInputW;
+    AscendC::Reg::LoadAlign(gradInputW, gmStWAddr);
+
+    AscendC::Reg::RegTensor<INDEX> gradKernelSize;
+    AscendC::Reg::LoadAlign(gradKernelSize, gmKernelSizeAddr);
+    AscendC::Reg::RegTensor<INDEX> gradKernelKernelStIdx;
+    AscendC::Reg::RegTensor<INDEX> gradKernelKernelEdIdx;
+    AscendC::Reg::RegTensor<INDEX> gradKernelRegConstBig;
+    AscendC::Reg::RegTensor<INDEX> gradKernelRegConstSmall;
+    AscendC::Reg::RegTensor<INDEX> gradKernelKernelMulTemp;
+
+    CalAndCopyGradInputStAndEdSingle<INDEX>(gradKernelRegConstBig, gradKernelRegConstSmall, gradKernelKernelStIdx,
+                                            gradKernelKernelEdIdx, gradInputW, gradKernelKernelMulTemp, gradKernelSize,
+                                            gmStWAddr, gmEdWAddr, wOutput, wGradInput, wAxisIndex, wOutputInner,
+                                            wOutputActual, allMaskIndex);
+    AscendC::Reg::StoreAlign(gmKernelSizeAddr, gradKernelSize, allMaskIndex);
+}
+
+template <typename T, typename INDEX>
+__simd_vf__ void CalAndCopyGradInputHVf(__ubuf__ INDEX* gmStHAddr, __ubuf__ INDEX* gmEdHAddr, INDEX hOutput,
+                                        INDEX hGradInput, INDEX hAxisIndex, INDEX hOutputInner, INDEX hOutputActual,
+                                        __ubuf__ INDEX* gmKernelSizeAddr)
+{
+    AscendC::Reg::MaskReg allMaskIndex = AscendC::Reg::CreateMask<INDEX, AscendC::Reg::MaskPattern::ALL>();
+
+    AscendC::Reg::RegTensor<INDEX> gradInputH;
+    AscendC::Reg::LoadAlign(gradInputH, gmStHAddr);
+
+    AscendC::Reg::RegTensor<INDEX> gradKernelSize;
+    AscendC::Reg::Duplicate(gradKernelSize, INDEX(1));
+    AscendC::Reg::RegTensor<INDEX> gradKernelKernelStIdx;
+    AscendC::Reg::RegTensor<INDEX> gradKernelKernelEdIdx;
+    AscendC::Reg::RegTensor<INDEX> gradKernelRegConstBig;
+    AscendC::Reg::RegTensor<INDEX> gradKernelRegConstSmall;
+    AscendC::Reg::RegTensor<INDEX> gradKernelKernelMulTemp;
+
+    CalAndCopyGradInputStAndEdSingle<INDEX>(gradKernelRegConstBig, gradKernelRegConstSmall, gradKernelKernelStIdx,
+                                            gradKernelKernelEdIdx, gradInputH, gradKernelKernelMulTemp, gradKernelSize,
+                                            gmStHAddr, gmEdHAddr, hOutput, hGradInput, hAxisIndex, hOutputInner,
+                                            hOutputActual, allMaskIndex);
+    AscendC::Reg::StoreAlign(gmKernelSizeAddr, gradKernelSize, allMaskIndex);
+}
+
+template <typename T, typename INDEX>
+__simd_vf__ void CalAndCopyGradInputStartVf(uint32_t gradInputUbIdxValue, INDEX hGradInputActual,
+                                            INDEX wGradInputActual, INDEX hStLeftCornerIdx, INDEX wStLeftCornerIdx,
+                                            __ubuf__ INDEX* gmHighIdxAddr, __ubuf__ INDEX* gmStHAddr,
+                                            __ubuf__ INDEX* gmStWAddr)
+{
+    AscendC::Reg::MaskReg allMaskU32 = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
+
+    AscendC::Reg::MaskReg allMaskIndex = AscendC::Reg::CreateMask<INDEX, AscendC::Reg::MaskPattern::ALL>();
+    AscendC::Reg::RegTensor<INDEX> gradInputUbIdx;
+    AscendC::Reg::Arange(gradInputUbIdx, gradInputUbIdxValue);
+    AscendC::Reg::RegTensor<INDEX> gradInputHigh;
+    AscendC::Reg::RegTensor<INDEX> gradInputH;
+    AscendC::Reg::RegTensor<INDEX> gradInputW;
+
+    AscendC::Reg::RegTensor<INDEX> gradInputHWValueConstReg;
+    AscendC::Reg::Duplicate(gradInputHWValueConstReg, INDEX(hGradInputActual * wGradInputActual));
+    AscendC::Reg::RegTensor<INDEX> gradInputWValueConstReg;
+    AscendC::Reg::Duplicate(gradInputWValueConstReg, INDEX(wGradInputActual));
+    CalGradInputGMHW<INDEX>(gradInputUbIdx, gradInputHigh, gradInputH, gradInputW, gradInputHWValueConstReg,
+                            gradInputWValueConstReg, allMaskIndex, hStLeftCornerIdx, wStLeftCornerIdx);
+    AscendC::Reg::StoreAlign(gmHighIdxAddr, gradInputHigh, allMaskIndex);
+    AscendC::Reg::StoreAlign(gmStHAddr, gradInputH, allMaskIndex);
+    AscendC::Reg::StoreAlign(gmStWAddr, gradInputW, allMaskIndex);
+}
 
 template <typename T, typename INDEX>
 __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::CalAndCopyGradInputInfo(
@@ -379,75 +462,23 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::CalAndCopyGradI
     INDEX wAxisIndex = wAxisIndex_;
     INDEX wOutputInner = tilingData_.wOutputInner;
     INDEX wOutputActual = wOutputActual_;
-    __VEC_SCOPE__
-    {
-        AscendC::Reg::MaskReg allMaskU32 = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
-
-        AscendC::Reg::MaskReg allMaskIndex = AscendC::Reg::CreateMask<INDEX, AscendC::Reg::MaskPattern::ALL>();
-        AscendC::Reg::RegTensor<INDEX> gradInputUbIdx;
-        AscendC::Reg::Arange(gradInputUbIdx, gradInputUbIdxValue);
-        AscendC::Reg::RegTensor<INDEX> gradInputHigh;
-        AscendC::Reg::RegTensor<INDEX> gradInputH;
-        AscendC::Reg::RegTensor<INDEX> gradInputW;
-
-        AscendC::Reg::RegTensor<INDEX> gradInputHWValueConstReg;
-        AscendC::Reg::Duplicate(gradInputHWValueConstReg, INDEX(hGradInputActual_ * wGradInputActual_));
-        AscendC::Reg::RegTensor<INDEX> gradInputWValueConstReg;
-        AscendC::Reg::Duplicate(gradInputWValueConstReg, INDEX(wGradInputActual_));
-        CalGradInputGMHW(gradInputUbIdx, gradInputHigh, gradInputH, gradInputW, gradInputHWValueConstReg,
-                         gradInputWValueConstReg, allMaskIndex);
-        AscendC::Reg::StoreAlign(gmHighIdxAddr, gradInputHigh, allMaskIndex);
-        AscendC::Reg::StoreAlign(gmStHAddr, gradInputH, allMaskIndex);
-        AscendC::Reg::StoreAlign(gmStWAddr, gradInputW, allMaskIndex);
-    }
-    __VEC_SCOPE__
-    {
-        AscendC::Reg::MaskReg allMaskIndex = AscendC::Reg::CreateMask<INDEX, AscendC::Reg::MaskPattern::ALL>();
-
-        AscendC::Reg::RegTensor<INDEX> gradInputH;
-        AscendC::Reg::LoadAlign(gradInputH, gmStHAddr);
-
-        AscendC::Reg::RegTensor<INDEX> gradKernelSize;
-        AscendC::Reg::Duplicate(gradKernelSize, INDEX(1));
-        AscendC::Reg::RegTensor<INDEX> gradKernelKernelStIdx;
-        AscendC::Reg::RegTensor<INDEX> gradKernelKernelEdIdx;
-        AscendC::Reg::RegTensor<INDEX> gradKernelRegConstBig;
-        AscendC::Reg::RegTensor<INDEX> gradKernelRegConstSmall;
-        AscendC::Reg::RegTensor<INDEX> gradKernelKernelMulTemp;
-
-        CalAndCopyGradInputStAndEdSingle(gradKernelRegConstBig, gradKernelRegConstSmall, gradKernelKernelStIdx,
-                                         gradKernelKernelEdIdx, gradInputH, gradKernelKernelMulTemp, gradKernelSize,
-                                         gmStHAddr, gmEdHAddr, hOutput, hGradInput, hAxisIndex, hOutputInner,
-                                         hOutputActual, allMaskIndex);
-        AscendC::Reg::StoreAlign(gmKernelSizeAddr, gradKernelSize, allMaskIndex);
-    }
-    __VEC_SCOPE__
-    {
-        AscendC::Reg::MaskReg allMaskIndex = AscendC::Reg::CreateMask<INDEX, AscendC::Reg::MaskPattern::ALL>();
-
-        AscendC::Reg::RegTensor<INDEX> gradInputW;
-        AscendC::Reg::LoadAlign(gradInputW, gmStWAddr);
-
-        AscendC::Reg::RegTensor<INDEX> gradKernelSize;
-        AscendC::Reg::LoadAlign(gradKernelSize, gmKernelSizeAddr);
-        AscendC::Reg::RegTensor<INDEX> gradKernelKernelStIdx;
-        AscendC::Reg::RegTensor<INDEX> gradKernelKernelEdIdx;
-        AscendC::Reg::RegTensor<INDEX> gradKernelRegConstBig;
-        AscendC::Reg::RegTensor<INDEX> gradKernelRegConstSmall;
-        AscendC::Reg::RegTensor<INDEX> gradKernelKernelMulTemp;
-
-        CalAndCopyGradInputStAndEdSingle(gradKernelRegConstBig, gradKernelRegConstSmall, gradKernelKernelStIdx,
-                                         gradKernelKernelEdIdx, gradInputW, gradKernelKernelMulTemp, gradKernelSize,
-                                         gmStWAddr, gmEdWAddr, wOutput, wGradInput, wAxisIndex, wOutputInner,
-                                         wOutputActual, allMaskIndex);
-        AscendC::Reg::StoreAlign(gmKernelSizeAddr, gradKernelSize, allMaskIndex);
-    }
+    INDEX hGradInputActual = hGradInputActual_;
+    INDEX wGradInputActual = wGradInputActual_;
+    INDEX hStLeftCornerIdx = hStLeftCornerIdx_;
+    INDEX wStLeftCornerIdx = wStLeftCornerIdx_;
+    CalAndCopyGradInputStartVf<T, INDEX>(gradInputUbIdxValue, hGradInputActual, wGradInputActual, hStLeftCornerIdx,
+                                         wStLeftCornerIdx, gmHighIdxAddr, gmStHAddr, gmStWAddr);
+    CalAndCopyGradInputHVf<T, INDEX>(gmStHAddr, gmEdHAddr, hOutput, hGradInput, hAxisIndex, hOutputInner, hOutputActual,
+                                     gmKernelSizeAddr);
+    CalAndCopyGradInputWVf<T, INDEX>(gmStWAddr, gmKernelSizeAddr, gmEdWAddr, wOutput, wGradInput, wAxisIndex,
+                                     wOutputInner, wOutputActual);
 }
 
-template <typename T, typename INDEX>
-__aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::ComputeGradIndexHW(
-    AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx, INDEX gradKernelW, INDEX gradStHIdxOffset, INDEX gradStWIdx,
-    INDEX highHOffset, AscendC::Reg::MaskReg& pregU32MaskAll)
+template <typename INDEX>
+__simd_callee__ __aicore__ inline void ComputeGradIndexHW(AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx,
+                                                          INDEX gradKernelW, INDEX gradStHIdxOffset, INDEX gradStWIdx,
+                                                          INDEX highHOffset, AscendC::Reg::MaskReg& pregU32MaskAll,
+                                                          INDEX wOutputAligned)
 {
     AscendC::Reg::Arange(gradOutputUBIdx, INDEX(0));
 
@@ -463,7 +494,7 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::ComputeGradInde
 
     AscendC::Reg::Duplicate(regConst, INDEX(gradStHIdxOffset));
     AscendC::Reg::Add(gradOutputUBDivKW, gradOutputUBDivKW, regConst, pregU32MaskAll);
-    AscendC::Reg::Duplicate(regConst, INDEX(wOutputAligned_));
+    AscendC::Reg::Duplicate(regConst, INDEX(wOutputAligned));
     AscendC::Reg::Mul(gradOutputUBDivKW, gradOutputUBDivKW, regConst, pregU32MaskAll);
 
     AscendC::Reg::Add(gradOutputUBLineInKW, gradOutputUBLineInKW, gradOutputUBDivKW, pregU32MaskAll);
@@ -473,10 +504,12 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::ComputeGradInde
     AscendC::Reg::Add(gradOutputUBIdx, gradOutputUBIdx, regConst, pregU32MaskAll);
 }
 
-template <typename T, typename INDEX>
-__aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::ComputeGradIndexEntireHW(
-    AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx, INDEX gradKernelW, INDEX outputHWAlign, INDEX gradStHIdx,
-    INDEX gradStWIdx, INDEX highOffset, AscendC::Reg::MaskReg& pregU32MaskAll)
+template <typename INDEX>
+__simd_callee__ __aicore__ inline void ComputeGradIndexEntireHW(AscendC::Reg::RegTensor<INDEX>& gradOutputUBIdx,
+                                                                INDEX gradKernelW, INDEX outputHWAlign,
+                                                                INDEX gradStHIdx, INDEX gradStWIdx, INDEX highOffset,
+                                                                AscendC::Reg::MaskReg& pregU32MaskAll,
+                                                                INDEX wOutputAligned)
 {
     AscendC::Reg::Arange(gradOutputUBIdx, INDEX(0));
 
@@ -492,7 +525,7 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::ComputeGradInde
 
     AscendC::Reg::Duplicate(regConst, INDEX(gradStHIdx));
     AscendC::Reg::Add(gradOutputUBIdxDivKW, gradOutputUBIdxDivKW, regConst, pregU32MaskAll);
-    AscendC::Reg::Duplicate(regConst, INDEX(wOutputAligned_));
+    AscendC::Reg::Duplicate(regConst, INDEX(wOutputAligned));
     AscendC::Reg::Mul(gradOutputUBIdxDivKW, gradOutputUBIdxDivKW, regConst, pregU32MaskAll);
     AscendC::Reg::Add(gradOutputUBIdxLineInW, gradOutputUBIdxLineInW, gradOutputUBIdxDivKW, pregU32MaskAll);
 
@@ -502,6 +535,113 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::ComputeGradInde
     AscendC::Reg::Duplicate(regConst, INDEX(highOffset));
     AscendC::Reg::Add(gradOutputUBIdx, gradOutputUBIdx, regConst, pregU32MaskAll);
 }
+template <typename T, typename INDEX>
+__simd_vf__ void AddGradInputToRowVf(INDEX highHWOffset, __ubuf__ COMPUTE_TYPE* yAddr, uint16_t wloopCount,
+                                     uint32_t vlFullSize, float gradInputValue, uint32_t wloopCountTail)
+{
+    AscendC::Reg::RegTensor<COMPUTE_TYPE> gradOutputUbValue;
+    AscendC::Reg::MaskReg pregU32 = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
+    AscendC::Reg::UnalignRegForLoad u0;
+    AscendC::Reg::UnalignRegForStore u1;
+    INDEX hwOffset = highHWOffset;
+    __ubuf__ COMPUTE_TYPE* unalignSrcPtr = yAddr + hwOffset;
+    __ubuf__ COMPUTE_TYPE* unalignDstPtr = yAddr + hwOffset;
+    __ubuf__ COMPUTE_TYPE* unalignTailPtr = yAddr + highHWOffset + wloopCount * vlFullSize;
+    AscendC::Reg::LoadUnAlignPre(u0, unalignSrcPtr);
+    for (uint16_t wloopIdx = 0; wloopIdx < wloopCount; ++wloopIdx) {
+        AscendC::Reg::LoadUnAlign(gradOutputUbValue, u0, unalignSrcPtr, vlFullSize);
+        AscendC::Reg::Adds(gradOutputUbValue, gradOutputUbValue, static_cast<COMPUTE_TYPE>(gradInputValue), pregU32);
+        AscendC::Reg::StoreUnAlign(unalignDstPtr, gradOutputUbValue, u1, vlFullSize);
+    }
+    AscendC::Reg::StoreUnAlignPost(unalignDstPtr, u1, 0);
+
+    hwOffset += wloopCount * vlFullSize;
+    AscendC::Reg::LoadUnAlignPre(u0, unalignTailPtr);
+    AscendC::Reg::LoadUnAlign(gradOutputUbValue, u0, unalignTailPtr);
+    PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, wloopCountTail);
+    AscendC::Reg::StoreUnAlign(unalignTailPtr, gradOutputUbValue, u1, wloopCountTail);
+    AscendC::Reg::StoreUnAlignPost(unalignTailPtr, u1, wloopCountTail);
+}
+template <typename T, typename INDEX>
+__simd_vf__ void AddGradInputToKernelBlockVf(INDEX gradKernelW, uint32_t outputHWAlign, INDEX gradStHIdx,
+                                             INDEX gradStWIdx, INDEX highOffset, INDEX wOutputAligned,
+                                             __ubuf__ COMPUTE_TYPE* yAddr, uint32_t maskCountFull, float gradInputValue)
+{
+    AscendC::Reg::RegTensor<COMPUTE_TYPE> gradOutputUbValue;
+    AscendC::Reg::MaskReg pregU32MaskAll = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
+
+    AscendC::Reg::RegTensor<INDEX> gradOutputUBIdx;
+    ComputeGradIndexEntireHW<INDEX>(gradOutputUBIdx, gradKernelW, outputHWAlign, gradStHIdx, gradStWIdx, highOffset,
+                                    pregU32MaskAll, wOutputAligned);
+    PoolUtils::DataMove::GatherCopyGradUb2Reg(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountFull);
+    PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, maskCountFull);
+    PoolUtils::DataMove::ScatterCopyGradReg2Ub(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountFull);
+}
+
+template <typename T, typename INDEX>
+__simd_vf__ void AddGradInputToTailHBlockVf(INDEX gradStHIdx, uint16_t hwloopCount, uint32_t maxWParaNum,
+                                            INDEX gradKernelW, INDEX gradStWIdx, INDEX highDHOffset,
+                                            INDEX wOutputAligned, __ubuf__ COMPUTE_TYPE* yAddr, uint32_t maskCountTail,
+                                            float gradInputValue)
+{
+    AscendC::Reg::RegTensor<COMPUTE_TYPE> gradOutputUbValue;
+    AscendC::Reg::MaskReg pregU32MaskAll = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
+
+    AscendC::Reg::RegTensor<INDEX> gradOutputUBIdx;
+    INDEX gradStHIdxOffset = gradStHIdx + hwloopCount * maxWParaNum;
+    ComputeGradIndexHW<INDEX>(gradOutputUBIdx, gradKernelW, gradStHIdxOffset, gradStWIdx, highDHOffset, pregU32MaskAll,
+                              wOutputAligned);
+    PoolUtils::DataMove::GatherCopyGradUb2Reg(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountTail);
+    PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, maskCountTail);
+    PoolUtils::DataMove::ScatterCopyGradReg2Ub(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountTail);
+}
+
+template <typename T, typename INDEX>
+__simd_vf__ void AddGradInputToFullHBlockVf(uint16_t hwloopCount, INDEX gradStHIdx, uint32_t maxWParaNum,
+                                            INDEX gradKernelW, INDEX gradStWIdx, INDEX highDHOffset,
+                                            INDEX wOutputAligned, __ubuf__ COMPUTE_TYPE* yAddr, uint32_t maskCountFull,
+                                            float gradInputValue)
+{
+    AscendC::Reg::RegTensor<COMPUTE_TYPE> gradOutputUbValue;
+    AscendC::Reg::MaskReg pregU32MaskAll = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
+
+    AscendC::Reg::RegTensor<INDEX> gradOutputUBIdx;
+    for (uint16_t hwloopIdx = 0; hwloopIdx < hwloopCount; ++hwloopIdx) {
+        INDEX gradStHIdxOffset = gradStHIdx + hwloopIdx * maxWParaNum;
+        ComputeGradIndexHW<INDEX>(gradOutputUBIdx, gradKernelW, gradStHIdxOffset, gradStWIdx, highDHOffset,
+                                  pregU32MaskAll, wOutputAligned);
+        PoolUtils::DataMove::GatherCopyGradUb2Reg(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountFull);
+        PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, maskCountFull);
+        PoolUtils::DataMove::ScatterCopyGradReg2Ub(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountFull);
+    }
+}
+
+template <typename T, typename INDEX>
+__simd_vf__ void AddGradInputToHBlockVf(uint16_t hwloopCount, INDEX gradStHIdx, uint32_t maxWParaNum, INDEX gradKernelW,
+                                        INDEX gradStWIdx, INDEX highDHOffset, INDEX wOutputAligned,
+                                        __ubuf__ COMPUTE_TYPE* yAddr, uint32_t maskCountFull, float gradInputValue,
+                                        uint32_t maskCountTail)
+{
+    AscendC::Reg::RegTensor<COMPUTE_TYPE> gradOutputUbValue;
+    AscendC::Reg::MaskReg pregU32MaskAll = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
+
+    AscendC::Reg::RegTensor<INDEX> gradOutputUBIdx;
+    for (uint16_t hwloopIdx = 0; hwloopIdx < hwloopCount; ++hwloopIdx) {
+        INDEX gradStHIdxOffset = gradStHIdx + hwloopIdx * maxWParaNum;
+        ComputeGradIndexHW<INDEX>(gradOutputUBIdx, gradKernelW, gradStHIdxOffset, gradStWIdx, highDHOffset,
+                                  pregU32MaskAll, wOutputAligned);
+        PoolUtils::DataMove::GatherCopyGradUb2Reg(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountFull);
+        PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, maskCountFull);
+        PoolUtils::DataMove::ScatterCopyGradReg2Ub(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountFull);
+    }
+
+    INDEX gradStHIdxOffset = gradStHIdx + hwloopCount * maxWParaNum;
+    ComputeGradIndexHW<INDEX>(gradOutputUBIdx, gradKernelW, gradStHIdxOffset, gradStWIdx, highDHOffset, pregU32MaskAll,
+                              wOutputAligned);
+    PoolUtils::DataMove::GatherCopyGradUb2Reg(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountTail);
+    PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, maskCountTail);
+    PoolUtils::DataMove::ScatterCopyGradReg2Ub(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountTail);
+}
 
 template <typename T, typename INDEX>
 __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::DoGradInputAccUb(
@@ -509,10 +649,11 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::DoGradInputAccU
     __ubuf__ INDEX* gmStHAddr, __ubuf__ INDEX* gmEdHAddr, __ubuf__ INDEX* gmStWAddr, __ubuf__ INDEX* gmEdWAddr,
     __ubuf__ INDEX* gmHighIdxAddr, __ubuf__ INDEX* gmKernelSizeAddr, __ubuf__ COMPUTE_TYPE* gmGradInputF32Addr)
 {
+    INDEX wOutputAligned = wOutputAligned_;
     for (uint32_t loopGradInputIdx = 0; loopGradInputIdx < gradInputLoopCount; ++loopGradInputIdx) {
         uint32_t loopGradInputUbRealIdx = loopGradInputIdx + gradInputUbIdxValue;
 
-        COMPUTE_TYPE gradInputValue = static_cast<COMPUTE_TYPE>(gmGradInputF32Addr[loopGradInputIdx]);
+        float gradInputValue = static_cast<float>(gmGradInputF32Addr[loopGradInputIdx]);
         INDEX gradHightIdx = gmHighIdxAddr[loopGradInputIdx];
         INDEX gradStHIdx = gmStHAddr[loopGradInputIdx];
         INDEX gradEdHIdx = gmEdHAddr[loopGradInputIdx];
@@ -528,32 +669,8 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::DoGradInputAccU
             for (uint32_t hloopIdx = gradStHIdx; hloopIdx < gradEdHIdx; ++hloopIdx) {
                 INDEX highHWOffset = gradHightIdx * hOutputActual_ * wOutputAligned_ + hloopIdx * (wOutputAligned_) +
                                      gradStWIdx;
-                __VEC_SCOPE__
-                {
-                    AscendC::Reg::RegTensor<COMPUTE_TYPE> gradOutputUbValue;
-                    AscendC::Reg::MaskReg
-                        pregU32 = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
-                    AscendC::Reg::UnalignRegForLoad u0;
-                    AscendC::Reg::UnalignRegForStore u1;
-                    auto yAddrSrcUnalign = yAddr + highHWOffset;
-                    auto yAddrDstUnalign = yAddr + highHWOffset;
-                    AscendC::Reg::LoadUnAlignPre(u0, yAddrSrcUnalign);
-                    for (uint16_t wloopIdx = 0; wloopIdx < wloopCount; ++wloopIdx) {
-                        AscendC::Reg::LoadUnAlign(gradOutputUbValue, u0, yAddrSrcUnalign, vlFullSize);
-                        AscendC::Reg::Adds(gradOutputUbValue, gradOutputUbValue,
-                                           static_cast<COMPUTE_TYPE>(gradInputValue), pregU32);
-                        AscendC::Reg::StoreUnAlign(yAddrDstUnalign, gradOutputUbValue, u1, vlFullSize);
-                    }
-                    AscendC::Reg::StoreUnAlignPost(yAddrDstUnalign, u1, 0);
-
-                    highHWOffset += wloopCount * vlFullSize;
-                    auto yAddrUnalign = yAddr + highHWOffset;
-                    AscendC::Reg::LoadUnAlignPre(u0, yAddrUnalign);
-                    AscendC::Reg::LoadUnAlign(gradOutputUbValue, u0, yAddrUnalign);
-                    PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, wloopCountTail);
-                    AscendC::Reg::StoreUnAlign(yAddrUnalign, gradOutputUbValue, u1, wloopCountTail);
-                    AscendC::Reg::StoreUnAlignPost(yAddrUnalign, u1, wloopCountTail);
-                }
+                AddGradInputToRowVf<T, INDEX>(highHWOffset, yAddr, wloopCount, vlFullSize, gradInputValue,
+                                              wloopCountTail);
             }
         } else if (gradKernelH * gradKernelW * DOUBLE * sizeof(COMPUTE_TYPE) > V_REG_SIZE) {
             uint32_t vlFullSize = CALC_ONE_VL;
@@ -564,67 +681,17 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::DoGradInputAccU
             uint32_t maskCountTail = gradKernelW * hwloopCountTail;
             INDEX highDHOffset = gradHightIdx * hOutputActual_ * wOutputAligned_;
             if constexpr (std::is_same<INDEX, int32_t>::value) {
-                __VEC_SCOPE__
-                {
-                    AscendC::Reg::RegTensor<COMPUTE_TYPE> gradOutputUbValue;
-                    AscendC::Reg::MaskReg
-                        pregU32MaskAll = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
-
-                    AscendC::Reg::RegTensor<INDEX> gradOutputUBIdx;
-                    for (uint16_t hwloopIdx = 0; hwloopIdx < hwloopCount; ++hwloopIdx) {
-                        INDEX gradStHIdxOffset = gradStHIdx + hwloopIdx * maxWParaNum;
-                        ComputeGradIndexHW(gradOutputUBIdx, gradKernelW, gradStHIdxOffset, gradStWIdx, highDHOffset,
-                                           pregU32MaskAll);
-                        PoolUtils::DataMove::GatherCopyGradUb2Reg(gradOutputUBIdx, gradOutputUbValue, yAddr,
-                                                                  maskCountFull);
-                        PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, maskCountFull);
-                        PoolUtils::DataMove::ScatterCopyGradReg2Ub(gradOutputUBIdx, gradOutputUbValue, yAddr,
-                                                                   maskCountFull);
-                    }
-
-                    INDEX gradStHIdxOffset = gradStHIdx + hwloopCount * maxWParaNum;
-                    ComputeGradIndexHW(gradOutputUBIdx, gradKernelW, gradStHIdxOffset, gradStWIdx, highDHOffset,
-                                       pregU32MaskAll);
-                    PoolUtils::DataMove::GatherCopyGradUb2Reg(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountTail);
-                    PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, maskCountTail);
-                    PoolUtils::DataMove::ScatterCopyGradReg2Ub(gradOutputUBIdx, gradOutputUbValue, yAddr,
-                                                               maskCountTail);
-                }
+                AddGradInputToHBlockVf<T, INDEX>(hwloopCount, gradStHIdx, maxWParaNum, gradKernelW, gradStWIdx,
+                                                 highDHOffset, wOutputAligned, yAddr, maskCountFull, gradInputValue,
+                                                 maskCountTail);
             } else {
-                __VEC_SCOPE__
-                {
-                    AscendC::Reg::RegTensor<COMPUTE_TYPE> gradOutputUbValue;
-                    AscendC::Reg::MaskReg
-                        pregU32MaskAll = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
+                AddGradInputToFullHBlockVf<T, INDEX>(hwloopCount, gradStHIdx, maxWParaNum, gradKernelW, gradStWIdx,
+                                                     highDHOffset, wOutputAligned, yAddr, maskCountFull,
+                                                     gradInputValue);
 
-                    AscendC::Reg::RegTensor<INDEX> gradOutputUBIdx;
-                    for (uint16_t hwloopIdx = 0; hwloopIdx < hwloopCount; ++hwloopIdx) {
-                        INDEX gradStHIdxOffset = gradStHIdx + hwloopIdx * maxWParaNum;
-                        ComputeGradIndexHW(gradOutputUBIdx, gradKernelW, gradStHIdxOffset, gradStWIdx, highDHOffset,
-                                           pregU32MaskAll);
-                        PoolUtils::DataMove::GatherCopyGradUb2Reg(gradOutputUBIdx, gradOutputUbValue, yAddr,
-                                                                  maskCountFull);
-                        PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, maskCountFull);
-                        PoolUtils::DataMove::ScatterCopyGradReg2Ub(gradOutputUBIdx, gradOutputUbValue, yAddr,
-                                                                   maskCountFull);
-                    }
-                }
-
-                __VEC_SCOPE__
-                {
-                    AscendC::Reg::RegTensor<COMPUTE_TYPE> gradOutputUbValue;
-                    AscendC::Reg::MaskReg
-                        pregU32MaskAll = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
-
-                    AscendC::Reg::RegTensor<INDEX> gradOutputUBIdx;
-                    INDEX gradStHIdxOffset = gradStHIdx + hwloopCount * maxWParaNum;
-                    ComputeGradIndexHW(gradOutputUBIdx, gradKernelW, gradStHIdxOffset, gradStWIdx, highDHOffset,
-                                       pregU32MaskAll);
-                    PoolUtils::DataMove::GatherCopyGradUb2Reg(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountTail);
-                    PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, maskCountTail);
-                    PoolUtils::DataMove::ScatterCopyGradReg2Ub(gradOutputUBIdx, gradOutputUbValue, yAddr,
-                                                               maskCountTail);
-                }
+                AddGradInputToTailHBlockVf<T, INDEX>(gradStHIdx, hwloopCount, maxWParaNum, gradKernelW, gradStWIdx,
+                                                     highDHOffset, wOutputAligned, yAddr, maskCountTail,
+                                                     gradInputValue);
             }
 
         } else {
@@ -634,21 +701,50 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::DoGradInputAccU
             uint32_t wOutputAlignedU32 = wOutputAligned_;
             uint32_t outputHWAlign = hOutputActualU32 * wOutputAlignedU32;
 
-            __VEC_SCOPE__
-            {
-                AscendC::Reg::RegTensor<COMPUTE_TYPE> gradOutputUbValue;
-                AscendC::Reg::MaskReg
-                    pregU32MaskAll = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
-
-                AscendC::Reg::RegTensor<INDEX> gradOutputUBIdx;
-                ComputeGradIndexEntireHW(gradOutputUBIdx, gradKernelW, outputHWAlign, gradStHIdx, gradStWIdx,
-                                         highOffset, pregU32MaskAll);
-                PoolUtils::DataMove::GatherCopyGradUb2Reg(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountFull);
-                PoolUtils::Compute::DoGradRegAdds(gradOutputUbValue, gradInputValue, yAddr, maskCountFull);
-                PoolUtils::DataMove::ScatterCopyGradReg2Ub(gradOutputUBIdx, gradOutputUbValue, yAddr, maskCountFull);
-            }
+            AddGradInputToKernelBlockVf<T, INDEX>(gradKernelW, outputHWAlign, gradStHIdx, gradStWIdx, highOffset,
+                                                  wOutputAligned, yAddr, maskCountFull, gradInputValue);
         }
     }
+}
+template <typename T, typename INDEX>
+__simd_vf__ void DivideGradByKernelSizeInt32Vf(__ubuf__ T* gradAddr, uint32_t gradInputUbIdxValue,
+                                               __ubuf__ INDEX* gmKernelSizeAddr,
+                                               __ubuf__ COMPUTE_TYPE* gmGradInputF32Addr)
+{
+    AscendC::Reg::RegTensor<COMPUTE_TYPE> gradInputUbValue;
+    AscendC::Reg::MaskReg pregT = AscendC::Reg::CreateMask<T, AscendC::Reg::MaskPattern::ALL>();
+    AscendC::Reg::MaskReg allMaskU32 = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
+    ops_vf::LoadOneTensorForDtypeT<T>(gradAddr, gradInputUbValue, pregT, gradInputUbIdxValue);
+
+    AscendC::Reg::RegTensor<INDEX> kernelSize;
+    AscendC::Reg::RegTensor<COMPUTE_TYPE> kernelSizeF32;
+    AscendC::Reg::LoadAlign(kernelSize, gmKernelSizeAddr);
+
+    AscendC::Reg::Cast<COMPUTE_TYPE, INDEX, castTraitI32TF32>(kernelSizeF32, kernelSize, allMaskU32);
+    AscendC::Reg::Div(gradInputUbValue, gradInputUbValue, kernelSizeF32, allMaskU32);
+    AscendC::Reg::StoreAlign(gmGradInputF32Addr, gradInputUbValue, allMaskU32);
+}
+
+template <typename T, typename INDEX>
+__simd_vf__ void DivideGradByKernelSizeInt64Vf(__ubuf__ T* gradAddr, uint32_t gradInputUbIdxValue,
+                                               __ubuf__ INDEX* gmKernelSizeAddr,
+                                               __ubuf__ COMPUTE_TYPE* gmGradInputF32Addr)
+{
+    AscendC::Reg::RegTensor<COMPUTE_TYPE> gradInputUbValue;
+    AscendC::Reg::MaskReg pregT = AscendC::Reg::CreateMask<T, AscendC::Reg::MaskPattern::ALL>();
+    AscendC::Reg::MaskReg allMaskU32 = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
+    ops_vf::LoadOneTensorForDtypeT<T>(gradAddr, gradInputUbValue, pregT, gradInputUbIdxValue);
+
+    AscendC::Reg::RegTensor<INDEX> kernelSize;
+    AscendC::Reg::RegTensor<COMPUTE_TYPE> kernelSizeF32;
+    AscendC::Reg::LoadAlign(kernelSize, gmKernelSizeAddr);
+    AscendC::Reg::MaskReg allMaskU = AscendC::Reg::CreateMask<INDEX, AscendC::Reg::MaskPattern::ALL>();
+
+    AscendC::Reg::Cast<COMPUTE_TYPE, INDEX, castTraitI64TF32>(kernelSizeF32, kernelSize, allMaskU);
+    AscendC::Reg::Pack((AscendC::Reg::RegTensor<uint32_t>&)kernelSizeF32,
+                       (AscendC::Reg::RegTensor<uint64_t>&)kernelSizeF32);
+    AscendC::Reg::Div(gradInputUbValue, gradInputUbValue, kernelSizeF32, allMaskU32);
+    AscendC::Reg::StoreAlign(gmGradInputF32Addr, gradInputUbValue, allMaskU32);
 }
 
 template <typename T, typename INDEX>
@@ -661,40 +757,9 @@ __aicore__ inline void AdaptiveAvgPool2dGradBigKernel<T, INDEX>::DoAllGradInputP
                             gmKernelSizeAddr);
 
     if constexpr (std::is_same<INDEX, int64_t>::value) {
-        __VEC_SCOPE__
-        {
-            AscendC::Reg::RegTensor<COMPUTE_TYPE> gradInputUbValue;
-            AscendC::Reg::MaskReg pregT = AscendC::Reg::CreateMask<T, AscendC::Reg::MaskPattern::ALL>();
-            AscendC::Reg::MaskReg allMaskU32 = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
-            ops::LoadOneTensorForDtypeT<T>(gradAddr, gradInputUbValue, pregT, gradInputUbIdxValue);
-
-            AscendC::Reg::RegTensor<INDEX> kernelSize;
-            AscendC::Reg::RegTensor<COMPUTE_TYPE> kernelSizeF32;
-            AscendC::Reg::LoadAlign(kernelSize, gmKernelSizeAddr);
-            AscendC::Reg::MaskReg allMaskU = AscendC::Reg::CreateMask<INDEX, AscendC::Reg::MaskPattern::ALL>();
-
-            AscendC::Reg::Cast<COMPUTE_TYPE, INDEX, castTraitI64TF32>(kernelSizeF32, kernelSize, allMaskU);
-            AscendC::Reg::Pack((AscendC::Reg::RegTensor<uint32_t>&)kernelSizeF32,
-                               (AscendC::Reg::RegTensor<uint64_t>&)kernelSizeF32);
-            AscendC::Reg::Div(gradInputUbValue, gradInputUbValue, kernelSizeF32, allMaskU32);
-            AscendC::Reg::StoreAlign(gmGradInputF32Addr, gradInputUbValue, allMaskU32);
-        }
+        DivideGradByKernelSizeInt64Vf<T, INDEX>(gradAddr, gradInputUbIdxValue, gmKernelSizeAddr, gmGradInputF32Addr);
     } else {
-        __VEC_SCOPE__
-        {
-            AscendC::Reg::RegTensor<COMPUTE_TYPE> gradInputUbValue;
-            AscendC::Reg::MaskReg pregT = AscendC::Reg::CreateMask<T, AscendC::Reg::MaskPattern::ALL>();
-            AscendC::Reg::MaskReg allMaskU32 = AscendC::Reg::CreateMask<uint32_t, AscendC::Reg::MaskPattern::ALL>();
-            ops::LoadOneTensorForDtypeT<T>(gradAddr, gradInputUbValue, pregT, gradInputUbIdxValue);
-
-            AscendC::Reg::RegTensor<INDEX> kernelSize;
-            AscendC::Reg::RegTensor<COMPUTE_TYPE> kernelSizeF32;
-            AscendC::Reg::LoadAlign(kernelSize, gmKernelSizeAddr);
-
-            AscendC::Reg::Cast<COMPUTE_TYPE, INDEX, castTraitI32TF32>(kernelSizeF32, kernelSize, allMaskU32);
-            AscendC::Reg::Div(gradInputUbValue, gradInputUbValue, kernelSizeF32, allMaskU32);
-            AscendC::Reg::StoreAlign(gmGradInputF32Addr, gradInputUbValue, allMaskU32);
-        }
+        DivideGradByKernelSizeInt32Vf<T, INDEX>(gradAddr, gradInputUbIdxValue, gmKernelSizeAddr, gmGradInputF32Addr);
     }
     PIPE_V_S();
     DoGradInputAccUb(gradInputLoopCount, gradInputUbIdxValue, gradAddr, yAddr, gmStHAddr, gmEdHAddr, gmStWAddr,

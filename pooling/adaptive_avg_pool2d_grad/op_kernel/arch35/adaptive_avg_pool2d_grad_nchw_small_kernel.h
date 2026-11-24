@@ -53,8 +53,8 @@ public:
 private:
     __aicore__ inline void AccumulateOutputRowsForInputPointRegFp32(LocalTensor<COMPUTE_TYPE> srcLocal,
                                                                     LocalTensor<COMPUTE_TYPE> dstLocal, int64_t inBase,
-                                                                    COMPUTE_TYPE scale, int64_t stH, int64_t edH,
-                                                                    int64_t stW, int64_t edW);
+                                                                    float scale, int64_t stH, int64_t edH, int64_t stW,
+                                                                    int64_t edW);
 
     __aicore__ inline void ComputeFp32Core(LocalTensor<COMPUTE_TYPE> srcLocal, LocalTensor<COMPUTE_TYPE> dstLocal,
                                            uint32_t dstElemCount);
@@ -225,15 +225,69 @@ __aicore__ inline void AdaptiveAvgPool2dGradNCHWSmallKernel<T, INDEX>::CopyIn()
 
     inputQue_.EnQue(gradInputLocal);
 }
+__simd_vf__ inline void AccumulateOutputRowsTailVf(uint32_t tail, __ubuf__ COMPUTE_TYPE* srcAddr, uint16_t hLoopCount,
+                                                   int32_t hRowBase0, int32_t wOutputAligned, uint16_t wLoopCount,
+                                                   int32_t stW, int32_t highAxisLocalStride,
+                                                   __ubuf__ COMPUTE_TYPE* dstBase, uint32_t processed, float scale)
+{
+    Reg::RegTensor<COMPUTE_TYPE> srcReg;
+    Reg::RegTensor<COMPUTE_TYPE> scaledReg;
+    Reg::RegTensor<COMPUTE_TYPE> dstReg;
+    Reg::MaskReg computeMask = Reg::UpdateMask<COMPUTE_TYPE>(tail);
+
+    Reg::LoadAlign(srcReg, srcAddr);
+    Reg::Muls(scaledReg, srcReg, scale, computeMask);
+
+    for (uint16_t oh = 0; oh < hLoopCount; ++oh) {
+        const int32_t hRowBase = hRowBase0 + static_cast<int32_t>(oh) * wOutputAligned;
+        for (uint16_t ow = 0; ow < wLoopCount; ++ow) {
+            const int32_t outRow = hRowBase + static_cast<int32_t>(stW + ow);
+            const int32_t outBase = outRow * highAxisLocalStride;
+
+            Reg::LoadAlign(dstReg, dstBase + outBase + processed);
+            Reg::Add(dstReg, dstReg, scaledReg, computeMask);
+            Reg::StoreAlign(dstBase + outBase + processed, dstReg, computeMask);
+        }
+    }
+}
+
+__simd_vf__ inline void AccumulateOutputRowsFullVf(uint32_t fullMaskCount, __ubuf__ COMPUTE_TYPE* srcAddr,
+                                                   uint16_t hLoopCount, int32_t hRowBase0, int32_t wOutputAligned,
+                                                   uint16_t wLoopCount, int32_t stW, int32_t highAxisLocalStride,
+                                                   __ubuf__ COMPUTE_TYPE* dstBase, uint32_t processed, float scale)
+{
+    Reg::RegTensor<COMPUTE_TYPE> srcReg;
+    Reg::RegTensor<COMPUTE_TYPE> scaledReg;
+    Reg::RegTensor<COMPUTE_TYPE> dstReg;
+    Reg::MaskReg computeMask = Reg::UpdateMask<COMPUTE_TYPE>(fullMaskCount);
+
+    Reg::LoadAlign(srcReg, srcAddr);
+    Reg::Muls(scaledReg, srcReg, scale, computeMask);
+
+    for (uint16_t oh = 0; oh < hLoopCount; ++oh) {
+        const int32_t hRowBase = hRowBase0 + static_cast<int32_t>(oh) * wOutputAligned;
+        for (uint16_t ow = 0; ow < wLoopCount; ++ow) {
+            const int32_t outRow = hRowBase + static_cast<int32_t>(stW + ow);
+            const int32_t outBase = outRow * highAxisLocalStride;
+
+            Reg::LoadAlign(dstReg, dstBase + outBase + processed);
+            Reg::Add(dstReg, dstReg, scaledReg, computeMask);
+            Reg::StoreAlign(dstBase + outBase + processed, dstReg, computeMask);
+        }
+    }
+}
 
 template <typename T, typename INDEX>
 __aicore__ inline void AdaptiveAvgPool2dGradNCHWSmallKernel<T, INDEX>::AccumulateOutputRowsForInputPointRegFp32(
-    LocalTensor<COMPUTE_TYPE> srcLocal, LocalTensor<COMPUTE_TYPE> dstLocal, int64_t inBase, COMPUTE_TYPE scale,
-    int64_t stH, int64_t edH, int64_t stW, int64_t edW)
+    LocalTensor<COMPUTE_TYPE> srcLocal, LocalTensor<COMPUTE_TYPE> dstLocal, int64_t inBase, float scale, int64_t stH,
+    int64_t edH, int64_t stW, int64_t edW)
 {
     const uint16_t hLoopCount = static_cast<uint16_t>(edH - stH);
     const uint16_t wLoopCount = static_cast<uint16_t>(edW - stW);
     const int64_t hRowBase0 = stH * wOutputAligned_;
+    const int64_t wOutputAligned = wOutputAligned_;
+    const int64_t highAxisLocalStride = highAxisLocalStride_;
+    __ubuf__ COMPUTE_TYPE* dstBase = (__ubuf__ COMPUTE_TYPE*)dstLocal.GetPhyAddr();
 
     uint32_t total = static_cast<uint32_t>(highAxisActual_);
     uint32_t fullLoops = total / static_cast<uint32_t>(COMPUTE_VF_LEN);
@@ -244,29 +298,9 @@ __aicore__ inline void AdaptiveAvgPool2dGradNCHWSmallKernel<T, INDEX>::Accumulat
     for (uint32_t loop = 0; loop < fullLoops; ++loop) {
         __ubuf__ COMPUTE_TYPE* srcAddr = (__ubuf__ COMPUTE_TYPE*)srcLocal[inBase + processed].GetPhyAddr();
 
-        __VEC_SCOPE__
-        {
-            Reg::RegTensor<COMPUTE_TYPE> srcReg;
-            Reg::RegTensor<COMPUTE_TYPE> scaledReg;
-            Reg::RegTensor<COMPUTE_TYPE> dstReg;
-            Reg::MaskReg computeMask = Reg::UpdateMask<COMPUTE_TYPE>(fullMaskCount);
-
-            Reg::LoadAlign(srcReg, srcAddr);
-            Reg::Muls(scaledReg, srcReg, scale, computeMask);
-
-            for (uint16_t oh = 0; oh < hLoopCount; ++oh) {
-                const int64_t hRowBase = hRowBase0 + static_cast<int64_t>(oh) * wOutputAligned_;
-                for (uint16_t ow = 0; ow < wLoopCount; ++ow) {
-                    const int64_t outRow = hRowBase + static_cast<int64_t>(stW + ow);
-                    const int64_t outBase = outRow * highAxisLocalStride_;
-                    __ubuf__ COMPUTE_TYPE* dstAddr = (__ubuf__ COMPUTE_TYPE*)dstLocal[outBase + processed].GetPhyAddr();
-
-                    Reg::LoadAlign(dstReg, dstAddr);
-                    Reg::Add(dstReg, dstReg, scaledReg, computeMask);
-                    Reg::StoreAlign(dstAddr, dstReg, computeMask);
-                }
-            }
-        }
+        AccumulateOutputRowsFullVf(fullMaskCount, srcAddr, hLoopCount, static_cast<int32_t>(hRowBase0),
+                                   static_cast<int32_t>(wOutputAligned), wLoopCount, static_cast<int32_t>(stW),
+                                   static_cast<int32_t>(highAxisLocalStride), dstBase, processed, scale);
 
         processed += static_cast<uint32_t>(COMPUTE_VF_LEN);
     }
@@ -274,30 +308,98 @@ __aicore__ inline void AdaptiveAvgPool2dGradNCHWSmallKernel<T, INDEX>::Accumulat
     if (tail > 0) {
         __ubuf__ COMPUTE_TYPE* srcAddr = (__ubuf__ COMPUTE_TYPE*)srcLocal[inBase + processed].GetPhyAddr();
 
-        __VEC_SCOPE__
-        {
-            Reg::RegTensor<COMPUTE_TYPE> srcReg;
-            Reg::RegTensor<COMPUTE_TYPE> scaledReg;
-            Reg::RegTensor<COMPUTE_TYPE> dstReg;
-            Reg::MaskReg computeMask = Reg::UpdateMask<COMPUTE_TYPE>(tail);
-
-            Reg::LoadAlign(srcReg, srcAddr);
-            Reg::Muls(scaledReg, srcReg, scale, computeMask);
-
-            for (uint16_t oh = 0; oh < hLoopCount; ++oh) {
-                const int64_t hRowBase = hRowBase0 + static_cast<int64_t>(oh) * wOutputAligned_;
-                for (uint16_t ow = 0; ow < wLoopCount; ++ow) {
-                    const int64_t outRow = hRowBase + static_cast<int64_t>(stW + ow);
-                    const int64_t outBase = outRow * highAxisLocalStride_;
-                    __ubuf__ COMPUTE_TYPE* dstAddr = (__ubuf__ COMPUTE_TYPE*)dstLocal[outBase + processed].GetPhyAddr();
-
-                    Reg::LoadAlign(dstReg, dstAddr);
-                    Reg::Add(dstReg, dstReg, scaledReg, computeMask);
-                    Reg::StoreAlign(dstAddr, dstReg, computeMask);
-                }
-            }
-        }
+        AccumulateOutputRowsTailVf(tail, srcAddr, hLoopCount, static_cast<int32_t>(hRowBase0),
+                                   static_cast<int32_t>(wOutputAligned), wLoopCount, static_cast<int32_t>(stW),
+                                   static_cast<int32_t>(highAxisLocalStride), dstBase, processed, scale);
     }
+}
+template <typename T, typename INDEX>
+__simd_vf__ void ComputeWTileRangesVf(INDEX wBaseIdx, uint32_t batchCountMask, INDEX wOutput, INDEX wGradInput,
+                                      INDEX wTileStart, INDEX wTileEnd, __ubuf__ INDEX* stWAddr,
+                                      __ubuf__ INDEX* edWAddr, __ubuf__ INDEX* coverWAddr)
+{
+    Reg::RegTensor<INDEX> idx;
+    Reg::Arange(idx, wBaseIdx);
+
+    Reg::MaskReg allMask = Reg::CreateMask<INDEX, Reg::MaskPattern::ALL>();
+    Reg::MaskReg batchMask = Reg::UpdateMask<INDEX>(batchCountMask);
+
+    Reg::RegTensor<INDEX> regConstOutput;
+    Reg::Duplicate(regConstOutput, wOutput);
+
+    Reg::RegTensor<INDEX> regConstInput;
+    Reg::Duplicate(regConstInput, wGradInput);
+
+    Reg::RegTensor<INDEX> stGlobal;
+    Reg::Mul(stGlobal, idx, regConstOutput, allMask);
+    Reg::Div(stGlobal, stGlobal, regConstInput, allMask);
+
+    Reg::RegTensor<INDEX> edGlobal;
+    Reg::Adds(edGlobal, idx, INDEX(1), allMask);
+    Reg::Mul(edGlobal, edGlobal, regConstOutput, allMask);
+    Reg::Add(edGlobal, edGlobal, regConstInput, allMask);
+    Reg::Adds(edGlobal, edGlobal, INDEX(-1), allMask);
+    Reg::Div(edGlobal, edGlobal, regConstInput, allMask);
+
+    Reg::RegTensor<INDEX> cover;
+    Reg::Sub(cover, edGlobal, stGlobal, allMask);
+
+    Reg::Maxs(stGlobal, stGlobal, wTileStart, allMask);
+    Reg::Adds(stGlobal, stGlobal, INDEX(-wTileStart), allMask);
+
+    Reg::Mins(edGlobal, edGlobal, wTileEnd, allMask);
+    Reg::Adds(edGlobal, edGlobal, INDEX(-wTileStart), allMask);
+
+    Reg::StoreAlign(stWAddr, stGlobal, batchMask);
+    Reg::StoreAlign(edWAddr, edGlobal, batchMask);
+    Reg::StoreAlign(coverWAddr, cover, batchMask);
+}
+
+template <typename T, typename INDEX>
+__simd_vf__ void ComputeHTileRangesVf(INDEX hBaseIdx, uint32_t hBatchCountMask, INDEX hOutput, INDEX hGradInput,
+                                      INDEX hTileStart, INDEX hTileEnd, __ubuf__ INDEX* stHAddr,
+                                      __ubuf__ INDEX* edHAddr, __ubuf__ INDEX* coverHAddr)
+{
+    Reg::RegTensor<INDEX> hIdx;
+    Reg::Arange(hIdx, hBaseIdx);
+
+    Reg::MaskReg hAllMask = Reg::CreateMask<INDEX, Reg::MaskPattern::ALL>();
+    Reg::MaskReg hBatchMask = Reg::UpdateMask<INDEX>(hBatchCountMask);
+
+    Reg::RegTensor<INDEX> hRegOut;
+    Reg::Duplicate(hRegOut, hOutput);
+
+    Reg::RegTensor<INDEX> hRegIn;
+    Reg::Duplicate(hRegIn, hGradInput);
+
+    Reg::RegTensor<INDEX> hStGlobal;
+    Reg::Mul(hStGlobal, hIdx, hRegOut, hAllMask);
+    Reg::Div(hStGlobal, hStGlobal, hRegIn, hAllMask);
+
+    Reg::RegTensor<INDEX> hEdGlobal;
+    Reg::Adds(hEdGlobal, hIdx, INDEX(1), hAllMask);
+    Reg::Mul(hEdGlobal, hEdGlobal, hRegOut, hAllMask);
+    Reg::Add(hEdGlobal, hEdGlobal, hRegIn, hAllMask);
+    Reg::Adds(hEdGlobal, hEdGlobal, INDEX(-1), hAllMask);
+    Reg::Div(hEdGlobal, hEdGlobal, hRegIn, hAllMask);
+
+    Reg::RegTensor<INDEX> hCover;
+    Reg::Sub(hCover, hEdGlobal, hStGlobal, hAllMask);
+
+    Reg::Maxs(hStGlobal, hStGlobal, hTileStart, hAllMask);
+    Reg::Adds(hStGlobal, hStGlobal, INDEX(-hTileStart), hAllMask);
+
+    Reg::Mins(hEdGlobal, hEdGlobal, hTileEnd, hAllMask);
+    Reg::Adds(hEdGlobal, hEdGlobal, INDEX(-hTileStart), hAllMask);
+
+    Reg::StoreAlign(stHAddr, hStGlobal, hBatchMask);
+    Reg::StoreAlign(edHAddr, hEdGlobal, hBatchMask);
+    Reg::StoreAlign(coverHAddr, hCover, hBatchMask);
+}
+
+__simd_vf__ inline void BarrierVecStoreToLoad(void)
+{
+    Reg::LocalMemBar<Reg::MemType::VEC_STORE, Reg::MemType::VEC_LOAD>();
 }
 
 template <typename T, typename INDEX>
@@ -305,7 +407,7 @@ __aicore__ inline void AdaptiveAvgPool2dGradNCHWSmallKernel<T, INDEX>::ComputeFp
     LocalTensor<COMPUTE_TYPE> srcLocal, LocalTensor<COMPUTE_TYPE> dstLocal, uint32_t dstElemCount)
 {
     Duplicate(dstLocal, static_cast<COMPUTE_TYPE>(0), dstElemCount);
-    __VEC_SCOPE__ { Reg::LocalMemBar<Reg::MemType::VEC_STORE, Reg::MemType::VEC_LOAD>(); }
+    BarrierVecStoreToLoad();
 
     LocalTensor<INDEX> stWLocal = stWRegBuf_.Get<INDEX>();
     LocalTensor<INDEX> edWLocal = edWRegBuf_.Get<INDEX>();
@@ -343,44 +445,8 @@ __aicore__ inline void AdaptiveAvgPool2dGradNCHWSmallKernel<T, INDEX>::ComputeFp
         const INDEX hBaseIdx = static_cast<INDEX>(hStLeftCornerIdx_ + shLocalBatch);
         uint32_t hBatchCountMask = static_cast<uint32_t>(curHBatchCount);
 
-        __VEC_SCOPE__
-        {
-            Reg::RegTensor<INDEX> hIdx;
-            Reg::Arange(hIdx, hBaseIdx);
-
-            Reg::MaskReg hAllMask = Reg::CreateMask<INDEX, Reg::MaskPattern::ALL>();
-            Reg::MaskReg hBatchMask = Reg::UpdateMask<INDEX>(hBatchCountMask);
-
-            Reg::RegTensor<INDEX> hRegOut;
-            Reg::Duplicate(hRegOut, hOutput);
-
-            Reg::RegTensor<INDEX> hRegIn;
-            Reg::Duplicate(hRegIn, hGradInput);
-
-            Reg::RegTensor<INDEX> hStGlobal;
-            Reg::Mul(hStGlobal, hIdx, hRegOut, hAllMask);
-            Reg::Div(hStGlobal, hStGlobal, hRegIn, hAllMask);
-
-            Reg::RegTensor<INDEX> hEdGlobal;
-            Reg::Adds(hEdGlobal, hIdx, INDEX(1), hAllMask);
-            Reg::Mul(hEdGlobal, hEdGlobal, hRegOut, hAllMask);
-            Reg::Add(hEdGlobal, hEdGlobal, hRegIn, hAllMask);
-            Reg::Adds(hEdGlobal, hEdGlobal, INDEX(-1), hAllMask);
-            Reg::Div(hEdGlobal, hEdGlobal, hRegIn, hAllMask);
-
-            Reg::RegTensor<INDEX> hCover;
-            Reg::Sub(hCover, hEdGlobal, hStGlobal, hAllMask);
-
-            Reg::Maxs(hStGlobal, hStGlobal, hTileStart, hAllMask);
-            Reg::Adds(hStGlobal, hStGlobal, INDEX(-hTileStart), hAllMask);
-
-            Reg::Mins(hEdGlobal, hEdGlobal, hTileEnd, hAllMask);
-            Reg::Adds(hEdGlobal, hEdGlobal, INDEX(-hTileStart), hAllMask);
-
-            Reg::StoreAlign(stHAddr, hStGlobal, hBatchMask);
-            Reg::StoreAlign(edHAddr, hEdGlobal, hBatchMask);
-            Reg::StoreAlign(coverHAddr, hCover, hBatchMask);
-        }
+        ComputeHTileRangesVf<T, INDEX>(hBaseIdx, hBatchCountMask, hOutput, hGradInput, hTileStart, hTileEnd, stHAddr,
+                                       edHAddr, coverHAddr);
 
         for (int64_t swLocalBatch = 0; swLocalBatch < wGradInputActual_; swLocalBatch += INDEX_VF_LEN) {
             int64_t curBatchCount = wGradInputActual_ - swLocalBatch;
@@ -389,44 +455,8 @@ __aicore__ inline void AdaptiveAvgPool2dGradNCHWSmallKernel<T, INDEX>::ComputeFp
             const INDEX wBaseIdx = static_cast<INDEX>(wStLeftCornerIdx_ + swLocalBatch);
             uint32_t batchCountMask = static_cast<uint32_t>(curBatchCount);
 
-            __VEC_SCOPE__
-            {
-                Reg::RegTensor<INDEX> idx;
-                Reg::Arange(idx, wBaseIdx);
-
-                Reg::MaskReg allMask = Reg::CreateMask<INDEX, Reg::MaskPattern::ALL>();
-                Reg::MaskReg batchMask = Reg::UpdateMask<INDEX>(batchCountMask);
-
-                Reg::RegTensor<INDEX> regConstOutput;
-                Reg::Duplicate(regConstOutput, wOutput);
-
-                Reg::RegTensor<INDEX> regConstInput;
-                Reg::Duplicate(regConstInput, wGradInput);
-
-                Reg::RegTensor<INDEX> stGlobal;
-                Reg::Mul(stGlobal, idx, regConstOutput, allMask);
-                Reg::Div(stGlobal, stGlobal, regConstInput, allMask);
-
-                Reg::RegTensor<INDEX> edGlobal;
-                Reg::Adds(edGlobal, idx, INDEX(1), allMask);
-                Reg::Mul(edGlobal, edGlobal, regConstOutput, allMask);
-                Reg::Add(edGlobal, edGlobal, regConstInput, allMask);
-                Reg::Adds(edGlobal, edGlobal, INDEX(-1), allMask);
-                Reg::Div(edGlobal, edGlobal, regConstInput, allMask);
-
-                Reg::RegTensor<INDEX> cover;
-                Reg::Sub(cover, edGlobal, stGlobal, allMask);
-
-                Reg::Maxs(stGlobal, stGlobal, wTileStart, allMask);
-                Reg::Adds(stGlobal, stGlobal, INDEX(-wTileStart), allMask);
-
-                Reg::Mins(edGlobal, edGlobal, wTileEnd, allMask);
-                Reg::Adds(edGlobal, edGlobal, INDEX(-wTileStart), allMask);
-
-                Reg::StoreAlign(stWAddr, stGlobal, batchMask);
-                Reg::StoreAlign(edWAddr, edGlobal, batchMask);
-                Reg::StoreAlign(coverWAddr, cover, batchMask);
-            }
+            ComputeWTileRangesVf<T, INDEX>(wBaseIdx, batchCountMask, wOutput, wGradInput, wTileStart, wTileEnd, stWAddr,
+                                           edWAddr, coverWAddr);
 
             PIPE_V_S();
 
@@ -464,7 +494,7 @@ __aicore__ inline void AdaptiveAvgPool2dGradNCHWSmallKernel<T, INDEX>::ComputeFp
                     }
 
                     const int64_t inBase = (hBase + swLocal) * highAxisLocalStride_;
-                    const COMPUTE_TYPE scale = invCoverH * iw;
+                    const float scale = invCoverH * iw;
                     AccumulateOutputRowsForInputPointRegFp32(srcLocal, dstLocal, inBase, scale, stH, edH, stW, edW);
                 }
             }
