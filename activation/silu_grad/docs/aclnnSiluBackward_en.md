@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: backward propagation of [aclnnSilu](../../swish/docs/aclnnSilu.md). Computes the gradient input of silu based on the silu backward propagation gradient and the forward output.
+- Description: backward propagation of [aclnnSilu](../../swish/docs/aclnnSilu_en.md). Computes the gradient input of silu based on the silu backward propagation gradient and the forward output.
 - Formula:
 
   $$
