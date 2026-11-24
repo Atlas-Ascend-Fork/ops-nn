@@ -213,13 +213,16 @@ ge::graphStatus BatchNormBlockSplitRTiling::DoOpTiling()
             RA_BINARY_ADD_THRESHOLD);
 
         OP_CHECK_IF(rUbFactorMax == 0,
-                    OP_LOGI(context_->GetNodeName(), "BatchNormBlockSplitRTiling rUbFactor %ld == 0", rUbFactorMax),
+                    OP_LOGI(context_->GetNodeName(), "BatchNormBlockSplitRTiling rUbFactorMax %ld == 0", rUbFactorMax),
                     return ge::GRAPH_PARAM_INVALID);
 
         RCoreSplitParam split = FindRCoreSplit(patternR, blockDim, rUbFactorMax, aAlignSize, inOutNodeNum,
                                                ubSizeCanUse);
         OP_CHECK_IF(split.coreNums == 0,
-                    OP_LOGI(context_->GetNodeName(), "BatchNormBlockSplitRTiling coreNums == 0", rUbFactorMax),
+                    OP_LOGI(context_->GetNodeName(),
+                            "BatchNormBlockSplitRTiling coreNums == 0, rUbFactorMax=%ld, patternR=%ld, aAlignSize=%ld, "
+                            "inOutNodeNum=%ld, ubSizeCanUse=%ld",
+                            rUbFactorMax, patternR, aAlignSize, inOutNodeNum, ubSizeCanUse),
                     return ge::GRAPH_PARAM_INVALID);
 
         rUbFactor = split.rUbFactor;

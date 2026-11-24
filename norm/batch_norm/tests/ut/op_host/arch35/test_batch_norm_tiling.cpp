@@ -861,3 +861,119 @@ INSTANTIATE_TEST_SUITE_P(TrainingAndInference, BatchNormMetadataError,
                          testing::Values(MetadataCase{true, 3}, MetadataCase{true, 4}, MetadataCase{false, 3},
                                          MetadataCase{false, 4}));
 } // namespace
+namespace {
+static ge::graphStatus RunBatchNormBlockSplitR(gert::StorageShape& x_shape, int64_t channel, int64_t ubSize,
+                                               uint64_t& tilingKey)
+{
+    gert::StorageShape scale_shape = {{channel}, {channel}};
+    gert::StorageShape reserve_space_3_shape = {{1}, {1}};
+
+    string compile_info_string = R"({
+        "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                          "Intrinsic_fix_pipe_l0c2out": false,
+                          "Intrinsic_data_move_l12ub": true,
+                          "Intrinsic_data_move_l0c2ub": true,
+                          "Intrinsic_data_move_out2l1_nd2nz": false,
+                          "UB_SIZE": )" +
+                                 std::to_string(ubSize) + R"(, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                          "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                          "CORE_NUM": 64}
+                          })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    map<string, string> soc_version;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics, soc_version);
+    soc_version["NpuArch"] = "9201";
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    optiling::BatchNormCompileInfo compile_info;
+
+    std::string op_type("BatchNorm");
+    auto op_impl = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str());
+    EXPECT_NE(op_impl, nullptr);
+    if (op_impl == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto tiling_func = op_impl->tiling;
+    auto tiling_parse_func = op_impl->tiling_parse;
+
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
+                                      reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+
+    EXPECT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", soc_version);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+    EXPECT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    EXPECT_NE(param, nullptr);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(5, 6)
+                      .IrInstanceNum({1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1})
+                      .InputShapes({&x_shape, &scale_shape, &scale_shape, &scale_shape, &scale_shape})
+                      .OutputShapes(
+                          {&x_shape, &scale_shape, &scale_shape, &scale_shape, &scale_shape, &reserve_space_3_shape})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_NHWC, ge::FORMAT_NHWC)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_NHWC, ge::FORMAT_NHWC)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(5, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-4f)},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<string>("NHWC")},
+                                  {"is_training", Ops::NN::AnyValue::CreateFrom<bool>(true)},
+                                  {"exponential_avg_factor", Ops::NN::AnyValue::CreateFrom<float>(1.0f)}})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    EXPECT_NE(tiling_context->GetPlatformInfo(), nullptr);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    tiling_context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("version", soc_version);
+
+    auto status = tiling_func(tiling_context);
+    tilingKey = tiling_context->GetTilingKey();
+    return status;
+}
+} // namespace
+
+TEST_F(BatchNormTilingTest, batch_norm_block_split_r_error_branches)
+{
+    gert::StorageShape x_shape = {{1, 1, 30000, 64}, {1, 1, 30000, 64}};
+
+    uint64_t key = 0;
+    EXPECT_EQ(RunBatchNormBlockSplitR(x_shape, 64, 4096, key), ge::GRAPH_SUCCESS);
+    EXPECT_NE(key, 600000);
+
+    key = 0;
+    EXPECT_EQ(RunBatchNormBlockSplitR(x_shape, 64, 20000, key), ge::GRAPH_SUCCESS);
+    EXPECT_NE(key, 600000);
+
+    key = 0;
+    EXPECT_EQ(RunBatchNormBlockSplitR(x_shape, 64, 60000, key), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 600000);
+}
