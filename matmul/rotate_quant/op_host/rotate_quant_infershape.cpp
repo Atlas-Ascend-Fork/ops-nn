@@ -69,7 +69,9 @@ static bool IsGroupedRotateQuantSupport()
     fe::PlatformInfo platformInfo;
     fe::OptionalInfo optionalInfo;
     auto ret = fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfo, optionalInfo);
-    return ret == ge::GRAPH_SUCCESS && platformInfo.str_info.short_soc_version == "Ascend950";
+    return ret == ge::GRAPH_SUCCESS && (platformInfo.str_info.short_soc_version == "Ascend950" ||
+                                        platformInfo.soc_info.arch_type == static_cast<int32_t>(Ops::Base::DAV_9201) ||
+                                        platformInfo.soc_info.arch_type == static_cast<int32_t>(Ops::Base::DAV_9202));
 }
 
 static ge::graphStatus CheckComputeNodeNum(gert::InferShapeContext* context)
@@ -327,7 +329,7 @@ static ge::graphStatus RotateQuantInferShape(gert::InferShapeContext* context)
         return ge::GRAPH_FAILED;
     }
     if (context->GetOptionalInputShape(3) != nullptr && !IsGroupedRotateQuantSupport()) {
-        OP_LOGE(context, "Grouped RotateQuant is only supported on Ascend950.");
+        OP_LOGE(context, "Grouped RotateQuant is only supported on Ascend950, DAV_9201 and DAV_9202.");
         return ge::GRAPH_FAILED;
     }
 
@@ -338,6 +340,13 @@ static ge::graphStatus RotateQuantInferShape(gert::InferShapeContext* context)
         if (pDstDtype != nullptr) {
             yDtype = static_cast<ge::DataType>(*pDstDtype);
         }
+    }
+
+    if (context->GetOptionalInputShape(3) != nullptr && yDtype == Ops::NN::DT_HIFLOAT4) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "y_dtype",
+                                              Ops::NN::FormatString("%d", static_cast<int32_t>(yDtype)).c_str(),
+                                              "Grouped RotateQuant requires MX FP4/FP8 output.");
+        return ge::GRAPH_FAILED;
     }
 
     if (IsRotateQuantDav3510Support()) {

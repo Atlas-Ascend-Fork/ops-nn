@@ -15,6 +15,7 @@ set(SUPPORT_COMPUTE_UNIT "dav_2201" "dav_3510" "dav_9201" "dav_9202")
 set(SUPPORT_TILING_DIR "arch22" "arch35" "arch35" "arch35")
 add_all_modules_sources(
     ACLNNTYPE aclnn_exclude
+    DEPENDENCIES transpose_batch_mat_mul
     COMPUTE_UNIT ${SUPPORT_COMPUTE_UNIT}
     TILING_DIR ${SUPPORT_TILING_DIR}
     DISABLE_IN_OPP TRUE

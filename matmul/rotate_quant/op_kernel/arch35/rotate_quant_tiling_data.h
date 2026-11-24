@@ -51,6 +51,7 @@ struct alignas(STRUCT_ALIGNAS) RotateQuantAptTilingData {
     // 核配参数（tiling层决策，kernel/block层按此运行时分发）
     uint32_t aivNumRatio = 2; // AIC:AIV核配比（3510=2即1:2, DAV_9201/DAV_9202=1即1:1），
                               // 驱动AIC↔AIV同步flag路由与fixpipe subBlockId路由
+    uint32_t ubDB = 1;        // Fixpipe UB slot count (1/2); preserves the tiling ABI offset.
 };
 #pragma pack(pop)
 } // namespace RotateQuantAptOpt

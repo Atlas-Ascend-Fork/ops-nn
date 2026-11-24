@@ -682,6 +682,60 @@ TEST_F(l2_rotate_quant_test, dav3510_grouped_rotate_quant_v2_per_n_rotation)
     }
 }
 
+TEST_F(l2_rotate_quant_test, dav920_series_grouped_mx_shared_and_segmented_rotation)
+{
+    for (auto arch : {Ops::Base::DAV_9201, Ops::Base::DAV_9202}) {
+        op::NpuArchManager archManager(arch);
+        for (int64_t k : {32, 64, 128, 256}) {
+            for (auto inType : {ACL_FLOAT16, ACL_BF16}) {
+                for (auto outType : {ACL_FLOAT4_E2M1, ACL_FLOAT8_E4M3FN, ACL_FLOAT8_E5M2}) {
+                    for (int64_t type : {0, 1}) {
+                        for (bool segmented : {false, true}) {
+                            SCOPED_TRACE(::testing::Message() << "arch=" << static_cast<uint32_t>(arch) << ", k=" << k
+                                                              << ", segmented=" << segmented << ", groupType=" << type);
+                            TensorDesc x = TensorDesc({65, 3 * k}, inType, ACL_FORMAT_ND);
+                            TensorDesc rot = TensorDesc(
+                                segmented ? vector<int64_t>{7, 3, k, k} : vector<int64_t>{7, k, k}, inType,
+                                ACL_FORMAT_ND);
+                            TensorDesc groups = TensorDesc({7}, ACL_INT64, ACL_FORMAT_ND);
+                            TensorDesc y = TensorDesc({65, 3 * k}, outType, ACL_FORMAT_ND);
+                            TensorDesc scale = TensorDesc({65, (3 * k + 63) / 64, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+                            auto ut = OP_API_UT(
+                                aclnnRotateQuantV2,
+                                INPUT(x, rot, (aclTensor*)nullptr, groups, type, -1, (char*)nullptr, 0, 0.0, false),
+                                OUTPUT(y, scale));
+                            uint64_t size = 0;
+                            EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_SUCCESS);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST_F(l2_rotate_quant_test, dav920_series_grouped_mx_optional_alpha_and_group_limits)
+{
+    for (auto arch : {Ops::Base::DAV_9201, Ops::Base::DAV_9202}) {
+        op::NpuArchManager archManager(arch);
+        for (int64_t groupNum : {1, 1024}) {
+            for (int64_t type : {0, 1}) {
+                TensorDesc x = TensorDesc({29, 96}, ACL_BF16, ACL_FORMAT_ND);
+                TensorDesc rot = TensorDesc({groupNum, 32, 32}, ACL_BF16, ACL_FORMAT_ND);
+                TensorDesc alpha = TensorDesc({1}, ACL_BF16, ACL_FORMAT_ND);
+                TensorDesc groups = TensorDesc({groupNum}, ACL_INT64, ACL_FORMAT_ND);
+                TensorDesc y = TensorDesc({29, 96}, ACL_FLOAT8_E4M3FN, ACL_FORMAT_ND);
+                TensorDesc scale = TensorDesc({29, 2, 2}, ACL_FLOAT8_E8M0, ACL_FORMAT_ND);
+                auto ut = OP_API_UT(aclnnRotateQuantV2,
+                                    INPUT(x, rot, alpha, groups, type, -1, (char*)nullptr, 0, 0.0, false),
+                                    OUTPUT(y, scale));
+                uint64_t size = 0;
+                EXPECT_EQ(ut.TestGetWorkspaceSize(&size), ACLNN_SUCCESS);
+            }
+        }
+    }
+}
+
 TEST_F(l2_rotate_quant_test, dav3510_grouped_rotate_quant_v2_rejects_invalid_4d_rotation)
 {
     op::NpuArchManager archManager(Ops::Base::DAV_3510);
@@ -1310,15 +1364,20 @@ TEST_F(l2_rotate_quant_test, dav9201_hif4_n_not_divisible_fail)
 // v121 fail: groupList仅支持dav3510, dav9201平台hif4下V2接口传入groupList必须拒绝
 TEST_F(l2_rotate_quant_test, dav9201_rotate_quant_v2_hif4_reject_groups_fail)
 {
-    op::NpuArchManager archManager(Ops::Base::DAV_9201);
-    TensorDesc x_desc = TensorDesc({7, 96}, ACL_BF16, ACL_FORMAT_ND);
-    TensorDesc rot_desc = TensorDesc({3, 32, 32}, ACL_BF16, ACL_FORMAT_ND);
-    TensorDesc groups_desc = TensorDesc({3}, ACL_INT64, ACL_FORMAT_ND);
-    TensorDesc y_desc = TensorDesc({7, 96}, ACL_HIFLOAT4, ACL_FORMAT_ND);
-    TensorDesc scale_desc = TensorDesc({7, 2, 1}, ACL_HIFLOAT4_SCALE, ACL_FORMAT_ND);
-    auto ut = OP_API_UT(aclnnRotateQuantV2,
-                        INPUT(x_desc, rot_desc, (aclTensor*)nullptr, groups_desc, 0, -1, (char*)nullptr, 0, 0.0, false),
-                        OUTPUT(y_desc, scale_desc));
-    uint64_t workspace_size = 0;
-    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+    for (auto arch : {Ops::Base::DAV_9201, Ops::Base::DAV_9202}) {
+        op::NpuArchManager archManager(arch);
+        for (int64_t scaleLastDim : {1, 2}) {
+            TensorDesc x_desc = TensorDesc({7, 192}, ACL_BF16, ACL_FORMAT_ND);
+            TensorDesc rot_desc = TensorDesc({3, 64, 64}, ACL_BF16, ACL_FORMAT_ND);
+            TensorDesc groups_desc = TensorDesc({3}, ACL_INT64, ACL_FORMAT_ND);
+            TensorDesc y_desc = TensorDesc({7, 192}, ACL_HIFLOAT4, ACL_FORMAT_ND);
+            TensorDesc scale_desc = TensorDesc({7, 3, scaleLastDim}, ACL_HIFLOAT4_SCALE, ACL_FORMAT_ND);
+            auto ut = OP_API_UT(
+                aclnnRotateQuantV2,
+                INPUT(x_desc, rot_desc, (aclTensor*)nullptr, groups_desc, 0, -1, (char*)nullptr, 0, 0.0, false),
+                OUTPUT(y_desc, scale_desc));
+            uint64_t workspace_size = 0;
+            EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+        }
+    }
 }

@@ -48,6 +48,7 @@ static void GetPlatFormInfosDavAware(const string& compileInfo, map<string, stri
         socVersion["NpuArch"] = "9202";
     }
 }
+constexpr size_t ROTATE_QUANT_SYS_WORKSPACE_BYTES = 16UL * 1024UL * 1024UL;
 
 struct RotateQuantArch35Data {
     string case_name;
@@ -72,6 +73,9 @@ struct RotateQuantArch35Data {
     uint32_t expectedAivRatio{2};
     uint32_t expectedML1{0};
     uint32_t expectedTailML1{0};
+    uint32_t expectedUbDB{0};
+    uint32_t expectedBlockDim{32};
+    uint32_t expectedBaseM{0};
 };
 
 class TilingRotateQuantArch35 : public ::testing::TestWithParam<RotateQuantArch35Data> {
@@ -168,13 +172,39 @@ TEST_P(TilingRotateQuantArch35, rotate_quant_arch35_tiling)
         if (test_params.expectedML1 != 0) {
             EXPECT_EQ(data->mL1, test_params.expectedML1);
             EXPECT_EQ(data->tailML1, test_params.expectedTailML1);
-            EXPECT_EQ(tiling_context->GetBlockDim(), 32);
+            EXPECT_EQ(tiling_context->GetBlockDim(), test_params.expectedBlockDim);
         }
-        if (data->aivNumRatio == 2) {
+        if (test_params.expectedBaseM != 0) {
+            EXPECT_EQ(data->baseM, test_params.expectedBaseM);
+        }
+        if (test_params.expectedUbDB != 0) {
+            EXPECT_EQ(data->ubDB, test_params.expectedUbDB) << test_params.case_name;
+        }
+        const bool hif4 = test_params.yDataType == Ops::NN::DT_HIFLOAT4;
+        auto workspaceSizes = tiling_context->GetWorkspaceSizes(1);
+        ASSERT_NE(workspaceSizes, nullptr);
+        const size_t expectedWorkspace = ROTATE_QUANT_SYS_WORKSPACE_BYTES +
+                                         (hif4 ? static_cast<size_t>(data->M) * data->N * sizeof(float) : 0);
+        EXPECT_EQ(workspaceSizes[0], expectedWorkspace);
+        const uint64_t alignedM = (data->mL1 + 15UL) / 16 * 16;
+        const uint64_t rotationBytes = static_cast<uint64_t>(data->K) * data->K * 2;
+        if (hif4) {
+            EXPECT_EQ(data->ubDB, 1);
+            EXPECT_EQ(data->baseK, data->K);
+            EXPECT_LE(alignedM * data->K * 2 + rotationBytes, stoull(aicore_spec.at("l1_size")));
+            EXPECT_LE(alignedM * data->baseK * 2, stoull(aicore_spec.at("l0_a_size")));
+            EXPECT_LE(alignedM * data->K * 4, stoull(aicore_spec.at("l0_c_size")));
+        } else {
             EXPECT_LE(data->mL1 * data->K, 16384);
+            EXPECT_LE(2 * (alignedM * data->K * 2 + rotationBytes), stoull(aicore_spec.at("l1_size")));
+            EXPECT_LE(2 * alignedM * data->baseK * 2, stoull(aicore_spec.at("l0_a_size")));
+            EXPECT_LE(2 * alignedM * data->K * 4, stoull(aicore_spec.at("l0_c_size")));
+            EXPECT_GE(data->ubDB, 1);
+            EXPECT_LE(data->ubDB, 2);
+            const uint64_t ubWorkspace = 52736UL + static_cast<uint64_t>(data->mL1) * 32;
+            EXPECT_LE(data->ubDB * ubWorkspace, stoull(aicore_spec.at("ub_size")));
+            EXPECT_LE(static_cast<uint64_t>(data->baseK) * data->baseN * 2, stoull(aicore_spec.at("l0_b_size")) / 2);
         }
-        const uint32_t l0Buffers = data->aivNumRatio == 1 ? 1 : 2;
-        EXPECT_LE(data->baseK * data->baseN * 2, 65536 / l0Buffers);
         if (data->K == 256) {
             EXPECT_EQ(data->baseK, 64);
             EXPECT_LE(data->mL1, 64);
@@ -210,19 +240,36 @@ static const string COMPILE_INFO_DAV_3510_BAD_RATIO = R"({
     "cube_core_cnt": 32, "vector_core_cnt": 48}
 })";
 
-// Exercise the retained 1:1 CMCT route alongside the Ascend950 Blaze cases.
-static RotateQuantArch35Data MakeDav920SeriesCase(const string& soc, bool hif4, bool multiRot,
-                                                  uint32_t vectorCores = 32)
+static string TestNpuArch(const string& soc)
+{
+    if (soc == "Ascend960DT" || soc == "dav9201") {
+        return "dav9201";
+    }
+    if (soc == "Ascend960PR" || soc == "dav9202") {
+        return "dav9202";
+    }
+    return "dav3510";
+}
+
+static string MakeCompileInfoForTest(const string& arch, uint32_t vectorCores)
+{
+    auto info = COMPILE_INFO_DAV_3510;
+    const string oldArch = "dav3510";
+    info.replace(info.find(oldArch), oldArch.size(), arch);
+    const string oldCores = "\"vector_core_cnt\": 64";
+    info.replace(info.find(oldCores), oldCores.size(), "\"vector_core_cnt\": " + to_string(vectorCores));
+    return info;
+}
+
+// Exercise A6's 1:1 MX Tensor API and HiFloat4 Basic API paths.
+static RotateQuantArch35Data MakeDav920SeriesCase(const string& soc, bool hif4, bool multiRot, uint32_t vectorCores = 0)
 {
     RotateQuantArch35Data data;
     data.case_name = soc + (hif4 ? "_hif4" : multiRot ? "_mx_multi_rot" : "_mx_shared");
-    data.compile_info = COMPILE_INFO_DAV_3510;
-    const string oldArch = "dav3510";
-    const string newArch = (soc == "dav9201") ? "dav9201" : "dav9202";
-    data.compile_info.replace(data.compile_info.find(oldArch), oldArch.size(), newArch);
-    const string oldCores = "\"vector_core_cnt\": 64";
-    data.compile_info.replace(data.compile_info.find(oldCores), oldCores.size(),
-                              "\"vector_core_cnt\": " + std::to_string(vectorCores));
+    const auto arch = TestNpuArch(soc);
+    data.expectedAivRatio = arch == "dav3510" ? 2 : 1;
+    const uint32_t expectedVectorCores = 32 * data.expectedAivRatio;
+    data.compile_info = MakeCompileInfoForTest(arch, vectorCores == 0 ? expectedVectorCores : vectorCores);
     data.x_shape = {{1025, 384}, {1025, 384}};
     data.rot_shape = multiRot ? gert::StorageShape{{3, 128, 128}, {3, 128, 128}} :
                                 gert::StorageShape{{128, 128}, {128, 128}};
@@ -234,8 +281,7 @@ static RotateQuantArch35Data MakeDav920SeriesCase(const string& soc, bool hif4, 
         data.yDataType = Ops::NN::DT_HIFLOAT4;
         data.scaleDataType = Ops::NN::DT_HIFLOAT4_SCALE;
     }
-    data.expectedAivRatio = 1;
-    if (vectorCores != 32) {
+    if (vectorCores != 0 && vectorCores != expectedVectorCores) {
         data.case_name += "_bad_ratio";
         data.expect_status = ge::GRAPH_FAILED;
     }
@@ -744,18 +790,9 @@ static vector<RotateQuantArch35Data> MakeEffectiveMOverflowCases()
         for (const auto& boundary : boundaries) {
             RotateQuantArch35Data data;
             data.case_name = string(soc) + "_shared_effective_m_" + boundary.name;
-            data.compile_info = COMPILE_INFO_DAV_3510;
-            const string oldArch = "dav3510";
-            const string newArch = (soc == string("dav9201")) ? "dav9201" :
-                                   (soc == string("dav9202")) ? "dav9202" :
-                                                                oldArch;
-            data.compile_info.replace(data.compile_info.find(oldArch), oldArch.size(), newArch);
-            const bool isDav920Series = string(soc) == "dav9201" || string(soc) == "dav9202";
-            if (isDav920Series) {
-                const string oldCores = "\"vector_core_cnt\": 64";
-                data.compile_info.replace(data.compile_info.find(oldCores), oldCores.size(), "\"vector_core_cnt\": 32");
-                data.expectedAivRatio = 1;
-            }
+            const auto arch = TestNpuArch(soc);
+            data.expectedAivRatio = arch == "dav3510" ? 2 : 1;
+            data.compile_info = MakeCompileInfoForTest(arch, 32 * data.expectedAivRatio);
             data.x_shape = {{boundary.m, boundary.n}, {boundary.m, boundary.n}};
             data.rot_shape = {{32, 32}, {32, 32}};
             data.y_shape = data.x_shape;
@@ -763,7 +800,7 @@ static vector<RotateQuantArch35Data> MakeEffectiveMOverflowCases()
             data.scale_shape = {{boundary.m, scalePairs, 2}, {boundary.m, scalePairs, 2}};
             data.expect_status = boundary.status;
             if (boundary.status == ge::GRAPH_SUCCESS) {
-                data.expectedML1 = isDav920Series ? 1024 : 512;
+                data.expectedML1 = 512;
                 data.expectedTailML1 = data.expectedML1 - boundary.tailOffset;
             }
             cases.push_back(data);
@@ -806,6 +843,11 @@ static vector<RotateQuantArch35Data> MakeDav920SeriesRegressionCases()
                                                         gert::StorageShape{{k, k}, {k, k}};
                             const int64_t scaleLastDim = hif4 ? 1 : 2;
                             data.scale_shape = {{m, (n + 63) / 64, scaleLastDim}, {m, (n + 63) / 64, scaleLastDim}};
+                            if (hif4 && m == 32769) {
+                                data.expectedML1 = k == 64 ? 512 : 256;
+                                data.expectedTailML1 = 3;
+                                data.expectedUbDB = 1;
+                            }
                             cases.push_back(data);
                         }
                     }
@@ -814,7 +856,7 @@ static vector<RotateQuantArch35Data> MakeDav920SeriesRegressionCases()
         }
     }
     for (const char* soc : {"Ascend950", "Ascend350"}) {
-        auto data = MakeDav920SeriesCase(soc, true, false, 64);
+        auto data = MakeDav920SeriesCase(soc, true, false);
         data.case_name = string(soc) + "_reject_hif4";
         data.expect_status = ge::GRAPH_FAILED;
         cases.push_back(data);
@@ -847,31 +889,186 @@ static const auto dav920SeriesRegressionCases = MakeDav920SeriesRegressionCases(
 INSTANTIATE_TEST_SUITE_P(RotateQuantDav920SeriesRegressionCases, TilingRotateQuantArch35,
                          testing::ValuesIn(dav920SeriesRegressionCases));
 
+static vector<RotateQuantArch35Data> MakeMxResourceBoundaryCases()
+{
+    struct ResourceBoundary {
+        const char* resource;
+        uint64_t bytes;
+        bool succeeds;
+        bool minimumRows;
+    };
+    const ResourceBoundary boundaries[] = {
+        {"UB_SIZE", 53248, true, true},    {"UB_SIZE", 53247, false, false}, {"L1_SIZE", 73728, true, true},
+        {"L1_SIZE", 73727, false, false},  {"L0A_SIZE", 8192, true, true},   {"L0A_SIZE", 8191, false, false},
+        {"L0B_SIZE", 8192, true, false},   {"L0B_SIZE", 8191, false, false}, {"L0C_SIZE", 16384, true, true},
+        {"L0C_SIZE", 16383, false, false},
+    };
+    vector<RotateQuantArch35Data> cases;
+    for (const char* soc : {"Ascend960DT", "Ascend960PR"}) {
+        for (const auto& boundary : boundaries) {
+            auto data = MakeDav920SeriesCase(soc, false, false);
+            data.case_name += "_" + string(boundary.resource) + "_" + to_string(boundary.bytes);
+            const string key = "\"" + string(boundary.resource) + "\": ";
+            const size_t begin = data.compile_info.find(key) + key.size();
+            const size_t end = data.compile_info.find_first_of(",}", begin);
+            data.compile_info.replace(begin, end - begin, to_string(boundary.bytes));
+            data.expect_status = boundary.succeeds ? ge::GRAPH_SUCCESS : ge::GRAPH_FAILED;
+            if (boundary.minimumRows) {
+                data.expectedML1 = 16;
+                data.expectedTailML1 = 3;
+            }
+            if (string(boundary.resource) == "UB_SIZE" && boundary.succeeds) {
+                data.expectedUbDB = 1;
+            }
+            cases.push_back(data);
+        }
+    }
+    return cases;
+}
+
+static const auto mxResourceBoundaryCases = MakeMxResourceBoundaryCases();
+INSTANTIATE_TEST_SUITE_P(RotateQuantMxResourceBoundaryCases, TilingRotateQuantArch35,
+                         testing::ValuesIn(mxResourceBoundaryCases));
+
+static vector<RotateQuantArch35Data> MakeMxWorkspacePipelineCases()
+{
+    vector<RotateQuantArch35Data> cases;
+    for (const char* soc : {"Ascend950", "Ascend960DT", "Ascend960PR"}) {
+        for (int64_t k : {32, 64, 128, 256}) {
+            const uint32_t rows = 16384 / k;
+            for (bool multiRot : {false, true}) {
+                auto data = MakeDav920SeriesCase(soc, false, multiRot);
+                data.case_name = string(soc) + (multiRot ? "_mx_multi_pipeline" : "_mx_shared_pipeline") + "_k" +
+                                 to_string(k);
+                // Shared: 33 tiles. Independent rotations: 11 M tiles * 3 rotations, not ceil(3*M/rows).
+                const int64_t m = (multiRot ? 10 : 32) * rows + 1;
+                const int64_t n = (multiRot ? 3 : 1) * k;
+                data.x_shape = {{m, n}, {m, n}};
+                data.y_shape = data.x_shape;
+                data.rot_shape = multiRot ? gert::StorageShape{{3, k, k}, {3, k, k}} :
+                                            gert::StorageShape{{k, k}, {k, k}};
+                data.scale_shape = {{m, (n + 63) / 64, 2}, {m, (n + 63) / 64, 2}};
+                data.expectedML1 = rows;
+                data.expectedTailML1 = 1;
+                data.expectedUbDB = 2;
+                cases.push_back(data);
+
+                if (k != 32) {
+                    continue;
+                }
+                const uint64_t twoWorkspaces = 2 * (52736UL + rows * 32UL);
+                for (uint64_t ubBytes : {twoWorkspaces, twoWorkspaces - 1}) {
+                    auto boundary = data;
+                    boundary.case_name += "_ub" + to_string(ubBytes);
+                    const string key = "\"UB_SIZE\": ";
+                    const size_t begin = boundary.compile_info.find(key) + key.size();
+                    const size_t end = boundary.compile_info.find_first_of(",}", begin);
+                    boundary.compile_info.replace(begin, end - begin, to_string(ubBytes));
+                    boundary.expectedUbDB = ubBytes == twoWorkspaces ? 2 : 1;
+                    // One byte below the double-workspace boundary must keep the same 512-row tile.
+                    cases.push_back(boundary);
+                }
+
+                auto oneWave = data;
+                oneWave.case_name += "_one_wave";
+                oneWave.x_shape = {{m - 1, n}, {m - 1, n}};
+                oneWave.y_shape = oneWave.x_shape;
+                oneWave.scale_shape = {{m - 1, (n + 63) / 64, 2}, {m - 1, (n + 63) / 64, 2}};
+                oneWave.expectedTailML1 = rows;
+                oneWave.expectedUbDB = 1;
+                oneWave.expectedBlockDim = multiRot ? 30 : 32;
+                cases.push_back(oneWave);
+            }
+        }
+    }
+    return cases;
+}
+
+static const auto mxWorkspacePipelineCases = MakeMxWorkspacePipelineCases();
+INSTANTIATE_TEST_SUITE_P(RotateQuantMxWorkspacePipelineCases, TilingRotateQuantArch35,
+                         testing::ValuesIn(mxWorkspacePipelineCases));
+
+static vector<RotateQuantArch35Data> MakeHif4BasicApiCases()
+{
+    struct MainlineCase {
+        int64_t k;
+        int64_t m;
+        int64_t segments;
+        uint32_t baseM;
+        uint32_t mL1;
+        uint32_t tailM;
+        uint32_t cores;
+    };
+    // Expected values come from the mainline A6 single-buffer Basic API tiling.
+    const MainlineCase baselines[] = {
+        {64, 1, 1, 512, 16, 1, 1},       {64, 17, 1, 512, 16, 1, 2},      {64, 16385, 1, 512, 512, 1, 32},
+        {64, 16385, 3, 512, 512, 3, 32}, {128, 1, 1, 256, 16, 1, 1},      {128, 17, 1, 256, 16, 1, 2},
+        {128, 8193, 1, 256, 256, 1, 32}, {128, 8193, 3, 256, 256, 3, 32},
+    };
+    vector<RotateQuantArch35Data> cases;
+    for (const char* soc : {"Ascend960DT", "Ascend960PR"}) {
+        for (ge::DataType inputType : {ge::DT_FLOAT16, ge::DT_BF16}) {
+            for (const auto& baseline : baselines) {
+                auto data = MakeDav920SeriesCase(soc, true, false);
+                data.case_name = string(soc) + "_hif4_basic_api_k" + to_string(baseline.k) + "_m" +
+                                 to_string(baseline.m) + "_segments" + to_string(baseline.segments) + "_dtype" +
+                                 to_string(static_cast<int32_t>(inputType));
+                const int64_t n = baseline.k * baseline.segments;
+                data.x_shape = {{baseline.m, n}, {baseline.m, n}};
+                data.y_shape = data.x_shape;
+                data.rot_shape = {{baseline.k, baseline.k}, {baseline.k, baseline.k}};
+                data.scale_shape = {{baseline.m, n / 64, 1}, {baseline.m, n / 64, 1}};
+                data.xDataType = inputType;
+                data.expectedBaseM = baseline.baseM;
+                data.expectedML1 = baseline.mL1;
+                data.expectedTailML1 = baseline.tailM;
+                data.expectedBlockDim = baseline.cores;
+                data.expectedUbDB = 1;
+                cases.push_back(data);
+
+                if (baseline.mL1 != baseline.baseM) {
+                    continue;
+                }
+                auto reducedL0 = data;
+                reducedL0.case_name += "_half_l0a";
+                const string oldL0 = "\"L0A_SIZE\": 65536";
+                reducedL0.compile_info.replace(reducedL0.compile_info.find(oldL0), oldL0.size(), "\"L0A_SIZE\": 32768");
+                reducedL0.expectedBaseM /= 2;
+                reducedL0.expectedML1 /= 2;
+                cases.push_back(reducedL0);
+            }
+        }
+    }
+    return cases;
+}
+
+static const auto hif4BasicApiCases = MakeHif4BasicApiCases();
+INSTANTIATE_TEST_SUITE_P(RotateQuantHif4BasicApiCases, TilingRotateQuantArch35, testing::ValuesIn(hif4BasicApiCases));
+
 static void CheckGroupedTiling(int64_t groupNum, int64_t rotNum, int64_t groupType, ge::DataType groupDtype,
                                ge::graphStatus expected, bool hasAlpha = true, const string& socVersion = "Ascend950",
-                               int64_t k = 32, int64_t rotSlices = 0, int64_t ratio = 3)
+                               int64_t k = 32, int64_t rotSlices = 0, int64_t ratio = 3,
+                               const map<string, uint64_t>& resources = map<string, uint64_t>(), int64_t m = 29,
+                               uint32_t expectedUbDB = 2, uint32_t expectedML1 = 0)
 {
     RotateQuantArch35Data test_params;
-    test_params.compile_info = COMPILE_INFO_DAV_3510;
-    const string oldArch = "dav3510";
-    const string newArch = (socVersion == "dav9201") ? "dav9201" : (socVersion == "dav9202") ? "dav9202" : oldArch;
-    const auto archPos = test_params.compile_info.find(oldArch);
-    ASSERT_NE(archPos, string::npos);
-    test_params.compile_info.replace(archPos, oldArch.size(), newArch);
-    const bool isDav920Series = socVersion == "dav9201" || socVersion == "dav9202";
-    if (isDav920Series) {
-        const string oldCores = "\"vector_core_cnt\": 64";
-        test_params.compile_info.replace(test_params.compile_info.find(oldCores), oldCores.size(),
-                                         "\"vector_core_cnt\": 32");
+    const auto arch = TestNpuArch(socVersion);
+    const uint32_t expectedAivRatio = arch == "dav3510" ? 2 : 1;
+    test_params.compile_info = MakeCompileInfoForTest(arch, 32 * expectedAivRatio);
+    for (const auto& resource : resources) {
+        const string key = "\"" + resource.first + "\": ";
+        const size_t begin = test_params.compile_info.find(key) + key.size();
+        const size_t end = test_params.compile_info.find_first_of(",}", begin);
+        test_params.compile_info.replace(begin, end - begin, to_string(resource.second));
     }
     const int64_t n = ratio * k;
-    test_params.x_shape = gert::StorageShape({29, n}, {29, n});
+    test_params.x_shape = gert::StorageShape({m, n}, {m, n});
     test_params.rot_shape = gert::StorageShape({rotNum, k, k}, {rotNum, k, k});
     if (rotSlices != 0) {
         test_params.rot_shape = gert::StorageShape({rotNum, rotSlices, k, k}, {rotNum, rotSlices, k, k});
     }
-    test_params.y_shape = gert::StorageShape({29, n}, {29, n});
-    test_params.scale_shape = gert::StorageShape({29, (n + 63) / 64, 2}, {29, (n + 63) / 64, 2});
+    test_params.y_shape = gert::StorageShape({m, n}, {m, n});
+    test_params.scale_shape = gert::StorageShape({m, (n + 63) / 64, 2}, {m, (n + 63) / 64, 2});
     test_params.expect_status = expected;
     gert::StorageShape alpha_shape = {{1}, {1}};
     gert::StorageShape group_shape = {{groupNum}, {groupNum}};
@@ -881,8 +1078,6 @@ static void CheckGroupedTiling(int64_t groupNum, int64_t rotNum, int64_t groupTy
     map<string, string> intrinsics;
     map<string, string> soc_version;
     GetPlatFormInfosDavAware(test_params.compile_info, soc_infos, aicore_spec, intrinsics, soc_version);
-    // Use the real core ratio and architecture so rejection reaches the group guard.
-    soc_version["NpuArch"] = isDav920Series ? (socVersion == "dav9201" ? "9201" : "9202") : "3510";
     soc_version["Short_SoC_version"] = socVersion;
 
     fe::PlatFormInfos platform_info;
@@ -968,16 +1163,40 @@ static void CheckGroupedTiling(int64_t groupNum, int64_t rotNum, int64_t groupTy
         auto data = reinterpret_cast<const RotateQuantAptOpt::RotateQuantAptTilingData*>(
             tiling_context->GetRawTilingData()->GetData());
         EXPECT_EQ(data->groupMode, 1);
+        auto workspaceSizes = tiling_context->GetWorkspaceSizes(1);
+        ASSERT_NE(workspaceSizes, nullptr);
+        EXPECT_EQ(workspaceSizes[0], ROTATE_QUANT_SYS_WORKSPACE_BYTES);
+        EXPECT_EQ(data->ubDB, expectedUbDB);
+        EXPECT_EQ(data->aivNumRatio, expectedAivRatio);
         EXPECT_EQ(data->groupNum, groupNum);
         EXPECT_EQ(data->groupListType, groupType);
         EXPECT_EQ(data->B, rotSlices != 0 ? ratio : 1);
         EXPECT_EQ(data->hasAlpha, hasAlpha);
         EXPECT_EQ(data->nKRatio, ratio);
         EXPECT_GT(data->mL1, 0);
+        if (expectedML1 != 0) {
+            EXPECT_EQ(data->mL1, expectedML1);
+        }
         EXPECT_LE(data->mL1 * data->K, 16384);
-        EXPECT_LE(data->baseK * data->baseN * 2, 65536 / 2);
+        EXPECT_LE(data->mL1, data->baseM);
+        EXPECT_EQ(data->nL1, data->K);
+        EXPECT_EQ(data->kL1, data->K);
+        EXPECT_EQ(data->baseN, data->K);
+        EXPECT_GT(data->baseK, 0);
+        EXPECT_LE(data->baseK, data->K);
+        EXPECT_EQ(data->baseK % 16, 0);
+        const uint64_t alignedM = (data->mL1 + 15UL) / 16 * 16;
+        const uint64_t alignedBaseM = (data->baseM + 15UL) / 16 * 16;
+        EXPECT_LE(2 * (alignedM * data->K * 2 + static_cast<uint64_t>(data->K) * data->K * 2),
+                  stoull(aicore_spec.at("l1_size")));
+        EXPECT_LE(2 * alignedBaseM * data->baseK * 2, stoull(aicore_spec.at("l0_a_size")));
+        EXPECT_LE(2 * alignedBaseM * data->K * 4, stoull(aicore_spec.at("l0_c_size")));
+        EXPECT_LE(static_cast<uint64_t>(data->baseK) * data->baseN * 2, stoull(aicore_spec.at("l0_b_size")) / 2);
+        EXPECT_LE(data->ubDB * (52736UL + static_cast<uint64_t>(data->mL1) * 32), stoull(aicore_spec.at("ub_size")));
         if (k == 256) {
-            EXPECT_EQ(data->baseK, 64);
+            if (resources.count("L0B_SIZE") == 0) {
+                EXPECT_EQ(data->baseK, 64);
+            }
             EXPECT_LE(data->mL1, 64);
         }
         EXPECT_EQ(tiling_context->GetBlockDim(), 32);
@@ -1005,16 +1224,85 @@ TEST(RotateQuantGroupedTiling, MissingAlphaDoesNotAliasGroupList)
     }
 }
 
+TEST(RotateQuantGroupedTiling, TensorApiWorkspaceAndResourceBoundaries)
+{
+    struct ResourceBoundary {
+        const char* name;
+        uint64_t bytes;
+        bool succeeds;
+        uint32_t stages;
+    };
+    for (const char* soc : {"Ascend950", "Ascend960DT", "Ascend960PR"}) {
+        for (int64_t k : {32, 64, 128, 256}) {
+            for (bool multiRot : {false, true}) {
+                const int64_t slices = multiRot ? 3 : 0;
+                const ResourceBoundary ubBoundaries[] = {
+                    {"UB_SIZE", 53248, true, 1},
+                    {"UB_SIZE", 53247, false, 0},
+                    {"UB_SIZE", 106496, true, 2},
+                    {"UB_SIZE", 106495, true, 1},
+                };
+                for (const auto& boundary : ubBoundaries) {
+                    CheckGroupedTiling(7, 7, 1, ge::DT_INT64, boundary.succeeds ? ge::GRAPH_SUCCESS : ge::GRAPH_FAILED,
+                                       false, soc, k, slices, 3, {{boundary.name, boundary.bytes}}, 29, boundary.stages,
+                                       16);
+                }
+                // Large groups keep the capacity-limited tile and launch all Cube cores.
+                CheckGroupedTiling(7, 7, 1, ge::DT_INT64, ge::GRAPH_SUCCESS, false, soc, k, slices, 3, {}, 32769, 2,
+                                   16384 / k);
+                if (k != 128) {
+                    continue;
+                }
+                const ResourceBoundary cubeBoundaries[] = {
+                    {"L1_SIZE", 73728, true, 2},  {"L1_SIZE", 73727, false, 0},  {"L0A_SIZE", 8192, true, 2},
+                    {"L0A_SIZE", 8191, false, 0}, {"L0B_SIZE", 8192, true, 2},   {"L0B_SIZE", 8191, false, 0},
+                    {"L0C_SIZE", 16384, true, 2}, {"L0C_SIZE", 16383, false, 0},
+                };
+                for (const auto& boundary : cubeBoundaries) {
+                    CheckGroupedTiling(7, 7, 1, ge::DT_INT64, boundary.succeeds ? ge::GRAPH_SUCCESS : ge::GRAPH_FAILED,
+                                       false, soc, k, slices, 3, {{boundary.name, boundary.bytes}}, 29, boundary.stages,
+                                       16);
+                }
+            }
+        }
+    }
+}
+
+TEST(RotateQuantGroupedTiling, StageCapacityDoesNotRequireExactGroupTaskCount)
+{
+    // Even this one-row case keeps the capacity-selected pipeline and full-core launch.
+    for (const char* soc : {"Ascend950", "Ascend960DT", "Ascend960PR"}) {
+        CheckGroupedTiling(1, 1, 1, ge::DT_INT64, ge::GRAPH_SUCCESS, false, soc, 32, 0, 1, {}, 1, 2, 16);
+    }
+}
+
+TEST(RotateQuantGroupedTiling, HostShapeBoundsKeepDeviceOffsetsWithinInt64)
+{
+    constexpr int64_t maxDim = (int64_t{1} << 31) - 1;
+    // Shape metadata only: no allocation of these large input/output tensors.
+    for (int64_t k : {32, 256}) {
+        const int64_t ratio = maxDim / k;
+        for (bool segmented : {false, true}) {
+            CheckGroupedTiling(1024, 1024, 1, ge::DT_INT64, ge::GRAPH_SUCCESS, false, "Ascend950", k,
+                               segmented ? ratio : 0, ratio, {}, maxDim);
+            CheckGroupedTiling(1024, 1024, 1, ge::DT_INT64, ge::GRAPH_FAILED, false, "Ascend950", k,
+                               segmented ? ratio : 0, ratio, {}, maxDim + 1);
+            CheckGroupedTiling(1024, 1024, 1, ge::DT_INT64, ge::GRAPH_FAILED, false, "Ascend950", k,
+                               segmented ? ratio + 1 : 0, ratio + 1, {}, maxDim);
+        }
+    }
+}
+
 TEST(RotateQuantGroupedTiling, RejectAscend350EvenWithArch35Resources)
 {
     CheckGroupedTiling(7, 7, 1, ge::DT_INT64, ge::GRAPH_FAILED, false, "Ascend350");
 }
 
-TEST(RotateQuantGroupedTiling, RejectDav920SeriesWithMatchingCoreRatio)
+TEST(RotateQuantGroupedTiling, Dav920SeriesUsesSingleAiv)
 {
-    for (const char* soc : {"dav9201", "dav9202"}) {
-        CheckGroupedTiling(7, 7, 0, ge::DT_INT64, ge::GRAPH_FAILED, false, soc);
-        CheckGroupedTiling(7, 7, 1, ge::DT_INT64, ge::GRAPH_FAILED, false, soc, 64, 3);
+    for (const char* soc : {"Ascend960DT", "Ascend960PR"}) {
+        CheckGroupedTiling(7, 7, 0, ge::DT_INT64, ge::GRAPH_SUCCESS, false, soc);
+        CheckGroupedTiling(7, 7, 1, ge::DT_INT64, ge::GRAPH_SUCCESS, false, soc, 64, 3);
     }
 }
 

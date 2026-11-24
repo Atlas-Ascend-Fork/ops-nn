@@ -183,9 +183,10 @@ TEST_F(RotateQuantInferShape, RotateQuant_InferDtype_case_0)
 }
 
 static void CheckGroupedInferShapePlatform(const string& socVersion, ge::graphStatus expected, int64_t rotSlices = 0,
-                                           int32_t archType = 0)
+                                           int32_t archType = 0, ge::DataType outputType = ge::DT_FLOAT8_E4M3FN)
 {
-    SCOPED_TRACE(::testing::Message() << "soc=" << socVersion << ", rotSlices=" << rotSlices);
+    SCOPED_TRACE(::testing::Message() << "soc=" << socVersion << ", arch=" << archType << ", rotSlices=" << rotSlices
+                                      << ", outputType=" << static_cast<int32_t>(outputType));
     fe::PlatformInfo platform;
     fe::OptionalInfo optional;
     platform.str_info.short_soc_version = socVersion;
@@ -197,10 +198,12 @@ static void CheckGroupedInferShapePlatform(const string& socVersion, ge::graphSt
     ASSERT_NE(impl, nullptr);
     // Runtime inputs are compacted: the missing alpha occupies no instance.
     // The group list is the fourth IR input, but the third runtime input.
-    gert::StorageShape x = {{29, 96}, {29, 96}};
-    gert::StorageShape rot = {{7, 32, 32}, {7, 32, 32}};
+    const int64_t k = outputType == Ops::NN::DT_HIFLOAT4 ? 64 : 32;
+    const int64_t n = 3 * k;
+    gert::StorageShape x = {{29, n}, {29, n}};
+    gert::StorageShape rot = {{7, k, k}, {7, k, k}};
     if (rotSlices != 0) {
-        rot = gert::StorageShape({7, rotSlices, 32, 32}, {7, rotSlices, 32, 32});
+        rot = gert::StorageShape({7, rotSlices, k, k}, {7, rotSlices, k, k});
     }
     gert::StorageShape groups = {{7}, {7}};
     gert::StorageShape y = {{}, {}};
@@ -214,9 +217,11 @@ static void CheckGroupedInferShapePlatform(const string& socVersion, ge::graphSt
                       .NodeInputTd(0, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(1, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeInputTd(2, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeOutputTd(0, ge::DT_FLOAT8_E4M3FN, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeOutputTd(1, ge::DT_FLOAT8_E8M0, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeAttrs({{"y_dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(ge::DT_FLOAT8_E4M3FN)},
+                      .NodeOutputTd(0, outputType, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(
+                          1, outputType == Ops::NN::DT_HIFLOAT4 ? Ops::NN::DT_HIFLOAT4_SCALE : ge::DT_FLOAT8_E8M0,
+                          ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"y_dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(outputType)},
                                   {"axis", Ops::NN::AnyValue::CreateFrom<int64_t>(-1)},
                                   {"round_mode", Ops::NN::AnyValue::CreateFrom<string>("rint")},
                                   {"scale_alg", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
@@ -231,8 +236,8 @@ static void CheckGroupedInferShapePlatform(const string& socVersion, ge::graphSt
     ASSERT_EQ(*context->GetOptionalInputShape(3), gert::Shape({7}));
     ASSERT_EQ(impl->infer_shape(context), expected);
     if (expected == ge::GRAPH_SUCCESS) {
-        EXPECT_EQ(*context->GetOutputShape(0), gert::Shape({29, 96}));
-        EXPECT_EQ(*context->GetOutputShape(1), gert::Shape({29, 2, 2}));
+        EXPECT_EQ(*context->GetOutputShape(0), gert::Shape({29, n}));
+        EXPECT_EQ(*context->GetOutputShape(1), gert::Shape({29, (n + 63) / 64, 2}));
     }
 }
 
@@ -241,12 +246,22 @@ TEST_F(RotateQuantInferShape, GroupedRotationWithoutAlphaUsesOptionalInputIndex)
     CheckGroupedInferShapePlatform("Ascend950", ge::GRAPH_SUCCESS, 0, static_cast<int32_t>(Ops::Base::DAV_3510));
 }
 
-TEST_F(RotateQuantInferShape, GroupedRotationRequiresAscend950)
+TEST_F(RotateQuantInferShape, GroupedRotationRejectsUnsupportedPlatforms)
 {
-    CheckGroupedInferShapePlatform("Ascend350", ge::GRAPH_FAILED);
+    CheckGroupedInferShapePlatform("Ascend350", ge::GRAPH_FAILED, 0, static_cast<int32_t>(Ops::Base::DAV_3510));
     CheckGroupedInferShapePlatform("Ascend910B", ge::GRAPH_FAILED);
-    CheckGroupedInferShapePlatform("dav9201", ge::GRAPH_FAILED);
-    CheckGroupedInferShapePlatform("dav9202", ge::GRAPH_FAILED);
+}
+
+TEST_F(RotateQuantInferShape, Dav920SeriesGroupedMxAndHiFloat4)
+{
+    const auto checkPlatform = [](const char* soc, int32_t arch) {
+        CheckGroupedInferShapePlatform(soc, ge::GRAPH_SUCCESS, 0, arch);
+        CheckGroupedInferShapePlatform(soc, ge::GRAPH_SUCCESS, 3, arch);
+        CheckGroupedInferShapePlatform(soc, ge::GRAPH_FAILED, 2, arch);
+        CheckGroupedInferShapePlatform(soc, ge::GRAPH_FAILED, 0, arch, Ops::NN::DT_HIFLOAT4);
+    };
+    checkPlatform("Ascend960DT", static_cast<int32_t>(Ops::Base::DAV_9201));
+    checkPlatform("Ascend960PR", static_cast<int32_t>(Ops::Base::DAV_9202));
 }
 
 TEST_F(RotateQuantInferShape, GroupedPerNRotation)

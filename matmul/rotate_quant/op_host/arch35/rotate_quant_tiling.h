@@ -33,6 +33,7 @@ struct RotateQuantAptCompileInfo {
     uint64_t aicNum{0};
     uint64_t aivNum{0};
     NpuArch npuArch{NpuArch::DAV_2201};
+    uint64_t ubSize{0};
 };
 
 struct RotateQuantAptInfo {
@@ -89,8 +90,12 @@ protected:
     ge::graphStatus ValidateScaleShape(const gert::Shape& mxscaleShape, const gert::Shape& scaleShape);
     void PrintTilingData();
     ge::graphStatus CalcTilingData();
+    bool IsHiFloat4Output() const;
+    uint64_t GetEpilogueWorkspaceBytes(uint32_t maxRows) const;
     bool SetBaseBlockTiling();
+    bool SetHiFloat4MatmulTiling();
     bool SetMatmulTiling();
+    void SetUbDB();
 
     RotateQuantAptOpt::RotateQuantAptTilingData tilingData_;
     RotateQuantAptInfo inputParams_;

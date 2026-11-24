@@ -629,9 +629,17 @@ static bool CheckTransValid(bool trans)
 static bool CheckGroupShape(const aclTensor* x, const aclTensor* rotation, const aclTensor* groupList,
                             int64_t groupListType, const aclTensor* yOut, const aclTensor* scaleOut)
 {
-    OP_CHECK(GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND950,
+    const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
+    OP_CHECK(GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND950 || npuArch == NpuArch::DAV_9201 ||
+                 npuArch == NpuArch::DAV_9202,
              OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnRotateQuantV2GetWorkspaceSize", "groupList", "not nullptr",
-                                                   "groupList must be nullptr on platforms other than Ascend950"),
+                                                   "grouped quantization requires Ascend950, DAV_9201 or DAV_9202"),
+             return false);
+    OP_CHECK(std::find(OUT_DTYPE_SUPPORT_LIST_MX.begin(), OUT_DTYPE_SUPPORT_LIST_MX.end(), yOut->GetDataType()) !=
+                 OUT_DTYPE_SUPPORT_LIST_MX.end(),
+             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                 "aclnnRotateQuantV2GetWorkspaceSize", "yOut.dtype", op::ToString(yOut->GetDataType()).GetString(),
+                 "grouped quantization supports only FLOAT4_E2M1, FLOAT8_E4M3FN and FLOAT8_E5M2"),
              return false);
     const auto& xs = x->GetViewShape();
     const auto& rs = rotation->GetViewShape();
