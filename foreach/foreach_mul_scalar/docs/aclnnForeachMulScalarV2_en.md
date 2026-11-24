@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: This API multiplies each tensor in the input tensor list by the scalar. Compared with [aclnnForeachMulScalar](aclnnForeachMulScalar.md), this API changes the structure type of the scalar input parameter from aclTensor to aclScalar. Select an appropriate API based on the actual situation.
+- Description: This API multiplies each tensor in the input tensor list by the scalar. Compared with [aclnnForeachMulScalar](aclnnForeachMulScalar_en.md), this API changes the structure type of the scalar input parameter from aclTensor to aclScalar. Select an appropriate API based on the actual situation.
 
 - Formula:
 
