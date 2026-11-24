@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Backward propagation of [aclnnLayerNorm](../../layer_norm_v4/docs/aclnnLayerNorm&aclnnLayerNormWithImplMode.md). Computes the gradients of the input tensors for updating model parameters during backward propagation.
+- Description: Backward propagation of [aclnnLayerNorm](../../layer_norm_v4/docs/aclnnLayerNorm&aclnnLayerNormWithImplMode_en.md). Computes the gradients of the input tensors for updating model parameters during backward propagation.
 - Formula:
 
   $$
