@@ -1,0 +1,12 @@
+testcase_name,api_name,tensor_view_shapes,tensor_dtypes,tensor_formats,attributes,output_tensor_indexes,golden_api,input_data_ranges,is_enabled
+Scewl_e2e_fp32_same_8x16,tf.raw_ops.SoftmaxCrossEntropyWithLogits,"((8,16),(8,16))","('float32','float32')",,{},,,"((-100,100),(-100,100))",
+Scewl_e2e_fp16_same_8x16,tf.raw_ops.SoftmaxCrossEntropyWithLogits,"((8,16),(8,16))","('float16','float16')",,{},,,"((-30,30),(-1,1))",
+Scewl_e2e_bf16_same_8x16,tf.raw_ops.SoftmaxCrossEntropyWithLogits,"((8,16),(8,16))","('bfloat16','bfloat16')",,{},,,"((-30,30),(-1,1))",
+Scewl_e2e_fp32_bcast_labels_col,tf.raw_ops.SoftmaxCrossEntropyWithLogits,"((8,16),(8,1))","('float32','float32')",,{},,,"((-100,100),(-1,1))",
+Scewl_e2e_fp32_bcast_both,tf.raw_ops.SoftmaxCrossEntropyWithLogits,"((1,16),(8,1))","('float32','float32')",,{},,,"((-100,100),(-1,1))",
+Scewl_e2e_fp16_bcast_labels_row,tf.raw_ops.SoftmaxCrossEntropyWithLogits,"((8,16),(1,16))","('float16','float16')",,{},,,"((-30,30),(-1,1))",
+Scewl_e2e_bf16_bcast_labels_col,tf.raw_ops.SoftmaxCrossEntropyWithLogits,"((8,16),(8,1))","('bfloat16','bfloat16')",,{},,,"((-30,30),(-1,1))",
+Scewl_e2e_fp32_large_128x256,tf.raw_ops.SoftmaxCrossEntropyWithLogits,"((128,256),(128,256))","('float32','float32')",,{},,,"((-100,100),(-100,100))",
+Scewl_e2e_fp16_large_128x256,tf.raw_ops.SoftmaxCrossEntropyWithLogits,"((128,256),(128,256))","('float16','float16')",,{},,,"((-30,30),(-1,1))",
+Scewl_e2e_bf16_large_128x256,tf.raw_ops.SoftmaxCrossEntropyWithLogits,"((128,256),(128,256))","('bfloat16','bfloat16')",,{},,,"((-30,30),(-1,1))",
+Scewl_e2e_fp32_bcast_large_row,tf.raw_ops.SoftmaxCrossEntropyWithLogits,"((128,256),(1,256))","('float32','float32')",,{},,,"((-100,100),(-1,1))",

@@ -1,0 +1,7 @@
+testcase_name,api_name,tensor_dtypes,tensor_formats,tensor_view_shapes,input_data_ranges,output_tensor_indexes,attributes,absolute_precision
+Scewl_aclnn_fp32_same_8x16,aclnnSoftmaxCrossEntropyWithLogits,"('float32','float32','float32','float32')","('ND',)","((8,16),(8,16),(8,),(8,16))","((-100,100),(-100,100),(-0.001,0.001),(-0.001,0.001))","(2,3)",{},0.0001
+Scewl_aclnn_fp16_same_8x16,aclnnSoftmaxCrossEntropyWithLogits,"('float16','float16','float16','float16')","('ND',)","((8,16),(8,16),(8,),(8,16))","((-30,30),(-1,1),(-0.001,0.001),(-0.001,0.001))","(2,3)",{},0.001
+Scewl_aclnn_bf16_same_8x16,aclnnSoftmaxCrossEntropyWithLogits,"('bfloat16','bfloat16','bfloat16','bfloat16')","('ND',)","((8,16),(8,16),(8,),(8,16))","((-30,30),(-1,1),(-0.001,0.001),(-0.001,0.001))","(2,3)",{},0.004
+Scewl_aclnn_fp32_large_128x256,aclnnSoftmaxCrossEntropyWithLogits,"('float32','float32','float32','float32')","('ND',)","((128,256),(128,256),(128,),(128,256))","((-100,100),(-100,100),(-0.001,0.001),(-0.001,0.001))","(2,3)",{},0.0001
+Scewl_aclnn_fp16_large_128x256,aclnnSoftmaxCrossEntropyWithLogits,"('float16','float16','float16','float16')","('ND',)","((128,256),(128,256),(128,),(128,256))","((-30,30),(-1,1),(-0.001,0.001),(-0.001,0.001))","(2,3)",{},0.001
+Scewl_aclnn_bf16_large_128x256,aclnnSoftmaxCrossEntropyWithLogits,"('bfloat16','bfloat16','bfloat16','bfloat16')","('ND',)","((128,256),(128,256),(128,),(128,256))","((-30,30),(-1,1),(-0.001,0.001),(-0.001,0.001))","(2,3)",{},0.004

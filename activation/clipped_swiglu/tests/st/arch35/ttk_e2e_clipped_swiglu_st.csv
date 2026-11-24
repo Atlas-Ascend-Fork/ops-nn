@@ -1,0 +1,13 @@
+testcase_name,api_name,tensor_view_shapes,tensor_dtypes,tensor_formats,attributes,output_tensor_indexes,golden_api,input_data_ranges,is_enabled
+csg_e2e_fp16_ilv_none,cann_ops_nn_custom.clipped_swiglu,"((4,64),None)","('float16','int64')",,"{'dim': -1, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': True, 'clamp_mode': 0}",,,"((-10,10),None)",
+csg_e2e_fp16_split_none,cann_ops_nn_custom.clipped_swiglu,"((4,64),None)","('float16','int64')",,"{'dim': -1, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': False, 'clamp_mode': 0}",,,"((-10,10),None)",
+csg_e2e_bf16_ilv_none,cann_ops_nn_custom.clipped_swiglu,"((4,64),None)","('bfloat16','int64')",,"{'dim': -1, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': True, 'clamp_mode': 0}",,,"((-10,10),None)",
+csg_e2e_fp32_ilv_none,cann_ops_nn_custom.clipped_swiglu,"((4,64),None)","('float32','int64')",,"{'dim': -1, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': True, 'clamp_mode': 0}",,,"((-10,10),None)",
+csg_e2e_fp16_cm1_ilv,cann_ops_nn_custom.clipped_swiglu,"((4,64),None)","('float16','int64')",,"{'dim': -1, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': True, 'clamp_mode': 1}",,,"((-10,10),None)",
+csg_e2e_bf16_cm1_split,cann_ops_nn_custom.clipped_swiglu,"((4,64),None)","('bfloat16','int64')",,"{'dim': -1, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': False, 'clamp_mode': 1}",,,"((-10,10),None)",
+csg_e2e_fp16_group_partial,cann_ops_nn_custom.clipped_swiglu,"((8,64),(2,))","('float16','int64')",,"{'dim': -1, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': True, 'clamp_mode': 0}",,,"((-10,10),(0,3))",
+csg_e2e_fp32_group_partial_split,cann_ops_nn_custom.clipped_swiglu,"((8,64),(3,))","('float32','int64')",,"{'dim': -1, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': False, 'clamp_mode': 0}",,,"((-10,10),(0,2))",
+csg_e2e_fp16_dim0,cann_ops_nn_custom.clipped_swiglu,"((4,6,64),None)","('float16','int64')",,"{'dim': 0, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': True, 'clamp_mode': 0}",,,"((-10,10),None)",
+csg_e2e_fp32_dim1_cm1,cann_ops_nn_custom.clipped_swiglu,"((2,4,64),None)","('float32','int64')",,"{'dim': 1, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': True, 'clamp_mode': 1}",,,"((-10,10),None)",
+csg_e2e_fp16_value_edge,cann_ops_nn_custom.clipped_swiglu,"((4,64),None)","('float16','int64')",,"{'dim': -1, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': True, 'clamp_mode': 0}",,,"((-100,100),None)",
+csg_e2e_bf16_group_full_cm1,cann_ops_nn_custom.clipped_swiglu,"((8,64),(1,))","('bfloat16','int64')",,"{'dim': -1, 'alpha': 1.702, 'limit': 7.0, 'bias': 1.0, 'interleaved': True, 'clamp_mode': 1}",,,"((-10,10),(8,8))",
