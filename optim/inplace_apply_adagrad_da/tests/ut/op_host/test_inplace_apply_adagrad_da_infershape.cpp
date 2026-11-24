@@ -150,6 +150,26 @@ TEST_F(InplaceApplyAdagradDAInferShapeTest, infershape_scalar_test)
     EXPECT_EQ(*context->GetOutputShape(0), var_shape);
 }
 
+TEST_F(InplaceApplyAdagradDAInferShapeTest, infershape_rank0_scalar_inputs_test)
+{
+    InitPlatform();
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("InplaceApplyAdagradDA")->infer_shape;
+
+    // TF API 原生 0-D 标量入参 (e2e 通路) 为公开契约合法输入;
+    // GE 规范化后 storage shape 为 {1}, 与 tiling 校验匹配
+    gert::Shape var_shape = {128};
+    gert::Shape scalar_shape = {};
+    gert::Shape out_shape_0 = {};
+    gert::Shape out_shape_1 = {};
+    gert::Shape out_shape_2 = {};
+
+    auto holder = MakeHolder(StandardInputs(&var_shape, &scalar_shape), {&out_shape_0, &out_shape_1, &out_shape_2});
+    auto* context = holder.GetContext<gert::InferShapeContext>();
+
+    ASSERT_EQ(inferShapeFunc(context), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(*context->GetOutputShape(0), var_shape);
+}
+
 TEST_F(InplaceApplyAdagradDAInferShapeTest, infershape_high_rank_test)
 {
     InitPlatform();
@@ -293,7 +313,7 @@ TEST_F(InplaceApplyAdagradDAInferShapeTest, infershape_tensor_mismatch_reject_te
     }
 }
 
-// ---------- 负向用例: 标量输入非 [1] ----------
+// ---------- 负向用例: 标量输入非标量形态 ----------
 
 TEST_F(InplaceApplyAdagradDAInferShapeTest, infershape_scalar_nonscalar_reject_test)
 {
@@ -303,21 +323,22 @@ TEST_F(InplaceApplyAdagradDAInferShapeTest, infershape_scalar_nonscalar_reject_t
     gert::Shape var_shape = {128};
     gert::Shape scalar_shape = {1};
     gert::Shape wrong_shape = {2};
-    gert::Shape wrong_rank0 = {};
+    gert::Shape wrong_rank2 = {1, 1};
     gert::Shape out_shape_0 = {};
     gert::Shape out_shape_1 = {};
     gert::Shape out_shape_2 = {};
 
-    // lr(4) / l1(5) / l2(6) / global_step(7) 必须为 [1]
+    // lr(4) / l1(5) / l2(6) / global_step(7) 必须为 0-D [] 或 [1];
+    // 0-D 标量(TF API 原生契约)为合法形态, 见 infershape_rank0_scalar_inputs_test
     for (size_t k = 4; k <= 7; ++k) {
         auto holder = MakeHolder(StandardInputs(&var_shape, &scalar_shape, &wrong_shape, k),
                                  {&out_shape_0, &out_shape_1, &out_shape_2});
         EXPECT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED)
             << "input index " << k;
-        auto holderRank0 = MakeHolder(StandardInputs(&var_shape, &scalar_shape, &wrong_rank0, k),
+        auto holderRank2 = MakeHolder(StandardInputs(&var_shape, &scalar_shape, &wrong_rank2, k),
                                       {&out_shape_0, &out_shape_1, &out_shape_2});
-        EXPECT_EQ(inferShapeFunc(holderRank0.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED)
-            << "input index " << k << " rank-0";
+        EXPECT_EQ(inferShapeFunc(holderRank2.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED)
+            << "input index " << k << " rank-2";
     }
 }
 

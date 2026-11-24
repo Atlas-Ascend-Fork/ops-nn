@@ -186,17 +186,19 @@ static ge::graphStatus GetShapeAndValidate(gert::TilingContext* context, int64_t
                     return ge::GRAPH_FAILED);
     }
 
-    // 校验标量输入为 1-element (lr=4, l1=5, l2=6, global_step=7)
+    // 校验标量输入为 0-D 标量或 1-element [1] (lr=4, l1=5, l2=6, global_step=7);
+    // 与 infershape 契约同判: 0-D 为 TF API 原生形态(e2e 通路,GE 归一化后 storage shape
+    // 为 {1}), [1] 为 kernel 模式用例契约; 标量值由 kernel 按内存平铺读取, 与 rank 无关
     constexpr uint32_t SCALAR_INPUT_START = 4;
     constexpr uint32_t SCALAR_INPUT_END = 8;
     for (uint32_t i = SCALAR_INPUT_START; i < SCALAR_INPUT_END; i++) {
         auto scalarInput = context->GetInputShape(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, scalarInput);
         const auto& scalarShape = scalarInput->GetStorageShape();
-        OP_CHECK_IF(scalarShape.GetDimNum() != 1 || scalarShape.GetDim(0) != 1,
+        OP_CHECK_IF(scalarShape.GetDimNum() != 0 && (scalarShape.GetDimNum() != 1 || scalarShape.GetDim(0) != 1),
                     OP_LOGE(context,
-                            "InplaceApplyAdagradDA: input[%u] must have scalar shape [1]; input name=%s, actual "
-                            "shape=%s, legal shape=[1]",
+                            "InplaceApplyAdagradDA: input[%u] must have scalar shape [1] or []; input name=%s, "
+                            "actual shape=%s, legal shape=[1]/[]",
                             i, INPUT_NAMES[i], Ops::Base::ToString(scalarShape).c_str()),
                     return ge::GRAPH_FAILED);
     }

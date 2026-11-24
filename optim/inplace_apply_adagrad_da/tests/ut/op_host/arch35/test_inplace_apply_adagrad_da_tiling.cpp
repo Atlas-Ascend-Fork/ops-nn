@@ -171,6 +171,21 @@ TEST_F(InplaceApplyAdagradDATilingTest, tiling_empty_tensor)
     DoTilingTest(ge::DT_FLOAT, ge::DT_INT32, varShape, scalarShape, false);
 }
 
+TEST_F(InplaceApplyAdagradDATilingTest, tiling_rank0_scalar_storage_test)
+{
+    // 0-D 标量 storage shape 为公开契约合法输入 (TF API 原生形态, 与 infershape 契约同判)
+    gert::StorageShape varShape = {{256}, {256}};
+    gert::StorageShape scalarShape = {{}, {}};
+    DoTilingTest(ge::DT_FLOAT, ge::DT_INT32, varShape, scalarShape, false);
+}
+
+TEST_F(InplaceApplyAdagradDATilingTest, tiling_scalar_nonscalar_storage_rejected)
+{
+    gert::StorageShape varShape = {{256}, {256}};
+    gert::StorageShape scalarShape = {{2}, {2}};
+    DoTilingTest(ge::DT_FLOAT, ge::DT_INT32, varShape, scalarShape, false, ge::GRAPH_FAILED);
+}
+
 TEST_F(InplaceApplyAdagradDATilingTest, tiling_unknown_dim_minus1_rejected)
 {
     // -1 未知维(动态 shape 图): Host 放行后由 Tiling 以绑定后 shape 把关(README 约束说明);

@@ -37,7 +37,7 @@ constexpr uint32_t INPUT_COUNT = 8;
 constexpr uint32_t OUTPUT_COUNT = 3;
 // 张量输入范围 [1, 4): shape 必须与 var 完全一致
 constexpr uint32_t TENSOR_INPUT_END = 4;
-// 标量输入范围 [4, 8): 必须为 1-element [1]
+// 标量输入范围 [4, 8): 必须为 0-D 标量或 1-element [1]
 constexpr uint32_t SCALAR_INPUT_END = 8;
 // FORMAT_ND 公开契约 rank 0..8
 constexpr size_t MAX_TENSOR_RANK = 8;
@@ -54,6 +54,13 @@ static bool HasUnknownDim(const gert::Shape& shape)
         }
     }
     return false;
+}
+
+// 标量双形态: 0-D (TF API 原生契约, e2e 通路传入) 或 [1] (kernel 模式用例契约)。
+// Matches the Tiling rule: a GE-normalized rank-0 tensor has storage shape {1}.
+static bool IsScalarShape(const gert::Shape& shape)
+{
+    return shape.GetDimNum() == 0 || (shape.GetDimNum() == 1 && shape.GetDim(0) == 1);
 }
 
 static ge::graphStatus InferShape4InplaceApplyAdagradDA(gert::InferShapeContext* context)
@@ -88,14 +95,14 @@ static ge::graphStatus InferShape4InplaceApplyAdagradDA(gert::InferShapeContext*
                     return ge::GRAPH_FAILED);
     }
 
-    // 标量输入必须为 1-element [1] (lr=4, l1=5, l2=6, global_step=7);
-    // 含未知维时同样留给 tiling 校验
+    // 标量输入必须为 0-D 标量或 1-element [1] (lr=4, l1=5, l2=6, global_step=7);
+    // 0-D 经 GE 规范化后 storage shape 为 {1}, 与 tiling 校验匹配; 含未知维时同样留给 tiling 校验
     for (uint32_t i = TENSOR_INPUT_END; i < SCALAR_INPUT_END; ++i) {
         const gert::Shape* scalarShape = context->GetInputShape(i);
-        OP_CHECK_IF(!HasUnknownDim(*scalarShape) && (scalarShape->GetDimNum() != 1 || scalarShape->GetDim(0) != 1),
+        OP_CHECK_IF(!HasUnknownDim(*scalarShape) && !IsScalarShape(*scalarShape),
                     OP_LOGE(context,
-                            "InplaceApplyAdagradDA: input[%u] must have scalar shape [1]; input name=%s, actual "
-                            "shape=%s, legal shape=[1]",
+                            "InplaceApplyAdagradDA: input[%u] must have scalar shape [1] or []; input name=%s, actual "
+                            "shape=%s, legal shape=[1]/[]",
                             i, INPUT_NAMES[i], Ops::Base::ToString(*scalarShape).c_str()),
                     return ge::GRAPH_FAILED);
     }

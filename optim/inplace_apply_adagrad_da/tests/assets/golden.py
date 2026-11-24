@@ -152,4 +152,60 @@ class InplaceApplyAdagradDASpec:
     }
 
 
-__spec__ = {"inplace_apply_adagrad_da": "InplaceApplyAdagradDASpec"}
+__spec__ = {
+    "inplace_apply_adagrad_da": "InplaceApplyAdagradDASpec",
+    "tf.raw_ops.ApplyAdagradDA": "InplaceApplyAdagradDATfSpec",
+    "tf.raw_ops.ResourceApplyAdagradDA": "InplaceApplyAdagradDATfSpec",
+}
+
+
+def _as_np(x):
+    """e2e 通路入参为 TF 框架对象(ResourceVariable/EagerTensor),统一转 numpy。"""
+    if hasattr(x, "numpy"):
+        x = x.numpy()
+    return np.asarray(x)
+
+
+def tf_golden(
+    var,
+    gradient_accumulator,
+    gradient_squared_accumulator,
+    grad,
+    lr,
+    l1,
+    l2,
+    global_step,
+    use_locking=False,
+    **kwargs,
+):
+    """TF 通路参考真值——TF2 eager 通路(升精度 fp32 计算、结果回 cast)。
+
+    不复用 kernel golden 的 TF1 通路: 其 tf.disable_v2_behavior() 会全局关闭
+    eager 且无法运行中恢复(enable_eager_execution 受 program startup 限制),
+    毒化同进程 e2e 执行腿; 改走 _TFThirdParty 同款 TF2 eager 实现, 数学一致。
+    """
+    del use_locking, kwargs
+    args = [
+        _as_np(a)
+        for a in (
+            var,
+            gradient_accumulator,
+            gradient_squared_accumulator,
+            grad,
+            lr,
+            l1,
+            l2,
+            global_step,
+        )
+    ]
+    return InplaceApplyAdagradDASpec._TFThirdParty()(*args)
+
+
+class InplaceApplyAdagradDATfSpec:
+    golden = staticmethod(tf_golden)
+    # TF 无 GPU kernel:第三方经远端执行时由 _TFThirdParty 内部 tf.device("/CPU:0") 强制 CPU
+    third_party = {"tf": InplaceApplyAdagradDASpec._TFThirdParty}
+    tolerance = {
+        "float32": {"standard": "cross_check", "level": "L1"},
+        "float16": {"standard": "cross_check", "level": "L1"},
+    }
