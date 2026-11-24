@@ -9,7 +9,6 @@
  */
 
 #include <iostream>
-#include <memory>
 #include <vector>
 #include "acl/acl.h"
 #include "aclnnop/aclnn_foreach_erfc.h"
@@ -71,13 +70,12 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
     return 0;
 }
 
-int ForeachErfcExample(int32_t deviceId, const aclrtStream stream)
+int main()
 {
-    // 2. 构造输入与输出，需要根据API的接口自定义构造
-    std::vector<int64_t> selfShape1 = {2, 3};
-    std::vector<int64_t> selfShape2 = {1, 3};
-    std::vector<int64_t> outShape1 = {2, 3};
-    std::vector<int64_t> outShape2 = {1, 3};
+    // 1. （固定写法）device/stream初始化，参考acl API手册
+    // 根据自己的实际device填写deviceId
+    int32_t deviceId = 0;
+    aclrtStream stream = nullptr;
     void* input1DeviceAddr = nullptr;
     void* input2DeviceAddr = nullptr;
     void* out1DeviceAddr = nullptr;
@@ -86,68 +84,100 @@ int ForeachErfcExample(int32_t deviceId, const aclrtStream stream)
     aclTensor* input2 = nullptr;
     aclTensor* out1 = nullptr;
     aclTensor* out2 = nullptr;
+    aclTensorList* tensorListInput = nullptr;
+    aclTensorList* tensorListOutput = nullptr;
+    void* workspaceAddr = nullptr;
+
+    auto cleanup = [&]() {
+        if (tensorListInput != nullptr) {
+            aclDestroyTensorList(tensorListInput);
+        }
+        if (tensorListOutput != nullptr) {
+            aclDestroyTensorList(tensorListOutput);
+        }
+        if (input1DeviceAddr != nullptr) {
+            aclrtFree(input1DeviceAddr);
+        }
+        if (input2DeviceAddr != nullptr) {
+            aclrtFree(input2DeviceAddr);
+        }
+        if (out1DeviceAddr != nullptr) {
+            aclrtFree(out1DeviceAddr);
+        }
+        if (out2DeviceAddr != nullptr) {
+            aclrtFree(out2DeviceAddr);
+        }
+        if (workspaceAddr != nullptr) {
+            aclrtFree(workspaceAddr);
+        }
+        if (stream != nullptr) {
+            aclrtDestroyStream(stream);
+        }
+        (void)aclrtResetDevice(deviceId);
+        (void)aclFinalize();
+    };
+
+    auto ret = Init(deviceId, &stream);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); cleanup(); return ret);
+
+    // 2. 构造输入与输出，需要根据API的接口自定义构造
+    std::vector<int64_t> selfShape1 = {2, 3};
+    std::vector<int64_t> selfShape2 = {1, 3};
+    std::vector<int64_t> outShape1 = {2, 3};
+    std::vector<int64_t> outShape2 = {1, 3};
     std::vector<float> input1HostData = {1, 2, 3, 4, 5, 6};
     std::vector<float> input2HostData = {7, 8, 9};
     std::vector<float> out1HostData(6, 0);
     std::vector<float> out2HostData(3, 0);
 
     // 创建input1 aclTensor
-    auto ret = CreateAclTensor(input1HostData, selfShape1, &input1DeviceAddr, aclDataType::ACL_FLOAT, &input1);
-    std::unique_ptr<void, aclError (*)(void*)> input1DeviceAddrPtr(input1DeviceAddr, aclrtFree);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    ret = CreateAclTensor(input1HostData, selfShape1, &input1DeviceAddr, aclDataType::ACL_FLOAT, &input1);
+    CHECK_RET(ret == ACL_SUCCESS, cleanup(); return ret);
 
     // 创建input2 aclTensor
     ret = CreateAclTensor(input2HostData, selfShape2, &input2DeviceAddr, aclDataType::ACL_FLOAT, &input2);
-    std::unique_ptr<void, aclError (*)(void*)> input2DeviceAddrPtr(input2DeviceAddr, aclrtFree);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, cleanup(); return ret);
 
     // 创建out1 aclTensor
     ret = CreateAclTensor(out1HostData, outShape1, &out1DeviceAddr, aclDataType::ACL_FLOAT, &out1);
-    std::unique_ptr<void, aclError (*)(void*)> out1DeviceAddrPtr(out1DeviceAddr, aclrtFree);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, cleanup(); return ret);
 
     // 创建out2 aclTensor
     ret = CreateAclTensor(out2HostData, outShape2, &out2DeviceAddr, aclDataType::ACL_FLOAT, &out2);
-    std::unique_ptr<void, aclError (*)(void*)> out2DeviceAddrPtr(out2DeviceAddr, aclrtFree);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, cleanup(); return ret);
 
     std::vector<aclTensor*> tempInput{input1, input2};
-    aclTensorList* tensorListInput = aclCreateTensorList(tempInput.data(), tempInput.size());
-    std::unique_ptr<aclTensorList, aclnnStatus (*)(const aclTensorList*)> tensorListInputPtr(tensorListInput,
-                                                                                             aclDestroyTensorList);
+    tensorListInput = aclCreateTensorList(tempInput.data(), tempInput.size());
     std::vector<aclTensor*> tempOutput{out1, out2};
-    aclTensorList* tensorListOutput = aclCreateTensorList(tempOutput.data(), tempOutput.size());
-    std::unique_ptr<aclTensorList, aclnnStatus (*)(const aclTensorList*)> tensorListOutputPtr(tensorListOutput,
-                                                                                              aclDestroyTensorList);
+    tensorListOutput = aclCreateTensorList(tempOutput.data(), tempOutput.size());
 
     // 3. 调用CANN算子库API，需要修改为具体的API名称
     uint64_t workspaceSize = 0;
-    aclOpExecutor* executor;
+    aclOpExecutor* executor = nullptr;
     // 调用aclnnForeachErfc第一段接口
     ret = aclnnForeachErfcGetWorkspaceSize(tensorListInput, tensorListOutput, &workspaceSize, &executor);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnForeachErfcGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnForeachErfcGetWorkspaceSize failed. ERROR: %d\n", ret); cleanup();
+              return ret);
     // 根据第一段接口计算出的workspaceSize申请device内存
-    void* workspaceAddr = nullptr;
-    std::unique_ptr<void, aclError (*)(void*)> workspaceAddrPtr(nullptr, aclrtFree);
     if (workspaceSize > 0) {
         ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
-        workspaceAddrPtr.reset(workspaceAddr);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); cleanup(); return ret);
     }
     // 调用aclnnForeachErfc第二段接口
     ret = aclnnForeachErfc(workspaceAddr, workspaceSize, executor, stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnForeachErfc failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnForeachErfc failed. ERROR: %d\n", ret); cleanup(); return ret);
 
     // 4. （固定写法）同步等待任务执行结束
     ret = aclrtSynchronizeStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); cleanup(); return ret);
 
     // 5. 获取输出的值，将device侧内存上的结果复制至host侧，需要根据具体API的接口定义修改
     auto size = GetShapeSize(outShape1);
     std::vector<float> out1Data(size, 0);
     ret = aclrtMemcpy(out1Data.data(), out1Data.size() * sizeof(out1Data[0]), out1DeviceAddr,
                       size * sizeof(out1Data[0]), ACL_MEMCPY_DEVICE_TO_HOST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); cleanup();
+              return ret);
     for (int64_t i = 0; i < size; i++) {
         LOG_PRINT("out1 result[%ld] is: %f\n", i, out1Data[i]);
     }
@@ -156,29 +186,11 @@ int ForeachErfcExample(int32_t deviceId, const aclrtStream stream)
     std::vector<float> out2Data(size, 0);
     ret = aclrtMemcpy(out2Data.data(), out2Data.size() * sizeof(out2Data[0]), out2DeviceAddr,
                       size * sizeof(out2Data[0]), ACL_MEMCPY_DEVICE_TO_HOST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); cleanup();
+              return ret);
     for (int64_t i = 0; i < size; i++) {
         LOG_PRINT("out2 result[%ld] is: %f\n", i, out2Data[i]);
     }
-
-    return ACL_SUCCESS;
-}
-
-int main()
-{
-    // 1. （固定写法）device/stream初始化，参考acl API手册
-    // 根据自己的实际device填写deviceId
-    int32_t deviceId = 0;
-    aclrtStream stream;
-    auto ret = Init(deviceId, &stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
-
-    ret = ForeachErfcExample(deviceId, stream);
-
-    // 6/7. 释放资源：aclTensor、TensorList、device内存在示例内任意路径（含失败提前返回）均由
-    // unique_ptr 自动释放；stream与设备上下文在此处统一释放
-    aclrtDestroyStream(stream);
-    aclrtResetDevice(deviceId);
-    aclFinalize();
-    return ret == ACL_SUCCESS ? 0 : ret;
+    cleanup();
+    return 0;
 }

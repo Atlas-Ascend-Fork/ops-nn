@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -75,80 +75,98 @@ int main()
     // 1. （固定写法）device/stream初始化，参考acl API手册
     // 根据自己的实际device填写deviceId
     int32_t deviceId = 0;
-    aclrtStream stream;
-    auto ret = Init(deviceId, &stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
-
-    // 2. 构造输入与输出，需要根据API的接口自定义构造
-    std::vector<int64_t> yGradShape = {2, 16};
-    std::vector<int64_t> xShape = {2, 32};
-    std::vector<int64_t> outShape = {2, 32};
+    aclrtStream stream = nullptr;
     void* yGradDeviceAddr = nullptr;
     void* xDeviceAddr = nullptr;
     void* outDeviceAddr = nullptr;
     aclTensor* yGrad = nullptr;
     aclTensor* x = nullptr;
     aclTensor* out = nullptr;
+    void* workspaceAddr = nullptr;
+
+    auto cleanup = [&]() {
+        if (yGrad != nullptr) {
+            aclDestroyTensor(yGrad);
+        }
+        if (x != nullptr) {
+            aclDestroyTensor(x);
+        }
+        if (out != nullptr) {
+            aclDestroyTensor(out);
+        }
+        if (yGradDeviceAddr != nullptr) {
+            aclrtFree(yGradDeviceAddr);
+        }
+        if (xDeviceAddr != nullptr) {
+            aclrtFree(xDeviceAddr);
+        }
+        if (outDeviceAddr != nullptr) {
+            aclrtFree(outDeviceAddr);
+        }
+        if (workspaceAddr != nullptr) {
+            aclrtFree(workspaceAddr);
+        }
+        if (stream != nullptr) {
+            aclrtDestroyStream(stream);
+        }
+        (void)aclrtResetDevice(deviceId);
+        (void)aclFinalize();
+    };
+
+    auto ret = Init(deviceId, &stream);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); cleanup(); return ret);
+
+    // 2. 构造输入与输出，需要根据API的接口自定义构造
+    std::vector<int64_t> yGradShape = {2, 16};
+    std::vector<int64_t> xShape = {2, 32};
+    std::vector<int64_t> outShape = {2, 32};
     std::vector<float> yGradHostData = {-2, -1, 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13,
                                         14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29};
     std::vector<float> xHostData = {-2, -1, 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13,
                                     14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
                                     30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
                                     46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61};
-    std::vector<float> outHostData = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    std::vector<float> outHostData(GetShapeSize(outShape), 0.0f);
     int64_t dimOptional = -1;
     // 创建yGrad aclTensor
     ret = CreateAclTensor(yGradHostData, yGradShape, &yGradDeviceAddr, aclDataType::ACL_FLOAT, &yGrad);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, cleanup(); return ret);
     // 创建x aclTensor
     ret = CreateAclTensor(xHostData, xShape, &xDeviceAddr, aclDataType::ACL_FLOAT, &x);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, cleanup(); return ret);
     // 创建out aclTensor
     ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT, &out);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
-    // 3. 调用CANN算子库API，需要修改为具体的Api名称
+    CHECK_RET(ret == ACL_SUCCESS, cleanup(); return ret);
+    // 3. 调用CANN算子库API，需要修改为具体的API名称
     uint64_t workspaceSize = 0;
-    aclOpExecutor* executor;
+    aclOpExecutor* executor = nullptr;
     // 调用aclnnSwiGluGrad第一段接口
     ret = aclnnSwiGluGradGetWorkspaceSize(yGrad, x, dimOptional, out, &workspaceSize, &executor);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSwiGluGradGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSwiGluGradGetWorkspaceSize failed. ERROR: %d\n", ret); cleanup();
+              return ret);
     // 根据第一段接口计算出的workspaceSize申请device内存
-    void* workspaceAddr = nullptr;
     if (workspaceSize > 0) {
         ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); cleanup(); return ret);
     }
     // 调用aclnnSwiGluGrad第二段接口
     ret = aclnnSwiGluGrad(workspaceAddr, workspaceSize, executor, stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSwiGluGrad failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSwiGluGrad failed. ERROR: %d\n", ret); cleanup(); return ret);
 
     // 4. （固定写法）同步等待任务执行结束
     ret = aclrtSynchronizeStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); cleanup(); return ret);
 
     // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
     auto size = GetShapeSize(outShape);
     std::vector<float> resultData(size, 0);
     ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), outDeviceAddr,
                       size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); cleanup();
+              return ret);
     for (int64_t i = 0; i < size; i++) {
         LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
     }
-    // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
-    aclDestroyTensor(yGrad);
-    aclDestroyTensor(x);
-    aclDestroyTensor(out);
-    // 7. 释放device资源，需要根据具体API的接口定义修改
-    aclrtFree(yGradDeviceAddr);
-    aclrtFree(xDeviceAddr);
-    aclrtFree(outDeviceAddr);
-    if (workspaceSize > 0) {
-        aclrtFree(workspaceAddr);
-    }
-    aclrtDestroyStream(stream);
-    aclrtResetDevice(deviceId);
-    aclFinalize();
+    cleanup();
     return 0;
 }

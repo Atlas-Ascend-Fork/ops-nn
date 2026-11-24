@@ -68,3 +68,4 @@ English | [简体中文](./README.md)
 | ---------------- | --------------------------- | --------------------------------------------------- |
 | aclnn invocation  | [test_aclnn_foreach_zero_inplace](examples/test_aclnn_foreach_zero_inplace.cpp) | Invokes the ForeachZeroInplace operator through the [aclnnForeachZeroInplace](docs/aclnnForeachZeroInplace_en.md) API. |
 | Graph mode | -  | Invokes the ForeachZeroInplace operator by constructing the graph through the [operator IR](op_graph/foreach_zero_inplace_proto.h).         |
+| PyTorch API | - | The `torch._foreach_zero_` interface registered by the torch_npu plugin is called (the op-plugin repository has already implemented it)。 |
