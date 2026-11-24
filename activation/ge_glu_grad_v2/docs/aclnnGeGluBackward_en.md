@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Performs the backward propagation of [aclnnGeGlu](../../ge_glu_v2/docs/aclnnGeGlu.md).
+- Description: Performs the backward propagation of [aclnnGeGlu](../../ge_glu_v2/docs/aclnnGeGlu_en.md).
 - Formula:
 
   $$
