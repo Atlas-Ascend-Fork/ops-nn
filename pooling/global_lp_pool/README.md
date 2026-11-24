@@ -60,7 +60,7 @@
 
 - 输入张量维度仅支持4D(NCHW)或5D(NCD0D1D2)。
 - 属性p必须为非零有限值。p为0、+Inf、-Inf或NaN时为非法输入，由Host Tiling拒绝。p为正有限值或负有限值时均按Lp范数公式计算，具有确定的语义。
-- 动态Shape：支持动态shape（维度-1）；不支持未知Rank（-2），未知Rank输入在InferShape阶段返回失败。
+- 动态Shape：支持动态shape（维度-1）与未知Rank（-2）。未知Rank输入在InferShape阶段透传未知Rank；运行期获取具体shape后按4D/5D路径执行，具体Rank仍须为4或5。
 - 空Tensor：N×C=0时输出为空；空间维乘积为0（空归约）时输出空间维为1、值恒为0（零恒等元约定，对所有p一致）。
 
 ## 调用说明

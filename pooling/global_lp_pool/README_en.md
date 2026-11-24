@@ -62,7 +62,7 @@ English | [简体中文](./README.md)
 
 - The input tensor supports only the 4D(NCHW) or 5D(NCD0D1D2) dimensions.
 - Attribute p must be a finite non-zero value. p = 0, +Inf, -Inf or NaN are illegal inputs and are rejected by Host Tiling. Positive and negative finite values both follow the Lp-norm formula and have defined semantics.
-- Dynamic shape: dynamic shape (dimension -1) is supported; unknown Rank (-2) is not supported, and unknown Rank inputs are rejected by InferShape.
+- Dynamic shape: both dynamic shape (dimension -1) and unknown Rank (-2) are supported. Unknown Rank inputs propagate the unknown Rank in InferShape; the concrete shape is supplied at run time and follows the 4D/5D path, where the concrete Rank must still be 4 or 5.
 - Empty tensor: when N×C = 0 the output is empty; when the spatial product is 0 (empty reduction), the output spatial dimensions are 1 and the value is always 0 (zero identity convention, for all p).
 
 ## Invocation Description

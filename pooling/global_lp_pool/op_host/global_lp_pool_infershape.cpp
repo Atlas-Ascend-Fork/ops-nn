@@ -10,6 +10,7 @@
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "graph/types.h"
+#include "util/shape_util.h"
 #include <vector>
 
 using namespace ge;
@@ -26,8 +27,17 @@ ge::graphStatus GlobalLpPoolInferShape(gert::InferShapeContext* context)
         return ge::GRAPH_FAILED;
     }
 
-    // Unknown rank (-2) is NOT supported (consistent with the canndev
-    // reference); it falls through to the rank check below and is rejected.
+    // Unknown rank (-2): output rank is also unknown; the concrete rank is
+    // supplied at run time and re-enters the 4D/5D path in tiling.
+    if (Ops::Base::IsUnknownRank(*xShape)) {
+        gert::Shape* yUnknown = context->GetOutputShape(0);
+        if (yUnknown == nullptr) {
+            return ge::GRAPH_FAILED;
+        }
+        Ops::Base::SetUnknownRank(*yUnknown);
+        return ge::GRAPH_SUCCESS;
+    }
+
     int64_t rank = static_cast<int64_t>(xShape->GetDimNum());
     if (rank != 4 && rank != 5) {
         return ge::GRAPH_FAILED;
