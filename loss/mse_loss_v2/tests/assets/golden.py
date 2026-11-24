@@ -177,18 +177,18 @@ class _MseLossAclnnCompose:
     def __init__(self, /, reduction=1, **_):
         self._red = _reduction_str(reduction)
 
-    def __call__(self, /, *args, **kw):
-        """入参按 aclnn 头文件顺序: (self, target, reduction, out)。
-
-        **位置与关键字都要接**: TTK 对 aclnn 三方腿是按头文件形参**顺序**下发的
-        (参照 activation/elu_grad_v2 的 aclnn golden —— 连标量和输出张量都在形参里),
-        原来只写 `**kw` 时 args 为空、kw 里没有 self/input, 取到 None 后 `.dtype` 直接崩,
-        服务端返回 500 AttributeError, 熔断器连续 30 例失败后中止整批(实测)。
-        """
+    def __call__(self, /, *args, output_dtypes=None, **kw):
+        """直接调用时支持 out 张量；远端过滤纯输出，改由 output_dtypes 指定最终类型。"""
         x = args[0] if len(args) > 0 else kw.get("self", kw.get("input"))
         t = args[1] if len(args) > 1 else kw.get("target")
         red = args[2] if len(args) > 2 else kw.get("reduction", self._red)
-        return [_third_party_mse(x, t, red)]
+        out = args[3] if len(args) > 3 else kw.get("out")
+        loss = _third_party_mse(x, t, red)
+        if out is not None:
+            return [loss.to(out.dtype)]
+        if output_dtypes:
+            return [loss.to(getattr(torch, output_dtypes[0]))]
+        return [loss]
 
 
 def _inject_nonfinite(input, target, testcase_name=""):
@@ -256,6 +256,7 @@ class MseLossV2AclnnSpec:
         return [y]
 
     # TTK ≥193da3e 起 aclnn 通路支持三方;指向 aclnn 名参数版 compose(首参 self 防撞名)。
+    third_party_needs_output_dtypes = True
     third_party = {"torch": _MseLossAclnnCompose}
     tolerance = _TOL
 
