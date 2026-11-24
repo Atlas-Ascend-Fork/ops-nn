@@ -48,7 +48,7 @@ aclnnStatus aclnnForeachAddcdivScalarGetWorkspaceSize(
   const aclTensorList *x2,
   const aclTensorList *x3,
   const aclTensor     *scalar,
-  const aclTensorList *out,
+  aclTensorList       *out,
   uint64_t            *workspaceSize,
   aclOpExecutor      **executor)
 ```
