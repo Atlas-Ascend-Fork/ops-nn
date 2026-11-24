@@ -50,8 +50,24 @@ struct TilingResult {
     CentralizationTilingData td{};
 };
 
-static TilingResult RunTilingWithUb(const std::vector<int64_t>& dims, ge::DataType dtype, std::vector<int64_t> axes,
-                                    uint64_t ubSize, bool omitAxes = false)
+struct TilingTensor {
+    std::vector<int64_t> dims;
+    ge::DataType dtype;
+    ge::Format format{ge::FORMAT_ND};
+};
+
+static gert::StorageShape MakeStorageShape(const std::vector<int64_t>& dims)
+{
+    gert::StorageShape shape;
+    for (const int64_t dim : dims) {
+        shape.MutableOriginShape().AppendDim(dim);
+        shape.MutableStorageShape().AppendDim(dim);
+    }
+    return shape;
+}
+
+static TilingResult RunTilingWithDescriptors(const TilingTensor& x, const TilingTensor& y,
+                                             const std::vector<int64_t>& axes, uint64_t ubSize, bool omitAxes = false)
 {
     TilingResult result;
     std::map<std::string, std::string> soc_version_infos = {{"NpuArch", "3510"}};
@@ -97,12 +113,8 @@ static TilingResult RunTilingWithUb(const std::vector<int64_t>& dims, ge::DataTy
         return result;
     }
 
-    gert::StorageShape x_shape;
-    for (const int64_t dim : dims) {
-        x_shape.MutableOriginShape().AppendDim(dim);
-        x_shape.MutableStorageShape().AppendDim(dim);
-    }
-    gert::StorageShape y_shape = x_shape;
+    auto x_shape = MakeStorageShape(x.dims);
+    auto y_shape = MakeStorageShape(y.dims);
 
     auto param = gert::TilingData::CreateCap(4096);
     auto workspace_holder = gert::ContinuousVector::Create<size_t>(4096);
@@ -118,8 +130,8 @@ static TilingResult RunTilingWithUb(const std::vector<int64_t>& dims, ge::DataTy
         .OutputShapes({&y_shape})
         .CompileInfo(&compile_info)
         .PlatformInfo(reinterpret_cast<char*>(&platform_info))
-        .NodeInputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-        .NodeOutputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(0, x.dtype, x.format, x.format)
+        .NodeOutputTd(0, y.dtype, y.format, y.format)
         .TilingData(param.get())
         .Workspace(ws_size);
     if (omitAxes) {
@@ -150,6 +162,13 @@ static TilingResult RunTilingWithUb(const std::vector<int64_t>& dims, ge::DataTy
     }
     result.ok = true;
     return result;
+}
+
+static TilingResult RunTilingWithUb(const std::vector<int64_t>& dims, ge::DataType dtype,
+                                    const std::vector<int64_t>& axes, uint64_t ubSize, bool omitAxes = false)
+{
+    const TilingTensor tensor{dims, dtype};
+    return RunTilingWithDescriptors(tensor, tensor, axes, ubSize, omitAxes);
 }
 
 static TilingResult RunTiling(const std::vector<int64_t>& dims, ge::DataType dtype, std::vector<int64_t> axes)
@@ -187,6 +206,23 @@ TEST(CentralizationTiling, NormalShapeKeepsCounts)
     EXPECT_EQ(r.td.totalCount, 24);
     EXPECT_EQ(r.td.reduceCount, 3);
     EXPECT_EQ(r.td.groupCount, 8);
+}
+
+TEST(CentralizationTiling, RejectIncompatibleStorageDescriptors)
+{
+    const TilingTensor x{{2, 3}, ge::DT_FLOAT};
+    const TilingTensor blocked{{2, 3}, ge::DT_FLOAT, ge::FORMAT_FRACTAL_NZ};
+    EXPECT_FALSE(RunTilingWithDescriptors(blocked, x, {-1}, 253952UL).ok);
+    EXPECT_FALSE(RunTilingWithDescriptors(x, blocked, {-1}, 253952UL).ok);
+    EXPECT_FALSE(RunTilingWithDescriptors(x, {{3}, ge::DT_FLOAT}, {-1}, 253952UL).ok);
+    EXPECT_FALSE(RunTilingWithDescriptors(x, {{3, 2}, ge::DT_FLOAT}, {-1}, 253952UL).ok);
+    EXPECT_FALSE(RunTilingWithDescriptors(x, {{2, 3}, ge::DT_FLOAT16}, {-1}, 253952UL).ok);
+}
+
+TEST(CentralizationTiling, RejectAxisBelowNegativeRank)
+{
+    EXPECT_FALSE(RunTiling({2, 3, 4}, ge::DT_FLOAT, {-4}).ok);
+    EXPECT_TRUE(RunTiling({2, 3, 4}, ge::DT_FLOAT, {-3}).ok);
 }
 
 TEST(CentralizationTiling, SingleDimOverInt32NotTruncated)

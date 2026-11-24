@@ -466,6 +466,21 @@ static ge::graphStatus ValidateInputs(gert::TilingContext* context, int64_t& ran
                                   "the same dtype as x");
         return GRAPH_FAILED;
     }
+    const auto xFormat = static_cast<ge::Format>(ge::GetPrimaryFormat(xDesc->GetStorageFormat()));
+    const auto yFormat = static_cast<ge::Format>(ge::GetPrimaryFormat(yDesc->GetStorageFormat()));
+    if (xFormat != FORMAT_ND || yFormat != FORMAT_ND) {
+        const bool invalidInput = xFormat != FORMAT_ND;
+        OP_LOGE_FOR_INVALID_FORMAT(context->GetNodeName(), invalidInput ? "x" : "y",
+                                   Ops::Base::ToString(invalidInput ? xFormat : yFormat), "ND");
+        return GRAPH_FAILED;
+    }
+    const auto* yShape = context->GetOutputShape(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    if (yShape->GetStorageShape() != storageShape) {
+        OP_LOGE_FOR_INVALID_SHAPE(context->GetNodeName(), "y", Ops::Base::ToString(yShape->GetStorageShape()),
+                                  Ops::Base::ToString(storageShape));
+        return GRAPH_FAILED;
+    }
     return GRAPH_SUCCESS;
 }
 

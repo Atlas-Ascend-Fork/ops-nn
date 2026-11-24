@@ -37,6 +37,17 @@ TEST(CentralizationInferShape, CopyInputShapeAndTypeFp16)
     EXPECT_EQ(op.GetOutputDescByName("y").GetDataType(), ge::DT_FLOAT16);
 }
 
+TEST(CentralizationInferShape, InfersFloat16OverDeclaredBoolOutput)
+{
+    ge::op::Centralization op;
+    const ge::Shape shape({2, 3});
+    ASSERT_EQ(op.UpdateInputDesc("x", ge::TensorDesc(shape, ge::FORMAT_ND, ge::DT_FLOAT16)), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(op.UpdateOutputDesc("y", ge::TensorDesc(shape, ge::FORMAT_ND, ge::DT_BOOL)), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(op.GetOutputDescByName("y").GetDataType(), ge::DT_BOOL);
+    ASSERT_EQ(InferDataTypeTest(op, Runtime2TestParam{{"axes"}}), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(op.GetOutputDescByName("y").GetDataType(), ge::DT_FLOAT16);
+}
+
 TEST(CentralizationInferShape, CopyDynamicDimensionAndShapeRange)
 {
     ge::op::Centralization op;
