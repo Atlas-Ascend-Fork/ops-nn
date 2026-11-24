@@ -53,8 +53,8 @@ aclnnStatus aclnnRmsNormQuantV3GetWorkspaceSize(
   const aclTensor *x,
   const aclTensor *gamma,
   const aclTensor *scale,
-  const aclTensor *offsetOptional,
-  const aclTensor *betaOptional,
+  const aclTensor *offset,
+  const aclTensor *beta,
   double           epsilon,
   bool             divMode,
   bool             outputRstd,
@@ -128,7 +128,7 @@ aclnnStatus aclnnRmsNormQuantV3(
       <td>√</td>
     </tr>
     <tr>
-      <td>offsetOptional (aclTensor*)</td>
+      <td>offset (aclTensor*)</td>
       <td>Optional input</td>
       <td>Offset tensor used to obtain y during quantization, corresponding to `offset` in the formula.</td>
       <td><ul><li>Empty tensors are not supported.</li><li>Optional parameter. A null pointer can be passed.</li><li>The shape must be the same as that of `scale`.</li><li>For data type constraints, see Constraints.</li></ul></td>
@@ -138,7 +138,7 @@ aclnnStatus aclnnRmsNormQuantV3(
       <td>√</td>
     </tr>
     <tr>
-      <td>betaOptional (aclTensor*)</td>
+      <td>beta (aclTensor*)</td>
       <td>Optional input</td>
       <td>Represents the offset tensor in the normalization process. Corresponds to `beta` in the formula.</td>
       <td><ul><li>Empty tensors are not supported.</li><li>Optional parameter. A null pointer can be passed in.</li><li>The data type must be the same as that of `x`.</li><li>If the shape is one-dimensional, the shape must be the same as the last dimension of `x`.</li><li>If the shape is two-dimensional, the first dimension must be 1, and the second dimension must be the same as the last dimension of `x`.</li></ul></td>
@@ -276,7 +276,7 @@ aclnnStatus aclnnRmsNormQuantV3(
       <td>The number of dimensions of rstdOut is different from that of x, or the shape of rstdOut is inconsistent with the preceding dimensions of the shape of input x (the preceding dimensions refer to the dimensions of x minus 1), or the last dimension of rstdOut is not 1.</td>
     </tr>
     <tr>
-      <td>The shapes of scale and offsetOptional (if present) are not exactly the same, or the axis size is not 1 or the size of the last dimension of x, or the data types do not satisfy the following Constraints.</td>
+      <td>The shapes of scale and offset (if present) are not exactly the same, or the axis size is not 1 or the size of the last dimension of x, or the data types do not satisfy the following Constraints.</td>
     </tr>
 
   </tbody></table>
@@ -337,7 +337,7 @@ aclnnStatus aclnnRmsNormQuantV3(
   <!-- npu="950" id9 -->
   - <term>Ascend 950PR&950DT products</term>:
 
-    | X Data Type | Gamma Data Type | Scale Data Type | offsetOptional Data Type | betaOptional Data Type | Epsilon Data Type | y Data Type | Rstd Data Type |
+    | X Data Type | Gamma Data Type | Scale Data Type | offset Data Type | beta Data Type | Epsilon Data Type | y Data Type | Rstd Data Type |
     | --------- | ------------- |  ------------- | -------------- |------------- | --------- |--------- |--------- |
     | FLOAT16   | FLOAT16       |  FLOAT16       | INT8           |FLOAT16       | DOUBLE      |INT8, INT4, FLOAT8_E4M3FN, FLOAT8_E5M2, HIFLOAT8      | FLOAT32       |
     | BFLOAT16   | BFLOAT16       |  BFLOAT16       | INT8           | BFLOAT16       |DOUBLE      |INT8, INT4, FLOAT8_E4M3FN, FLOAT8_E5M2, HIFLOAT8      | FLOAT32       |
