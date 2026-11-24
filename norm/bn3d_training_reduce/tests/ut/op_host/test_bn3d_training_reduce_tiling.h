@@ -12,6 +12,7 @@
 #define OPS_BUILT_IN_OP_TEST_TILING_RUNTIME_BN3D_TRAINING_REDUCE_H_
 
 #include <cstdint>
+#include "../../../op_kernel/arch35/bn3d_training_reduce_tiling_data.h"
 #include "tiling/platform/platform_ascendc.h"
 #include "platform/platform_infos_def.h"
 
@@ -27,27 +28,7 @@ struct BN3DTrainingReduceCompileInfo {
     uint64_t ubBlockSize;  // 32B，UB 的字节对齐单位
 };
 
-// 与 op_kernel/arch35/bn3d_training_reduce_tiling_data.h 的
-// BN3DTrainingReduceDenseChannelTilingData 布局一致。用例据此断言字段值，
-// 而不是只断言 TilingKey——三条路线（100000 / 200000 / 300000）内部还有 R0 全载 /
-// sub-R 分块 / 空通道等分支，仅断言 key 区分不出来。
-struct BN3DTrainingReduceDenseChannelTilingData {
-    uint64_t numN;
-    uint64_t numC;
-    uint64_t numR0;
-    uint64_t r0Align;
-    uint64_t usedCoreNum;
-    uint64_t cPerCore;
-    uint64_t cRound;
-    uint64_t nTile;
-    uint64_t isSubR;
-    uint64_t r0Factor;
-    uint64_t numChunks;
-    uint64_t tailLen;
-    uint64_t numC0; // 0：NCDHW/NCHW，每通道 1 个标量；>0：NDC1HWC0 的 C0
-    uint64_t numAccSlots;
-    uint64_t foldPasses;
-};
+using ::BN3DTrainingReduceDenseChannelTilingData;
 
 } // namespace optiling
 #endif // OPS_BUILT_IN_OP_TEST_TILING_RUNTIME_BN3D_TRAINING_REDUCE_H_

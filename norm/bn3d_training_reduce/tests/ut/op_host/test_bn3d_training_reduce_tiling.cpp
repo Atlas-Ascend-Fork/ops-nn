@@ -28,6 +28,7 @@
  * 等分支，仅断言 key 区分不出来，故逐字段校验 TilingData 与 blockDim。
  */
 
+#include <cstddef>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -56,6 +57,7 @@ namespace {
 constexpr uint64_t TILINGKEY_DENSE_CHANNEL = 100000U;
 constexpr uint64_t TILINGKEY_NDC1HWC0_CHANNEL = 200000U;
 constexpr uint64_t TILINGKEY_SPLIT_REDUCE = 300000U;
+constexpr uint64_t TILINGKEY_SHORT_ROWS = 400000U;
 
 // 公共 compile_info。UB_SIZE / CORE_NUM 取真机 Ascend950PR 的实际值
 // （platform_config/Ascend950PR_957*.ini 中 ub_size=253952），使 UT 里的
@@ -69,12 +71,16 @@ static const char* kCompileInfoStr = R"({
                      "CORE_NUM": 64, "socVersion": "Ascend950"}
             })";
 
+static_assert(offsetof(BN3DTrainingReduceDenseChannelTilingData, foldPasses) == 14 * sizeof(uint64_t),
+              "Preserve the dense kernel tiling ABI");
+
 struct TilingResult {
     uint64_t key{UINT64_MAX};
     uint32_t blockDim{0};
     optiling::BN3DTrainingReduceDenseChannelTilingData td{};
     uint32_t vectorLength{0}; // tiling_parse 解析出的向量寄存器字节宽度
     size_t workspaceSize{0};
+    uint32_t dynUbSize{0};
     bool ok{false};
 };
 
@@ -166,6 +172,7 @@ static TilingResult RunTiling(gert::StorageShape& x_shape, gert::StorageShape& o
     result.key = tiling_context->GetTilingKey();
     result.blockDim = tiling_context->GetBlockDim();
     result.workspaceSize = tiling_context->GetWorkspaceSizes(1)[0];
+    result.dynUbSize = tiling_context->GetDynUBufSize();
     auto raw = tiling_context->GetRawTilingData();
     if (raw != nullptr && raw->GetDataSize() >= sizeof(optiling::BN3DTrainingReduceDenseChannelTilingData)) {
         result.td = *reinterpret_cast<const optiling::BN3DTrainingReduceDenseChannelTilingData*>(raw->GetData());
@@ -672,7 +679,7 @@ TEST_F(BN3DTrainingReduceTilingTest, tiling_r0_unaligned_tail_019)
 // ---------------------------------------------------------------------------
 TEST_F(BN3DTrainingReduceTilingTest, tiling_c_round_capped_020)
 {
-    gert::StorageShape x_shape = {{2, 65536, 8}, {2, 65536, 8}};
+    gert::StorageShape x_shape = {{2, 65536, 128}, {2, 65536, 128}};
     gert::StorageShape out_shape = {{65536}, {65536}};
     auto r = RunTiling(x_shape, out_shape, ge::DT_FLOAT, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW);
 
@@ -683,6 +690,68 @@ TEST_F(BN3DTrainingReduceTilingTest, tiling_c_round_capped_020)
     EXPECT_EQ(r.td.usedCoreNum, 64U);
     EXPECT_EQ(r.td.cRound, 512U); // 被 C_ROUND_CAP 截断
     EXPECT_LE(r.td.cRound, r.td.cPerCore);
+}
+
+TEST_F(BN3DTrainingReduceTilingTest, short_rows_direct_and_partitioned_workspace)
+{
+    gert::StorageShape wide = {{4, 65536}, {4, 65536}};
+    gert::StorageShape wideOut = {{65536}, {65536}};
+    auto direct = RunTiling(wide, wideOut, ge::DT_FLOAT, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW);
+    ASSERT_TRUE(direct.ok);
+    ASSERT_EQ(direct.key, TILINGKEY_SHORT_ROWS);
+    EXPECT_EQ(direct.td.rowPartitions, 1U);
+
+    gert::StorageShape deep = {{65536, 3, 4}, {65536, 3, 4}};
+    gert::StorageShape deepOut = {{3}, {3}};
+    auto split = RunTiling(deep, deepOut, ge::DT_FLOAT16, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW);
+    ASSERT_TRUE(split.ok);
+    ASSERT_EQ(split.key, TILINGKEY_SHORT_ROWS);
+    EXPECT_GE(split.td.rowPartitions, split.td.numR0);
+    EXPECT_EQ(split.td.rowPartitions % split.td.numR0, 0U);
+    EXPECT_EQ(split.dynUbSize, 128U);
+    EXPECT_EQ(split.workspaceSize, direct.workspaceSize + split.td.rowPartitions * 3U * 4U * sizeof(float));
+}
+
+TEST_F(BN3DTrainingReduceTilingTest, short_rows_workspace_budget)
+{
+    // Metadata only. Five unconstrained partitions would need 1.28 GB for the last shape.
+    for (const int64_t channels : {1048577, 16000001}) {
+        gert::StorageShape x = {{129, channels}, {129, channels}};
+        gert::StorageShape out = {{channels}, {channels}};
+        auto result = RunTiling(x, out, ge::DT_FLOAT, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW);
+        ASSERT_TRUE(result.ok);
+        ASSERT_EQ(result.key, TILINGKEY_SHORT_ROWS);
+        EXPECT_EQ(result.td.rowPartitions, channels == 1048577 ? 3U : 1U);
+    }
+}
+
+TEST_F(BN3DTrainingReduceTilingTest, aligned_matrix_groups_preserve_row_stride)
+{
+    gert::StorageShape x = {{2139, 2344}, {2139, 2344}};
+    gert::StorageShape out = {{2344}, {2344}};
+    auto result = RunTiling(x, out, ge::DT_FLOAT, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW);
+    ASSERT_TRUE(result.ok);
+    ASSERT_EQ(result.key, TILINGKEY_NDC1HWC0_CHANNEL);
+    EXPECT_EQ(result.td.numN, 2139U);
+    EXPECT_EQ(result.td.numC0, 8U);
+    EXPECT_EQ(result.td.numR0, result.td.numC0);
+    EXPECT_EQ(result.td.numC * result.td.numC0, 2344U);
+}
+
+TEST_F(BN3DTrainingReduceTilingTest, split_full_rows_across_cores)
+{
+    gert::StorageShape x = {{43010, 3, 45}, {43010, 3, 45}};
+    gert::StorageShape out = {{3}, {3}};
+    auto result = RunTiling(x, out, ge::DT_FLOAT, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW);
+    ASSERT_TRUE(result.ok);
+    ASSERT_EQ(result.key, TILINGKEY_SPLIT_REDUCE);
+    EXPECT_EQ(result.td.isSubR, 0U);
+    EXPECT_GT(result.td.cPerCore, 1U);
+    EXPECT_EQ(result.blockDim, result.td.cPerCore * 3U);
+    gert::StorageShape directX = {{1, 3, 45}, {1, 3, 45}};
+    auto direct = RunTiling(directX, out, ge::DT_FLOAT, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW);
+    ASSERT_TRUE(direct.ok);
+    EXPECT_EQ(result.workspaceSize, direct.workspaceSize + result.blockDim * 4U * sizeof(float));
 }
 
 // A == 1 时 R1 折进 R0：折叠后 numN 恒为 1、numR0 == 原 R1 * R0，归约集合不变。

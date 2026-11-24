@@ -18,6 +18,8 @@
 #include "arch35/bn3d_training_reduce_common.h"
 #include "arch35/bn3d_training_reduce_dense_channel.h"
 
+#include "arch35/bn3d_training_reduce_short_rows.h"
+
 using namespace AscendC;
 using namespace BN3DTrainingReduceOps;
 
@@ -27,12 +29,14 @@ using namespace BN3DTrainingReduceOps;
 #define TILINGKEY_NDC1HWC0_CHANNEL 200000
 // 低通道、超大归约轴多核分段路线。
 #define TILINGKEY_SPLIT_REDUCE 300000
+#define TILINGKEY_SHORT_ROWS 400000
 
 extern "C" __global__ __aicore__ void bn3d_training_reduce(GM_ADDR x, GM_ADDR sum, GM_ADDR square_sum,
                                                            GM_ADDR workspace, GM_ADDR tiling)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY);
     KERNEL_TASK_TYPE(TILINGKEY_SPLIT_REDUCE, KERNEL_TYPE_MIX_AIV_1_0);
+    KERNEL_TASK_TYPE(TILINGKEY_SHORT_ROWS, KERNEL_TYPE_MIX_AIV_1_0);
     REGISTER_TILING_DEFAULT(BN3DTrainingReduceDenseChannelTilingData);
     if (TILING_KEY_IS(TILINGKEY_DENSE_CHANNEL)) {
         GET_TILING_DATA_WITH_STRUCT(BN3DTrainingReduceDenseChannelTilingData, tilingData, tiling);
@@ -44,6 +48,9 @@ extern "C" __global__ __aicore__ void bn3d_training_reduce(GM_ADDR x, GM_ADDR su
         BN3DTrainingReduceDenseChannel<DTYPE_X, true> op(&tilingData);
         op.Init(x, sum, square_sum);
         op.Process();
+    } else if (TILING_KEY_IS(TILINGKEY_SHORT_ROWS)) {
+        GET_TILING_DATA_WITH_STRUCT(BN3DTrainingReduceDenseChannelTilingData, data, tiling);
+        RunShortRows<DTYPE_X>(x, sum, square_sum, GetUserWorkspace(workspace), data);
     } else if (TILING_KEY_IS(TILINGKEY_SPLIT_REDUCE)) {
         GET_TILING_DATA_WITH_STRUCT(BN3DTrainingReduceDenseChannelTilingData, tilingData, tiling);
         BN3DTrainingReduceDenseChannel<DTYPE_X, false> op(&tilingData);

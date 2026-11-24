@@ -20,12 +20,17 @@
 using namespace ge;
 
 namespace optiling {
+using BN3DTrainingReduceOps::ROW_MERGE_UB_BYTES;
+using BN3DTrainingReduceOps::ROW_PARTIAL_BYTES;
+using BN3DTrainingReduceOps::ROW_THREADS;
+using BN3DTrainingReduceOps::ROW_WARP;
 // 每通道归约成 1 个标量（storage NCDHW / NCHW）。
 constexpr uint64_t TILINGKEY_DENSE_CHANNEL = 100000;
 // 每通道归约成 C0 个标量（storage NDC1HWC0）。搬运模型与上者同构，只是收尾方式不同。
 constexpr uint64_t TILINGKEY_NDC1HWC0_CHANNEL = 200000;
 // 低通道、超大归约轴：每个通道由多核分段归约，通过 workspace 确定性合并部分和。
 constexpr uint64_t TILINGKEY_SPLIT_REDUCE = 300000;
+constexpr uint64_t TILINGKEY_SHORT_ROWS = 400000;
 
 constexpr int64_t RESERVE_FOR_ALIGN = 512;
 // SIMD/SIMT share UB. Recovery needs at least 32 KiB DCache and the compiler's
@@ -70,6 +75,9 @@ bool BN3DTrainingReduceDenseChannelTiling::IsCapable()
 
 uint64_t BN3DTrainingReduceDenseChannelTiling::GetTilingKey() const
 {
+    if (td_.rowPartitions != 0) {
+        return TILINGKEY_SHORT_ROWS;
+    }
     if (splitReduce_) {
         return TILINGKEY_SPLIT_REDUCE;
     }
@@ -371,6 +379,48 @@ ge::graphStatus BN3DTrainingReduceDenseChannelTiling::ValidateAndNormalizeShape(
     return ge::GRAPH_SUCCESS;
 }
 
+// Short spatial rows leave most SIMD lanes idle when a core owns a single channel.
+// Assign adjacent channels to adjacent SIMT threads. Long reductions also distribute
+// N across the device; each (partition, channel) writes one private compensated pair.
+bool BN3DTrainingReduceDenseChannelTiling::TryTileShortRows()
+{
+    constexpr int64_t maxSpatial = 64;
+    constexpr int64_t minElements = 1 << 18;
+    constexpr int64_t rowsPerThread = 32;
+    constexpr int64_t maxPartitions = 1 << 15;
+    constexpr int64_t residentWaves = 2;
+    // Cap auxiliary GM for short rows independently of the tensor dimensions.
+    constexpr int64_t maxPartialBytes = 64LL * 1024 * 1024;
+    int64_t elements = 0;
+    if (c0_ != 0 || a_ <= 1 || r0_ > maxSpatial || !CheckedMul(r1_, a_, elements) ||
+        !CheckedMul(elements, r0_, elements) || elements < minElements || elements > INT32_MAX ||
+        aicoreParams_.ubSize < SUM_RECOVERY_RESERVE + ROW_MERGE_UB_BYTES) {
+        return false;
+    }
+    const int64_t coreThreads = static_cast<int64_t>(aicoreParams_.blockDim) * ROW_THREADS;
+    // With many outputs a whole row stripe already occupies the device; avoid
+    // a workspace pass for shallow reductions. With few outputs spread the
+    // spatial positions across lanes as well as N, bounding the final merge.
+    int64_t partitions = std::min(maxPartitions, CeilDivPositive(r1_, rowsPerThread));
+    const int64_t partitionBudget = maxPartialBytes / ROW_PARTIAL_BYTES / a_;
+    if (a_ <= ROW_WARP) {
+        const int64_t rowGroups = std::min(
+            r1_, std::max<int64_t>(1, CeilDivPositive(residentWaves * coreThreads, a_ * r0_)));
+        // One complete group covers every spatial position, so the kernel row step is positive.
+        partitions = std::min(rowGroups, partitionBudget / r0_) * r0_;
+    } else {
+        partitions = (a_ >= coreThreads && r1_ <= 128) ? 1 :
+                                                         std::max<int64_t>(1, std::min(partitions, partitionBudget));
+    }
+    td_.numN = r1_;
+    td_.numC = a_;
+    td_.numR0 = r0_;
+    td_.rowPartitions = partitions;
+    blockNum_ = std::min(static_cast<int64_t>(aicoreParams_.blockDim), CeilDivPositive(partitions * a_, ROW_THREADS));
+    td_.usedCoreNum = blockNum_;
+    return true;
+}
+
 ge::graphStatus BN3DTrainingReduceDenseChannelTiling::BuildDenseTilingData()
 {
     OP_CHECK_IF(vlfp32_ <= 0 || ubBlockSize_ <= 0 || aicoreParams_.blockDim == 0 ||
@@ -380,6 +430,28 @@ ge::graphStatus BN3DTrainingReduceDenseChannelTiling::BuildDenseTilingData()
                 OP_LOGE(context_->GetNodeName(), "Invalid platform tiling parameters"), return ge::GRAPH_FAILED);
 
     const int64_t elemSize = (dataType_ == ge::DT_FLOAT) ? FP32_BYTE : B16_BYTE;
+    // For a dense [N,C] matrix a block-aligned group of adjacent channels
+    // is already contiguous. Reuse the packed vector reduction without a layout copy.
+    if (c0_ == 0 && r0_ == 1 && r1_ >= 512 && a_ >= 4 * vlfp32_) {
+        int64_t pack = vlfp32_;
+        while (pack > 1 && a_ % pack != 0) {
+            pack /= 2;
+        }
+        if (pack * elemSize >= ubBlockSize_ && a_ / pack >= static_cast<int64_t>(aicoreParams_.blockDim)) {
+            a_ /= pack;
+            c0_ = pack;
+            r0_ = pack;
+        }
+    }
+    // At least one DMA block per spatial row: amortize the strided 2-D copy,
+    // with a group of cores dividing N for each channel.
+    int64_t rowCount = 0;
+    const bool splitRows = c0_ == 0 && a_ > 1 && r0_ <= vlfp32_ && r0_ * elemSize >= ubBlockSize_ &&
+                           a_ <= static_cast<int64_t>(aicoreParams_.blockDim) / SPLIT_REDUCE_CORE_ALIGN &&
+                           r1_ >= 4096 && CheckedMul(r1_, a_, rowCount) && rowCount <= INT32_MAX / r0_;
+    if (!splitRows && TryTileShortRows()) {
+        return ge::GRAPH_SUCCESS;
+    }
     // UB 内行步长对齐到 VL_FP32：保证 VF 每次取满一个向量寄存器时不跨行，
     // 尾段无效 lane 由 mask 清零，不会污染有效通道。
     int64_t r0Align = 0;
@@ -411,9 +483,10 @@ ge::graphStatus BN3DTrainingReduceDenseChannelTiling::BuildDenseTilingData()
     int64_t elemsPerChannel = 0;
     const bool canSplitReduce = c0_ == 0 && a_ <= SPLIT_REDUCE_MAX_CHANNELS && td_.isSubR != 0 &&
                                 CheckedMul(r1_, r0_, elemsPerChannel) &&
-                                elemsPerChannel >= SPLIT_REDUCE_MIN_ELEMS_PER_CHANNEL &&
+                                elemsPerChannel >= (a_ == 1 ? SPLIT_REDUCE_MIN_ELEMS_PER_CHANNEL / 2 :
+                                                              SPLIT_REDUCE_MIN_ELEMS_PER_CHANNEL) &&
                                 static_cast<int64_t>(aicoreParams_.blockDim) >= a_ * SPLIT_REDUCE_CORE_ALIGN;
-    if (canSplitReduce) {
+    if (canSplitReduce || splitRows) {
         // 每通道平分尽可能多的核，并向下对齐到 8 核。根核按连续 FP32 搬入 partial，
         // 32B 对齐可避免 DMA 尾块把下一通道 partial 带入横向归约。
         const int64_t rawCoresPerChannel = std::min(static_cast<int64_t>(aicoreParams_.blockDim) / a_, vlfp32_);
@@ -450,13 +523,17 @@ ge::graphStatus BN3DTrainingReduceDenseChannelTiling::DoOpTiling()
 ge::graphStatus BN3DTrainingReduceDenseChannelTiling::PostTiling()
 {
     context_->SetBlockDim(blockNum_);
-    if (!isEmptyChannel_ && dataType_ != ge::DT_FLOAT16) {
+    if (td_.rowPartitions > 1) {
+        OP_CHECK_IF(context_->SetDynUBufSize(ROW_MERGE_UB_BYTES) != ge::GRAPH_SUCCESS,
+                    OP_LOGE(context_->GetNodeName(), "Failed to configure short-row merge UB"),
+                    return ge::GRAPH_FAILED);
+    } else if (!isEmptyChannel_ && dataType_ != ge::DT_FLOAT16) {
         OP_CHECK_IF(aicoreParams_.ubSize <= SUM_RECOVERY_RESERVE ||
                         context_->SetDynUBufSize(static_cast<uint32_t>(aicoreParams_.ubSize - SUM_RECOVERY_RESERVE)) !=
                             ge::GRAPH_SUCCESS,
                     OP_LOGE(context_->GetNodeName(), "Failed to reserve UB for sum recovery"), return ge::GRAPH_FAILED);
     }
-    if (splitReduce_) {
+    if (splitReduce_ || td_.rowPartitions > 1) {
         OP_CHECK_IF(context_->SetScheduleMode(1) != ge::GRAPH_SUCCESS,
                     OP_LOGE(context_->GetNodeName(), "Failed to set batch schedule mode for split reduce"),
                     return ge::GRAPH_FAILED);
@@ -464,8 +541,12 @@ ge::graphStatus BN3DTrainingReduceDenseChannelTiling::PostTiling()
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
     currentWorkspace[0] = workspaceSize_;
+    if (td_.rowPartitions > 1) {
+        // Two sums with one FP32 residual each, per partition and output channel.
+        currentWorkspace[0] += td_.rowPartitions * td_.numC * ROW_PARTIAL_BYTES;
+    }
     if (splitReduce_) {
-        const size_t components = dataType_ == ge::DT_FLOAT16 ? NUM_ACC_AND_COMP : 1U;
+        const size_t components = (dataType_ == ge::DT_FLOAT16 || td_.isSubR == 0) ? NUM_ACC_AND_COMP : 1U;
         currentWorkspace[0] += static_cast<size_t>(blockNum_) * ACC_SLOTS_PER_ACCUM * components * sizeof(float);
     }
 

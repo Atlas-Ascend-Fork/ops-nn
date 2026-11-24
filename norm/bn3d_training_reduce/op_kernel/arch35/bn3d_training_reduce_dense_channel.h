@@ -144,7 +144,7 @@ public:
     __aicore__ inline void InitSplitReduce(GM_ADDR x, GM_ADDR sum, GM_ADDR squareSum, GM_ADDR workspace)
     {
         Init(x, sum, squareSum);
-        constexpr uint32_t partialSlots = ACC_SLOT_NUM * (IsSameType<T_X, half>::value ? NUM_ACC_AND_COMP : 1U);
+        const uint32_t partialSlots = ACC_SLOT_NUM * (KeepSplitResidual() ? NUM_ACC_AND_COMP : 1U);
         partialGm_.SetGlobalBuffer((__gm__ float*)workspace, usedCoreNum_ * partialSlots);
     }
 
@@ -201,16 +201,40 @@ public:
         LocalTensor<float> accLocal = accBuf_.Get<float>();
         __ubuf__ float* accUb = (__ubuf__ float*)accLocal.GetPhyAddr();
         ResetAcc(accUb);
-        AccumulateSplitRange(channel, start, end, accUb);
+        if (isSubR_ != 0) {
+            AccumulateSplitRange(channel, start, end, accUb);
+        } else {
+            const uint64_t rowsPerCore = (numN_ + coresPerChannel - 1) / coresPerChannel;
+            const uint64_t first = channelCore * rowsPerCore;
+            const uint64_t last = (first + rowsPerCore < numN_) ? first + rowsPerCore : numN_;
+            AccumulateChannelFull(channel, accUb, first, last);
+        }
         FoldAccSlots(accUb);
-        CopyOutSplitPartial(accUb);
-        SyncAll<true>();
-        if (channelCore == 0) {
-            MergeSplitPartials(channel, coresPerChannel, accUb);
+        if (KeepSplitResidual()) {
+            FinishSplitReduce<true>(channel, channelCore, coresPerChannel, accUb);
+        } else {
+            FinishSplitReduce<false>(channel, channelCore, coresPerChannel, accUb);
         }
     }
 
 private:
+    __aicore__ inline bool KeepSplitResidual() const
+    {
+        // Full-row splits may cancel across cores. Preserve the existing sub-R workspace layout.
+        return IsSameType<T_X, half>::value || isSubR_ == 0;
+    }
+
+    template <bool KEEP_LOW>
+    __aicore__ inline void FinishSplitReduce(uint64_t channel, uint64_t channelCore, uint64_t coresPerChannel,
+                                             __ubuf__ float* accUb)
+    {
+        CopyOutSplitPartial<KEEP_LOW>(accUb);
+        SyncAll<true>();
+        if (channelCore == 0) {
+            MergeSplitPartials<KEEP_LOW>(channel, coresPerChannel, accUb);
+        }
+    }
+
     __aicore__ inline void AccumulateSplitRange(uint64_t channel, uint64_t start, uint64_t end, __ubuf__ float* accUb)
     {
         uint64_t logical = start;
@@ -243,14 +267,14 @@ private:
         }
     }
 
+    template <bool KEEP_LOW>
     __aicore__ inline void CopyOutSplitPartial(__ubuf__ float* accUb)
     {
         LocalTensor<T_SUM> sumLocal = outQueueSum_.AllocTensor<T_SUM>();
         LocalTensor<T_SUM> squareSumLocal = outQueueSquareSum_.AllocTensor<T_SUM>();
-        // FP16 partials carry both components through workspace. Rounding each
-        // core to one FP32 value can lose a residual before other cores cancel.
-        FinalizeChannel<IsSameType<T_X, half>::value>(accUb, (__ubuf__ float*)sumLocal.GetPhyAddr(),
-                                                      (__ubuf__ float*)squareSumLocal.GetPhyAddr(), 0);
+        // Keep the partial and its residual separate until the cross-core reduction.
+        FinalizeChannel<KEEP_LOW>(accUb, (__ubuf__ float*)sumLocal.GetPhyAddr(),
+                                  (__ubuf__ float*)squareSumLocal.GetPhyAddr(), 0);
         outQueueSum_.EnQue<T_SUM>(sumLocal);
         outQueueSquareSum_.EnQue<T_SUM>(squareSumLocal);
         sumLocal = outQueueSum_.DeQue<T_SUM>();
@@ -259,7 +283,7 @@ private:
         const uint64_t partialOffset = static_cast<uint64_t>(blockIdx_);
         DataCopyPad(partialGm_[partialOffset], sumLocal, copyParams);
         DataCopyPad(partialGm_[usedCoreNum_ + partialOffset], squareSumLocal, copyParams);
-        if constexpr (IsSameType<T_X, half>::value) {
+        if constexpr (KEEP_LOW) {
             LocalTensor<float> accLocal = accBuf_.Get<float>();
             const uint64_t compOffset = static_cast<uint64_t>(numAccSlots_) * ACC_SLOT_NUM * VL_FP32;
             DataCopyPad(partialGm_[NUM_ACC_AND_COMP * usedCoreNum_ + partialOffset], accLocal[compOffset], copyParams);
@@ -270,6 +294,7 @@ private:
         outQueueSquareSum_.FreeTensor(squareSumLocal);
     }
 
+    template <bool KEEP_LOW>
     __aicore__ inline void MergeSplitPartials(uint64_t channel, uint64_t coresPerChannel, __ubuf__ float* accUb)
     {
         ResetAcc(accUb);
@@ -281,7 +306,7 @@ private:
         const uint64_t partialOffset = channel * coresPerChannel;
         DataCopyPad(accLocal, partialGm_[partialOffset], copyParams, padParams);
         DataCopyPad(accLocal[VL_FP32], partialGm_[usedCoreNum_ + partialOffset], copyParams, padParams);
-        if constexpr (IsSameType<T_X, half>::value) {
+        if constexpr (KEEP_LOW) {
             const uint64_t compOffset = static_cast<uint64_t>(numAccSlots_) * ACC_SLOT_NUM * VL_FP32;
             DataCopyPad(accLocal[compOffset], partialGm_[NUM_ACC_AND_COMP * usedCoreNum_ + partialOffset], copyParams,
                         padParams);
@@ -342,7 +367,7 @@ private:
             if (isSubR_ != 0) {
                 AccumulateChannelSubR(c, accUb);
             } else {
-                AccumulateChannelFull(c, accUb);
+                AccumulateChannelFull(c, accUb, 0, numN_);
             }
             // FP16 sub-R 与普通 full-R 多 tile 的槽间合并均需保留新产生的舍入低位。
             if constexpr (IsSameType<T_X, half>::value) {
@@ -394,11 +419,11 @@ private:
         inQueueX_.EnQue(xLocal);
     }
 
-    __aicore__ inline void AccumulateChannelFull(uint64_t c, __ubuf__ float* accUb)
+    __aicore__ inline void AccumulateChannelFull(uint64_t c, __ubuf__ float* accUb, uint64_t first, uint64_t last)
     {
         uint32_t slot = 0;
-        for (uint64_t nBase = 0; nBase < numN_; nBase += nTile_) {
-            const uint16_t cnt = static_cast<uint16_t>(((nBase + nTile_) > numN_) ? (numN_ - nBase) : nTile_);
+        for (uint64_t nBase = first; nBase < last; nBase += nTile_) {
+            const uint16_t cnt = static_cast<uint16_t>(((nBase + nTile_) > last) ? (last - nBase) : nTile_);
             CopyInRows(c, nBase, cnt);
             LocalTensor<T_X> xLocal = inQueueX_.DeQue<T_X>();
             __ubuf__ T_X* xUb = (__ubuf__ T_X*)xLocal.GetPhyAddr();

@@ -78,6 +78,19 @@ def generate(output_dir):
         packed[..., 1::2] *= -1
         append(f"bn3_recover_{np.dtype(dtype).name}_packed", packed, "NDC1HWC0")
 
+    # Separate cores receive 2**24 + 1 and -2**24. The final sum must retain 1.
+    for dtype, spatial in ((np.float32, 8), (ml_dtypes.bfloat16, 16)):
+        split_rows = np.zeros((4096, 2, 1, 1, spatial), dtype=dtype)
+        split_rows[0, :, 0, 0, :2] = (2**24, 1)
+        split_rows[-1, 0, 0, 0, 0] = -(2**24)
+        split_rows[128, 1, 0, 0, 0] = -(2**24)
+        append(f"bn3_split_rows_cancel_{np.dtype(dtype).name}", split_rows)
+
+    # Each channel has a different exact sum after the multi-partition warp merge.
+    warp_merge = np.zeros((65536, 3, 1, 1, 4), dtype=np.float16)
+    warp_merge[:, :, 0, 0, 0] = (1, -1, 2)
+    append("bn3_short_rows_fp16_warp_merge", warp_merge)
+
     maximum = np.finfo(np.float32).max
     cases = {
         "cancellation": [maximum, maximum, -maximum, -maximum],

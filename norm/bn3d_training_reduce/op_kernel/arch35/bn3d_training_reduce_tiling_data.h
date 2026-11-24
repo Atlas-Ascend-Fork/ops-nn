@@ -17,6 +17,13 @@
 #ifndef OPS_NORM_BN3D_TRAINING_REDUCE_TILING_DATA_H_
 #define OPS_NORM_BN3D_TRAINING_REDUCE_TILING_DATA_H_
 
+namespace BN3DTrainingReduceOps {
+constexpr uint32_t ROW_THREADS = 256;
+constexpr uint32_t ROW_WARP = 32;
+constexpr uint32_t ROW_PARTIAL_BYTES = 4 * sizeof(float);
+constexpr uint32_t ROW_MERGE_UB_BYTES = ROW_THREADS / ROW_WARP * ROW_PARTIAL_BYTES;
+} // namespace BN3DTrainingReduceOps
+
 // DENSE_CHANNEL 路线 TilingData（两条 Kernel 分支共用）。
 //
 // 两种受支持的布局都归一化为同一个 R1-A-R0 模型，GM 线性下标同为
@@ -58,8 +65,9 @@ struct BN3DTrainingReduceDenseChannelTilingData {
     // 链长由 T 降到 T / numAccSlots + log2(numAccSlots)。
     // 槽轮转在**标量侧**完成（accUb + slot * 2 * VL_FP32），__VEC_SCOPE__ 内部一行不改，
     // 因此不触碰 VF 编程模型的两条约束（内部禁数据依赖分支、归纳变量须 uint16_t）。
-    uint64_t numAccSlots; // 累加槽数，恒为 2 的幂；1 表示退化为原单槽行为
-    uint64_t foldPasses;  // 两两折叠的趟数 = log2(numAccSlots)
+    uint64_t numAccSlots;   // 累加槽数，恒为 2 的幂；1 表示退化为原单槽行为
+    uint64_t foldPasses;    // 两两折叠的趟数 = log2(numAccSlots)
+    uint64_t rowPartitions; // Short spatial rows: independent ranges of N, merged in a fixed order.
 };
 
 #endif // OPS_NORM_BN3D_TRAINING_REDUCE_TILING_DATA_H_
