@@ -21,7 +21,6 @@
 #include "op_common/op_host/util/math_util.h"
 #include "op_common/op_host/util/platform_util.h"
 #include "graph/utils/type_utils.h"
-#include <cmath>
 #include "../../op_kernel/arch35/fused_bias_leaky_relu_grad_tiling_struct.h"
 #include "../../op_kernel/arch35/fused_bias_leaky_relu_grad_struct.h"
 
@@ -428,16 +427,6 @@ static ge::graphStatus TilingFuncFusedBiasLeakyReluGrad(gert::TilingContext* con
     float negativeSlope = (negSlopePtr != nullptr) ? *negSlopePtr : kDefaultNegativeSlope;
     const float* scalePtr = attrs->GetAttrPointer<float>(1);
     float scale = (scalePtr != nullptr) ? *scalePtr : kDefaultScale;
-
-    constexpr float kAttrValueLimit = 1.0e38f;
-    OP_CHECK_IF(std::isnan(negativeSlope) || std::isinf(negativeSlope) || std::fabs(negativeSlope) > kAttrValueLimit,
-                OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "negative_slope",
-                                          std::to_string(negativeSlope).c_str(), "[-1e38, 1e38]"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(
-        std::isnan(scale) || std::isinf(scale) || std::fabs(scale) > kAttrValueLimit,
-        OP_LOGE_FOR_INVALID_VALUE(context->GetNodeName(), "scale", std::to_string(scale).c_str(), "[-1e38, 1e38]"),
-        return ge::GRAPH_FAILED);
 
     std::vector<int64_t> maximum_bro_shape;
     std::vector<std::vector<int64_t>> normal_input_shapes, normal_output_shapes;

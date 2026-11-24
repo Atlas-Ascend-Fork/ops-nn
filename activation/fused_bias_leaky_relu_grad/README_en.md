@@ -83,6 +83,7 @@ English | [简体中文](./README.md)
 - The data types of y_grad and features must be the same.
 - The shapes of y_grad and features must satisfy the broadcast rules, and the rank after broadcasting does not exceed 8.
 - Empty tensors are supported (an empty output is returned when the number of elements is 0).
+- y_grad, features, and x_grad support only the ND format.
 
 ## Invocation Description
 
