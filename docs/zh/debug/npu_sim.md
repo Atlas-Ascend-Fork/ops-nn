@@ -153,7 +153,7 @@ npusim report [options]
 |参数 | 可选/必选 | 说明|
 | --- | --- | --- |
 |-e或 --export | 必选 | 仿真执行结果目录，指定到npusim_{timestamp}_${user_app}层，可配置为绝对路径或者相对路径，且执行用户需具有读写权限。|
-|-o或 --output | 可选 | 指令流水图输出目录，可配置为绝对路径或者相对路径，且执行用户需具有读写权限。若未指定路径，默认与export目录相同。|
+|-o或 --output | 可选 | 指令流水图输出目录，可配置为绝对路径或者相对路径，且执行用户需具有读写权限。若未指定路径，默认写入 `<export>/report`。|
 |-n或 --core-id | 可选 | 指定生成指令流水的核ID，支持格式：'all'、'0-2,12-14'、'5'。不指定默认生成0核的指令流水。|
 |-f或 --object-file | 可选 | 设备对象文件路径，用于辅助生成报告。|
 
@@ -163,7 +163,7 @@ npusim report [options]
 2. 执行仿真结果解析命令，可参考以下执行用例。
 
     ```bash
-    # 在当前目录下生成性能分析报告（默认仅分析核0）
+    # 在仿真结果目录下的 report 子目录中生成性能分析报告（默认仅分析核0）
     npusim report -e /path/to/npusim_{timestamp}_${user_app}
 
     # 在指定目录下生成核0、核1、核11、核12的性能分析报告
@@ -179,7 +179,7 @@ npusim report [options]
     ```
 
 4. 仿真结果查看
-    在Chrome浏览器中输入“chrome://tracing”地址，并将生成的指令流水图文件（trace.json）拖到空白处打开，键盘上输入快捷键（W：放大，S：缩小，A：左移，D：右移）可进行查看。
+    在Chrome浏览器中输入“chrome://tracing”地址，并将生成的指令流水图文件（如 `trace_core0.json`）拖到空白处打开，键盘上输入快捷键（W：放大，S：缩小，A：左移，D：右移）可进行查看。
     ![指令流水图](../figures/cannsim_pipeline_chart.png)
 
     表2关键字段说明
