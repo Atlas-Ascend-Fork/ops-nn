@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Performs element-wise multiplication on tensor list x2 and tensor list x3, multiplies the product by the scalar, and then performs element-wise addition between the obtained result and tensor list x1. Compared with [aclnnForeachAddcmulScalar](aclnnForeachAddcmulScalar.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Choose an appropriate API based on actual requirements.
+- Description: Performs element-wise multiplication on tensor list x2 and tensor list x3, multiplies the product by the scalar, and then performs element-wise addition between the obtained result and tensor list x1. Compared with [aclnnForeachAddcmulScalar](aclnnForeachAddcmulScalar_en.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Choose an appropriate API based on actual requirements.
 - Formula:
 
   $$
