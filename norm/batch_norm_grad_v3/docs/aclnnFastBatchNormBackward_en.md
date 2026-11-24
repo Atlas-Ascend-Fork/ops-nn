@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: The backward propagation (high-performance version) of [aclnnBatchNorm](../../batch_norm_v3/docs/aclnnBatchNorm.md). Computes the gradients of the input tensors for updating model parameters during backward propagation.
+- Description: The backward propagation (high-performance version) of [aclnnBatchNorm](../../batch_norm_v3/docs/aclnnBatchNorm_en.md). Computes the gradients of the input tensors for updating model parameters during backward propagation.
 - Formula:
 
   - When training is true:
