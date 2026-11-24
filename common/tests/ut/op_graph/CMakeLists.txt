@@ -15,7 +15,6 @@ if(UT_TEST_ALL OR OP_GRAPH_UT)
     target_sources(${OP_GRAPH_MODULE_NAME}_cases_obj PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/test_bias_optimize_quant_rollback_base.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/test_fixpipe_ability_process_pass.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/test_fixpipe_fusion_pass.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/test_fixpipe_pre_quant_pass.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/test_fixpipe_relu_quant_pass.cpp)
     # fe 融合 pass 桩登记基线 UT：注册代码仅 ascend950 构建经 graph_plugin 对象编入（与产品门控一致），

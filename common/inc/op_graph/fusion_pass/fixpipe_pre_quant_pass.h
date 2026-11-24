@@ -80,11 +80,11 @@ private:
     bool IsTinyPlatform() const;
     // handle one Cube -> Dequant branch: parse, judge and run the requant absorb
     ge::graphStatus HandlePattern0(const ge::GNodePtr& headNode, ge::Graph& graph, const ge::GNodePtr& dequantNode,
-                                   std::vector<ge::GNodePtr>& newNodes);
+                                   std::vector<ge::GNodePtr>& newNodes, ge::CustomPassContext& passContext);
     ge::graphStatus ReDequantProcess(const ge::GNodePtr& headNode, ge::Graph& graph, const ge::GNodePtr& dequantNode,
                                      std::vector<ge::GNodePtr>& quants,
                                      std::map<ge::GNodePtr, std::vector<ge::GNodePtr>>& relus,
-                                     std::vector<ge::GNodePtr>& newNodes);
+                                     std::vector<ge::GNodePtr>& newNodes, ge::CustomPassContext& passContext);
     // clone the dequant / relu node per quant branch and relink the edges
     ge::graphStatus DealDequant(const ge::GNodePtr& headNode, ge::Graph& graph, const ge::GNodePtr& dequantNode,
                                 std::vector<ge::GNodePtr>& quants,
@@ -111,7 +111,8 @@ private:
                               std::map<ge::GNodePtr, std::vector<ge::GNodePtr>>& relus) const;
     ge::graphStatus DeleteDequant(ge::Graph& graph, const ge::GNodePtr& dequantNode) const;
     // walk all AscendDequant successors of the head node (the merge node of the cube when it exists)
-    ge::graphStatus FusionImpl(const ge::GNodePtr& headNode, ge::Graph& graph, std::vector<ge::GNodePtr>& newNodes);
+    ge::graphStatus FusionImpl(const ge::GNodePtr& headNode, ge::Graph& graph, std::vector<ge::GNodePtr>& newNodes,
+                               ge::CustomPassContext& passContext);
     // clone a node with the same type/attrs/input-output desc, returns the new node in the graph
     ge::GNodePtr CloneNode(ge::Graph& graph, const ge::GNodePtr& srcNode, const std::string& nodeName) const;
     // eltwise cycle check of the multi output branch (equals the FusionCycleDetector logic)

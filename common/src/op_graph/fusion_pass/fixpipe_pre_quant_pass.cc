@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "fusion_pass/fixpipe_fusion_report_utils.h"
 #include "graph/operator_factory.h"
 #include "version/ge-compiler_version.h"
 
@@ -143,6 +144,37 @@ bool IsNodeReachable(const ge::GNodePtr& from, const ge::GNodePtr& to)
         }
     }
     return false;
+}
+
+// build the GNode list of one requant absorb branch (head -> dequant -> {quant, relu ->
+// quant}), the data connected list is the fusion_result.json match/fuse report input
+std::vector<ge::GNode> BuildRequantChainNodes(const ge::GNodePtr& headNode, const ge::GNodePtr& dequantNode,
+                                              const std::vector<ge::GNodePtr>& quants,
+                                              const std::map<ge::GNodePtr, std::vector<ge::GNodePtr>>& relus)
+{
+    std::vector<ge::GNode> nodes;
+    if (headNode != nullptr) {
+        nodes.emplace_back(*headNode);
+    }
+    if (dequantNode != nullptr) {
+        nodes.emplace_back(*dequantNode);
+    }
+    for (const auto& quantNode : quants) {
+        if (quantNode != nullptr) {
+            nodes.emplace_back(*quantNode);
+        }
+    }
+    for (const auto& reluIter : relus) {
+        if (reluIter.first != nullptr) {
+            nodes.emplace_back(*reluIter.first);
+        }
+        for (const auto& quantNode : reluIter.second) {
+            if (quantNode != nullptr) {
+                nodes.emplace_back(*quantNode);
+            }
+        }
+    }
+    return nodes;
 }
 
 // build the match op type list of the pass (equals kSupportFixpipeCubeTypeVec)
@@ -703,13 +735,30 @@ ge::graphStatus FIXPIPEAPREQUANTFUSIONPASS::ReDequantProcess(const ge::GNodePtr&
                                                              const ge::GNodePtr& dequantNode,
                                                              std::vector<ge::GNodePtr>& quants,
                                                              std::map<ge::GNodePtr, std::vector<ge::GNodePtr>>& relus,
-                                                             std::vector<ge::GNodePtr>& newNodes)
+                                                             std::vector<ge::GNodePtr>& newNodes,
+                                                             ge::CustomPassContext& passContext)
 {
     OPS_LOG_D(kFixpipePreQuantModule, "Start to do general requant fusion pass.");
+    // the absorbed chain of this branch is the fusion_result.json fuse report input
+    const std::vector<ge::GNode> nodesBeforeFuse = BuildRequantChainNodes(headNode, dequantNode, quants, relus);
+    const size_t newNodesCountBefore = newNodes.size();
     std::vector<ge::GNodePtr> dequants;
     if (DealDequant(headNode, graph, dequantNode, quants, relus, dequants, newNodes) != ge::GRAPH_SUCCESS) {
         OPS_LOG_E(kFixpipePreQuantModule, "[GraphOpt][fixpipeprequant][ReqntPcs] deal dequant nodes failed");
         return ge::GRAPH_FAILED;
+    }
+    // report the effect after the relinking and while the absorbed nodes are still referenced
+    // (they are removed by the DealRelus/DeleteDequant/DealQuant calls below)
+    if (!nodesBeforeFuse.empty() && newNodes.size() > newNodesCountBefore) {
+        std::vector<ge::GNode> nodesAfterFuse;
+        for (size_t idx = newNodesCountBefore; idx < newNodes.size(); ++idx) {
+            if (newNodes[idx] != nullptr) {
+                nodesAfterFuse.emplace_back(*newNodes[idx]);
+            }
+        }
+        if (ops::fusion::ReportFuseNodes(nodesBeforeFuse, nodesAfterFuse, passContext) != ge::SUCCESS) {
+            OPS_LOG_E(kFixpipePreQuantModule, "ReportFuse failed, effect_times statistic may be incomplete.");
+        }
     }
     if (DealRelus(graph, dequantNode, relus) != ge::GRAPH_SUCCESS) {
         OPS_LOG_E(kFixpipePreQuantModule, "[GraphOpt][fixpipeprequant][ReqntPcs] deal relu nodes failed");
@@ -837,7 +886,8 @@ bool FIXPIPEAPREQUANTFUSIONPASS::JudgeMultiOutNode(const ge::GNodePtr& headNode,
 
 ge::graphStatus FIXPIPEAPREQUANTFUSIONPASS::HandlePattern0(const ge::GNodePtr& headNode, ge::Graph& graph,
                                                            const ge::GNodePtr& dequantNode,
-                                                           std::vector<ge::GNodePtr>& newNodes)
+                                                           std::vector<ge::GNodePtr>& newNodes,
+                                                           ge::CustomPassContext& passContext)
 {
     std::vector<ge::GNodePtr> quants;
     std::map<ge::GNodePtr, std::vector<ge::GNodePtr>> relus;
@@ -845,6 +895,14 @@ ge::graphStatus FIXPIPEAPREQUANTFUSIONPASS::HandlePattern0(const ge::GNodePtr& h
         OPS_LOG_D(kFixpipePreQuantModule, "Do not need do requant pattern0 here, dequant name [%s]",
                   GNodeGetName(dequantNode).GetString());
         return ge::GRAPH_NOT_CHANGED;
+    }
+    if (!quants.empty() || !relus.empty()) {
+        // the pattern0 structure is matched, the entry is counted regardless of the fusion
+        // conditions below and lands in fusion_result.json
+        const std::vector<ge::GNode> matchedNodes = BuildRequantChainNodes(headNode, dequantNode, quants, relus);
+        if (ops::fusion::ReportMatchNodes(matchedNodes, passContext) != ge::SUCCESS) {
+            OPS_LOG_W(kFixpipePreQuantModule, "ReportMatch failed, match_times statistic may be incomplete.");
+        }
     }
     if (!JudgeMultiOutNode(headNode, dequantNode, quants, relus)) {
         OPS_LOG_D(kFixpipePreQuantModule, "Node[%s, %s]: quants size = %zu, reluquant size = %zu",
@@ -868,7 +926,7 @@ ge::graphStatus FIXPIPEAPREQUANTFUSIONPASS::HandlePattern0(const ge::GNodePtr& h
     } else if (retSwapForbidden == ge::GRAPH_NOT_CHANGED) { // platforminfo get failed
         return ge::GRAPH_NOT_CHANGED;
     }
-    const ge::graphStatus ret = ReDequantProcess(headNode, graph, dequantNode, quants, relus, newNodes);
+    const ge::graphStatus ret = ReDequantProcess(headNode, graph, dequantNode, quants, relus, newNodes, passContext);
     if (ret != ge::GRAPH_SUCCESS) {
         OPS_LOG_E(kFixpipePreQuantModule,
                   "[GraphOpt][fixpipeprequant][HdlPtn0] requant fusion pass fail, dequant "
@@ -895,7 +953,8 @@ uint32_t FIXPIPEAPREQUANTFUSIONPASS::GetAtomicId()
 }
 
 ge::graphStatus FIXPIPEAPREQUANTFUSIONPASS::FusionImpl(const ge::GNodePtr& headNode, ge::Graph& graph,
-                                                       std::vector<ge::GNodePtr>& newNodes)
+                                                       std::vector<ge::GNodePtr>& newNodes,
+                                                       ge::CustomPassContext& passContext)
 {
     ge::GNodePtr curHeadNode = headNode;
     const ge::GNodePtr mergeNode = PostCubeComm::GetMergeNodeByCube(curHeadNode);
@@ -922,7 +981,7 @@ ge::graphStatus FIXPIPEAPREQUANTFUSIONPASS::FusionImpl(const ge::GNodePtr& headN
         if (GNodeGetType(nodeOutput).GetString() != ASCEND_DEQUANT) {
             continue;
         }
-        if (HandlePattern0(curHeadNode, graph, nodeOutput, tmpNodes) == ge::GRAPH_FAILED) {
+        if (HandlePattern0(curHeadNode, graph, nodeOutput, tmpNodes, passContext) == ge::GRAPH_FAILED) {
             return ge::GRAPH_FAILED;
         }
     }
@@ -962,6 +1021,8 @@ ge::Status FIXPIPEAPREQUANTFUSIONPASS::Run(ge::GraphPtr& graph, ge::CustomPassCo
         OPS_LOG_E(kFixpipePreQuantModule, "Input graph is nullptr.");
         return ge::GRAPH_FAILED;
     }
+    // the pass name is recorded by the fuse inspector report of this run into fusion_result.json
+    passContext.SetPassName(ge::AscendString(kFixpipePreQuantPassName));
     // equals the ReadConfig check of the legacy Fusion(): no pre_conv/pre_act unit, no fusion
     if (!ReadConfig(passContext)) {
         return ge::GRAPH_NOT_CHANGED;
@@ -998,7 +1059,7 @@ ge::Status FIXPIPEAPREQUANTFUSIONPASS::Run(ge::GraphPtr& graph, ge::CustomPassCo
     int32_t effectTimes = 0;
     for (const auto& headNode : headNodes) {
         std::vector<ge::GNodePtr> newNodes;
-        const ge::graphStatus ret = FusionImpl(headNode, *graph, newNodes);
+        const ge::graphStatus ret = FusionImpl(headNode, *graph, newNodes, passContext);
         if (ret == ge::GRAPH_SUCCESS) {
             effectTimes++;
         } else if (ret == ge::GRAPH_FAILED) {

@@ -43,7 +43,7 @@ private:
     // walk every quant successor of the relu, swap it before the cloned relu or reuse the
     // matched cloned relu (equals the legacy FusionImpl)
     ge::graphStatus ReluQuantFusionImpl(ge::Graph& graph, const ge::GNodePtr& cubeNode, const ge::GNodePtr& reluNode,
-                                        std::vector<ge::GNodePtr>& newNodes) const;
+                                        std::vector<ge::GNodePtr>& newNodes, ge::CustomPassContext& passContext) const;
     // clone the relu node whose input/output desc takes the quant output desc
     ge::GNodePtr CreateReluNode(ge::Graph& graph, const ge::GNodePtr& reluNode, const ge::GNodePtr& quantNode,
                                 std::vector<ge::GNodePtr>& newNodes) const;

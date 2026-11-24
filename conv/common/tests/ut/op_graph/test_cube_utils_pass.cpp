@@ -797,6 +797,50 @@ TEST_F(cube_utils_ut, FiltrNodeStrategy_LeakyRelu_FP32Reject)
     EXPECT_EQ(status, ge::GRAPH_FAILED);
 }
 
+TEST_F(cube_utils_ut, FiltrNodeStrategy_LeakyRelu_FuseSocFP32Pass)
+{
+    // a cube vector fuse soc (SoCInfo.cube_vector_combine=fuse, e.g. MC62) runs the conv
+    // fp32 chains natively and its pre_act relu units accept the fp32 activation: the
+    // fp32 conv+leakyrelu chains fused before the fixpipe pass migration, the split soc
+    // dtype gate then silently rejected every fp32 activation after the migration and the
+    // whole post cube chain fell back to no fusion
+    fe::PlatFormInfos fusePlatformInfos;
+    fe::OptionalInfos fuseOptionalInfos;
+    fusePlatformInfos.Init();
+    fuseOptionalInfos.Init();
+    std::map<std::string, std::vector<std::string>> fixpipeDtypeMap;
+    fixpipeDtypeMap["Intrinsic_fix_pipe_unit_list"] = {"pre_covn", "pre_act", "post_eltwise", "post_act"};
+    fusePlatformInfos.SetFixPipeDtypeMap(fixpipeDtypeMap);
+    std::map<std::string, std::string> versionRes = {{"AIC_version", "AIC-C310"}};
+    fusePlatformInfos.SetPlatformRes("version", versionRes);
+    std::map<std::string, std::string> socInfoRes = {{"cube_vector_combine", "fuse"}};
+    fusePlatformInfos.SetPlatformRes("SoCInfo", socInfoRes);
+    fe::PlatformInfoManager::Instance().platform_infos_map_["dav_fuse"] = fusePlatformInfos;
+    fuseOptionalInfos.SetSocVersion("dav_fuse");
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(fuseOptionalInfos);
+
+    PostCubeUtils post_cube_utils;
+    ge::Graph graph("test_graph");
+    auto leaky_relu = CreateLeakyReluNode(graph, "leaky_relu_fp32_fuse", 0.1f, ge::DT_FLOAT);
+
+    ge::CustomPassContext context;
+    (void)post_cube_utils.ReadConfig(context);
+
+    PostCubeNodeInfo node_info(leaky_relu);
+    auto status = post_cube_utils.FiltrNodeStrategy(node_info);
+    EXPECT_EQ(status, ge::GRAPH_SUCCESS);
+
+    // restore the dav3510 split soc setup of the fixture so the other tests keep the
+    // original platform resolution
+    fe::OptionalInfo davOptionalInfo;
+    davOptionalInfo.soc_version = "dav3510";
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(davOptionalInfo);
+    fe::OptionalInfos davOptionalInfos;
+    davOptionalInfos.Init();
+    davOptionalInfos.SetSocVersion("dav3510");
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(davOptionalInfos);
+}
+
 TEST_F(cube_utils_ut, FiltrNodeStrategy_PRelu_FP32Reject)
 {
     PostCubeUtils post_cube_utils;

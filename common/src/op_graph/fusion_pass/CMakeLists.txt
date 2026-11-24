@@ -14,6 +14,5 @@ target_include_directories(${CUBE_UTILS_PLUGIN_NAME}_obj PRIVATE
 target_sources(${CUBE_UTILS_PLUGIN_NAME}_obj PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/bias_optimize_quant_rollback_base.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/fixpipe_ability_process_pass.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/fixpipe_pass.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/fixpipe_pre_quant_pass.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/fixpipe_relu_quant_pass.cc)

@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "fusion_pass/fixpipe_fusion_report_utils.h"
 #include "graph/operator_factory.h"
 #include "version/ge-compiler_version.h"
 
@@ -399,7 +400,8 @@ ge::graphStatus FIXPIPEARELUQUANTFUSIONPASS::DeleteQuantNode(ge::Graph& graph, c
 
 ge::graphStatus FIXPIPEARELUQUANTFUSIONPASS::ReluQuantFusionImpl(ge::Graph& graph, const ge::GNodePtr& cubeNode,
                                                                  const ge::GNodePtr& reluNode,
-                                                                 std::vector<ge::GNodePtr>& newNodes) const
+                                                                 std::vector<ge::GNodePtr>& newNodes,
+                                                                 ge::CustomPassContext& passContext) const
 {
     std::map<ge::GNodePtr, ge::GNodePtr> reluMap;
     const auto reluOutNodes = GetAllOutDataNodes(reluNode);
@@ -413,12 +415,24 @@ ge::graphStatus FIXPIPEARELUQUANTFUSIONPASS::ReluQuantFusionImpl(ge::Graph& grap
             if (DeleteQuantNode(graph, quantNode, matchedReluNode) != ge::GRAPH_SUCCESS) {
                 return ge::GRAPH_FAILED;
             }
+            // the quant node is absorbed into the cloned relu reported by an earlier branch,
+            // report this branch after the relinking of DeleteQuantNode (the node object is
+            // still referenced by the loop above)
+            if (ops::fusion::ReportFuseNodes({*reluNode, *quantNode}, {*matchedReluNode}, passContext) != ge::SUCCESS) {
+                OPS_LOG_E(kFixpipeReluQuantModule, "ReportFuse failed, effect_times statistic may be incomplete.");
+            }
         } else {
             // create the quant op and the relu op, add edge
             const ge::GNodePtr newReluNode = CreateReluNode(graph, reluNode, quantNode, newNodes);
             if (newReluNode == nullptr ||
                 RelinkEdge(graph, cubeNode, reluNode, quantNode, newReluNode, reluMap) != ge::GRAPH_SUCCESS) {
                 return ge::GRAPH_FAILED;
+            }
+            // report the effect after the swap rewiring (cube -> quant -> cloned relu) and
+            // while the stale relu node is still referenced before its removal below
+            if (ops::fusion::ReportFuseNodes({*reluNode, *quantNode}, {*quantNode, *newReluNode}, passContext) !=
+                ge::SUCCESS) {
+                OPS_LOG_E(kFixpipeReluQuantModule, "ReportFuse failed, effect_times statistic may be incomplete.");
             }
             if (PostCubeComm::GetOutDataNodesSize(reluNode) == 0U) {
                 (void)graph.RemoveNode(*reluNode, true);
@@ -435,6 +449,8 @@ ge::Status FIXPIPEARELUQUANTFUSIONPASS::Run(ge::GraphPtr& graph, ge::CustomPassC
         OPS_LOG_E(kFixpipeReluQuantModule, "Input graph is nullptr.");
         return ge::GRAPH_FAILED;
     }
+    // the pass name is recorded by the fuse inspector report of this run into fusion_result.json
+    passContext.SetPassName(ge::AscendString(kFixpipeReluQuantPassName));
     // equals the ReadConfig check of the legacy Fusion(): no pre_conv/pre_act unit, no fusion
     if (!ReadConfig(passContext)) {
         return ge::GRAPH_NOT_CHANGED;
@@ -490,10 +506,12 @@ ge::Status FIXPIPEARELUQUANTFUSIONPASS::Run(ge::GraphPtr& graph, ge::CustomPassC
                 continue;
             }
             int32_t quantCnt = 0;
+            ge::GNodePtr quantNode;
             const auto reluOutNodes = GetAllOutDataNodes(reluNode);
-            for (const auto& quantNode : reluOutNodes) {
-                if (quantNode != nullptr && GNodeGetType(quantNode).GetString() == ASCEND_QUANT) {
+            for (const auto& nodeIter : reluOutNodes) {
+                if (nodeIter != nullptr && GNodeGetType(nodeIter).GetString() == ASCEND_QUANT) {
                     quantCnt++;
+                    quantNode = nodeIter;
                 }
             }
             // equals the kPatternQuant of the legacy pattern: the relu without any quant
@@ -506,6 +524,11 @@ ge::Status FIXPIPEARELUQUANTFUSIONPASS::Run(ge::GraphPtr& graph, ge::CustomPassC
                           GNodeGetName(headNode).GetString(), GNodeGetType(headNode).GetString());
                 continue;
             }
+            // the cube -> relu -> quant structure is matched, the entry is counted regardless
+            // of the fusion conditions below and lands in fusion_result.json
+            if (ops::fusion::ReportMatchNodes({*headNode, *reluNode, *quantNode}, passContext) != ge::SUCCESS) {
+                OPS_LOG_W(kFixpipeReluQuantModule, "ReportMatch failed, match_times statistic may be incomplete.");
+            }
             if ((PostCubeComm::GetOutDataNodesSize(headNode) > 1U ||
                  PostCubeComm::GetOutDataNodesSize(reluNode) > 1U) &&
                 !PostCubeComm::CheckPostCubeAbilityAttr(headNode, PostCubeAbilityType::SupportMultipleOutput)) {
@@ -517,7 +540,7 @@ ge::Status FIXPIPEARELUQUANTFUSIONPASS::Run(ge::GraphPtr& graph, ge::CustomPassC
                 continue;
             }
             std::vector<ge::GNodePtr> newNodes;
-            if (ReluQuantFusionImpl(*graph, headNode, reluNode, newNodes) == ge::GRAPH_FAILED) {
+            if (ReluQuantFusionImpl(*graph, headNode, reluNode, newNodes, passContext) == ge::GRAPH_FAILED) {
                 // equals the FAILED propagation of the legacy Fusion()
                 return ge::GRAPH_FAILED;
             }

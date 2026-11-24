@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "fusion_pass/fixpipe_fusion_report_utils.h"
 #include "version/ge-compiler_version.h"
 
 namespace ops {
@@ -182,12 +183,13 @@ std::vector<ge::fusion::PatternUniqPtr> FixPipeAbilityProcessPass::Patterns()
 
 ge::Status FixPipeAbilityProcessPass::Run(ge::GraphPtr& graph, ge::CustomPassContext& passContext)
 {
-    (void)passContext;
     OPS_LOG_D(kFixpipeAbilityModule, "Begin to do %s.", kFixpipeAbilityPassName);
     if (graph == nullptr) {
         OPS_LOG_E(kFixpipeAbilityModule, "Input graph is nullptr.");
         return ge::GRAPH_FAILED;
     }
+    // the pass name is recorded by the fuse inspector report of this run into fusion_result.json
+    passContext.SetPassName(ge::AscendString(kFixpipeAbilityPassName));
     // collect the matched cube nodes (equals the kPatternConv of the legacy DefinePatterns)
     const std::set<std::string> matchTypes(kSupportPostCubeCubeTypeVec.begin(), kSupportPostCubeCubeTypeVec.end());
     std::vector<ge::GNodePtr> headNodes;
@@ -214,10 +216,18 @@ ge::Status FixPipeAbilityProcessPass::Run(ge::GraphPtr& graph, ge::CustomPassCon
     }
     int32_t effectTimes = 0;
     for (const auto& headNode : headNodes) {
+        // one matched cube head per report entry, counted regardless of the ability checks below
+        if (ops::fusion::ReportMatchNodes({*headNode}, passContext) != ge::SUCCESS) {
+            OPS_LOG_W(kFixpipeAbilityModule, "ReportMatch failed, match_times statistic may be incomplete.");
+        }
         // equals the legacy Fusion(): the limited cube node is marked NodeCantAccess and it
         // still counts as a changed graph, the ability process of the other nodes continues
         if (CheckCubeNode(headNode) != ge::GRAPH_SUCCESS) {
             PostCubeComm::SetPostCubeAbilityAttr(headNode, PostCubeAbilityType::NodeCantAccess);
+            // the ability mark edits the node in place, the node list is unchanged before/after
+            if (ops::fusion::ReportFuseNodes({*headNode}, {*headNode}, passContext) != ge::SUCCESS) {
+                OPS_LOG_E(kFixpipeAbilityModule, "ReportFuse failed, effect_times statistic may be incomplete.");
+            }
             effectTimes++;
             continue;
         }
@@ -226,6 +236,9 @@ ge::Status FixPipeAbilityProcessPass::Run(ge::GraphPtr& graph, ge::CustomPassCon
             continue; // platforminfo get failed or not in fixpipeUtilFunc op white list
         }
         (void)SetConvFixpipeAbilityAttr(headNode);
+        if (ops::fusion::ReportFuseNodes({*headNode}, {*headNode}, passContext) != ge::SUCCESS) {
+            OPS_LOG_E(kFixpipeAbilityModule, "ReportFuse failed, effect_times statistic may be incomplete.");
+        }
         effectTimes++;
     }
     OPS_LOG_D(kFixpipeAbilityModule, "%s completed, effect times = %d.", kFixpipeAbilityPassName, effectTimes);

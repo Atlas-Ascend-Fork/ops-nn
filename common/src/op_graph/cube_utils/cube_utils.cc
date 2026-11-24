@@ -105,6 +105,28 @@ bool IsFlatControlFlowBoundary(const ge::GNodePtr& node)
     }
     return kFlatControlFlowBoundaryTypes.count(std::string(GNodeGetType(node).GetString())) != 0U;
 }
+
+// whether the current soc is a cube vector fuse soc (SoCInfo.cube_vector_combine=fuse):
+// the fuse socs (e.g. MC62) run the cube and the vector on one core and their conv output
+// is fp32 by default, the fixpipe pre_act relu units of such socs accept the fp32
+// activation (equals the IsCubeVectorCombineFuse of the fixpipe pre quant pass)
+bool IsCubeVectorCombineFuseSoc()
+{
+    fe::PlatFormInfos platformInfos;
+    fe::OptionalInfos optionalInfos;
+    if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfos, optionalInfos) !=
+        ge::GRAPH_SUCCESS) {
+        OPS_LOG_D("PostCube", "Can't get platform info when check cube_vector_combine.");
+        return false;
+    }
+    std::string cubeVectorCombineStr;
+    platformInfos.GetPlatformRes("SoCInfo", "cube_vector_combine", cubeVectorCombineStr);
+    if (cubeVectorCombineStr.empty()) {
+        OPS_LOG_D("PostCube", "Get cube_vector_combine failed.");
+        return false;
+    }
+    return cubeVectorCombineStr == "fuse";
+}
 } // namespace
 
 constexpr uint32_t POST_CUBE_INPUT_2_INDEX = 2;
@@ -582,6 +604,15 @@ ge::graphStatus PostCubeUtils::FiltrNodeStrategyForRelu(const PostCubeNodeInfo& 
     }
     const auto input_dtype = input_desc.GetDataType();
     if (input_dtype == ge::DT_FLOAT16 || input_dtype == ge::DT_INT8) {
+        return ge::GRAPH_SUCCESS;
+    }
+    // the hardcoded set above is the dtype table of the split socs: a cube vector fuse
+    // soc (e.g. MC62, cube_vector_combine=fuse) runs the conv fp32 chains natively and
+    // its pre_act relu units accept the fp32 activation, the fp32 conv+leakyrelu chains
+    // of such socs fused before the fixpipe pass migration, so the fuse soc keeps the
+    // no filter behavior of the pre migration code, otherwise every fp32 activation is
+    // silently rejected and the whole post cube chain falls back to no fusion
+    if (IsCubeVectorCombineFuseSoc()) {
         return ge::GRAPH_SUCCESS;
     }
     PrintNodeFilterReason(node, "input data type is not fp16 or int8, cur input datatype is ",
