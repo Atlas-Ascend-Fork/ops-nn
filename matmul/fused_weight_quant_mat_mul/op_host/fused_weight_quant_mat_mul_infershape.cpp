@@ -91,10 +91,12 @@ static ge::graphStatus ShapeCheckAndInfer(const gert::Shape* xShape, const gert:
 {
     size_t numDimA = xShape->GetDimNum();
     size_t numDimB = weightShape->GetDimNum();
-    OP_CHECK_IF(std::min(numDimA, numDimB) < MINIMUM_SHAPE_SIZE || std::max(numDimA, numDimB) > MAXNUM_SHAPE_SIZE,
-                OP_LOGE(NODE_NAME, "The shape of x and weight must >= 2 and <=6, which are %s and %s",
-                        Ops::Base::ToString(*xShape).c_str(), Ops::Base::ToString(*weightShape).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        std::min(numDimA, numDimB) < MINIMUM_SHAPE_SIZE || std::max(numDimA, numDimB) > MAXNUM_SHAPE_SIZE,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            NODE_NAME, "x, weight", (Ops::Base::ToString(*xShape) + ", " + Ops::Base::ToString(*weightShape)).c_str(),
+            "the dim nums of x and weight must be greater than or equal to 2 and less than or equal to 6"),
+        return ge::GRAPH_FAILED);
     size_t mIdx = transposeX ? 1UL : 2UL;
     size_t kaIdx = transposeX ? 2UL : 1UL;
     size_t kbIdx = transposeWeight ? 1UL : 2UL;
@@ -102,7 +104,10 @@ static ge::graphStatus ShapeCheckAndInfer(const gert::Shape* xShape, const gert:
     int64_t xK = xShape->GetDim(numDimA - kaIdx);
     int64_t weightK = weightShape->GetDim(numDimB - kbIdx);
     int64_t weightN = weightShape->GetDim(numDimB - nIdx);
-    OP_CHECK_IF(xK != weightK && xK > 0 && weightK > 0, OP_LOGE(NODE_NAME, "Ka[%ld] != Kb[%ld]", xK, weightK),
+    OP_CHECK_IF(xK != weightK && xK > 0 && weightK > 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(NODE_NAME, "x, weight",
+                                                      (std::to_string(xK) + ", " + std::to_string(weightK)).c_str(),
+                                                      "the k dim of x and weight must be equal"),
                 return ge::GRAPH_FAILED);
     size_t outDimNum = std::max(numDimA, numDimB);
     yShape->SetDimNum(outDimNum);

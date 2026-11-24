@@ -65,12 +65,12 @@ static ge::graphStatus SetBroadcastShape(const gert::Shape* xShape, const gert::
             yShape->SetDim(i, longerShape->GetDim(i));
         }
         for (size_t i = batchOffset; i < outDimNum - MINIMUM_SHAPE_SIZE; i++) {
-            OP_CHECK_IF(
-                !BroadcastBatchDim(longerShape->GetDim(i), smallShape->GetDim(i - batchOffset), broadcastDim),
-                OP_LOGE(NODE_NAME,
-                        "batch of xShape and batch of wShape can't broadcast, x shape is %s, weight shape is %s",
-                        Ops::Base::ToString(*xShape).c_str(), Ops::Base::ToString(*weightShape).c_str()),
-                return ge::GRAPH_FAILED);
+            OP_CHECK_IF(!BroadcastBatchDim(longerShape->GetDim(i), smallShape->GetDim(i - batchOffset), broadcastDim),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            NODE_NAME, "x, weight",
+                            (Ops::Base::ToString(*xShape) + ", " + Ops::Base::ToString(*weightShape)).c_str(),
+                            "the batch dims of x and weight must be broadcastable"),
+                        return ge::GRAPH_FAILED);
             yShape->SetDim(i, broadcastDim);
         }
     }
@@ -83,10 +83,12 @@ static ge::graphStatus ShapeCheckAndInfer(const gert::Shape* xShape, const gert:
 {
     size_t numDimA = xShape->GetDimNum();
     size_t numDimB = weightShape->GetDimNum();
-    OP_CHECK_IF(std::min(numDimA, numDimB) < MINIMUM_SHAPE_SIZE || std::min(numDimA, numDimB) > MAXNUM_SHAPE_SIZE,
-                OP_LOGE(NODE_NAME, "The shape of x and weight must >= 2 and <=6, which are %s and %s",
-                        Ops::Base::ToString(*xShape).c_str(), Ops::Base::ToString(*weightShape).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        std::min(numDimA, numDimB) < MINIMUM_SHAPE_SIZE || std::min(numDimA, numDimB) > MAXNUM_SHAPE_SIZE,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            NODE_NAME, "x, weight", (Ops::Base::ToString(*xShape) + ", " + Ops::Base::ToString(*weightShape)).c_str(),
+            "the dim num of x and weight must be in range [2, 6]"),
+        return ge::GRAPH_FAILED);
     size_t mIdx = transposeX ? 1UL : 2UL;
     size_t kaIdx = transposeX ? 2UL : 1UL;
     size_t kbIdx = transposeWeight ? 1UL : 2UL;
@@ -109,7 +111,10 @@ static ge::graphStatus ShapeCheckAndInfer(const gert::Shape* xShape, const gert:
             weightN *= INT4_NUMS_IN_INT32;
         }
     }
-    OP_CHECK_IF(xK != weightK && xK > 0 && weightK > 0, OP_LOGE(NODE_NAME, "Ka[%ld] != Kb[%ld]", xK, weightK),
+    OP_CHECK_IF(xK != weightK && xK > 0 && weightK > 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(NODE_NAME, "x, weight",
+                                                      (std::to_string(xK) + ", " + std::to_string(weightK)).c_str(),
+                                                      "the k dim of x and weight must be equal"),
                 return ge::GRAPH_FAILED);
     size_t outDimNum = std::max(numDimA, numDimB);
     yShape->SetDimNum(outDimNum);

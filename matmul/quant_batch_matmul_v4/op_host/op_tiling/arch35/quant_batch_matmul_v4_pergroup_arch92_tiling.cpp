@@ -265,7 +265,10 @@ bool QuantBatchMatmulV4PerGroupTiling::AnalyzeAttrs()
     auto attrs = context_->GetAttrs();
 
     const int64_t* groupSizePtr = attrs->GetAttrPointer<int64_t>(GROUP_SIZE_INDEX);
-    OP_TILING_CHECK(groupSizePtr == nullptr, OP_LOGE(inputParams_.opName, "groupSize can not be null"), return false);
+    OP_TILING_CHECK(
+        groupSizePtr == nullptr,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "groupSize", "null", "groupSize can not be null"),
+        return false);
 
     inputParams_.groupSize = static_cast<uint64_t>(*groupSizePtr);
     inputParams_.antiQuantType = QuantType::PER_GROUP;
@@ -274,7 +277,10 @@ bool QuantBatchMatmulV4PerGroupTiling::AnalyzeAttrs()
     }
 
     auto transposeX1 = attrs->GetAttrPointer<bool>(TRANSPOSE_X1_INDEX);
-    OP_TILING_CHECK(transposeX1 == nullptr, OP_LOGE(inputParams_.opName, "transposeX1 can not be null"), return false);
+    OP_TILING_CHECK(transposeX1 == nullptr,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "transposeX1", "null",
+                                                          "transposeX1 can not be null"),
+                    return false);
     inputParams_.transA = *transposeX1;
     OP_TILING_CHECK(inputParams_.transA != false,
                     OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "transposeX1", "true",
@@ -282,7 +288,10 @@ bool QuantBatchMatmulV4PerGroupTiling::AnalyzeAttrs()
                     return false);
 
     auto transposeX2 = attrs->GetAttrPointer<bool>(TRANSPOSE_X2_INDEX);
-    OP_TILING_CHECK(transposeX2 == nullptr, OP_LOGE(inputParams_.opName, "transposeX2 can not be null"), return false);
+    OP_TILING_CHECK(transposeX2 == nullptr,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "transposeX2", "null",
+                                                          "transposeX2 can not be null"),
+                    return false);
     inputParams_.transB = *transposeX2;
 
     if (isFp8Fp4_) {
@@ -380,9 +389,11 @@ bool QuantBatchMatmulV4PerGroupTiling::AnalyzeYScaleInput()
 {
     auto yScaleDesc = context_->GetOptionalInputDesc(Y_SCALE_INDEX);
     // check yScale dtype
-    OP_TILING_CHECK(yScaleDesc == nullptr,
-                    OP_LOGE(inputParams_.opName, "yScaleDesc can not be null when the quant mode is Fp8Fp4 per-group"),
-                    return false);
+    OP_TILING_CHECK(
+        yScaleDesc == nullptr,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "yScale", "null",
+                                              "when the quantization mode is Fp8Fp4 pergroup, yScale can not be null"),
+        return false);
     OP_TILING_CHECK(yScaleDesc->GetDataType() != ge::DT_UINT64,
                     OP_LOGE_FOR_INVALID_DTYPE(inputParams_.opName, "yScale",
                                               ge::TypeUtils::DataTypeToSerialString(yScaleDesc->GetDataType()).c_str(),
@@ -392,13 +403,15 @@ bool QuantBatchMatmulV4PerGroupTiling::AnalyzeYScaleInput()
     // check yScale shape
     auto yScaleShape = context_->GetOptionalInputShape(Y_SCALE_INDEX);
     OP_TILING_CHECK(yScaleShape == nullptr,
-                    OP_LOGE(inputParams_.opName, "yScaleShape can not be null when the quant mode is Fp8Fp4 per-group"),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        inputParams_.opName, "yScale", "null",
+                        "when the quantization mode is Fp8Fp4 pergroup, the shape of yScale can not be null"),
                     return false);
 
     OP_TILING_CHECK(yScaleShape->GetStorageShape().GetShapeSize() == 0,
                     OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
                         inputParams_.opName, "yScale", "0",
-                        "when the quant mode is Fp8Fp4 per-group, the shape size of yScale must be greater than 0"),
+                        "when the quant mode is Fp8Fp4 pergroup, the shape size of yScale must be greater than 0"),
                     return false);
 
     std::string yScaleShapeStr = Ops::Base::ToString(yScaleShape->GetStorageShape());

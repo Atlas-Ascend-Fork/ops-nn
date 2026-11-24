@@ -429,27 +429,30 @@ bool CheckInputShape(WeightQuantBatchMatmulInfo* inputParams, const gert::Storag
     size_t xOriDimNum = xShape->GetOriginShape().GetDimNum();
     size_t weigthDimNum = weightShape->GetStorageShape().GetDimNum();
     size_t weightOriDimNum = weightShape->GetOriginShape().GetDimNum();
-    OP_TILING_CHECK(
-        xOriDimNum != MM_SHAPE_LEN_ND,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "OriginalShape of x must be 2, but is [%zu]", xOriDimNum),
-        return false);
-    OP_TILING_CHECK(
-        xDimNum != MM_SHAPE_LEN_ND,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "StorageShape of x must be 2, but is [%zu]", xDimNum),
-        return false);
-    OP_TILING_CHECK(weightOriDimNum != MM_SHAPE_LEN_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName,
-                                                    "OriginalShape of weight must be 2, but is [%zu]", weightOriDimNum),
+    OP_TILING_CHECK(xOriDimNum != MM_SHAPE_LEN_ND,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams->opName, "x", std::to_string(xOriDimNum).c_str(),
+                                                          "the dim num of the origin shape of x must be 2"),
                     return false);
+    OP_TILING_CHECK(xDimNum != MM_SHAPE_LEN_ND,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams->opName, "x", std::to_string(xDimNum).c_str(),
+                                                          "the dim num of the storage shape of x must be 2"),
+                    return false);
+    OP_TILING_CHECK(
+        weightOriDimNum != MM_SHAPE_LEN_ND,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams->opName, "weight", std::to_string(weightOriDimNum).c_str(),
+                                              "the dim num of the origin shape of weight must be 2"),
+        return false);
     if (inputParams->bFormat != ge::FORMAT_FRACTAL_NZ) {
         OP_TILING_CHECK(weigthDimNum != MM_SHAPE_LEN_ND,
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams->opName, "StorageShape of weight must be 2 in ND, but is [%zu]", weigthDimNum),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            inputParams->opName, "weight", std::to_string(weigthDimNum).c_str(),
+                            "the dim num of the storage shape of weight must be 2 in ND scenario"),
                         return false);
     } else {
         OP_TILING_CHECK(weigthDimNum != MM_SHAPE_LEN_NZ,
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams->opName, "StorageShape of weight must be 4 in NZ, but is [%zu]", weigthDimNum),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            inputParams->opName, "weight", std::to_string(weigthDimNum).c_str(),
+                            "the dim num of the storage shape of weight must be 4 in NZ scenario"),
                         return false);
     }
     uint64_t weightLastDim = weightShape->GetOriginShape().GetDim(1);
@@ -464,18 +467,20 @@ bool CheckInputShape(WeightQuantBatchMatmulInfo* inputParams, const gert::Storag
                                                                      weightLastDim);
     auto kBSize = static_cast<uint64_t>(inputParams->transB ? weightLastDim : weightShape->GetOriginShape().GetDim(0));
     OP_TILING_CHECK(inputParams->kSize != kBSize,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName,
-                                                    "K dim of x and weight must equal, but they are [%lu] and [%lu]",
-                                                    inputParams->kSize, kBSize),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        inputParams->opName, "x, weight",
+                        (std::to_string(inputParams->kSize) + ", " + std::to_string(kBSize)).c_str(),
+                        "the k dim of x and weight must be equal"),
                     return false);
     if (inputParams->bDtype == ge::DT_INT4 || inputParams->bDtype == ge::DT_INT32 ||
         inputParams->bDtype == ge::DT_FLOAT4_E2M1 || inputParams->bDtype == ge::DT_FLOAT) {
         uint64_t innerAxisDim = static_cast<uint64_t>(weightLastDim);
-        OP_TILING_CHECK((innerAxisDim & 1) != 0,
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams->opName,
-                            "Inner dim of weight must be even when dtype is int4/float4, but is [%lu]", innerAxisDim),
-                        return false);
+        OP_TILING_CHECK(
+            (innerAxisDim & 1) != 0,
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                inputParams->opName, "weight", std::to_string(innerAxisDim).c_str(),
+                "when the dtype of weight is INT4, FLOAT4_E2M1, INT32 or FLOAT, the inner dim of weight must be even"),
+            return false);
     }
     return true;
 }
@@ -485,9 +490,9 @@ bool CheckAntiQuantScaleShape(WeightQuantBatchMatmulInfo* inputParams, const ger
     size_t antiQuantScaleDimNum = antiQuantScaleShape->GetStorageShape().GetDimNum();
     size_t antiQuantScaleShapeSize = static_cast<size_t>(antiQuantScaleShape->GetStorageShape().GetShapeSize());
     OP_TILING_CHECK(antiQuantScaleDimNum > MM_SHAPE_LEN_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams->opName, "antiquant scale shape size should not be more than 2, but is [%zu]",
-                        antiQuantScaleDimNum),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        inputParams->opName, "antiquantScale", std::to_string(antiQuantScaleDimNum).c_str(),
+                        "the dim num of antiquantScale can not be greater than 2"),
                     return false);
     if (antiQuantScaleShapeSize != 1) {
         if (antiQuantScaleDimNum == MM_SHAPE_LEN_ND) {
@@ -500,12 +505,12 @@ bool CheckAntiQuantScaleShape(WeightQuantBatchMatmulInfo* inputParams, const ger
                 expectShape.AppendDim(static_cast<int64_t>(kNum));
                 expectShape.AppendDim(static_cast<int64_t>(inputParams->nSize));
             }
-            OP_TILING_CHECK(
-                expectShape != antiQuantScaleShape->GetStorageShape(),
-                VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "Antiquant shape expect %s, but is %s",
-                                                Ops::Base::ToString(expectShape).c_str(),
-                                                Ops::Base::ToString(antiQuantScaleShape->GetStorageShape()).c_str()),
-                return false);
+            OP_TILING_CHECK(expectShape != antiQuantScaleShape->GetStorageShape(),
+                            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                                inputParams->opName, "antiquantScale",
+                                Ops::Base::ToString(antiQuantScaleShape->GetStorageShape()).c_str(),
+                                ("the shape of antiquantScale must be " + Ops::Base::ToString(expectShape)).c_str()),
+                            return false);
             if (inputParams->antiQuantScaleDtype == ge::DT_FLOAT8_E8M0) {
                 inputParams->antiQuantType = QuantType::MX;
             } else if (inputParams->groupSize > 0) {
@@ -515,9 +520,12 @@ bool CheckAntiQuantScaleShape(WeightQuantBatchMatmulInfo* inputParams, const ger
             }
         } else {
             OP_TILING_CHECK(antiQuantScaleShapeSize != inputParams->nSize,
-                            VECTOR_INNER_ERR_REPORT_TILIING(
-                                inputParams->opName, "Antiquant size should be n size when perchannel, but is %s",
-                                Ops::Base::ToString(antiQuantScaleShape->GetStorageShape()).c_str()),
+                            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                                inputParams->opName, "antiquantScale", std::to_string(antiQuantScaleShapeSize).c_str(),
+                                ("the size of antiquantScale must be equal to the n size of weight in perchannel "
+                                 "scenario, actual n size is " +
+                                 std::to_string(inputParams->nSize))
+                                    .c_str()),
                             return false);
             inputParams->antiQuantType = QuantType::PER_CHANNEL;
         }
@@ -542,12 +550,14 @@ bool CheckAntiQuantOffsetShape(WeightQuantBatchMatmulInfo* inputParams, const ge
             return false);
     }
     if (inputParams->hasAntiQuantOffset) {
-        OP_TILING_CHECK(antiQuantScaleShape->GetStorageShape() != antiQuantOffsetShape->GetStorageShape(),
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams->opName, "Antiquant scale and offset should be same, but are %s and %s",
-                            Ops::Base::ToString(antiQuantScaleShape->GetStorageShape()).c_str(),
-                            Ops::Base::ToString(antiQuantOffsetShape->GetStorageShape()).c_str()),
-                        return false);
+        OP_TILING_CHECK(
+            antiQuantScaleShape->GetStorageShape() != antiQuantOffsetShape->GetStorageShape(),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams->opName, "antiquantScale, antiquantOffset",
+                                                  (Ops::Base::ToString(antiQuantScaleShape->GetStorageShape()) + ", " +
+                                                   Ops::Base::ToString(antiQuantOffsetShape->GetStorageShape()))
+                                                      .c_str(),
+                                                  "the shape of antiquantScale and antiquantOffset must be the same"),
+            return false);
     }
     return true;
 }
@@ -569,44 +579,50 @@ bool CheckQuantShape(WeightQuantBatchMatmulInfo* inputParams, const gert::Storag
 {
     if (!CheckOptionalInputByShape(quantScaleShape)) {
         if (CheckOptionalInputByShape(quantOffsetShape)) {
-            VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "Quant offset should exist with scale");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams->opName, "quantOffset", "non-null",
+                                                  "quantOffset can not exist without quantScale");
             return false;
         }
         if (inputParams->cDtype != inputParams->aDtype) {
-            VECTOR_INNER_ERR_REPORT_TILIING(
-                inputParams->opName, "Output dtype should be x dtype without quant scale, but is [%s] and x is [%s]",
-                ge::TypeUtils::DataTypeToAscendString(inputParams->cDtype).GetString(),
-                ge::TypeUtils::DataTypeToAscendString(inputParams->aDtype).GetString());
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                inputParams->opName, "y", ge::TypeUtils::DataTypeToAscendString(inputParams->cDtype).GetString(),
+                (std::string("the dtype of y must be the same as the dtype of x (") +
+                 ge::TypeUtils::DataTypeToAscendString(inputParams->aDtype).GetString() + ") without quantScale")
+                    .c_str());
             return false;
         }
         return true;
     } else {
         if (inputParams->cDtype != ge::DT_INT8) {
-            VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName,
-                                            "Output dtype should be int8 with quant scale, but is [%s]",
-                                            ge::TypeUtils::DataTypeToAscendString(inputParams->cDtype).GetString());
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                inputParams->opName, "y", ge::TypeUtils::DataTypeToAscendString(inputParams->cDtype).GetString(),
+                "the dtype of y must be INT8 with quantScale");
             return false;
         }
     }
     size_t quantScaleDimNum = quantScaleShape->GetStorageShape().GetDimNum();
     size_t quantScaleShapeSize = static_cast<size_t>(quantScaleShape->GetStorageShape().GetShapeSize());
-    OP_TILING_CHECK(
-        quantScaleDimNum > MM_SHAPE_LEN_ND,
-        VECTOR_INNER_ERR_REPORT_TILIING(
-            inputParams->opName, "quant scale shape size should not be more than 2, but is [%zu]", quantScaleDimNum),
-        return false);
+    OP_TILING_CHECK(quantScaleDimNum > MM_SHAPE_LEN_ND,
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(inputParams->opName, "quantScale",
+                                                              std::to_string(quantScaleDimNum).c_str(),
+                                                              "the dim num of quantScale can not be greater than 2"),
+                    return false);
     if (quantScaleDimNum == MM_SHAPE_LEN_ND) {
         OP_TILING_CHECK(
             quantScaleShape->GetStorageShape().GetDim(0) != 1 ||
                 static_cast<uint64_t>(quantScaleShape->GetStorageShape().GetDim(1)) != inputParams->nSize,
-            VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "quant shape should be (1, n), but is %s",
-                                            Ops::Base::ToString(quantScaleShape->GetStorageShape()).c_str()),
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams->opName, "quantScale",
+                                                  Ops::Base::ToString(quantScaleShape->GetStorageShape()).c_str(),
+                                                  "the shape of quantScale must be (1, n)"),
             return false);
     } else {
         OP_TILING_CHECK(quantScaleShapeSize > 1 && quantScaleShapeSize != inputParams->nSize,
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams->opName, "Quant size should be n size when perchannel, but is %s",
-                            Ops::Base::ToString(quantScaleShape->GetStorageShape()).c_str()),
+                        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                            inputParams->opName, "quantScale", std::to_string(quantScaleShapeSize).c_str(),
+                            ("the size of quantScale must be equal to the n size of weight in perchannel scenario, "
+                             "actual n size is " +
+                             std::to_string(inputParams->nSize))
+                                .c_str()),
                         return false);
     }
     return true;
@@ -619,18 +635,20 @@ bool CheckBiasShape(WeightQuantBatchMatmulInfo* inputParams, const gert::Storage
         if (biasShapeDimNum == 1) {
             OP_TILING_CHECK(biasShape->GetStorageShape().GetDim(0) != 0 &&
                                 static_cast<uint64_t>(biasShape->GetStorageShape().GetDim(0)) != inputParams->nSize,
-                            VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "Bias should be 0 or n, but is %s",
-                                                            Ops::Base::ToString(biasShape->GetStorageShape()).c_str()),
+                            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                                inputParams->opName, "bias", Ops::Base::ToString(biasShape->GetStorageShape()).c_str(),
+                                "the shape of bias must be (0,) or (n,)"),
                             return false);
         } else if (biasShapeDimNum == MM_SHAPE_LEN_ND) {
             OP_TILING_CHECK(biasShape->GetStorageShape().GetDim(0) != 1 ||
                                 static_cast<uint64_t>(biasShape->GetStorageShape().GetDim(1)) != inputParams->nSize,
-                            VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "Bias should be [1, n], but is %s",
-                                                            Ops::Base::ToString(biasShape->GetStorageShape()).c_str()),
+                            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                                inputParams->opName, "bias", Ops::Base::ToString(biasShape->GetStorageShape()).c_str(),
+                                "the shape of bias must be (1, n)"),
                             return false);
         } else {
-            VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "Input shape of bias should be 1 or 2, but is [%zu]",
-                                            biasShapeDimNum);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams->opName, "bias", std::to_string(biasShapeDimNum).c_str(),
+                                                  "the dim num of bias must be 1 or 2");
             return false;
         }
         return true;
@@ -643,27 +661,28 @@ bool CheckShapeDims(WeightQuantBatchMatmulInfo* inputParams, NpuArch npuArch)
     OP_TILING_CHECK((npuArch != Ops::Base::DAV_3510 ||
                      (inputParams->bDtype == ge::DT_INT8 && inputParams->bFormat == ge::FORMAT_FRACTAL_NZ)) &&
                         (inputParams->kSize > MAX_SHAPE_DIM || inputParams->nSize > MAX_SHAPE_DIM),
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams->opName, "Dim of k or n should not more than 65535, but they are [%lu] and [%lu]",
-                        inputParams->kSize, inputParams->nSize),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        inputParams->opName, "x, weight",
+                        (std::to_string(inputParams->kSize) + ", " + std::to_string(inputParams->nSize)).c_str(),
+                        "the dim of k and n can not be greater than 65535"),
                     return false);
     uint64_t batchMax = inputParams->transA ? MAX_SHAPE_DIM : MAX_INT32;
-    OP_TILING_CHECK(
-        npuArch != Ops::Base::DAV_3510 && (inputParams->mSize > batchMax),
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "Dim of m should not more than [%lu], but is [%lu]",
-                                        batchMax, inputParams->mSize),
-        return false);
-    OP_TILING_CHECK(inputParams->groupSize >= inputParams->kSize || inputParams->groupSize % MIN_GROUP_SIZE != 0,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams->opName, "Group sizes should not more than [%lu] and align to 32, but is [%lu]",
-                        inputParams->kSize, inputParams->groupSize),
+    OP_TILING_CHECK(npuArch != Ops::Base::DAV_3510 && (inputParams->mSize > batchMax),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        inputParams->opName, "x", std::to_string(inputParams->mSize).c_str(),
+                        ("the dim of m can not be greater than " + std::to_string(batchMax)).c_str()),
                     return false);
     OP_TILING_CHECK(
+        inputParams->groupSize >= inputParams->kSize || inputParams->groupSize % MIN_GROUP_SIZE != 0,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            inputParams->opName, "groupSize", std::to_string(inputParams->groupSize).c_str(),
+            ("groupSize must be less than kSize " + std::to_string(inputParams->kSize) + " and aligned to 32").c_str()),
+        return false);
+    OP_TILING_CHECK(
         inputParams->antiQuantScaleDtype == ge::DT_FLOAT8_E8M0 && inputParams->groupSize != MICROSCALING_GROUP_SIZE,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName,
-                                        "In microscaling formats context, the antiquant scale dtype must be configured "
-                                        "as E8M0, while the groupSize must be 32, but is [%lu]",
-                                        inputParams->groupSize),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams->opName, "groupSize",
+                                              std::to_string(inputParams->groupSize).c_str(),
+                                              "when the dtype of antiquantScale is FLOAT8_E8M0, groupSize must be 32"),
         return false);
 
     return true;
@@ -702,7 +721,9 @@ bool CheckShape(gert::TilingContext* context, WeightQuantBatchMatmulInfo* inputP
     OP_TILING_CHECK(xShape->GetStorageShape().GetShapeSize() == 0 ||
                         weightShape->GetStorageShape().GetShapeSize() == 0 ||
                         antiQuantScaleShape->GetStorageShape().GetShapeSize() == 0,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "Not yet support empty tensor"), return false);
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams->opName, "x, weight, antiquantScale", "empty",
+                                                          "empty tensor is not supported"),
+                    return false);
     inputParams->bFormat = GetInputStorageFormat(context, 1);
     // NZ_C0_16（4-bit 紧凑 NZ）与 NZ_C0_2 统一归一到 FRACTAL_NZ 处理，与 eager 侧 TensorPreProcess 行为一致
     if (inputParams->bFormat == ge::FORMAT_FRACTAL_NZ_C0_2 || inputParams->bFormat == ge::FORMAT_FRACTAL_NZ_C0_16) {
@@ -740,33 +761,36 @@ bool CheckBiasDtype(gert::TilingContext* context, WeightQuantBatchMatmulInfo* in
         if (socVersion == platform_ascendc::SocVersion::ASCEND910B ||
             (npuArch == Ops::Base::DAV_3510 && inputParams->bDtype == ge::DT_INT8 &&
              inputParams->bFormat == ge::FORMAT_FRACTAL_NZ)) {
-            OP_TILING_CHECK(biasDtype != ge::DT_FLOAT,
-                            VECTOR_INNER_ERR_REPORT_TILIING(
-                                inputParams->opName, "Bias dtype must be fp32 when x is bf16, but is [%s]",
-                                ge::TypeUtils::DataTypeToAscendString(biasDtype).GetString()),
-                            return false);
+            OP_TILING_CHECK(
+                biasDtype != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    inputParams->opName, "bias", ge::TypeUtils::DataTypeToAscendString(biasDtype).GetString(),
+                    "when the dtype of x is BFLOAT16, the dtype of bias must be FLOAT32"),
+                return false);
         } else {
             if (npuArch == Ops::Base::DAV_3510 &&
                 (inputParams->bDtype == ge::DT_FLOAT4_E2M1 || inputParams->bDtype == ge::DT_FLOAT ||
                  inputParams->bDtype == ge::DT_FLOAT8_E4M3FN || inputParams->bDtype == ge::DT_HIFLOAT8)) {
-                OP_TILING_CHECK(biasDtype != inputParams->aDtype,
-                                VECTOR_INNER_ERR_REPORT_TILIING(
-                                    inputParams->opName, "Bias dtype must be bf16 when x dtype is bf16, but is [%s]",
-                                    ge::TypeUtils::DataTypeToAscendString(biasDtype).GetString()),
-                                return false);
+                OP_TILING_CHECK(
+                    biasDtype != inputParams->aDtype,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams->opName, "bias", ge::TypeUtils::DataTypeToAscendString(biasDtype).GetString(),
+                        "when the dtype of x is BFLOAT16, the dtype of bias must be BFLOAT16"),
+                    return false);
             } else {
-                OP_TILING_CHECK(biasDtype != ge::DT_FLOAT && biasDtype != ge::DT_BF16,
-                                VECTOR_INNER_ERR_REPORT_TILIING(
-                                    inputParams->opName, "Bias dtype must be fp32 or bf16 when x is bf16, but is [%s]",
-                                    ge::TypeUtils::DataTypeToAscendString(biasDtype).GetString()),
-                                return false);
+                OP_TILING_CHECK(
+                    biasDtype != ge::DT_FLOAT && biasDtype != ge::DT_BF16,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams->opName, "bias", ge::TypeUtils::DataTypeToAscendString(biasDtype).GetString(),
+                        "when the dtype of x is BFLOAT16, the dtype of bias must be FLOAT32 or BFLOAT16"),
+                    return false);
             }
         }
     } else {
         OP_TILING_CHECK(biasDtype != inputParams->aDtype,
-                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName,
-                                                        "Bias dtype must be fp16 when x dtype is fp16, but is [%s]",
-                                                        ge::TypeUtils::DataTypeToAscendString(biasDtype).GetString()),
+                        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                            inputParams->opName, "bias", ge::TypeUtils::DataTypeToAscendString(biasDtype).GetString(),
+                            "when the dtype of x is FLOAT16, the dtype of bias must be FLOAT16"),
                         return false);
     }
 
@@ -778,15 +802,15 @@ bool CheckInputDtype(gert::TilingContext* context, WeightQuantBatchMatmulInfo* i
 {
     OP_TILING_CHECK(
         inputParams->aDtype != ge::DT_FLOAT16 && inputParams->aDtype != ge::DT_BF16,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "Input x dtype must be fp16 or bf16, but is [%s]",
-                                        ge::TypeUtils::DataTypeToAscendString(inputParams->aDtype).GetString()),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams->opName, "x",
+                                              ge::TypeUtils::DataTypeToAscendString(inputParams->aDtype).GetString(),
+                                              "the dtype of x must be FLOAT16 or BFLOAT16"),
         return false);
     OP_TILING_CHECK(
         std::find(WEIGHT_DTYPE_LIST.begin(), WEIGHT_DTYPE_LIST.end(), inputParams->bDtype) == WEIGHT_DTYPE_LIST.end(),
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName,
-                                        "Input weight dtype must be int8, float8_e4m3fn, hifloat8, int4, "
-                                        "float4_e2m1, but is [%s]",
-                                        ge::TypeUtils::DataTypeToAscendString(inputParams->bDtype).GetString()),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            inputParams->opName, "weight", ge::TypeUtils::DataTypeToAscendString(inputParams->bDtype).GetString(),
+            "the dtype of weight must be INT8, FLOAT8_E4M3FN, HIFLOAT8, INT4 or FLOAT4_E2M1"),
         return false);
 
     return CheckBiasDtype(context, inputParams, socVersion);
@@ -804,42 +828,43 @@ bool CheckAntiQuantDtype(gert::TilingContext* context, WeightQuantBatchMatmulInf
                         return false);
         OP_TILING_CHECK(
             inputParams->aDtype != ge::DT_FLOAT16,
-            VECTOR_INNER_ERR_REPORT_TILIING(
-                inputParams->opName, "X dtype must be fp16 when antiquant scale dtype is int64/uint64, but is [%s]",
-                ge::TypeUtils::DataTypeToAscendString(inputParams->aDtype).GetString()),
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                inputParams->opName, "x", ge::TypeUtils::DataTypeToAscendString(inputParams->aDtype).GetString(),
+                "when the dtype of antiquantScale is INT64 or UINT64, the dtype of x must be FLOAT16"),
             return false);
         if (antiQuantOffsetDesc != nullptr) {
             auto antiQuantOffsetDtype = antiQuantOffsetDesc->GetDataType();
             OP_TILING_CHECK(antiQuantOffsetDtype != ge::DT_INT32,
-                            VECTOR_INNER_ERR_REPORT_TILIING(
-                                inputParams->opName,
-                                "Antiquant offset dtype must be int32 when scale dtype is int64/uint64, but is [%s]",
-                                ge::TypeUtils::DataTypeToAscendString(antiQuantOffsetDtype).GetString()),
+                            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                                inputParams->opName, "antiquantOffset",
+                                ge::TypeUtils::DataTypeToAscendString(antiQuantOffsetDtype).GetString(),
+                                "when the dtype of antiquantScale is INT64 or UINT64, the dtype of antiquantOffset "
+                                "must be INT32"),
                             return false);
         }
     } else if (inputParams->antiQuantScaleDtype == ge::DT_FLOAT8_E8M0) {
         OP_TILING_CHECK(inputParams->hasAntiQuantOffset,
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams->opName,
-                            "In microscaling formats context, the antiquant scale dtype must be configured as E8M0, "
-                            "while the antiquant offset dtype is explicitly prohibited "),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            inputParams->opName, "antiquantOffset", "non-null",
+                            "when the dtype of antiquantScale is FLOAT8_E8M0, antiquantOffset can not exist"),
                         return false);
     } else if (inputParams->antiQuantScaleDtype == inputParams->aDtype) {
         if (antiQuantOffsetDesc != nullptr) {
             auto antiQuantOffsetDtype = antiQuantOffsetDesc->GetDataType();
             OP_TILING_CHECK(antiQuantOffsetDtype != inputParams->aDtype,
-                            VECTOR_INNER_ERR_REPORT_TILIING(
-                                inputParams->opName,
-                                "Antiquant offset dtype must be x dtype when scale dtype is x dtype, but is [%s]",
-                                ge::TypeUtils::DataTypeToAscendString(antiQuantOffsetDtype).GetString()),
+                            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                                inputParams->opName, "antiquantOffset",
+                                ge::TypeUtils::DataTypeToAscendString(antiQuantOffsetDtype).GetString(),
+                                "when the dtype of antiquantScale is the same as the dtype of x, the dtype of "
+                                "antiquantOffset must be the same as the dtype of x"),
                             return false);
         }
     } else {
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName,
-                                        "In non-microscaling formats context , Antiquant scale dtype [%s] must be "
-                                        "int64/uint64 or x dtype [%s]. ",
-                                        ge::TypeUtils::DataTypeToSerialString(inputParams->antiQuantScaleDtype).c_str(),
-                                        ge::TypeUtils::DataTypeToSerialString(inputParams->aDtype).c_str());
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            inputParams->opName, "antiquantScale",
+            ge::TypeUtils::DataTypeToSerialString(inputParams->antiQuantScaleDtype).c_str(),
+            "when the quantization mode is not microscaling, the dtype of antiquantScale must be INT64, "
+            "UINT64 or the same as the dtype of x; FLOAT8_E8M0 is only supported in microscaling scenarios");
         return false;
     }
     return true;
@@ -853,16 +878,18 @@ bool CheckQuantDtype(gert::TilingContext* context, WeightQuantBatchMatmulInfo* i
         auto quantScaleDtype = quantScaleDesc->GetDataType();
         OP_TILING_CHECK(
             quantScaleDtype != ge::DT_UINT64,
-            VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName, "Quant scale dtype should be uint64, but is [%s]",
-                                            ge::TypeUtils::DataTypeToAscendString(quantScaleDtype).GetString()),
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams->opName, "quantScale",
+                                                  ge::TypeUtils::DataTypeToAscendString(quantScaleDtype).GetString(),
+                                                  "the dtype of quantScale must be UINT64"),
             return false);
     } else {
         OP_TILING_CHECK(
             inputParams->cDtype != inputParams->aDtype,
-            VECTOR_INNER_ERR_REPORT_TILIING(inputParams->opName,
-                                            "Output dtype should be x dtype without quant, but is [%s] and x is [%s]",
-                                            ge::TypeUtils::DataTypeToAscendString(inputParams->cDtype).GetString(),
-                                            ge::TypeUtils::DataTypeToAscendString(inputParams->aDtype).GetString()),
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                inputParams->opName, "y", ge::TypeUtils::DataTypeToAscendString(inputParams->cDtype).GetString(),
+                (std::string("the dtype of y must be the same as the dtype of x (") +
+                 ge::TypeUtils::DataTypeToAscendString(inputParams->aDtype).GetString() + ") without quantScale")
+                    .c_str()),
             return false);
     }
     return true;
@@ -910,8 +937,9 @@ bool CheckAttr(gert::TilingContext* context, WeightQuantBatchMatmulInfo* inputPa
     // the group size not less than 0
     if (groupSizePtr != nullptr) {
         OP_TILING_CHECK(*groupSizePtr < 0,
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams->opName, "Group size should not less than 0, but is [%ld]", *groupSizePtr),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams->opName, "groupSize",
+                                                              std::to_string(*groupSizePtr).c_str(),
+                                                              "the value of groupSize can not be less than 0"),
                         return false);
         inputParams->groupSize = static_cast<uint64_t>(*groupSizePtr);
     }
@@ -922,8 +950,9 @@ bool CheckAttr(gert::TilingContext* context, WeightQuantBatchMatmulInfo* inputPa
     }
     if (innerPrecisePtr != nullptr) {
         OP_TILING_CHECK((*innerPrecisePtr != 0) && (*innerPrecisePtr != 1),
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams->opName, "innerPrecise only support 0 or 1, but is [%ld]", *innerPrecisePtr),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams->opName, "innerPrecise",
+                                                              std::to_string(*innerPrecisePtr).c_str(),
+                                                              "the value of innerPrecise must be 0 or 1"),
                         return false);
         inputParams->innerPrecise = static_cast<uint64_t>(*innerPrecisePtr);
     }
@@ -968,13 +997,19 @@ bool CheckTempLimit(WeightQuantBatchMatmulInfo* inputParams, const gert::TilingC
         inputParams->bDtype != ge::DT_INT8) {
         OP_TILING_CHECK(!(inputParams->antiQuantType == QuantType::PER_CHANNEL ||
                           (inputParams->antiQuantType == QuantType::PER_TENSOR && inputParams->nSize == 1)),
-                        OP_LOGE(inputParams->opName, "A16F8 only support perchannel"), return false);
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams->opName, "weight, antiquantScale",
+                                                              "A16F8 with non-perchannel antiquantScale",
+                                                              "A16F8 scenario only supports perchannel antiquantScale"),
+                        return false);
     }
     // A16F4 support Mx and pergroup
     if (inputParams->bDtype == ge::DT_FLOAT4_E2M1 || inputParams->bDtype == ge::DT_FLOAT) {
         OP_TILING_CHECK(
             inputParams->antiQuantType == QuantType::PER_TENSOR || inputParams->antiQuantType == QuantType::PER_CHANNEL,
-            OP_LOGE(inputParams->opName, "A16F4 only support Mx and pergroup"), return false);
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams->opName, "weight, antiquantScale",
+                                                  "A16F4 with pertensor or perchannel antiquantScale",
+                                                  "A16F4 scenario only supports MX and pergroup antiquantScale"),
+            return false);
     }
 
     if (inputParams->antiQuantType == QuantType::PER_GROUP &&
@@ -1042,14 +1077,13 @@ bool CheckNzSupportedScenarios(WeightQuantBatchMatmulInfo* inputParams, NpuArch 
                 "non-transposed A/B. WeightNZ cannot support int8 output or per-tensor quantization"),
             return false);
     } else {
-        OP_TILING_CHECK(
-            (inputParams->antiQuantType == QuantType::PER_GROUP && inputParams->transA &&
-             inputParams->bDtype != ge::DT_INT4) ||
-                inputParams->cDtype == ge::DT_INT8 || inputParams->antiQuantType == QuantType::PER_TENSOR,
-            VECTOR_INNER_ERR_REPORT_TILIING(
-                inputParams->opName,
-                "WeightNZ cannot support per-group with transA int8, cannot support int8 output or per-tensor"),
-            return false);
+        OP_TILING_CHECK((inputParams->antiQuantType == QuantType::PER_GROUP && inputParams->transA &&
+                         inputParams->bDtype != ge::DT_INT4) ||
+                            inputParams->cDtype == ge::DT_INT8 || inputParams->antiQuantType == QuantType::PER_TENSOR,
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            inputParams->opName, "weight", "NZ format with unsupported scenario",
+                            "WeightNZ can not support pergroup with transA INT8, INT8 output or pertensor"),
+                        return false);
     }
     return true;
 }
@@ -1089,8 +1123,9 @@ ge::graphStatus CheckPara(gert::TilingContext* context, platform_ascendc::SocVer
     if (inputParams.bDtype == ge::DT_FLOAT8_E4M3FN || inputParams.bDtype == ge::DT_HIFLOAT8) {
         OP_TILING_CHECK(
             inputParams.transA || (inputParams.cDtype == ge::DT_INT8) || (inputParams.bFormat == ge::FORMAT_FRACTAL_NZ),
-            OP_LOGE(inputParams.opName,
-                    "Weight FP8_E4M3/HIFLOAT8 input cannot support transA, int8 output or weightNz"),
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                inputParams.opName, "weight", "FP8_E4M3FN or HIFLOAT8 with transA, INT8 output or weightNz",
+                "weight of FP8_E4M3FN or HIFLOAT8 can not support transA, INT8 output or weightNz"),
             return ge::GRAPH_FAILED);
     }
     if (npuArch == Ops::Base::DAV_3510) {

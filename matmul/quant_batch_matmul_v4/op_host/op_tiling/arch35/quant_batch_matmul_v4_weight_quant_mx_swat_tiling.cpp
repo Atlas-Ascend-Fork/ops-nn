@@ -67,7 +67,9 @@ ge::graphStatus GetWeightQuantMxSwatScenario(const gert::TilingContext* context,
         const bool hasMxScale = (x1ScaleDesc != nullptr && x1ScaleDesc->GetDataType() == ge::DT_FLOAT8_E8M0) ||
                                 (x2ScaleDesc != nullptr && x2ScaleDesc->GetDataType() == ge::DT_FLOAT8_E8M0);
         if (hasMxScale) {
-            OP_LOGE(context, "MX x1Scale/x2Scale desc is incomplete");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                OP_TYPE, "x1Scale/x2Scale", "incomplete",
+                "when the quantization mode is MX, both x1Scale and x2Scale must exist");
             return ge::GRAPH_FAILED;
         }
         OP_LOGD(context, "x1Scale/x2Scale desc is missing, skip MX SWAT template");

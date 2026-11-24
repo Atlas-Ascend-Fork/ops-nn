@@ -66,35 +66,40 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckDtype()
     inputParams_.antiQuantScaleDtype = context_->GetInputDesc(idx++)->GetDataType();
     inputParams_.cDtype = context_->GetOutputDesc(0)->GetDataType();
     OP_TILING_CHECK(inputParams_.aDtype != ge::DT_FLOAT16,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input x dtype must be FLOAT16, but is [%s]",
-                                                    ge::TypeUtils::DataTypeToSerialString(inputParams_.aDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams_.opName, "x", ge::TypeUtils::DataTypeToSerialString(inputParams_.aDtype).c_str(),
+                        "the dtype of x must be FLOAT16"),
                     return false);
 
-    OP_TILING_CHECK(inputParams_.bDtype != ge::DT_INT8,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input weight dtype must be INT8, but is [%s]",
-                                                    ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype).c_str()),
-                    return false);
+    OP_TILING_CHECK(
+        inputParams_.bDtype != ge::DT_INT8,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "weight",
+                                              ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype).c_str(),
+                                              "the dtype of weight must be INT8"),
+        return false);
 
     OP_TILING_CHECK(
         inputParams_.antiQuantScaleDtype != ge::DT_UINT64 && inputParams_.antiQuantScaleDtype != ge::DT_INT64,
-        VECTOR_INNER_ERR_REPORT_TILIING(
-            inputParams_.opName, "Input antiquant scale dtype must be UINT64/INT64, but is [%s]",
-            ge::TypeUtils::DataTypeToSerialString(inputParams_.antiQuantScaleDtype).c_str()),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            inputParams_.opName, "antiquantScale",
+            ge::TypeUtils::DataTypeToSerialString(inputParams_.antiQuantScaleDtype).c_str(),
+            "the dtype of antiquantScale must be UINT64 or INT64"),
         return false);
 
-    OP_TILING_CHECK(
-        inputParams_.cDtype != ge::DT_FLOAT16 && inputParams_.cDtype != ge::DT_INT8,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Output y dtype must be FLOAT16/INT8, but is [%s]",
-                                        ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype).c_str()),
-        return false);
+    OP_TILING_CHECK(inputParams_.cDtype != ge::DT_FLOAT16 && inputParams_.cDtype != ge::DT_INT8,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams_.opName, "y", ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype).c_str(),
+                        "the dtype of y must be FLOAT16 or INT8"),
+                    return false);
 
     auto biasDesc = context_->GetOptionalInputDesc(BIAS_INDEX);
     if (biasDesc != nullptr) {
         inputParams_.biasDtype = biasDesc->GetDataType();
         OP_TILING_CHECK(
             inputParams_.biasDtype != ge::DT_FLOAT16 && inputParams_.biasDtype != ge::DT_INT32,
-            VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input bias dtype must be FLOAT16/INT32, but is [%s]",
-                                            ge::TypeUtils::DataTypeToSerialString(inputParams_.biasDtype).c_str()),
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "bias",
+                                                  ge::TypeUtils::DataTypeToSerialString(inputParams_.biasDtype).c_str(),
+                                                  "the dtype of bias must be FLOAT16 or INT32"),
             return false);
     }
     return true;
@@ -125,16 +130,18 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckAttr()
     inputParams_.transB = transposeWeight != nullptr && *transposeWeight;
 
     if (groupSizePtr != nullptr) {
-        OP_TILING_CHECK(
-            *groupSizePtr != 0,
-            VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Group size should be 0, but is [%ld]", *groupSizePtr),
-            return false);
+        OP_TILING_CHECK(*groupSizePtr != 0,
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "groupSize",
+                                                              std::to_string(*groupSizePtr).c_str(),
+                                                              "the value of groupSize must be 0"),
+                        return false);
         inputParams_.groupSize = static_cast<uint64_t>(*groupSizePtr);
     }
     if (innerPrecisePtr != nullptr) {
         OP_TILING_CHECK((*innerPrecisePtr != 0) && (*innerPrecisePtr != 1),
-                        VECTOR_INNER_ERR_REPORT_TILIING(
-                            inputParams_.opName, "innerPrecise only support 0 or 1, but is [%ld]", *innerPrecisePtr),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "innerPrecise",
+                                                              std::to_string(*innerPrecisePtr).c_str(),
+                                                              "the value of innerPrecise must be 0 or 1"),
                         return false);
         inputParams_.innerPrecise = static_cast<uint64_t>(*innerPrecisePtr);
     }
@@ -170,7 +177,9 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckShape()
     OP_TILING_CHECK(xShape->GetStorageShape().GetShapeSize() == 0 ||
                         weightShape->GetStorageShape().GetShapeSize() == 0 ||
                         antiQuantScaleShape->GetStorageShape().GetShapeSize() == 0,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Not yet support empty tensor"), return false);
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "x, weight, antiquantScale", "empty",
+                                                          "empty tensor is not supported"),
+                    return false);
     // check x, weight
     inputParams_.aFormat = GetInputStorageFormat(context_, 0);
     inputParams_.bFormat = GetInputStorageFormat(context_, 1);
@@ -178,10 +187,13 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckShape()
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Check input x and weight shape failed"),
                     return false);
     // check batch
-    OP_TILING_CHECK(
-        !CheckBatchInfo(xShape->GetOriginShape(), weightShape->GetOriginShape()),
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Batch dimension should be equal when their value not 1."),
-        return false);
+    OP_TILING_CHECK(!CheckBatchInfo(xShape->GetOriginShape(), weightShape->GetOriginShape()),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x, weight",
+                                                          (Ops::Base::ToString(xShape->GetOriginShape()) + ", " +
+                                                           Ops::Base::ToString(weightShape->GetOriginShape()))
+                                                              .c_str(),
+                                                          "the batch dims of x and weight must be equal or 1"),
+                    return false);
     // check antiquant scale, antiquant offset
     OP_TILING_CHECK(!CheckAntiQuantShape(antiQuantScaleShape, antiQuantOffsetShape),
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Check antiquant shape failed"), return false);
@@ -194,19 +206,27 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckShape()
                     return false);
     // check bias
     if (biasShape != nullptr) {
-        OP_TILING_CHECK(biasShape->GetStorageShape().GetDimNum() != 1,
-                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Bias dimension should equal to 1"),
-                        return false);
+        OP_TILING_CHECK(
+            biasShape->GetStorageShape().GetDimNum() != 1,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "bias",
+                                                  std::to_string(biasShape->GetStorageShape().GetDimNum()).c_str(),
+                                                  "the dim num of bias must be 1"),
+            return false);
         OP_TILING_CHECK(static_cast<uint64_t>(biasShape->GetStorageShape().GetDim(0)) != inputParams_.nSize,
-                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Bias size should be equal to nsize"),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            inputParams_.opName, "bias", std::to_string(biasShape->GetStorageShape().GetDim(0)).c_str(),
+                            ("the size of bias must be equal to the n size of weight, actual n size is " +
+                             std::to_string(inputParams_.nSize))
+                                .c_str()),
                         return false);
     }
     // check dim value
-    OP_TILING_CHECK(inputParams_.groupSize >= inputParams_.kSize || inputParams_.groupSize % MIN_GROUP_SIZE != 0,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "Group sizes should not more than [%lu] and align to 32, but is [%lu]",
-                        inputParams_.kSize, inputParams_.groupSize),
-                    return false);
+    OP_TILING_CHECK(
+        inputParams_.groupSize >= inputParams_.kSize || inputParams_.groupSize % MIN_GROUP_SIZE != 0,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            inputParams_.opName, "groupSize", std::to_string(inputParams_.groupSize).c_str(),
+            ("groupSize must be less than kSize " + std::to_string(inputParams_.kSize) + " and aligned to 32").c_str()),
+        return false);
     return true;
 }
 
@@ -228,33 +248,29 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckInputShape(const gert::Stora
     size_t xDimNum = xShape->GetStorageShape().GetDimNum();
     size_t weightDimNum = weightShape->GetStorageShape().GetDimNum();
 
-    OP_TILING_CHECK(xOriDimNum < MIN_SHAPE_LEN_ND || xOriDimNum > MAX_SHAPE_LEN_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "OriginalShape of x can not be greater than %zu and "
-                                                    "less than %zu, but is [%zu]",
-                                                    MAX_SHAPE_LEN_ND, MIN_SHAPE_LEN_ND, xOriDimNum),
-                    return false);
+    OP_TILING_CHECK(
+        xOriDimNum < MIN_SHAPE_LEN_ND || xOriDimNum > MAX_SHAPE_LEN_ND,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x", std::to_string(xOriDimNum).c_str(),
+                                              "the dim num of the origin shape of x must be in range [2, 6]"),
+        return false);
 
-    OP_TILING_CHECK(weightOriDimNum < MIN_SHAPE_LEN_ND || weightDimNum > MAX_SHAPE_LEN_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "OriginalShape of weight can not be greater than %zu and "
-                                                    "less than %zu, but is [%zu]",
-                                                    MAX_SHAPE_LEN_ND, MIN_SHAPE_LEN_ND, weightOriDimNum),
-                    return false);
+    OP_TILING_CHECK(
+        weightOriDimNum < MIN_SHAPE_LEN_ND || weightOriDimNum > MAX_SHAPE_LEN_ND,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "weight", std::to_string(weightOriDimNum).c_str(),
+                                              "the dim num of the origin shape of weight must be in range [2, 6]"),
+        return false);
 
-    OP_TILING_CHECK(xDimNum < MIN_SHAPE_LEN_ND || xDimNum > MAX_SHAPE_LEN_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "StorageShape of x can not be greater than %zu and "
-                                                    "less than %zu, but is [%zu]",
-                                                    MAX_SHAPE_LEN_ND, MIN_SHAPE_LEN_ND, xDimNum),
-                    return false);
+    OP_TILING_CHECK(
+        xDimNum < MIN_SHAPE_LEN_ND || xDimNum > MAX_SHAPE_LEN_ND,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "x", std::to_string(xDimNum).c_str(),
+                                              "the dim num of the storage shape of x must be in range [2, 6]"),
+        return false);
 
-    OP_TILING_CHECK(weightDimNum < MIN_SHAPE_LEN_ND || weightDimNum > MAX_SHAPE_LEN_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "StorageShape of weight can not be greater "
-                                                    "than %zu and less than %zu, but is [%zu]",
-                                                    MAX_SHAPE_LEN_ND, MIN_SHAPE_LEN_ND, weightDimNum),
-                    return false);
+    OP_TILING_CHECK(
+        weightDimNum < MIN_SHAPE_LEN_ND || weightDimNum > MAX_SHAPE_LEN_ND,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "weight", std::to_string(weightDimNum).c_str(),
+                                              "the dim num of the storage shape of weight must be in range [2, 6]"),
+        return false);
 
     auto xShapeLen = xShape->GetOriginShape().GetDimNum();
     auto weightShapeLen = weightShape->GetOriginShape().GetDimNum();
@@ -268,9 +284,10 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckInputShape(const gert::Stora
 
     auto kBSize = static_cast<uint64_t>(inputParams_.transB ? weightLastDim : weightFirstDim);
     OP_TILING_CHECK(inputParams_.kSize != kBSize,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "K dim of x and weight must equal, but they are [%lu] and [%lu]",
-                                                    inputParams_.kSize, kBSize),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        inputParams_.opName, "x, weight",
+                        (std::to_string(inputParams_.kSize) + ", " + std::to_string(kBSize)).c_str(),
+                        "the k dim of x and weight must be equal"),
                     return false);
     return true;
 }
@@ -300,9 +317,9 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckAntiQuantShape(const gert::S
     size_t antiQuantScaleDimNum = antiQuantScaleShape->GetStorageShape().GetDimNum();
     size_t antiQuantScaleShapeSize = static_cast<size_t>(antiQuantScaleShape->GetStorageShape().GetShapeSize());
     OP_TILING_CHECK(antiQuantScaleDimNum > MM_SHAPE_LEN_ND,
-                    VECTOR_INNER_ERR_REPORT_TILIING(
-                        inputParams_.opName, "antiquant scale shape size should not be more than 2, but is [%zu]",
-                        antiQuantScaleDimNum),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        inputParams_.opName, "antiquantScale", std::to_string(antiQuantScaleDimNum).c_str(),
+                        "the dim num of antiquantScale can not be greater than 2"),
                     return false);
     if (antiQuantScaleShapeSize != 1) {
         if (antiQuantScaleDimNum == MM_SHAPE_LEN_ND) {
@@ -315,18 +332,21 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckAntiQuantShape(const gert::S
                 expectShape.AppendDim(static_cast<int64_t>(kNum));
                 expectShape.AppendDim(static_cast<int64_t>(inputParams_.nSize));
             }
-            OP_TILING_CHECK(
-                expectShape != antiQuantScaleShape->GetStorageShape(),
-                VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Antiquant shape expect %s, but is %s",
-                                                Ops::Base::ToString(expectShape).c_str(),
-                                                Ops::Base::ToString(antiQuantScaleShape->GetStorageShape()).c_str()),
-                return false);
+            OP_TILING_CHECK(expectShape != antiQuantScaleShape->GetStorageShape(),
+                            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                                inputParams_.opName, "antiquantScale",
+                                Ops::Base::ToString(antiQuantScaleShape->GetStorageShape()).c_str(),
+                                ("the shape of antiquantScale must be " + Ops::Base::ToString(expectShape)).c_str()),
+                            return false);
             inputParams_.antiQuantType = inputParams_.groupSize > 0 ? QuantType::PER_GROUP : QuantType::PER_CHANNEL;
         } else {
             OP_TILING_CHECK(antiQuantScaleShapeSize != inputParams_.nSize,
-                            VECTOR_INNER_ERR_REPORT_TILIING(
-                                inputParams_.opName, "Antiquant size should be n size when perchannel, but is %s",
-                                Ops::Base::ToString(antiQuantScaleShape->GetStorageShape()).c_str()),
+                            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                                inputParams_.opName, "antiquantScale", std::to_string(antiQuantScaleShapeSize).c_str(),
+                                ("the size of antiquantScale must be equal to the n size of weight in perchannel "
+                                 "scenario, actual n size is " +
+                                 std::to_string(inputParams_.nSize))
+                                    .c_str()),
                             return false);
             inputParams_.antiQuantType = QuantType::PER_CHANNEL;
         }

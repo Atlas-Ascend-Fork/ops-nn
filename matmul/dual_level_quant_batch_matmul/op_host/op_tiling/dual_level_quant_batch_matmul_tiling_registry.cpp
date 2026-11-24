@@ -45,7 +45,9 @@ static ge::graphStatus DualLevelQuantBatchMatmulTilingFunc(gert::TilingContext* 
     OPS_CHECK_NULL_WITH_CONTEXT(context, compileInfoPtr);
     NpuArch npuArch = compileInfoPtr->npuArch;
     if (npuArch != Ops::Base::DAV_3510 && npuArch != Ops::Base::DAV_9201) {
-        OP_LOGE(context->GetNodeName(), "Platform not supported, only supports dav3510 and dav9201 platforms");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "platform",
+                                              std::to_string(static_cast<int32_t>(npuArch)).c_str(),
+                                              "the platform must be dav3510 or dav9201");
         return ge::GRAPH_FAILED;
     }
     return TilingRegistry::GetInstance().DoTilingImpl(context);

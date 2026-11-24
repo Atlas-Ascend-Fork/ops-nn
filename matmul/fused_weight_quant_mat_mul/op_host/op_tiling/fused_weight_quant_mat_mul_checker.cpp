@@ -65,14 +65,17 @@ bool FusedWeightQuantMatMulChecker::CheckDtype()
     inputParams_.antiQuantScaleDtype = context_->GetInputDesc(idx++)->GetDataType();
     inputParams_.cDtype = context_->GetOutputDesc(0)->GetDataType();
     OP_TILING_CHECK(inputParams_.aDtype != ge::DT_FLOAT16,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input x dtype must be FLOAT16, but is [%s]",
-                                                    ge::TypeUtils::DataTypeToSerialString(inputParams_.aDtype).c_str()),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams_.opName, "x", ge::TypeUtils::DataTypeToSerialString(inputParams_.aDtype).c_str(),
+                        "the dtype of x must be FLOAT16"),
                     return false);
 
-    OP_TILING_CHECK(inputParams_.bDtype != ge::DT_INT8,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input weight dtype must be INT8, but is [%s]",
-                                                    ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype).c_str()),
-                    return false);
+    OP_TILING_CHECK(
+        inputParams_.bDtype != ge::DT_INT8,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "weight",
+                                              ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype).c_str(),
+                                              "the dtype of weight must be INT8"),
+        return false);
 
     OP_TILING_CHECK(inputParams_.antiQuantScaleDtype != ge::DT_UINT64,
                     VECTOR_INNER_ERR_REPORT_TILIING(
@@ -80,11 +83,11 @@ bool FusedWeightQuantMatMulChecker::CheckDtype()
                         ge::TypeUtils::DataTypeToSerialString(inputParams_.antiQuantScaleDtype).c_str()),
                     return false);
 
-    OP_TILING_CHECK(
-        inputParams_.cDtype != ge::DT_FLOAT16 && inputParams_.cDtype != ge::DT_INT8,
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Output y dtype must be FLOAT16/INT8, but is [%s]",
-                                        ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype).c_str()),
-        return false);
+    OP_TILING_CHECK(inputParams_.cDtype != ge::DT_FLOAT16 && inputParams_.cDtype != ge::DT_INT8,
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        inputParams_.opName, "y", ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype).c_str(),
+                        "the dtype of y must be FLOAT16 or INT8"),
+                    return false);
     // 合并编码契约：y INT8 时 antiquant_scale 为"反量化 × 输出量化"合并编码（pass 折叠生成），
     // 仅由融合 pass 产生；checker 不区分编码来源（与底座 y=INT8 行为一致）
 
@@ -93,8 +96,9 @@ bool FusedWeightQuantMatMulChecker::CheckDtype()
         inputParams_.biasDtype = biasDesc->GetDataType();
         OP_TILING_CHECK(
             inputParams_.biasDtype != ge::DT_FLOAT16 && inputParams_.biasDtype != ge::DT_INT32,
-            VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Input bias dtype must be FLOAT16/INT32, but is [%s]",
-                                            ge::TypeUtils::DataTypeToSerialString(inputParams_.biasDtype).c_str()),
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "bias",
+                                                  ge::TypeUtils::DataTypeToSerialString(inputParams_.biasDtype).c_str(),
+                                                  "the dtype of bias must be FLOAT16 or INT32"),
             return false);
     }
     return true;
@@ -186,9 +190,10 @@ bool FusedWeightQuantMatMulChecker::CheckInputShape(const gert::StorageShape* xS
 
     auto kBSize = static_cast<uint64_t>(inputParams_.transB ? weightLastDim : weightFirstDim);
     OP_TILING_CHECK(inputParams_.kSize != kBSize,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName,
-                                                    "K dim of x and weight must equal, but they are [%lu] and [%lu]",
-                                                    inputParams_.kSize, kBSize),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        inputParams_.opName, "x, weight",
+                        (std::to_string(inputParams_.kSize) + ", " + std::to_string(kBSize)).c_str(),
+                        "the k dim of x and weight must be equal"),
                     return false);
     return true;
 }
@@ -273,13 +278,19 @@ bool FusedWeightQuantMatMulChecker::CheckShape()
     OP_TILING_CHECK(xShape->GetStorageShape().GetShapeSize() == 0 ||
                         weightShape->GetStorageShape().GetShapeSize() == 0 ||
                         antiQuantScaleShape->GetStorageShape().GetShapeSize() == 0,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Not yet support empty tensor"), return false);
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "x, weight, antiquantScale", "empty",
+                                                          "empty tensor is not supported"),
+                    return false);
     OP_TILING_CHECK(!CheckInputShape(xShape, weightShape),
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Check input x and weight shape failed"),
                     return false);
     OP_TILING_CHECK(
         !CheckBatchInfo(xShape->GetOriginShape(), weightShape->GetOriginShape()),
-        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Batch dimension should be equal when their value not 1."),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            inputParams_.opName, "x, weight",
+            (Ops::Base::ToString(xShape->GetOriginShape()) + ", " + Ops::Base::ToString(weightShape->GetOriginShape()))
+                .c_str(),
+            "when the batch dimensions of x and weight are not 1, they must be equal"),
         return false);
     OP_TILING_CHECK(!CheckAntiQuantShape(antiQuantScaleShape, antiQuantOffsetShape),
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Check antiquant shape failed"), return false);
@@ -293,10 +304,14 @@ bool FusedWeightQuantMatMulChecker::CheckShape()
                     return false);
     if (biasShape != nullptr) {
         OP_TILING_CHECK(biasShape->GetStorageShape().GetDimNum() != 1,
-                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Bias dimension should equal to 1"),
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(inputParams_.opName, "bias",
+                                                              Ops::Base::ToString(biasShape->GetStorageShape()).c_str(),
+                                                              "the dim num of bias must be 1"),
                         return false);
         OP_TILING_CHECK(static_cast<uint64_t>(biasShape->GetStorageShape().GetDim(0)) != inputParams_.nSize,
-                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Bias size should be equal to nsize"),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            inputParams_.opName, "bias", std::to_string(biasShape->GetStorageShape().GetDim(0)).c_str(),
+                            "the size of bias must be equal to the n size of weight"),
                         return false);
     }
     return true;

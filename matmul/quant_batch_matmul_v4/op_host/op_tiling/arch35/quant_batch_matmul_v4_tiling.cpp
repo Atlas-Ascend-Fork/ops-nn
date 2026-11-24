@@ -476,7 +476,10 @@ bool QuantBatchMatmulV4TilingBase::AnalyzeX1scaleDtype(const gert::CompileTimeTe
 
 bool QuantBatchMatmulV4TilingBase::AnalyzeX2scaleDtype(const gert::CompileTimeTensorDesc* x2ScaleDesc)
 {
-    OP_TILING_CHECK(x2ScaleDesc == nullptr, OP_LOGE(inputParams_.opName, "X2 scale cannot be null."), return false);
+    OP_TILING_CHECK(
+        x2ScaleDesc == nullptr,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "x2Scale", "null", "x2Scale can not be null"),
+        return false);
     inputParams_.x2ScaleDtype = x2ScaleDesc->GetDataType();
     OP_TILING_CHECK(
         inputParams_.antiQuantType == QuantType::PER_GROUP && inputParams_.x2ScaleDtype != ge::DT_BF16 &&
@@ -578,17 +581,20 @@ bool QuantBatchMatmulV4TilingBase::AnalyzeScaleBNzFormat()
 {
     auto x1ScaleDesc = context_->GetOptionalInputDesc(X1_SCALE_INDEX);
     OP_TILING_CHECK(x1ScaleDesc != nullptr && IsScaleNzFormat(x1ScaleDesc->GetStorageFormat()),
-                    OP_LOGE(inputParams_.opName, "ScaleNZ is only supported for x2Scale"), return false);
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(inputParams_.opName, "x1Scale", "NZ",
+                                                           "ScaleNZ is only supported for x2Scale"),
+                    return false);
     if (inputParams_.antiQuantType != QuantType::MX) {
         return true;
     }
 
     auto x2ScaleDesc = context_->GetOptionalInputDesc(X2_SCALE_INDEX);
     inputParams_.scaleBNz = x2ScaleDesc != nullptr && IsScaleNzFormat(x2ScaleDesc->GetStorageFormat());
-    OP_TILING_CHECK(inputParams_.scaleBNz && !inputParams_.weightNz,
-                    OP_LOGE(inputParams_.opName, "ScaleB NZ requires FRACTAL_NZ weight, weightNz=%d",
-                            static_cast<int32_t>(inputParams_.weightNz)),
-                    return false);
+    OP_TILING_CHECK(
+        inputParams_.scaleBNz && !inputParams_.weightNz,
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(inputParams_.opName, "x2", "ND",
+                                               "when the format of x2Scale is NZ, the format of x2 must be FRACTAL_NZ"),
+        return false);
     return true;
 }
 
@@ -842,7 +848,10 @@ bool QuantBatchMatmulV4TilingBase::AnalyzeX2ScaleMxPerGroupShape(const gert::Sto
 
 bool QuantBatchMatmulV4TilingBase::AnalyzeX2ScaleShape(const gert::StorageShape* x2ScaleShape)
 {
-    OP_TILING_CHECK(x2ScaleShape == nullptr, OP_LOGE(inputParams_.opName, "X2 scale cannot be null"), return false);
+    OP_TILING_CHECK(x2ScaleShape == nullptr,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "x2Scale", "null",
+                                                          "the shape of x2Scale can not be null"),
+                    return false);
     auto x2ScaleShapeSize = static_cast<size_t>(x2ScaleShape->GetStorageShape().GetShapeSize());
     if (inputParams_.antiQuantType == QuantType::MX) { // check mx shape
         return AnalyzeX2ScaleMxPerGroupShape(x2ScaleShape);
@@ -949,7 +958,9 @@ ge::graphStatus QuantBatchMatmulV4TilingBase::GetPlatformInfo()
 
     if (inputParams_.bDtype == ge::DT_INT4) {
         OP_TILING_CHECK(!CalcUBSize(1UL, inputParams_.groupSize),
-                        OP_LOGE(inputParams_.opName, "group size[%lu] cannot fully load to UB", inputParams_.groupSize),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "groupSize",
+                                                              std::to_string(inputParams_.groupSize).c_str(),
+                                                              "the group size can not be fully loaded to UB"),
                         return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
