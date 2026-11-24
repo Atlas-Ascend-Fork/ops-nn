@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Performs element-wise addition, multiplication, and division on multiple tensors. Divides $x2_{i}$ by $x3_{i}$ element-wise, multiplies the result by scalar, and adds the result to $x1_{i}$. Compared with [aclnnForeachAddcdivScalar](aclnnForeachAddcdivScalar.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Select an appropriate API based on actual requirements.
+- Description: Performs element-wise addition, multiplication, and division on multiple tensors. Divides $x2_{i}$ by $x3_{i}$ element-wise, multiplies the result by scalar, and adds the result to $x1_{i}$. Compared with [aclnnForeachAddcdivScalar](aclnnForeachAddcdivScalar_en.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Select an appropriate API based on actual requirements.
 - Formula:
 
   $$
