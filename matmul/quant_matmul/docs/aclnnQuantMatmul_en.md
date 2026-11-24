@@ -27,7 +27,7 @@
 
 ## Function
 
-- Description: Performs quantized Matmul computation. The minimum supported dimension is 2, and the maximum supported input dimension is 3. Similar APIs include [aclnnMm](../../mat_mul_v3/docs/aclnnMm.md) (Matmul with 2D tensor input only) and [aclnnBatchMatMul](../../batch_mat_mul_v3/docs/aclnnBatchMatMul.md) (Matmul with 3D input only, where the first dimension is the batch dimension).
+- Description: Performs quantized Matmul computation. The minimum supported dimension is 2, and the maximum supported input dimension is 3. Similar APIs include [aclnnMm](../../mat_mul_v3/docs/aclnnMm_en.md) (Matmul with 2D tensor input only) and [aclnnBatchMatMul](../../batch_mat_mul_v3/docs/aclnnBatchMatMul_en.md) (Matmul with 3D input only, where the first dimension is the batch dimension).
 
 - Formula:
 
