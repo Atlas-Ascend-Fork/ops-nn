@@ -21,16 +21,16 @@
 - 原型信息
 
   <table>
-    <tr><th align="center">算子类型(OpType)</th><th colspan="4" align="center">Swish</th></tr> 
-    <tr><td align="center"> </td><td align="center">name</td><td align="center">Type</td><td align="center">data type</td><td align="center">format</td></tr>  
+    <tr><th align="center">算子类型(OpType)</th><th colspan="4" align="center">Swish</th></tr>
+    <tr><td align="center"> </td><td align="center">name</td><td align="center">Type</td><td align="center">data type</td><td align="center">format</td></tr>
     <tr><td rowspan="2" align="center">算子输入</td></tr>
-    <tr><td align="center">x</td><td align="center">tensor</td><td align="center">float32,float16,bfloat16</td><td align="center">ND</td></tr>  
-    
+    <tr><td align="center">x</td><td align="center">tensor</td><td align="center">float32,float16,bfloat16</td><td align="center">ND</td></tr>
+
     <tr><td rowspan="1" align="center">算子输出</td>
-    <td align="center">y</td><td align="center">tensor</td><td align="center">float32,float16,bfloat16</td><td align="center">ND</td></tr>  
+    <td align="center">y</td><td align="center">tensor</td><td align="center">float32,float16,bfloat16</td><td align="center">ND</td></tr>
     <tr><td rowspan="1" align="center">算子属性</td>
-    <td align="center">scale</td><td align="center">scalar</td><td align="center">float</td><td align="center">-</td></tr>  
-    <tr><td rowspan="1" align="center">核函数名</td><td colspan="4" align="center">swish</td></tr>  
+    <td align="center">scale</td><td align="center">scalar</td><td align="center">float</td><td align="center">-</td></tr>
+    <tr><td rowspan="1" align="center">核函数名</td><td colspan="4" align="center">swish</td></tr>
   </table>
 
 ## 约束与限制
@@ -52,8 +52,8 @@ bash build.sh --run_example swish eager cust --vendor_name=custom --experimental
 ```
 
 <table>
-    <th>目录</th><th>描述</th>
+    <tr><th>目录</th><th>描述</th></tr>
     <tr>
-        <td><a href="./examples/test_aclnn_swish.cpp"></a>test_aclnn_swish.cpp</td><td>通过aclnn调用的方式调用Swish算子。</td>
+        <td><a href="./examples/test_aclnn_swish.cpp">test_aclnn_swish.cpp</a></td><td>通过aclnn调用的方式调用Swish算子。</td>
     </tr>
 </table>
