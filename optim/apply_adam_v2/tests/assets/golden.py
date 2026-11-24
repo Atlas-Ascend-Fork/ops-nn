@@ -14,7 +14,10 @@ import numpy as np
 import torch
 
 
-__spec__ = {"apply_adam_v2": "ApplyAdamV2TestSpec"}
+__spec__ = {
+    "apply_adam_v2": "ApplyAdamV2TestSpec",
+    "aclnnApplyAdamV2": "ApplyAdamV2AclnnTestSpec",
+}
 
 _L0 = {
     "float32": {"standard": "cross_check", "level": "L0"},
@@ -326,4 +329,89 @@ class ApplyAdamV2TestSpec:
 
     third_party = {"torch": ThirdPartyImpl}
 
+    tolerance = _L0
+
+
+class ApplyAdamV2AclnnTestSpec:
+    @staticmethod
+    def golden(
+        varRef,
+        mRef,
+        vRef,
+        lr,
+        beta1,
+        beta2,
+        epsilon,
+        grad,
+        maxGradNormOptional=None,
+        globalGradNorm=None,
+        weightDecay=None,
+        stepSizeOptional=None,
+        adamModeOptional=None,
+        **kwargs,
+    ):
+        # ACLNN TTK can supply Torch tensors in C parameter order.
+        var, m, v, grad = (
+            tensor.detach().cpu().numpy()
+            if isinstance(tensor, torch.Tensor)
+            else tensor
+            for tensor in (varRef, mRef, vRef, grad)
+        )
+        return ApplyAdamV2TestSpec.golden(
+            var,
+            m,
+            v,
+            lr,
+            beta1,
+            beta2,
+            epsilon,
+            grad,
+            maxGradNormOptional,
+            globalGradNorm,
+            weightDecay,
+            stepSizeOptional,
+            adam_mode="adam" if adamModeOptional is None else adamModeOptional,
+        )
+
+    class ThirdPartyImpl(ApplyAdamV2TestSpec.ThirdPartyImpl):
+        def __init__(
+            self,
+            *,
+            varRef,
+            mRef,
+            vRef,
+            lr,
+            beta1,
+            beta2,
+            epsilon,
+            grad=None,
+            maxGradNormOptional=None,
+            globalGradNorm,
+            weightDecay,
+            stepSizeOptional=None,
+            adamModeOptional=None,
+            gradRef=None,
+        ):
+            # XPU binds by name, and ACLNN metadata can expose grad or gradRef.
+            if grad is None:
+                grad = gradRef
+            if grad is None:
+                raise ValueError("Missing ACLNN gradient input (grad or gradRef)")
+            super().__init__(
+                varRef,
+                mRef,
+                vRef,
+                lr,
+                beta1,
+                beta2,
+                epsilon,
+                grad,
+                maxGradNormOptional,
+                globalGradNorm,
+                weightDecay,
+                stepSizeOptional,
+                adam_mode="adam" if adamModeOptional is None else adamModeOptional,
+            )
+
+    third_party = {"torch": ThirdPartyImpl}
     tolerance = _L0
