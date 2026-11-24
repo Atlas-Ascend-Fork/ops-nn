@@ -35,6 +35,21 @@ constexpr int64_t INPUT_IDX_X1 = 0;
 constexpr int64_t INPUT_IDX_X2 = 1;
 constexpr int64_t MAX_SUPPORT_DIM_NUMS = 8;
 constexpr int32_t WS_ALIGN = 128;
+// arch35 RegBase (Ascend950) planning constants. 40960 B is the PB-32
+// SIMT/regbase top-of-UB reserve; 1024 B keeps headroom for the tiling-data
+// copy and VF bursts. Six slots = 3 queues (x1/x2/y) x depth 2.
+constexpr int64_t UB_SIMT_RESERVE = 40 * 1024;
+constexpr int64_t UB_GUARD_BYTES = 1024;
+constexpr int64_t VECTOR_TILE_BUFFER_COUNT = 6;
+constexpr int64_t VECTOR_BYTES_PER_BLOCK = 4096;
+constexpr int64_t VECTOR_UB_ALIGN_BYTES = 32;
+// RegBase workload guard: a tensor list with at most two tensors and at most 32
+// elements in total (e.g. L1_empty_001: 2 tensors / 6 fp16 elements) keeps the
+// frozen SIMT path. Those micro lists are launch/latency bound, the RegBase
+// transport adds ~1.7 us of fixed cost and measured 0.67x on such a case, while
+// every multi-tensor tiny list (L1_001 244x1, L1_168 20x1, ...) keeps RegBase.
+constexpr uint64_t REGBASE_FALLBACK_MAX_TENSORS = 2;
+constexpr int64_t REGBASE_FALLBACK_MAX_ELEMENTS = 32;
 
 // Get tiling key from dtype (SE order: FP32=0, FP16=1, BF16=2)
 static ge::graphStatus GetTilingKeyByDtype(gert::TilingContext* context, ge::DataType dtype, uint64_t& tilingKey)
@@ -197,16 +212,185 @@ static ge::graphStatus CheckTensorListInfo(gert::TilingContext* context, uint64_
     return ge::GRAPH_SUCCESS;
 }
 
+} // namespace optiling
+
+// Read-only reuse of the shared flat schema (ForeachFlatTilingData) and its
+// alignment helpers. The builder Build<>() in this header is not used: it sizes
+// the tile from the raw ubSize and does not reserve the PB-32 40 KiB.
+#include "../../../foreach_utils/op_host/foreach_flat_regbase_tiling.h"
+
+namespace optiling {
+
+// Ascend950 (DAV_3510) is the only target that enables the RegBase path; every
+// other arch35 target (Ascend350) keeps the original SIMT implementation.
+static bool IsRegbaseSoc(gert::TilingContext* context)
+{
+    fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
+    if (platformInfoPtr == nullptr) {
+        return false;
+    }
+    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
+    return ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+}
+
+static int64_t GetDtypeBytes(ge::DataType dtype)
+{
+    switch (dtype) {
+        case ge::DT_FLOAT:
+            return 4;
+        case ge::DT_FLOAT16:
+        case ge::DT_BF16:
+            return 2;
+        default:
+            return 0;
+    }
+}
+
+static int64_t FloorAlignBytes(int64_t value, int64_t align) { return (value / align) * align; }
+
+// Tile elements from the usable UB budget: 3 double-buffered queues, no extra
+// UB (the register VF keeps no cast TBuf), 32 B aligned per slot.
+static ge::graphStatus ComputeRegbaseTile(gert::TilingContext* context, ge::DataType dtype, int64_t ubBudget,
+                                          uint32_t& tileElems)
+{
+    int64_t bytesPerElem = GetDtypeBytes(dtype);
+    OP_CHECK_IF(
+        bytesPerElem <= 0,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "ForeachDivList"),
+            "x1", Ops::Base::ToString(dtype), "supported dtypes are float32, float16 and bfloat16"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ubBudget <= 0, OP_LOGE(context, "RegBase UB budget %ld is not positive", ubBudget),
+                return ge::GRAPH_FAILED);
+    int64_t slotBytes = FloorAlignBytes(ubBudget / VECTOR_TILE_BUFFER_COUNT, VECTOR_UB_ALIGN_BYTES);
+    int64_t elems = slotBytes / bytesPerElem;
+    OP_CHECK_IF(elems < 1, OP_LOGE(context, "RegBase tile elements %ld is not positive", elems),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(VECTOR_TILE_BUFFER_COUNT * elems * bytesPerElem > ubBudget,
+                OP_LOGE(context, "RegBase UB reservation %ld exceeds budget %ld",
+                        VECTOR_TILE_BUFFER_COUNT * elems * bytesPerElem, ubBudget),
+                return ge::GRAPH_FAILED);
+    tileElems = static_cast<uint32_t>(elems);
+    return ge::GRAPH_SUCCESS;
+}
+
+static void LocateFlatUnit(const int64_t* elementCounts, int32_t tensorCount, int64_t alignElems, int64_t unitIndex,
+                           uint16_t& tensorIndex, int64_t& unitInTensor)
+{
+    int64_t remaining = unitIndex;
+    tensorIndex = 0;
+    unitInTensor = 0;
+    for (int32_t i = 0; i < tensorCount; ++i) {
+        int64_t units = elementCounts[i] > 0 ? ForeachFlatRegbaseTiling::CeilDiv(elementCounts[i], alignElems) : 0;
+        if (remaining < units) {
+            tensorIndex = static_cast<uint16_t>(i);
+            unitInTensor = remaining;
+            return;
+        }
+        remaining -= units;
+    }
+}
+
+// Split the flat element stream into contiguous, disjoint 32 B-unit ranges, one
+// per AIV core. A core boundary inside a tensor is always a multiple of the
+// unit size, and tensors smaller than one unit stay whole.
+static void FillFlatTensorRanges(const int64_t* elementCounts, int32_t tensorCount, int64_t coreCount,
+                                 int64_t alignElems, ForeachFlatTilingData* flat)
+{
+    for (int32_t c = 0; c < FOREACH_FLAT_MAX_CORE_COUNT; ++c) {
+        flat->tensorStartList[c] = 0;
+        flat->tensorEndList[c] = 0;
+        flat->tensorStartOffsetList[c] = 0;
+        flat->tensorEndOffsetList[c] = -1;
+    }
+    int64_t totalUnits = 0;
+    for (int32_t i = 0; i < tensorCount; ++i) {
+        if (elementCounts[i] > 0) {
+            totalUnits += ForeachFlatRegbaseTiling::CeilDiv(elementCounts[i], alignElems);
+        }
+    }
+    if (totalUnits <= 0) {
+        return;
+    }
+    int64_t baseUnits = totalUnits / coreCount;
+    int64_t remainderUnits = totalUnits % coreCount;
+    int64_t unitCursor = 0;
+    for (int64_t c = 0; c < coreCount; ++c) {
+        int64_t units = baseUnits + (c < remainderUnits ? 1 : 0);
+        if (units <= 0) {
+            continue;
+        }
+        uint16_t startTensor = 0;
+        uint16_t endTensor = 0;
+        int64_t startUnit = 0;
+        int64_t endUnit = 0;
+        LocateFlatUnit(elementCounts, tensorCount, alignElems, unitCursor, startTensor, startUnit);
+        LocateFlatUnit(elementCounts, tensorCount, alignElems, unitCursor + units - 1, endTensor, endUnit);
+        int64_t endExclusive = (endUnit + 1) * alignElems;
+        if (endExclusive > elementCounts[endTensor]) {
+            endExclusive = elementCounts[endTensor];
+        }
+        flat->tensorStartList[c] = startTensor;
+        flat->tensorStartOffsetList[c] = startUnit * alignElems;
+        flat->tensorEndList[c] = endTensor;
+        flat->tensorEndOffsetList[c] = endExclusive - 1;
+        unitCursor += units;
+    }
+}
+
+// Fill the flat schema appended after the frozen SIMT fields and set the
+// useRegbase routing bit. The caller validates that the raw tiling buffer is
+// large enough for the whole layout before any of these fields are written.
+static ge::graphStatus FillRegbaseTiling(gert::TilingContext* context, ge::DataType dtype, int64_t ubBudget,
+                                         int64_t coreNum, int64_t tensorNum, int64_t totalElements, int64_t& coreCount,
+                                         ForeachDivListTilingData* tilingData)
+{
+    int64_t bytesPerElem = GetDtypeBytes(dtype);
+    OP_CHECK_IF(
+        bytesPerElem <= 0,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            ((context) != nullptr && (context)->GetNodeName() != nullptr ? (context)->GetNodeName() : "ForeachDivList"),
+            "x1", Ops::Base::ToString(dtype), "supported dtypes are float32, float16 and bfloat16"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tensorNum > static_cast<int64_t>(MAX_TENSOR_NUM_FOREACH_DIV_LIST),
+                OP_LOGE(context, "tensorNum %ld exceeds the flat schema capacity", tensorNum), return ge::GRAPH_FAILED);
+    int64_t elementsPerBlock = VECTOR_BYTES_PER_BLOCK / bytesPerElem;
+    int64_t byElements = totalElements > 0 ? ForeachFlatRegbaseTiling::CeilDiv(totalElements, elementsPerBlock) : 0;
+    int64_t byTensors = std::min<int64_t>(tensorNum, coreNum);
+    coreCount = std::min<int64_t>(coreNum, std::max<int64_t>(byElements, byTensors));
+    if (coreCount < 1) {
+        coreCount = 1;
+    }
+    OP_CHECK_IF(coreCount > static_cast<int64_t>(FOREACH_FLAT_MAX_CORE_COUNT),
+                OP_LOGE(context, "core count %ld exceeds the flat schema capacity", coreCount),
+                return ge::GRAPH_FAILED);
+
+    uint32_t tileElems = 0;
+    OP_CHECK_IF(ComputeRegbaseTile(context, dtype, ubBudget, tileElems) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "ComputeRegbaseTile failed."), return ge::GRAPH_FAILED);
+
+    ForeachFlatTilingData* flat = &tilingData->flat;
+    *flat = ForeachFlatTilingData{};
+    flat->tileElems = tileElems;
+    for (int32_t i = 0; i < static_cast<int32_t>(tensorNum); ++i) {
+        flat->tensorDataCountList[i] = tilingData->elementCounts[i];
+    }
+    FillFlatTensorRanges(tilingData->elementCounts, static_cast<int32_t>(tensorNum), coreCount,
+                         VECTOR_UB_ALIGN_BYTES / bytesPerElem, flat);
+
+    tilingData->useRegbase = 1U;
+    tilingData->needCoreNum = static_cast<int32_t>(coreCount);
+    return ge::GRAPH_SUCCESS;
+}
+
 static ge::graphStatus ForeachDivListTilingFunc(gert::TilingContext* context)
 {
     // 1. Get platform info
     int64_t coreNum = 0;
-    int64_t ubSize = 0;
-    OP_CHECK_IF(GetPlatformInfoFallback(context, coreNum, ubSize) != ge::GRAPH_SUCCESS,
+    int64_t ubSizeTotal = 0;
+    OP_CHECK_IF(GetPlatformInfoFallback(context, coreNum, ubSizeTotal) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context, "Failed to get platform info"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF((ubSize <= DCACHE_SIZE), OP_LOGE(context, "ubSize %ld <= DCACHE_SIZE %ld", ubSize, DCACHE_SIZE),
-                return ge::GRAPH_FAILED);
-    ubSize = ubSize - DCACHE_SIZE;
+    const bool regbaseSoc = IsRegbaseSoc(context);
 
     // 2. Get tensor count from dynamic input x1
     auto computeNodeInfoPtr = context->GetComputeNodeInfo();
@@ -227,11 +411,33 @@ static ge::graphStatus ForeachDivListTilingFunc(gert::TilingContext* context)
     OP_CHECK_IF(CheckTensorListInfo(context, tensorNum) != ge::GRAPH_SUCCESS,
                 OP_LOGE_WITHOUT_REPORT(context, "CheckTensorListInfo failed."), return ge::GRAPH_FAILED);
 
+    // Validate the dtype before touching the tiling buffer: an unsupported
+    // dtype must report the parameter error (EZ0020, param_name=x1) from
+    // GetTilingKeyByDtype, not a generic capacity error of the RegBase schema.
+    ge::DataType dataType = ge::DT_FLOAT;
+    if (tensorNum > 0) {
+        auto x1DescPtr = context->GetDynamicInputDesc(INPUT_IDX_X1, 0);
+        OP_CHECK_NULL_WITH_CONTEXT(context, x1DescPtr);
+        dataType = x1DescPtr->GetDataType();
+    }
+    uint64_t tilingKey = 0;
+    if (GetTilingKeyByDtype(context, dataType, tilingKey) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
     // 3. Compute per-tensor element counts, totalElements, maxTensorElements
     int64_t totalElements = 0;
     int64_t maxTensorElements = 0;
-    ge::DataType dataType = ge::DT_FLOAT;
     ForeachDivListTilingData* tilingData = context->GetTilingData<ForeachDivListTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tilingData);
+
+    // The whole host layout (frozen SIMT fields + flat RegBase schema + the
+    // routing bit) must fit the raw tiling buffer before any field is written.
+    auto* rawTilingData = context->GetRawTilingData();
+    OP_CHECK_IF(rawTilingData == nullptr || rawTilingData->GetCapacity() < sizeof(ForeachDivListTilingData),
+                OP_LOGE(context, "tiling data capacity %zu is smaller than %zu",
+                        rawTilingData == nullptr ? 0U : rawTilingData->GetCapacity(), sizeof(ForeachDivListTilingData)),
+                return ge::GRAPH_FAILED);
 
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto idxTensorShapePtr = context->GetDynamicInputShape(INPUT_IDX_X1, i);
@@ -247,41 +453,60 @@ static ge::graphStatus ForeachDivListTilingFunc(gert::TilingContext* context)
         if (numel > maxTensorElements) {
             maxTensorElements = numel;
         }
-        if (i == 0) {
-            auto idxTensorDtypePtr = context->GetDynamicInputDesc(INPUT_IDX_X1, i);
-            OP_CHECK_NULL_WITH_CONTEXT(context, idxTensorDtypePtr);
-            dataType = idxTensorDtypePtr->GetDataType();
-        }
     }
 
-    // 4. Compute core split based on maxTensorElements (MDE design)
+    // 3b. RegBase workload guard (arch35-soc-routing-guard): micro lists keep the
+    // byte-identical SIMT fallback, everything else uses the RegBase path.
+    const bool useRegbase = regbaseSoc && !(tensorNum <= REGBASE_FALLBACK_MAX_TENSORS &&
+                                            totalElements <= REGBASE_FALLBACK_MAX_ELEMENTS);
+    const int64_t ubReserve = useRegbase ? (UB_SIMT_RESERVE + UB_GUARD_BYTES) : DCACHE_SIZE;
+    OP_CHECK_IF((ubSizeTotal <= ubReserve), OP_LOGE(context, "ubSize %ld <= ub reserve %ld", ubSizeTotal, ubReserve),
+                return ge::GRAPH_FAILED);
+    const int64_t ubSize = ubSizeTotal - ubReserve;
+
+    // 4. Compute core split
     int64_t needCoreNum = 1;
-    if (maxTensorElements >= SINGLE_CORE_MIN_ELEMENTS) {
-        needCoreNum = std::min(coreNum, (static_cast<int64_t>(maxTensorElements) + SINGLE_CORE_MIN_ELEMENTS - 1) /
-                                            SINGLE_CORE_MIN_ELEMENTS);
+    if (useRegbase) {
+        // 4a. Ascend950 RegBase: tensor-count-aware split plus per-core flat
+        // tensor ranges consumed by the shared FlatFlowKernel.
+        OP_CHECK_IF(FillRegbaseTiling(context, dataType, ubSize, coreNum, static_cast<int64_t>(tensorNum),
+                                      totalElements, needCoreNum, tilingData) != ge::GRAPH_SUCCESS,
+                    OP_LOGE(context, "FillRegbaseTiling failed."), return ge::GRAPH_FAILED);
+    } else {
+        // 4b. SIMT split based on maxTensorElements (unchanged). The routing bit
+        // is still part of the reported payload, so write it explicitly for the
+        // fallback path (micro list or non-RegBase SoC).
+        if (maxTensorElements >= SINGLE_CORE_MIN_ELEMENTS) {
+            needCoreNum = std::min(coreNum, (static_cast<int64_t>(maxTensorElements) + SINGLE_CORE_MIN_ELEMENTS - 1) /
+                                                SINGLE_CORE_MIN_ELEMENTS);
+        }
+        tilingData->needCoreNum = static_cast<int32_t>(needCoreNum);
+        tilingData->useRegbase = 0U;
     }
 
-    // 5. Fill TilingData (aligned with MDE)
-    tilingData->needCoreNum = static_cast<int32_t>(needCoreNum);
+    // 5. Fill shared SIMT-visible fields (aligned with MDE)
     tilingData->totalElements = totalElements;
     tilingData->tensorCount = static_cast<int32_t>(tensorNum);
     tilingData->maxTensorElements = maxTensorElements;
 
+    // Report the whole layout (including useRegbase) so the kernel receives a
+    // fully initialized struct on both the RegBase and SIMT fallback paths.
+    rawTilingData->SetDataSize(sizeof(ForeachDivListTilingData));
+
     // 6. Set context
     context->SetBlockDim(needCoreNum);
-    uint64_t tilingKey = 0;
-    if (GetTilingKeyByDtype(context, dataType, tilingKey) != ge::GRAPH_SUCCESS) {
-        return ge::GRAPH_FAILED;
-    }
     context->SetTilingKey(tilingKey);
 
-    // 7. Set local memory size
-    auto res = context->SetLocalMemorySize(static_cast<uint32_t>(ubSize));
-    OP_CHECK_IF((res != ge::GRAPH_SUCCESS), OP_LOGE(context, "SetLocalMemorySize ubSize=%ld failed", ubSize),
+    // 7. Set local memory size: the RegBase path keeps the PB-32 reserve out of
+    // the usable UB (212992 B) while the SIMT path keeps the dcache budget.
+    int64_t localMemorySize = useRegbase ? (ubSize + UB_GUARD_BYTES) : ubSize;
+    auto res = context->SetLocalMemorySize(static_cast<uint32_t>(localMemorySize));
+    OP_CHECK_IF((res != ge::GRAPH_SUCCESS), OP_LOGE(context, "SetLocalMemorySize ubSize=%ld failed", localMemorySize),
                 return ge::GRAPH_FAILED);
 
-    // 8. Set workspace size (user workspace + system workspace)
-    int64_t userWorkspaceSize = ComputeWorkspaceSize(static_cast<int32_t>(tensorNum));
+    // 8. Set workspace size. The RegBase path keeps no tensor metadata table to
+    // the device, so only the system workspace remains.
+    int64_t userWorkspaceSize = useRegbase ? 0 : ComputeWorkspaceSize(static_cast<int32_t>(tensorNum));
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint64_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);

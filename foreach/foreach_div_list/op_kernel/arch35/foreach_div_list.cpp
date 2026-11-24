@@ -18,6 +18,9 @@
  */
 
 #include "foreach_div_list_simt.h"
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#include "foreach_div_list_regbase.h"
+#endif
 
 using namespace AscendC;
 using namespace NsForeachDivList;
@@ -33,6 +36,27 @@ __global__ __aicore__ void foreach_div_list(GM_ADDR x1, GM_ADDR x2, GM_ADDR y, G
 {
     REGISTER_TILING_DEFAULT(ForeachDivListTilingData);
     GET_TILING_DATA_WITH_STRUCT(ForeachDivListTilingData, tilingData, tiling);
+
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+    if (tilingData.useRegbase != 0U) {
+        TPipe pipeOp;
+        if constexpr (schMode == static_cast<uint32_t>(ForeachDivListTilingKey::TILING_KEY_FLOAT32)) {
+            NsForeachDivList::ForeachDivListRegbase<float, ForeachFlatTilingData> op;
+            op.Init(&tilingData.flat, &pipeOp);
+            op.Process(x1, x2, y);
+        } else if constexpr (schMode == static_cast<uint32_t>(ForeachDivListTilingKey::TILING_KEY_FLOAT16)) {
+            NsForeachDivList::ForeachDivListRegbase<half, ForeachFlatTilingData> op;
+            op.Init(&tilingData.flat, &pipeOp);
+            op.Process(x1, x2, y);
+        } else if constexpr (schMode == static_cast<uint32_t>(ForeachDivListTilingKey::TILING_KEY_BFLOAT16)) {
+            NsForeachDivList::ForeachDivListRegbase<bfloat16_t, ForeachFlatTilingData> op;
+            op.Init(&tilingData.flat, &pipeOp);
+            op.Process(x1, x2, y);
+        }
+        pipeOp.Destroy();
+        return;
+    }
+#endif
 
     GM_ADDR userWorkspace = AscendC::GetUserWorkspace(workspace);
     NsForeachDivList::PopulateWorkspace(x1, x2, y, userWorkspace, &tilingData);

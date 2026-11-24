@@ -40,7 +40,8 @@ protected:
 
 static std::map<std::string, std::string> soc_version_infos = {{"Short_SoC_version", "Ascend950"}};
 
-static void RunTilingCase(ge::DataType dtype, uint64_t expectedTilingKey)
+static void RunTilingCase(ge::DataType dtype, uint64_t expectedTilingKey, size_t cap = 8192,
+                          ge::graphStatus expectedStatus = ge::GRAPH_SUCCESS)
 {
     std::string op_type("ForeachDivList");
     ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
@@ -95,7 +96,7 @@ static void RunTilingCase(ge::DataType dtype, uint64_t expectedTilingKey)
 
     ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
-    auto param = gert::TilingData::CreateCap(4096);
+    auto param = gert::TilingData::CreateCap(cap);
     ASSERT_NE(param, nullptr);
     auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
     auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
@@ -123,9 +124,11 @@ static void RunTilingCase(ge::DataType dtype, uint64_t expectedTilingKey)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
-    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
-    auto tiling_key = tiling_context->GetTilingKey();
-    ASSERT_EQ(tiling_key, expectedTilingKey);
+    EXPECT_EQ(tiling_func(tiling_context), expectedStatus);
+    if (expectedStatus == ge::GRAPH_SUCCESS) {
+        auto tiling_key = tiling_context->GetTilingKey();
+        ASSERT_EQ(tiling_key, expectedTilingKey);
+    }
 }
 
 static void RunTilingOutShapeCase(bool outLarger, ge::graphStatus expectedStatus)
@@ -183,7 +186,7 @@ static void RunTilingOutShapeCase(bool outLarger, ge::graphStatus expectedStatus
 
     ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
-    auto param = gert::TilingData::CreateCap(4096);
+    auto param = gert::TilingData::CreateCap(8192);
     ASSERT_NE(param, nullptr);
     auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
     auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
@@ -480,6 +483,14 @@ TilingRunResult TilingRunner::Run(const std::vector<std::vector<ForeachTensorSpe
 
 TEST_F(foreach_div_list_arch35_tiling_test, foreach_div_list_arch35_fp32) { RunTilingCase(ge::DT_FLOAT, 0); }
 
+// The host layout is the full 5740 B struct (SIMT fields + flat schema + routing
+// bit); a 4096 B buffer must be rejected before any field is written.
+TEST_F(foreach_div_list_arch35_tiling_test, foreach_div_list_arch35_small_capacity_rejected)
+{
+    RunTilingCase(ge::DT_FLOAT, 0, 4096, ge::GRAPH_FAILED);
+    RunTilingCase(ge::DT_FLOAT, 0, sizeof(ForeachDivListTilingData) - 1, ge::GRAPH_FAILED);
+}
+
 // out 元素数大于 x1（4096 >= 2048，异 shape）应放行：社区 issue #37 的 y>=x 口径守护
 TEST_F(foreach_div_list_arch35_tiling_test, foreach_div_list_arch35_out_shape_larger_accepted)
 {
@@ -676,4 +687,373 @@ TEST_F(foreach_div_list_arch35_tiling_test, foreach_div_list_arch35_first_error_
     EXPECT_EQ(result.error.code, "EZ0009");
     EXPECT_EQ(ErrorValue(result.error, "param_name"), "x2");
     EXPECT_EQ(result.duplicateCount, 0U) << "duplicate report detected";
+}
+
+// ===================== arch35 RegBase flat path (round2) =====================
+// Probes the real tiling function with a tensor list and checks the appended
+// flat schema: core split, per-core tensor ranges (exact partition, no hole or
+// overlap), tile size from the PB-32 UB budget, routing bit and workspace.
+
+namespace {
+
+constexpr uint32_t PROBE_CORE_NUM = 56;
+constexpr uint32_t PROBE_UB_SIZE = 253952;
+constexpr uint32_t PROBE_SIMT_DCACHE = 128 * 1024;
+constexpr size_t PROBE_TILING_CAP = 8192;
+
+struct ProbeCompileInfo {
+    int64_t coreNum;
+    int64_t ubSize;
+};
+
+struct FlatTilingProbe {
+    ge::graphStatus status = ge::GRAPH_FAILED;
+    uint64_t tilingKey = 0;
+    uint32_t blockDim = 0;
+    uint32_t localMemorySize = 0;
+    size_t workspaceSize = 0;
+    size_t tilingDataSize = 0;
+    std::vector<int64_t> tilingStorage;
+};
+
+static const ForeachDivListTilingData* ProbeKernelTiling(const FlatTilingProbe& probe)
+{
+    return reinterpret_cast<const ForeachDivListTilingData*>(probe.tilingStorage.data());
+}
+
+static size_t ProbeFlatOffset() { return __builtin_offsetof(ForeachDivListTilingData, flat); }
+
+static size_t ProbeUseRegbaseOffset() { return ProbeFlatOffset() + sizeof(ForeachFlatTilingData); }
+
+static size_t ExpectedUserWorkspace(int64_t tensorCount)
+{
+    int64_t rawSize = 8 + tensorCount * 8 * 4;
+    return static_cast<size_t>(((rawSize + 127) / 128) * 128);
+}
+
+static FlatTilingProbe RunFlatTilingProbe(ge::DataType dtype, const std::vector<int64_t>& tensorSizes,
+                                          const std::string& socVersion)
+{
+    FlatTilingProbe probe;
+    probe.tilingStorage.assign(PROBE_TILING_CAP / sizeof(int64_t), 0xFF);
+    const uint32_t tensorNum = static_cast<uint32_t>(tensorSizes.size());
+    std::string op_type("ForeachDivList");
+    auto op_impl = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str());
+    if (op_impl == nullptr) {
+        return probe;
+    }
+    auto tiling_func = op_impl->tiling;
+    auto tiling_parse_func = op_impl->tiling_parse;
+
+    std::string compile_info_string = R"({
+        "hardware_info": {
+            "BT_SIZE": 0,
+            "load3d_constraints": "1",
+            "Intrinsic_fix_pipe_l0c2out": false,
+            "Intrinsic_data_move_l12ub": true,
+            "Intrinsic_data_move_l0c2ub": true,
+            "Intrinsic_data_move_out2l1_nd2nz": false,
+            "UB_SIZE": 253952,
+            "L2_SIZE": 33554432,
+            "L1_SIZE": 524288,
+            "L0A_SIZE": 65536,
+            "L0B_SIZE": 65536,
+            "L0C_SIZE": 131072,
+            "CORE_NUM": 56
+        }
+    })";
+    std::map<std::string, std::string> soc_infos;
+    std::map<std::string, std::string> aicore_spec;
+    std::map<std::string, std::string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+    soc_infos["Short_SoC_version"] = socVersion;
+
+    soc_infos["NpuArch"] = "3510";
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    platform_info.SetPlatformRes("SoCInfo", soc_infos);
+    platform_info.SetPlatformRes("AICoreSpec", aicore_spec);
+    platform_info.SetCoreNumByCoreType("AICore");
+    platform_info.SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    std::map<std::string, std::string> version_info{{"Short_SoC_version", socVersion}};
+    platform_info.SetPlatformResWithLock("version", version_info);
+    ProbeCompileInfo compile_info{static_cast<int64_t>(PROBE_CORE_NUM), static_cast<int64_t>(PROBE_UB_SIZE)};
+
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
+                                      reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+    if (!kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init()) {
+        return probe;
+    }
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+    if (tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()) != ge::GRAPH_SUCCESS) {
+        return probe;
+    }
+
+    std::vector<gert::StorageShape> x1Shapes;
+    std::vector<gert::StorageShape> x2Shapes;
+    std::vector<gert::StorageShape> outShapes;
+    x1Shapes.reserve(tensorNum);
+    x2Shapes.reserve(tensorNum);
+    outShapes.reserve(tensorNum);
+    for (uint32_t i = 0; i < tensorNum; ++i) {
+        x1Shapes.emplace_back(gert::StorageShape({tensorSizes[i]}, {tensorSizes[i]}));
+        x2Shapes.emplace_back(gert::StorageShape({tensorSizes[i]}, {tensorSizes[i]}));
+        outShapes.emplace_back(gert::StorageShape({tensorSizes[i]}, {tensorSizes[i]}));
+    }
+    std::vector<gert::StorageShape*> inputPtrs;
+    std::vector<gert::StorageShape*> outputPtrs;
+    inputPtrs.reserve(tensorNum * 2);
+    outputPtrs.reserve(tensorNum);
+    for (uint32_t i = 0; i < tensorNum; ++i) {
+        inputPtrs.push_back(&x1Shapes[i]);
+    }
+    for (uint32_t i = 0; i < tensorNum; ++i) {
+        inputPtrs.push_back(&x2Shapes[i]);
+    }
+    for (uint32_t i = 0; i < tensorNum; ++i) {
+        outputPtrs.push_back(&outShapes[i]);
+    }
+
+    auto param = gert::TilingData::CreateCap(PROBE_TILING_CAP);
+    if (param == nullptr) {
+        return probe;
+    }
+    auto workspace_size_holder = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holder.get());
+
+    gert::TilingContextFaker faker;
+    faker.SetOpType(op_type.c_str())
+        .NodeIoNum(2, 1)
+        .IrInstanceNum(std::vector<uint32_t>{tensorNum, tensorNum}, std::vector<uint32_t>{tensorNum})
+        .InputShapes(inputPtrs)
+        .OutputShapes(outputPtrs)
+        .CompileInfo(&compile_info)
+        .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+        .NodeInputTd(0, dtype, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(1, dtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    for (uint32_t i = 0; i < tensorNum; ++i) {
+        faker.NodeOutputTd(static_cast<int32_t>(i), dtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    auto holder = faker.TilingData(param.get()).Workspace(ws_size).Build();
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    if (tiling_context == nullptr || tiling_context->GetPlatformInfo() == nullptr) {
+        return probe;
+    }
+    tiling_context->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    tiling_context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    tiling_context->GetPlatformInfo()->SetPlatformResWithLock("version", version_info);
+
+    probe.status = tiling_func(tiling_context);
+    if (probe.status != ge::GRAPH_SUCCESS) {
+        return probe;
+    }
+    probe.tilingKey = tiling_context->GetTilingKey();
+    probe.blockDim = tiling_context->GetBlockDim();
+    probe.localMemorySize = tiling_context->GetLocalMemorySize();
+    probe.workspaceSize = tiling_context->GetWorkspaceSizes(1)[0];
+    probe.tilingDataSize = tiling_context->GetRawTilingData()->GetDataSize();
+    const int64_t* raw = reinterpret_cast<const int64_t*>(tiling_context->GetRawTilingData()->GetData());
+    for (size_t i = 0; i < probe.tilingStorage.size(); ++i) {
+        probe.tilingStorage[i] = raw[i];
+    }
+    return probe;
+}
+
+static uint32_t ProbeUseRegbase(const FlatTilingProbe& probe)
+{
+    return *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(probe.tilingStorage.data()) +
+                                              ProbeUseRegbaseOffset());
+}
+
+// Every element of the flattened list must be owned by exactly one core, and no
+// core may run past the end of a tensor.
+static void ExpectExactCoverage(const FlatTilingProbe& probe, const std::vector<int64_t>& tensorSizes)
+{
+    const ForeachDivListTilingData* tiling = ProbeKernelTiling(probe);
+    std::vector<int64_t> tensorBase(tensorSizes.size() + 1, 0);
+    for (size_t i = 0; i < tensorSizes.size(); ++i) {
+        tensorBase[i + 1] = tensorBase[i] + tensorSizes[i];
+    }
+    const int64_t totalElements = tensorBase.back();
+    std::vector<uint8_t> owner(static_cast<size_t>(totalElements), 0);
+    int64_t coveredElements = 0;
+    int64_t prevEndFlat = -1;
+    for (uint32_t core = 0; core < probe.blockDim; ++core) {
+        const uint16_t startTensor = tiling->flat.tensorStartList[core];
+        const uint16_t endTensor = tiling->flat.tensorEndList[core];
+        const int64_t startOffset = tiling->flat.tensorStartOffsetList[core];
+        const int64_t endOffset = tiling->flat.tensorEndOffsetList[core];
+        if (endOffset < 0) {
+            continue;
+        }
+        EXPECT_LE(startTensor, endTensor);
+        EXPECT_LT(static_cast<size_t>(endTensor), tensorSizes.size());
+        EXPECT_GE(startOffset, 0);
+        EXPECT_LT(startOffset, tensorSizes[startTensor]);
+        EXPECT_GE(endOffset, 0);
+        EXPECT_LT(endOffset, tensorSizes[endTensor]);
+        if (startTensor == endTensor) {
+            EXPECT_LE(startOffset, endOffset);
+        }
+        const int64_t startFlat = tensorBase[startTensor] + startOffset;
+        const int64_t endFlat = tensorBase[endTensor] + endOffset;
+        EXPECT_EQ(startFlat, prevEndFlat + 1);
+        EXPECT_GT(endFlat, prevEndFlat);
+        prevEndFlat = endFlat;
+        for (uint16_t tensor = startTensor; tensor <= endTensor; ++tensor) {
+            const int64_t from = (tensor == startTensor) ? startOffset : 0;
+            const int64_t to = (tensor == endTensor) ? endOffset : tensorSizes[tensor] - 1;
+            for (int64_t idx = from; idx <= to; ++idx) {
+                const int64_t flatIdx = tensorBase[tensor] + idx;
+                EXPECT_EQ(owner[static_cast<size_t>(flatIdx)], 0U);
+                owner[static_cast<size_t>(flatIdx)] = 1U;
+                ++coveredElements;
+            }
+        }
+    }
+    EXPECT_EQ(coveredElements, totalElements);
+    int64_t owned = 0;
+    for (uint8_t value : owner) {
+        owned += value;
+    }
+    EXPECT_EQ(owned, totalElements);
+}
+
+} // namespace
+
+TEST_F(foreach_div_list_arch35_tiling_test, foreach_div_list_arch35_regbase_layout_and_routing_fp32)
+{
+    EXPECT_EQ(ProbeFlatOffset(), 2080U);
+    EXPECT_EQ(ProbeUseRegbaseOffset(), 2080U + sizeof(ForeachFlatTilingData));
+    EXPECT_LE(sizeof(ForeachDivListTilingData), PROBE_TILING_CAP);
+
+    std::vector<int64_t> sizes(244, 1);
+    FlatTilingProbe regbase = RunFlatTilingProbe(ge::DT_FLOAT, sizes, "Ascend950");
+    ASSERT_EQ(regbase.status, ge::GRAPH_SUCCESS);
+    const ForeachDivListTilingData* tiling = ProbeKernelTiling(regbase);
+    EXPECT_EQ(ProbeUseRegbase(regbase), 1U);
+    EXPECT_EQ(regbase.tilingKey, 0U);
+    EXPECT_EQ(regbase.blockDim, PROBE_CORE_NUM);
+    EXPECT_EQ(tiling->flat.tileElems, 8832U);
+    EXPECT_EQ(regbase.localMemorySize, PROBE_UB_SIZE - 40 * 1024);
+    EXPECT_LE(static_cast<int64_t>(tiling->flat.tileElems) * 4 * 6, static_cast<int64_t>(regbase.localMemorySize));
+
+    FlatTilingProbe simt = RunFlatTilingProbe(ge::DT_FLOAT, sizes, "Ascend910B");
+    ASSERT_EQ(simt.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(ProbeUseRegbase(simt), 0U);
+    EXPECT_EQ(simt.tilingKey, 0U);
+    EXPECT_EQ(simt.blockDim, 1U);
+    EXPECT_EQ(simt.localMemorySize, PROBE_UB_SIZE - PROBE_SIMT_DCACHE);
+    EXPECT_EQ(simt.workspaceSize - regbase.workspaceSize, ExpectedUserWorkspace(244));
+}
+
+TEST_F(foreach_div_list_arch35_tiling_test, foreach_div_list_arch35_regbase_tile_and_small_list_fp16)
+{
+    std::vector<int64_t> sizes{4, 2, 3};
+    FlatTilingProbe probe = RunFlatTilingProbe(ge::DT_FLOAT16, sizes, "Ascend950");
+    ASSERT_EQ(probe.status, ge::GRAPH_SUCCESS);
+    const ForeachDivListTilingData* tiling = ProbeKernelTiling(probe);
+    EXPECT_EQ(probe.tilingKey, 1U);
+    EXPECT_EQ(probe.blockDim, 3U);
+    EXPECT_EQ(tiling->flat.tileElems, 17664U);
+    EXPECT_EQ(probe.tilingDataSize, sizeof(ForeachDivListTilingData));
+    ExpectExactCoverage(probe, sizes);
+}
+
+TEST_F(foreach_div_list_arch35_tiling_test, foreach_div_list_arch35_regbase_ragged_coverage_fp32)
+{
+    std::vector<int64_t> sizes{3, 5000, 0, 1, 4097, 33, 70000};
+    FlatTilingProbe probe = RunFlatTilingProbe(ge::DT_FLOAT, sizes, "Ascend950");
+    ASSERT_EQ(probe.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(probe.blockDim, PROBE_CORE_NUM);
+    ExpectExactCoverage(probe, sizes);
+}
+
+TEST_F(foreach_div_list_arch35_tiling_test, foreach_div_list_arch35_regbase_single_large_fp16)
+{
+    std::vector<int64_t> sizes{7500000};
+    FlatTilingProbe probe = RunFlatTilingProbe(ge::DT_FLOAT16, sizes, "Ascend950");
+    ASSERT_EQ(probe.status, ge::GRAPH_SUCCESS);
+    const ForeachDivListTilingData* tiling = ProbeKernelTiling(probe);
+    EXPECT_EQ(probe.blockDim, PROBE_CORE_NUM);
+    EXPECT_EQ(tiling->flat.tensorStartList[0], 0U);
+    EXPECT_EQ(tiling->flat.tensorStartOffsetList[0], 0);
+    EXPECT_EQ(tiling->flat.tensorEndOffsetList[probe.blockDim - 1], 7499999);
+    ExpectExactCoverage(probe, sizes);
+}
+
+TEST_F(foreach_div_list_arch35_tiling_test, foreach_div_list_arch35_simt_micro_list_fallback_fp16)
+{
+    // Empty / zero-count micro list (1 tensor, 0 elements) keeps the frozen SIMT
+    // path through the RegBase workload guard; the flat schema stays untouched and
+    // the SIMT kernel skips zero-element tensors.
+    std::vector<int64_t> sizes{0};
+    FlatTilingProbe probe = RunFlatTilingProbe(ge::DT_FLOAT16, sizes, "Ascend950");
+    ASSERT_EQ(probe.status, ge::GRAPH_SUCCESS);
+    const ForeachDivListTilingData* tiling = ProbeKernelTiling(probe);
+    EXPECT_EQ(probe.tilingKey, 1U);
+    EXPECT_EQ(ProbeUseRegbase(probe), 0U);
+    EXPECT_EQ(probe.blockDim, 1U);
+    EXPECT_EQ(probe.localMemorySize, PROBE_UB_SIZE - PROBE_SIMT_DCACHE);
+    EXPECT_EQ(probe.tilingDataSize, sizeof(ForeachDivListTilingData));
+}
+
+TEST_F(foreach_div_list_arch35_tiling_test, foreach_div_list_arch35_regbase_workload_guard_boundaries)
+{
+    // 2 tensors / 32 elements -> SIMT fallback (threshold inclusive)
+    {
+        std::vector<int64_t> sizes{16, 16};
+        FlatTilingProbe probe = RunFlatTilingProbe(ge::DT_FLOAT16, sizes, "Ascend950");
+        ASSERT_EQ(probe.status, ge::GRAPH_SUCCESS);
+        EXPECT_EQ(ProbeUseRegbase(probe), 0U);
+        EXPECT_EQ(probe.blockDim, 1U);
+        EXPECT_EQ(probe.localMemorySize, PROBE_UB_SIZE - PROBE_SIMT_DCACHE);
+        EXPECT_EQ(ProbeKernelTiling(probe)->flat.tileElems, 0U);
+    }
+    // 3 tensors / 32 elements -> RegBase (tensor count above the guard)
+    {
+        std::vector<int64_t> sizes{11, 11, 10};
+        FlatTilingProbe probe = RunFlatTilingProbe(ge::DT_FLOAT16, sizes, "Ascend950");
+        ASSERT_EQ(probe.status, ge::GRAPH_SUCCESS);
+        EXPECT_EQ(ProbeUseRegbase(probe), 1U);
+        EXPECT_EQ(probe.blockDim, 3U);
+        EXPECT_EQ(ProbeKernelTiling(probe)->flat.tileElems, 17664U);
+        ExpectExactCoverage(probe, sizes);
+    }
+    // 2 tensors / 33 elements -> RegBase (element count above the guard)
+    {
+        std::vector<int64_t> sizes{16, 17};
+        FlatTilingProbe probe = RunFlatTilingProbe(ge::DT_FLOAT16, sizes, "Ascend950");
+        ASSERT_EQ(probe.status, ge::GRAPH_SUCCESS);
+        EXPECT_EQ(ProbeUseRegbase(probe), 1U);
+        EXPECT_EQ(probe.blockDim, 2U);
+        ExpectExactCoverage(probe, sizes);
+    }
+    // empty list with three tensors -> RegBase keeps the zero-count contract
+    {
+        std::vector<int64_t> sizes{0, 5, 0};
+        FlatTilingProbe probe = RunFlatTilingProbe(ge::DT_FLOAT16, sizes, "Ascend950");
+        ASSERT_EQ(probe.status, ge::GRAPH_SUCCESS);
+        EXPECT_EQ(ProbeUseRegbase(probe), 1U);
+        ExpectExactCoverage(probe, sizes);
+    }
+}
+
+TEST_F(foreach_div_list_arch35_tiling_test, foreach_div_list_arch35_regbase_bf16_key_preserved)
+{
+    std::vector<int64_t> sizes{1024, 2048, 512};
+    FlatTilingProbe probe = RunFlatTilingProbe(ge::DT_BF16, sizes, "Ascend950");
+    ASSERT_EQ(probe.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(probe.tilingKey, 2U);
+    ExpectExactCoverage(probe, sizes);
 }

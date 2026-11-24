@@ -19,7 +19,14 @@
 #ifndef FOREACH_DIV_LIST_TILING_DATA_H
 #define FOREACH_DIV_LIST_TILING_DATA_H
 
+#if __has_include("../../foreach_utils/arch35/foreach_flat_tiling_data.h")
+#include "../../foreach_utils/arch35/foreach_flat_tiling_data.h"
+#else
+#include "../../../foreach_utils/op_kernel/arch35/foreach_flat_tiling_data.h"
+#endif
+
 constexpr int32_t MAX_TENSOR_NUM_FOREACH_DIV_LIST = 256;
+constexpr int32_t FOREACH_DIV_LIST_SIMT_TILING_BYTES = 2080;
 
 class ForeachDivListTilingData {
 public:
@@ -28,6 +35,12 @@ public:
     int32_t tensorCount;
     int64_t maxTensorElements;
     int64_t elementCounts[MAX_TENSOR_NUM_FOREACH_DIV_LIST];
+    ForeachFlatTilingData flat;
+    uint32_t useRegbase;
 };
+
+static_assert(__builtin_offsetof(ForeachDivListTilingData, flat) == FOREACH_DIV_LIST_SIMT_TILING_BYTES,
+              "flat schema must start exactly at the end of the frozen SIMT tiling layout");
+static_assert(sizeof(ForeachDivListTilingData) <= 8192, "tiling data must fit the op tiling buffer");
 
 #endif // FOREACH_DIV_LIST_TILING_DATA_H

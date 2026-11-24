@@ -21,15 +21,11 @@
 
 #include "platform/platform_info.h"
 
-constexpr int32_t MAX_TENSOR_NUM_FOREACH_DIV_LIST = 256;
-
-struct ForeachDivListTilingData {
-    int32_t needCoreNum;
-    int64_t totalElements;
-    int32_t tensorCount;
-    int64_t maxTensorElements;
-    int64_t elementCounts[MAX_TENSOR_NUM_FOREACH_DIV_LIST];
-};
+// Single source of truth for the host and kernel tiling layout: the kernel
+// header carries the frozen SIMT fields followed by the flat RegBase schema
+// and the useRegbase routing bit, so sizeof()/offsets agree on both sides
+// (capacity validation in the host covers the whole payload).
+#include "../../op_kernel/arch35/foreach_div_list_tiling_data.h"
 
 struct ForeachDivListCompileInfo {
     int64_t coreNum;
