@@ -78,7 +78,7 @@
 
     - Calculate the block scale factor: $S_{ue8m0}^b=2^{E_{int}^b}$
     - Calculate the block conversion factor: $R_{fp32}^b=\frac{1}{fp32(S_{ue8m0}^b)}$
-    - Apply the final step to quantization: $d^i = DType(d_{fp32}^i \cdot R_{fp32}^n)$
+    - Apply the final step to quantization: $d^i = DType(d_{fp32}^i \cdot R_{fp32}^b)$
 
 ## Function Prototype
 
@@ -228,7 +228,7 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
     <tr>
       <td>mxscaleOut (aclTensor*)</td>
       <td>Output</td>
-      <td>Represents the quantization scale corresponding to each group, corresponding to mxscale and Sb in the formula.</td>
+      <td>Quantization scale for each group: mxscale when scaleAlg is 0, or the block scale factor S<sub>ue8m0</sub><sup>b</sup> when scaleAlg is 1.</td>
       <td><ul><li>Supports empty tensors.</li><li>On the trailing axis, the shape is the corresponding value of x divided by blocksize=32, rounded up, and padded to an even number. The fill value is 0.</li><li>The remaining dimensions Keep Consistent with the first few dimensions of input x. The first few dimensions refer to the dimensions of x minus the dimensions of gamma, indicating the dimensions that do not need norm.</li><li>See Constraints for the detailed calculation process.</li></ul></td>
       <td>FLOAT8_E8M0</td>
       <td>ND</td>
@@ -290,7 +290,7 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
     <tr>
       <td rowspan="2">ACLNN_ERR_PARAM_NULLPTR</td>
       <td rowspan="2">161001</td>
-      <td>The input x, gamma, yOut, and mxscaleOut are null pointers.</td>
+      <td>Any of x, gamma, roundMode, yOut, or mxscaleOut is a null pointer.</td>
     </tr>
     <tr>
       <td>When outputRstd is True, the passed-in rstdOut is a null pointer.</td>
@@ -310,7 +310,7 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
       <td>The dimensions of gamma do not match the dimensions of x to be normalized, or the dimensions of rstdOut do not match the dimensions of x not to be normalized, or the axis length of rstdOut corresponding to the normalized dimensions of x is not 1.</td>
     </tr>
     <tr>
-      <td>scaleAlg is not 0 or 1, or roundMode is a null pointer, or roundMode is not one of {"rint", "floor", "round"}.</td>
+      <td>scaleAlg is not 0 or 1, or roundMode is not one of {"rint", "floor", "round"}.</td>
     </tr>
     <tr>
       <td>When dstType is FP8, roundMode is not "rint".</td>
@@ -417,8 +417,26 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
 
 The following sample code is for reference only. For details about compilation and execution, see [Compile and Run Samples](../../../docs/en/context/compile_and_run_sample.md).
 
+For a default installation of the `custom_nn` package built from this repository, save the example as `test_aclnn_rms_norm_dynamic_mx_quant.cpp` and set `CANN_INSTALL_DIR` to the CANN installation directory. If you installed the package with `--install-path`, set `VENDOR_OPP_PATH` to `<install-path>/vendors/custom_nn` and source its `bin/set_env.bash` before compiling.
+
+```bash
+CANN_INSTALL_DIR=/path/to/Ascend/cann
+source "${CANN_INSTALL_DIR}/set_env.sh"
+VENDOR_OPP_PATH="${ASCEND_OPP_PATH}/vendors/custom_nn"
+g++ -std=c++11 test_aclnn_rms_norm_dynamic_mx_quant.cpp \
+    -I"${VENDOR_OPP_PATH}/op_api/include" -I"${ASCEND_HOME_PATH}/include" \
+    -I"${ASCEND_HOME_PATH}/include/aclnnop" \
+    -L"${VENDOR_OPP_PATH}/op_api/lib" -L"${ASCEND_HOME_PATH}/lib64" \
+    -Wl,-rpath,"${VENDOR_OPP_PATH}/op_api/lib" \
+    -lcust_opapi -lacl_rt -lnnopbase -o test_aclnn_rms_norm_dynamic_mx_quant
+./test_aclnn_rms_norm_dynamic_mx_quant
+```
+
 ```Cpp
 #include <iostream>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 #include <cmath>
 #include "acl/acl.h"
@@ -477,7 +495,53 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
   // Call the aclCreateTensor API to create an aclTensor.
   *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
                             shape.data(), shape.size(), *deviceAddr);
+  CHECK_RET(*tensor != nullptr, LOG_PRINT("aclCreateTensor failed\n"); return 1);
   return 0;
+}
+
+bool CheckOutputs(const std::vector<uint8_t>& y, const std::vector<uint8_t>& mxscale,
+                  const std::vector<float>& rstd, uint8_t expectedY, double expectedRstd)
+{
+    // For these constant FP16 inputs, the affine result rounds to 1 or 1.5.
+    // OCP uses exponent floor(log2(max(abs(affine)))) - 8 = -8.
+    // E8M0 encodes -8 as 119; E4M3FN encodes 256/384 as 0x78/0x7c.
+    constexpr uint8_t expectedScale = 119;
+    constexpr double rstdRelativeTolerance = 1.0 / 8192.0;
+    for (size_t i = 0; i < y.size(); ++i) {
+        if (y[i] != expectedY) {
+            LOG_PRINT("y[%zu]: got 0x%02x, expected 0x%02x\n", i, y[i], expectedY);
+            return false;
+        }
+    }
+    for (size_t i = 0; i < mxscale.size(); ++i) {
+        if (mxscale[i] != expectedScale) {
+            LOG_PRINT("mxscale[%zu]: got %u, expected %u\n", i, mxscale[i], expectedScale);
+            return false;
+        }
+    }
+    for (size_t i = 0; i < rstd.size(); ++i) {
+        if (!std::isfinite(rstd[i]) ||
+            std::abs(rstd[i] - expectedRstd) > rstdRelativeTolerance * std::abs(expectedRstd)) {
+            LOG_PRINT("rstd[%zu]: got %.9g, expected %.9g\n", i, rstd[i], expectedRstd);
+            return false;
+        }
+    }
+    LOG_PRINT("Checked y=%zu, mxscale=%zu, rstd=%zu elements\n", y.size(), mxscale.size(), rstd.size());
+    return true;
+}
+
+aclError WaitForStream(aclrtStream stream)
+{
+    const auto syncRet = aclrtSynchronizeStream(stream);
+    if (syncRet != ACL_SUCCESS) {
+        const auto abortRet = aclrtStreamAbort(stream);
+        if (abortRet != ACL_SUCCESS) {
+            // The stream may still use the buffers. Exit this standalone sample without running their deleters.
+            std::fprintf(stderr, "Stream synchronization and abort failed. ERROR: %d, %d\n", syncRet, abortRet);
+            std::_Exit(EXIT_FAILURE);
+        }
+    }
+    return syncRet;
 }
 
 int main() {
@@ -495,7 +559,6 @@ int main() {
 
   void* xDeviceAddr = nullptr;
   void* gammaDeviceAddr = nullptr;
-  void* betaDeviceAddr = nullptr;
 
   void* yDeviceAddr = nullptr;
   void* mxscaleDeviceAddr = nullptr;
@@ -503,96 +566,127 @@ int main() {
 
   aclTensor* x = nullptr;
   aclTensor* gamma = nullptr;
-  aclTensor* beta = nullptr;
   aclTensor* y = nullptr;
   aclTensor* mxscale = nullptr;
   aclTensor* rstd = nullptr;
+
+  void* workspaceAddr = nullptr;
+
+  int cleanupStatus = 0;
+  auto checkCleanup = [&](const char* name, int status) {
+      if (status != ACL_SUCCESS) {
+          LOG_PRINT("%s failed. ERROR: %d\n", name, status);
+          if (cleanupStatus == 0) {
+              cleanupStatus = status;
+          }
+      }
+  };
+  auto destroyTensor = [&](aclTensor*& tensor) {
+      if (tensor != nullptr) {
+          checkCleanup("aclDestroyTensor", aclDestroyTensor(tensor));
+          tensor = nullptr;
+      }
+  };
+  auto freeDeviceAddr = [&](void*& deviceAddr) {
+      if (deviceAddr != nullptr) {
+          checkCleanup("aclrtFree", aclrtFree(deviceAddr));
+          deviceAddr = nullptr;
+      }
+  };
+  auto releaseResources = [&]() {
+      freeDeviceAddr(workspaceAddr);
+      destroyTensor(x);
+      destroyTensor(gamma);
+      destroyTensor(y);
+      destroyTensor(mxscale);
+      destroyTensor(rstd);
+      freeDeviceAddr(xDeviceAddr);
+      freeDeviceAddr(gammaDeviceAddr);
+      freeDeviceAddr(yDeviceAddr);
+      freeDeviceAddr(mxscaleDeviceAddr);
+      freeDeviceAddr(rstdDeviceAddr);
+      checkCleanup("aclrtDestroyStream", aclrtDestroyStream(stream));
+      checkCleanup("aclrtResetDevice", aclrtResetDevice(deviceId));
+      checkCleanup("aclFinalize", aclFinalize());
+      return cleanupStatus;
+  };
 
   int64_t xShapeSize = GetShapeSize(xShape);
   int64_t gammaShapeSize = GetShapeSize(gammaShape);
   int64_t mxscaleShapeSize = GetShapeSize(mxscaleShape);
   int64_t rstdShapeSize = GetShapeSize(rstdShape);
 
-  std::vector<short> xHostData(xShapeSize, 0x3800);
-  std::vector<short> gammaHostData(gammaShapeSize, 0x3e00);
-  std::vector<short> betaHostData(gammaShapeSize, 0);
+  std::vector<uint16_t> xHostData(xShapeSize, 0x3800);
+  std::vector<uint16_t> gammaHostData(gammaShapeSize, 0x3e00);
 
-  std::vector<int8_t> yHostData(xShapeSize, 0);
-  std::vector<int8_t> mxscaleHostData(mxscaleShapeSize, 0);
+  std::vector<uint8_t> yHostData(xShapeSize, 0);
+  std::vector<uint8_t> mxscaleHostData(mxscaleShapeSize, 0);
   std::vector<float> rstdHostData(rstdShapeSize, 0);
 
-  float epsilon = 1e-6;
-  bool outputRstd = true;  // Set to true to output a valid rstdOut.
+  double epsilon = 1e-6;
+  char roundMode[] = "rint";
+  constexpr int64_t ocpScaleAlg = 0;
+  constexpr auto dstType = aclDataType::ACL_FLOAT8_E4M3FN;
+  bool outputRstd = true;
 
   // Create the x aclTensor.
   ret = CreateAclTensor(xHostData, xShape, &xDeviceAddr, aclDataType::ACL_FLOAT16, &x);
-  CHECK_RET(ret == ACL_SUCCESS, return ret);
+  CHECK_RET(ret == ACL_SUCCESS, releaseResources(); return ret);
   // Create the gamma aclTensor.
   ret = CreateAclTensor(gammaHostData, gammaShape, &gammaDeviceAddr, aclDataType::ACL_FLOAT16, &gamma);
-  CHECK_RET(ret == ACL_SUCCESS, return ret);
+  CHECK_RET(ret == ACL_SUCCESS, releaseResources(); return ret);
 
   // Create the y aclTensor (FLOAT8_E4M3FN).
-  ret = CreateAclTensor(yHostData, xShape, &yDeviceAddr, aclDataType::ACL_FLOAT8_E4M3FN, &y);
-  CHECK_RET(ret == ACL_SUCCESS, return ret);
+  ret = CreateAclTensor(yHostData, xShape, &yDeviceAddr, dstType, &y);
+  CHECK_RET(ret == ACL_SUCCESS, releaseResources(); return ret);
   // Create the mxscale aclTensor (FLOAT8_E8M0).
   ret = CreateAclTensor(mxscaleHostData, mxscaleShape, &mxscaleDeviceAddr, aclDataType::ACL_FLOAT8_E8M0, &mxscale);
-  CHECK_RET(ret == ACL_SUCCESS, return ret);
+  CHECK_RET(ret == ACL_SUCCESS, releaseResources(); return ret);
   // Create the rstd aclTensor.
   ret = CreateAclTensor(rstdHostData, rstdShape, &rstdDeviceAddr, aclDataType::ACL_FLOAT, &rstd);
-  CHECK_RET(ret == ACL_SUCCESS, return ret);
+  CHECK_RET(ret == ACL_SUCCESS, releaseResources(); return ret);
 
   // 3. Call the CANN operator library API.
   uint64_t workspaceSize = 0;
-  aclOpExecutor* executor;
+  aclOpExecutor* executor = nullptr;
   // Call the first-phase API of aclnnRmsNormDynamicMxQuant.
   ret = aclnnRmsNormDynamicMxQuantGetWorkspaceSize(
-      x, gamma, nullptr, epsilon, 0, nullptr, 36, outputRstd, y, mxscale, rstd, &workspaceSize, &executor);
+      x, gamma, nullptr, epsilon, ocpScaleAlg, roundMode, dstType, outputRstd, y, mxscale, rstd, &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS,
-      LOG_PRINT("aclnnRmsNormDynamicMxQuantGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
+      LOG_PRINT("aclnnRmsNormDynamicMxQuantGetWorkspaceSize failed. ERROR: %d\n", ret); releaseResources(); return ret);
   // Allocate device memory according to the workspaceSize computed by the first-phase API.
-  void* workspaceAddr = nullptr;
   if (workspaceSize > 0) {
     ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); releaseResources(); return ret);
   }
   // Call the second-phase API of aclnnRmsNormDynamicMxQuant.
   ret = aclnnRmsNormDynamicMxQuant(workspaceAddr, workspaceSize, executor, stream);
-  CHECK_RET(ret == ACL_SUCCESS,
-      LOG_PRINT("aclnnRmsNormDynamicMxQuant failed. ERROR: %d\n", ret); return ret);
   // 4. (Boilerplate) Synchronize and wait for the task execution to complete.
-  ret = aclrtSynchronizeStream(stream);
-  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
+  const auto syncRet = WaitForStream(stream);
+  CHECK_RET(ret == ACL_SUCCESS,
+      LOG_PRINT("aclnnRmsNormDynamicMxQuant failed. ERROR: %d\n", ret); releaseResources(); return ret);
+  CHECK_RET(syncRet == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", syncRet); releaseResources(); return syncRet);
 
-  // 5. Obtain the output value and copy the result in device memory to the host.
-  auto size = GetShapeSize(xShape);
-  std::vector<int8_t> yRet(size, 0);
-  ret = aclrtMemcpy(
-      yRet.data(), yRet.size() * sizeof(yRet[0]), yDeviceAddr, size * sizeof(int8_t), ACL_MEMCPY_DEVICE_TO_HOST);
-  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
-  for (int64_t i = 0; i < size; i++) {
-    LOG_PRINT("result[%ld] is: %d\n", i, yRet[i]);
+  // 5. Copy the outputs to the host and check their values.
+  std::vector<uint8_t> yRet(xShapeSize, 0);
+  std::vector<uint8_t> mxscaleRet(mxscaleShapeSize, 0);
+  std::vector<float> rstdRet(rstdShapeSize, 0);
+  ret = aclrtMemcpy(yRet.data(), yRet.size(), yDeviceAddr, yRet.size(), ACL_MEMCPY_DEVICE_TO_HOST);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy y failed. ERROR: %d\n", ret); releaseResources(); return ret);
+  ret = aclrtMemcpy(mxscaleRet.data(), mxscaleRet.size(), mxscaleDeviceAddr, mxscaleRet.size(),
+                    ACL_MEMCPY_DEVICE_TO_HOST);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy mxscale failed. ERROR: %d\n", ret); releaseResources(); return ret);
+  ret = aclrtMemcpy(rstdRet.data(), rstdRet.size() * sizeof(float), rstdDeviceAddr,
+                    rstdRet.size() * sizeof(float), ACL_MEMCPY_DEVICE_TO_HOST);
+  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy rstd failed. ERROR: %d\n", ret); releaseResources(); return ret);
+  // x=0.5, gamma=1.5: FP16 affine=1.5, E4M3FN y=384 (0x7c).
+  if (!CheckOutputs(yRet, mxscaleRet, rstdRet, 0x7c, 1.0 / std::sqrt(0.25 + epsilon))) {
+    releaseResources();
+    return 1;
   }
-
-  // 6. Release aclTensor.
-  aclDestroyTensor(x);
-  aclDestroyTensor(gamma);
-  aclDestroyTensor(y);
-  aclDestroyTensor(mxscale);
-  aclDestroyTensor(rstd);
-
-  // 7. Release device resources.
-  aclrtFree(xDeviceAddr);
-  aclrtFree(gammaDeviceAddr);
-  aclrtFree(yDeviceAddr);
-  aclrtFree(mxscaleDeviceAddr);
-  aclrtFree(rstdDeviceAddr);
-
-  if (workspaceSize > 0) {
-    aclrtFree(workspaceAddr);
-  }
-  aclrtDestroyStream(stream);
-  aclrtResetDevice(deviceId);
-  aclFinalize();
+  ret = releaseResources();
+  CHECK_RET(ret == ACL_SUCCESS, return ret);
+  LOG_PRINT("RmsNormDynamicMxQuant example PASSED\n");
   return 0;
 }
 ```

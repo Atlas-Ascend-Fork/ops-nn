@@ -32,6 +32,12 @@
   dx_i= (dy_i * g_i - \frac{1}{\operatorname{Rms}(\mathbf{x})} * x_i * \operatorname{Mean}(\mathbf{y})) * \frac{1} {\operatorname{Rms}(\mathbf{x})},  \quad \text { where } \operatorname{Mean}(\mathbf{y}) = \frac{1}{n}\sum_{i=1}^n (dy_i * g_i * x_i * \frac{1}{\operatorname{Rms}(\mathbf{x})})
   $$
 
+  For each position $i$ along the normalized dimensions, sum the contributions to the gradient of gamma over rows $r$:
+
+  $$
+  dg_i = \sum_r dy_{r,i} \cdot x_{r,i} \cdot rstd_r
+  $$
+
   - When divMode is true:
 
     $$
@@ -42,10 +48,6 @@
 
     $$
     dx_i\_quant=round((dx_i*scales\_x)+offset\_x)
-    $$
-
-    $$
-    dg_i = \frac{1}{\operatorname{Rms}(\mathbf{x})} * x_i * dy_i
     $$
 
 ## Function Prototype
@@ -125,7 +127,7 @@ aclnnStatus aclnnRmsNormGradQuant(
     <tr>
       <td>rstd (aclTensor*)</td>
       <td>Input</td>
-      <td>Indicates the intermediate computation result of the forward operator, corresponding to Rms(x) in the formula.</td>
+      <td>Reciprocal root mean square saved during the forward pass, corresponding to 1/Rms(x) in the formula.</td>
       <td><ul><li>Supports empty Tensor.</li><li>The shape must satisfy rstd_shape = x_shape[0:n], where n < x_shape.dims() and n remains consistent with the n of gamma.</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
@@ -337,8 +339,10 @@ The following sample code is for reference only. For details about compilation a
 
 ```Cpp
 #include <iostream>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
-#include <cmath>
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include "acl/acl.h"
@@ -406,17 +410,26 @@ int CreateAclTensor(
     *tensor = aclCreateTensor(
         shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND, shape.data(), shape.size(),
         *deviceAddr);
+    CHECK_RET(*tensor != nullptr, LOG_PRINT("aclCreateTensor failed\n"); return 1);
     return 0;
 }
 
-int main()
+aclError WaitForStream(aclrtStream stream)
 {
-    // 1. Initialize the device/stream.
-    int32_t deviceId = 0;
-    aclrtStream stream;
-    auto ret = Init(deviceId, &stream);
-    CHECK_RET(ret == 0, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
+    const auto syncRet = aclrtSynchronizeStream(stream);
+    if (syncRet != ACL_SUCCESS) {
+        const auto abortRet = aclrtStreamAbort(stream);
+        if (abortRet != ACL_SUCCESS) {
+            // The stream may still use the buffers. Exit this standalone sample without running their deleters.
+            std::fprintf(stderr, "Stream synchronization and abort failed. ERROR: %d, %d\n", syncRet, abortRet);
+            std::_Exit(EXIT_FAILURE);
+        }
+    }
+    return syncRet;
+}
 
+int RunExample(aclrtStream stream)
+{
     // 2. Construct the input and output.
     // RmsNormGradQuant: dy[M, D], x[M, D], rstd[M], gamma[D], scalesX[1], offsetX[1] -> dx[M, D], dgamma[D]
     std::vector<int64_t> dy_shape = {8, 64};
@@ -472,60 +485,60 @@ int main()
     LOG_PRINT("quantMode: static, divMode: true\n");
 
     // Create the dy aclTensor (FP16).
-    ret = CreateAclTensor(dy_host_data, dy_shape, &dy_device_addr, aclDataType::ACL_FLOAT16, &dy);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> dyPtr(dy, aclDestroyTensor);
+    auto ret = CreateAclTensor(dy_host_data, dy_shape, &dy_device_addr, aclDataType::ACL_FLOAT16, &dy);
     std::unique_ptr<void, aclError (*)(void*)> dyDevPtr(dy_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> dyPtr(dy, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor dy failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // Create the x aclTensor (FP16).
     ret = CreateAclTensor(x_host_data, x_shape, &x_device_addr, aclDataType::ACL_FLOAT16, &x);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> xPtr(x, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> xDevPtr(x_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> xPtr(x, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor x failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // Create the rstd aclTensor (FP32).
     ret = CreateAclTensor(rstd_host_data, rstd_shape, &rstd_device_addr, aclDataType::ACL_FLOAT, &rstd);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> rstdPtr(rstd, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> rstdDevPtr(rstd_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> rstdPtr(rstd, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor rstd failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // Create gamma aclTensor (FP32).
     ret = CreateAclTensor(gamma_host_data, gamma_shape, &gamma_device_addr, aclDataType::ACL_FLOAT, &gamma);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> gammaPtr(gamma, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> gammaDevPtr(gamma_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> gammaPtr(gamma, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor gamma failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // Create scalesX aclTensor (FP32).
     ret = CreateAclTensor(scales_x_host_data, scales_x_shape, &scales_x_device_addr, aclDataType::ACL_FLOAT, &scalesX);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> scalesXPtr(scalesX, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> scalesXDevPtr(scales_x_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> scalesXPtr(scalesX, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor scalesX failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // Create offsetX aclTensor (INT32).
     ret = CreateAclTensor(offset_x_host_data, offset_x_shape, &offset_x_device_addr, aclDataType::ACL_INT32, &offsetX);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> offsetXPtr(offsetX, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> offsetXDevPtr(offset_x_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> offsetXPtr(offsetX, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor offsetX failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // Create dxOut aclTensor (INT8).
     ret = CreateAclTensor(dx_host_data, dx_shape, &dx_device_addr, aclDataType::ACL_INT8, &dxOut);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> dxOutPtr(dxOut, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> dxDevPtr(dx_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> dxOutPtr(dxOut, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor dxOut failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // Create dgammaOut aclTensor (FP32).
     ret = CreateAclTensor(dgamma_host_data, dgamma_shape, &dgamma_device_addr, aclDataType::ACL_FLOAT, &dgammaOut);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> dgammaOutPtr(dgammaOut, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> dgammaDevPtr(dgamma_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> dgammaOutPtr(dgammaOut, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor dgammaOut failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // 3. Call the CANN operator library APIs.
     uint64_t workspace_size = 0;
@@ -540,7 +553,7 @@ int main()
 
     CHECK_RET(ret == ACL_SUCCESS,
               LOG_PRINT("aclnnRmsNormGradQuantGetWorkspaceSize failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     LOG_PRINT("Workspace size: %lu bytes (%.2f KB)\n", workspace_size, workspace_size / 1024.0);
 
@@ -550,22 +563,21 @@ int main()
         ret = aclrtMalloc(&workspace_addr, workspace_size, ACL_MEM_MALLOC_HUGE_FIRST);
         CHECK_RET(ret == ACL_SUCCESS,
                   LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret);
-                  Finalize(deviceId, stream); return ret);
+                  return ret);
         workspaceAddrPtr.reset(workspace_addr);
     }
 
     // Call the second-phase API of aclnnRmsNormGradQuant.
     LOG_PRINT("Calling aclnnRmsNormGradQuant...\n");
     ret = aclnnRmsNormGradQuant(workspaceAddrPtr.get(), workspace_size, executor, stream);
+    // 4. Synchronize and wait for the task to complete.
+    const auto syncRet = WaitForStream(stream);
     CHECK_RET(ret == ACL_SUCCESS,
               LOG_PRINT("aclnnRmsNormGradQuant failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
-
-    // 4. Synchronize and wait for the task to complete.
-    ret = aclrtSynchronizeStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS,
-              LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
+    CHECK_RET(syncRet == ACL_SUCCESS,
+              LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", syncRet);
+              return syncRet);
 
     // 5. Obtain the output values, and copy the results on the device side to the host side.
     {
@@ -576,7 +588,7 @@ int main()
                           dxDevPtr.get(), size * sizeof(int8_t), ACL_MEMCPY_DEVICE_TO_HOST);
         CHECK_RET(ret == ACL_SUCCESS,
                   LOG_PRINT("copy dx from device to host failed. ERROR: %d\n", ret);
-                  Finalize(deviceId, stream); return ret);
+                  return ret);
 
         LOG_PRINT("Output dx (first 10 values):\n");
         for (int64_t i = 0; i < std::min(size, (int64_t)10); i++) {
@@ -590,7 +602,7 @@ int main()
                           dgammaDevPtr.get(), size * sizeof(float), ACL_MEMCPY_DEVICE_TO_HOST);
         CHECK_RET(ret == ACL_SUCCESS,
                   LOG_PRINT("copy dgamma from device to host failed. ERROR: %d\n", ret);
-                  Finalize(deviceId, stream); return ret);
+                  return ret);
 
         LOG_PRINT("Output dgamma (first 10 values):\n");
         for (int64_t i = 0; i < std::min(size, (int64_t)10); i++) {
@@ -600,9 +612,19 @@ int main()
 
     LOG_PRINT("\n=== RmsNormGradQuant Test PASSED ===\n");
 
-    // 6. Resources are automatically released.
-    Finalize(deviceId, stream);
-
     return 0;
+}
+
+int main()
+{
+    // 1. Initialize the device/stream.
+    int32_t deviceId = 0;
+    aclrtStream stream;
+    auto ret = Init(deviceId, &stream);
+    CHECK_RET(ret == 0, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
+
+    ret = RunExample(stream);
+    Finalize(deviceId, stream);
+    return ret;
 }
 ```

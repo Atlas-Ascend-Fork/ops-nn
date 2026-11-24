@@ -184,7 +184,7 @@ aclnnStatus aclnnAddRmsNormDynamicMxQuantV2(
     <tr>
       <td>beta(aclTensor*)</td>
       <td>Input</td>
-      <td>Indicates the bias term in the normalization process. It corresponds to beta in the formula.</td>
+      <td>Bias term in the normalization formula. Pass a null pointer to omit the bias.</td>
       <td><ul><li>Support Null Tensor.</li><li>Optional parameter. Supports passing in null pointer.</li><li>If provided, the shape and data type must keep consistent with gamma.</li></ul></td>
       <td>FLOAT16, BFLOAT16, FLOAT32</td>
       <td>ND</td>
@@ -285,7 +285,7 @@ aclnnStatus aclnnAddRmsNormDynamicMxQuantV2(
       <td>rstdOut (aclTensor*)</td>
       <td>Output</td>
       <td>Indicates the reciprocal of the standard deviation after normalization. Corresponding Formula: the reciprocal of Rms(x).</td>
-      <td><ul><li>Supports Null Tensor.</li><li>When outputRstd is True, the number of dimensions keeps consistent with that of input x1, all dimensions except the last one keep consistent with the corresponding dimensions of x1, and the last dimension is 1. Example of the relationship between the rstdOut shape and the x1 shape: if the x1 shape is (2,3,4,8), the rstdOut shape is (2,3,4,1).</li><li>When outputRstd is False, rstdOut is an invalid output.</li></ul></td>
+      <td><ul><li>Supports Null Tensor.</li><li>When outputRstd is True, the number of dimensions keeps consistent with that of input x1, all dimensions except the last one keep consistent with the corresponding dimensions of x1, and the last dimension is 1. Example of the relationship between the rstdOut shape and the x1 shape: if the x1 shape is (2,3,4,8), the rstdOut shape is (2,3,4,1).</li><li>When outputRstd is False, rstdOut may be a null pointer. If provided, its contents are undefined.</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
       <td>1-7</td>
@@ -475,7 +475,22 @@ aclnnStatus aclnnAddRmsNormDynamicMxQuantV2(
 
 The sample code is for reference only. For details about compilation and execution, see [Compile and Run Samples](../../../docs/en/context/compile_and_run_sample.md).
 
+For a default installation of the `custom_nn` package built from this repository, save the example as `example.cpp` and set `CANN_INSTALL_DIR` to the CANN installation directory. If you installed the package with `--install-path`, set `CUSTOM_OP_DIR` to `<install-path>/vendors/custom_nn` and source its `bin/set_env.bash` before compiling.
+
+```bash
+CANN_INSTALL_DIR=/path/to/Ascend/cann
+source "${CANN_INSTALL_DIR}/set_env.sh"
+CUSTOM_OP_DIR="${ASCEND_OPP_PATH}/vendors/custom_nn"
+g++ -std=c++11 -O2 example.cpp -o example \
+    -I"${CANN_INSTALL_DIR}/include" -I"${CUSTOM_OP_DIR}/op_api/include" \
+    -L"${CUSTOM_OP_DIR}/op_api/lib" -L"${CANN_INSTALL_DIR}/lib64" \
+    -Wl,-rpath,"${CUSTOM_OP_DIR}/op_api/lib" -Wl,-rpath,"${CANN_INSTALL_DIR}/lib64" \
+    -lcust_opapi -lnnopbase -lacl_rt
+./example
+```
+
 ```Cpp
+#include <algorithm>
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"
@@ -508,9 +523,10 @@ int Init(int32_t deviceId, aclrtStream* stream)
     auto ret = aclInit(nullptr);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclInit failed. ERROR: %d\n", ret); return ret);
     ret = aclrtSetDevice(deviceId);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSetDevice failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSetDevice failed. ERROR: %d\n", ret); aclFinalize(); return ret);
     ret = aclrtCreateStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtCreateStream failed. ERROR: %d\n", ret); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtCreateStream failed. ERROR: %d\n", ret); aclrtResetDevice(deviceId);
+              aclFinalize(); return ret);
 
     return 0;
 }
@@ -547,7 +563,7 @@ int main()
     // 1. (Boilerplate) Initialize device/stream. For details, see the acl API manual.
     // Set deviceId based on the actual device.
     int32_t deviceId = 0;
-    aclrtStream stream;
+    aclrtStream stream = nullptr;
     auto ret = Init(deviceId, &stream);
     // Handle the check as needed.
     CHECK_RET(ret == 0, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
@@ -615,8 +631,6 @@ int main()
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // Call the first-phase API of aclnnAddRmsNormDynamicMxQuantV2.
-    // Passing nullptr to beta indicates that no bias is used; passing a non-null pointer to x3Optional enables the V2 x = (x3Optional+x1)+x2 path.
-    // Pass "rint" to roundMode (FP8 output supports only "rint"); pass nullptr to rstdOut (can be omitted when outputRstd=false).
     ret = aclnnAddRmsNormDynamicMxQuantV2GetWorkspaceSize(
         x1, x2, gamma, nullptr, x3Optional, epsilon, 0, const_cast<char*>("rint"), 36, false, y, x, mxscale, nullptr, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS,
@@ -645,6 +659,32 @@ int main()
         LOG_PRINT("result[%ld] is: %d\n", i, yRet[i]);
     }
 
+    // Check all outputs enabled for these inputs.
+    // The residual sum is 2.0 and gamma is 1.5, giving a normalized and scaled FP16 value of 1.5.
+    // The OCP scale is 2^-8 (E8M0 byte 0x77); the quantized value is 384 (E4M3FN byte 0x7c).
+    const bool yMatches = std::all_of(yRet.begin(), yRet.end(), [](int8_t value) { return value == 0x7c; });
+    std::vector<short> xRet(xShapeSize, 0);
+    ret = aclrtMemcpy(xRet.data(), xRet.size() * sizeof(xRet[0]), xDeviceAddr,
+                      xRet.size() * sizeof(xRet[0]), ACL_MEMCPY_DEVICE_TO_HOST);
+    const bool xMatches = ret == ACL_SUCCESS &&
+        std::all_of(xRet.begin(), xRet.end(), [](short value) { return value == 0x4000; });
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("copy x from device to host failed. ERROR: %d\n", ret);
+    }
+    std::vector<int8_t> mxscaleRet(mxscaleShapeSize, 0);
+    ret = aclrtMemcpy(mxscaleRet.data(), mxscaleRet.size() * sizeof(mxscaleRet[0]), mxscaleDeviceAddr,
+                      mxscaleRet.size() * sizeof(mxscaleRet[0]), ACL_MEMCPY_DEVICE_TO_HOST);
+    const bool scaleMatches = ret == ACL_SUCCESS &&
+        std::all_of(mxscaleRet.begin(), mxscaleRet.end(), [](int8_t value) { return value == 0x77; });
+    if (ret != ACL_SUCCESS) {
+        LOG_PRINT("copy mxscale from device to host failed. ERROR: %d\n", ret);
+    }
+    const bool resultsMatch = yMatches && xMatches && scaleMatches;
+    LOG_PRINT("Check yOut: %s, elements=%zu\n", yMatches ? "PASS" : "FAIL", yRet.size());
+    LOG_PRINT("Check xOut: %s, elements=%zu\n", xMatches ? "PASS" : "FAIL", xRet.size());
+    LOG_PRINT("Check mxscaleOut: %s, elements=%zu\n", scaleMatches ? "PASS" : "FAIL", mxscaleRet.size());
+    LOG_PRINT("All valid outputs: %s\n", resultsMatch ? "PASS" : "FAIL");
+
     // 6. Release the aclTensor.
     aclDestroyTensor(x1);
     aclDestroyTensor(x2);
@@ -669,6 +709,6 @@ int main()
     aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);
     aclFinalize();
-    return 0;
+    return resultsMatch ? 0 : 1;
 }
 ```

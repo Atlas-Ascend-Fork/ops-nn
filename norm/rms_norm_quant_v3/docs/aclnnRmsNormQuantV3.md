@@ -365,8 +365,10 @@ aclnnStatus aclnnRmsNormQuantV3(
 <!-- npu="950" id10 -->
 ```Cpp
 #include <iostream>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
-#include <cmath>
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include "acl/acl.h"
@@ -459,21 +461,28 @@ int CreateAclTensor(
     *tensor = aclCreateTensor(
         shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND, shape.data(), shape.size(),
         *deviceAddr);
+    CHECK_RET(*tensor != nullptr, LOG_PRINT("aclCreateTensor failed\n"); return 1);
     return 0;
 }
 
-int main()
+aclError WaitForStream(aclrtStream stream)
 {
-    // 1. （固定写法）device/stream初始化
-    int32_t deviceId = 0;
-    aclrtStream stream;
-    auto ret = Init(deviceId, &stream);
-    CHECK_RET(ret == 0, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
+    const auto syncRet = aclrtSynchronizeStream(stream);
+    if (syncRet != ACL_SUCCESS) {
+        const auto abortRet = aclrtStreamAbort(stream);
+        if (abortRet != ACL_SUCCESS) {
+            // 流可能仍在使用缓冲区，直接结束示例进程，避免析构时提前释放设备内存。
+            std::fprintf(stderr, "Stream synchronization and abort failed. ERROR: %d, %d\n", syncRet, abortRet);
+            std::_Exit(EXIT_FAILURE);
+        }
+    }
+    return syncRet;
+}
 
-    // 检查硬件支持
+int RunExample(aclrtStream stream)
+{
     if (!CheckHardwareSupport()) {
         LOG_PRINT("\n=== Test SKIPPED (hardware not supported) ===\n");
-        Finalize(deviceId, stream);
         return 0;
     }
 
@@ -535,53 +544,53 @@ int main()
               epsilon, divMode ? "true" : "false", outputRstd ? "true" : "false");
 
     // 创建x aclTensor (FP16)
-    ret = CreateAclTensor(x_host_data, x_shape, &x_device_addr, aclDataType::ACL_FLOAT16, &x);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> xTensorPtr(x, aclDestroyTensor);
+    auto ret = CreateAclTensor(x_host_data, x_shape, &x_device_addr, aclDataType::ACL_FLOAT16, &x);
     std::unique_ptr<void, aclError (*)(void*)> xDeviceAddrPtr(x_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> xTensorPtr(x, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor x failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // 创建gamma aclTensor (FP16)
     ret = CreateAclTensor(gamma_host_data, gamma_shape, &gamma_device_addr, aclDataType::ACL_FLOAT16, &gamma);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> gammaTensorPtr(gamma, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> gammaDeviceAddrPtr(gamma_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> gammaTensorPtr(gamma, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor gamma failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // 创建scale aclTensor (FP16)
     ret = CreateAclTensor(scale_host_data, scale_shape, &scale_device_addr, aclDataType::ACL_FLOAT16, &scale);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> scaleTensorPtr(scale, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> scaleDeviceAddrPtr(scale_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> scaleTensorPtr(scale, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor scale failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // 创建offset aclTensor (INT8)
     ret = CreateAclTensor(offset_host_data, offset_shape, &offset_device_addr, aclDataType::ACL_INT8, &offset);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> offsetTensorPtr(offset, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> offsetDeviceAddrPtr(offset_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> offsetTensorPtr(offset, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor offset failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // 创建beta aclTensor (FP16)
     ret = CreateAclTensor(beta_host_data, beta_shape, &beta_device_addr, aclDataType::ACL_FLOAT16, &beta);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> betaTensorPtr(beta, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> betaDeviceAddrPtr(beta_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> betaTensorPtr(beta, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor beta failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // 创建y aclTensor (INT8输出)
     ret = CreateAclTensor(y_host_data, y_shape, &y_device_addr, aclDataType::ACL_INT8, &y);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> yTensorPtr(y, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> yDeviceAddrPtr(y_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> yTensorPtr(y, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor y failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // 创建rstd aclTensor (FLOAT32输出)
     ret = CreateAclTensor(rstd_host_data, rstd_shape, &rstd_device_addr, aclDataType::ACL_FLOAT, &rstd);
-    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> rstdTensorPtr(rstd, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> rstdDeviceAddrPtr(rstd_device_addr, aclrtFree);
+    std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> rstdTensorPtr(rstd, aclDestroyTensor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor rstd failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     // 3. 调用CANN算子库API
     uint64_t workspace_size = 0;
@@ -595,7 +604,7 @@ int main()
 
     CHECK_RET(ret == ACL_SUCCESS,
               LOG_PRINT("aclnnRmsNormQuantV3GetWorkspaceSize failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
 
     LOG_PRINT("Workspace size: %lu bytes (%.2f KB)\n", workspace_size, workspace_size / 1024.0);
 
@@ -605,22 +614,21 @@ int main()
         ret = aclrtMalloc(&workspace_addr, workspace_size, ACL_MEM_MALLOC_HUGE_FIRST);
         CHECK_RET(ret == ACL_SUCCESS,
                   LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret);
-                  Finalize(deviceId, stream); return ret);
+                  return ret);
         workspaceAddrPtr.reset(workspace_addr);
     }
 
     // 调用aclnnRmsNormQuantV3第二段接口
     LOG_PRINT("Calling aclnnRmsNormQuantV3...\n");
     ret = aclnnRmsNormQuantV3(workspaceAddrPtr.get(), workspace_size, executor, stream);
+    // 4. 同步等待任务执行结束
+    const auto syncRet = WaitForStream(stream);
     CHECK_RET(ret == ACL_SUCCESS,
               LOG_PRINT("aclnnRmsNormQuantV3 failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
-
-    // 4. 同步等待任务执行结束
-    ret = aclrtSynchronizeStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS,
-              LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret);
-              Finalize(deviceId, stream); return ret);
+              return ret);
+    CHECK_RET(syncRet == ACL_SUCCESS,
+              LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", syncRet);
+              return syncRet);
 
     // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧
     {
@@ -631,7 +639,7 @@ int main()
                           yDeviceAddrPtr.get(), size * sizeof(int8_t), ACL_MEMCPY_DEVICE_TO_HOST);
         CHECK_RET(ret == ACL_SUCCESS,
                   LOG_PRINT("copy y from device to host failed. ERROR: %d\n", ret);
-                  Finalize(deviceId, stream); return ret);
+                  return ret);
 
         LOG_PRINT("Output y (first 10 values):\n");
         for (int64_t i = 0; i < std::min(size, (int64_t)10); i++) {
@@ -645,7 +653,7 @@ int main()
                           rstdDeviceAddrPtr.get(), size * sizeof(float), ACL_MEMCPY_DEVICE_TO_HOST);
         CHECK_RET(ret == ACL_SUCCESS,
                   LOG_PRINT("copy rstd from device to host failed. ERROR: %d\n", ret);
-                  Finalize(deviceId, stream); return ret);
+                  return ret);
 
         LOG_PRINT("Output rstd values:\n");
         for (int64_t i = 0; i < size; i++) {
@@ -655,10 +663,21 @@ int main()
 
     LOG_PRINT("\n=== RmsNormQuantV3 Test PASSED ===\n");
 
-    // 6. 资源自动释放
-    Finalize(deviceId, stream);
-
     return 0;
 }
+
+int main()
+{
+    // 1. （固定写法）device/stream初始化
+    int32_t deviceId = 0;
+    aclrtStream stream;
+    auto ret = Init(deviceId, &stream);
+    CHECK_RET(ret == 0, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
+
+    ret = RunExample(stream);
+    Finalize(deviceId, stream);
+    return ret;
+}
 ```
+
 <!-- end id10 -->

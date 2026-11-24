@@ -184,7 +184,7 @@ aclnnStatus aclnnAddRmsNormDynamicMxQuantV2(
     <tr>
       <td>beta（const aclTensor*）</td>
       <td>输入</td>
-      <td>表示标准化过程中的偏置项。对应公式中的beta。</td>
+      <td>表示标准化过程中的偏置项，对应公式中的 beta。传入空指针时不加偏置。</td>
       <td><ul><li>支持空Tensor。</li><li>可选参数，支持传入空指针。</li><li>如果提供，shape和数据类型需要与gamma保持一致。</li></ul></td>
       <td>FLOAT16、BFLOAT16、FLOAT32</td>
       <td>ND</td>
@@ -482,19 +482,18 @@ aclnnStatus aclnnAddRmsNormDynamicMxQuantV2(
 ## 调用示例
 
 <!-- npu="950" id8 -->
-通用编译流程参见[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。以下步骤适用于已安装本仓源码构建的`custom_nn`算子包：将下方代码保存为`example.cpp`，在其所在目录执行。`CANN_INSTALL_DIR`替换为实际CANN安装目录，`CUSTOM_OP_DIR`指向该版本的自定义算子包目录；头文件和库须来自同一套安装。需要g++及<term>Ascend 950PR&950DT系列产品</term>，示例使用设备0。
+通用编译流程参见[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。使用本仓构建并按默认路径安装的 `custom_nn` 算子包时，将下方代码保存为 `example.cpp`，并将 `CANN_INSTALL_DIR` 替换为实际 CANN 安装目录。若安装算子包时指定了 `--install-path`，请将 `CUSTOM_OP_DIR` 改为 `<install-path>/vendors/custom_nn`，并在编译前加载该目录下的 `bin/set_env.bash`。 需要 g++ 及<term>Ascend 950PR&950DT系列产品</term>，示例使用设备 0。
 <!-- end id8 -->
 
 ```bash
 CANN_INSTALL_DIR=/path/to/Ascend/cann
-CUSTOM_OP_DIR="${CANN_INSTALL_DIR}/vendors/custom_nn"
 source "${CANN_INSTALL_DIR}/set_env.sh"
-source "${CUSTOM_OP_DIR}/bin/set_env.bash"
+CUSTOM_OP_DIR="${ASCEND_OPP_PATH}/vendors/custom_nn"
 g++ -std=c++11 -O2 example.cpp -o example \
     -I"${CANN_INSTALL_DIR}/include" -I"${CUSTOM_OP_DIR}/op_api/include" \
     -L"${CUSTOM_OP_DIR}/op_api/lib" -L"${CANN_INSTALL_DIR}/lib64" \
     -Wl,-rpath,"${CUSTOM_OP_DIR}/op_api/lib" -Wl,-rpath,"${CANN_INSTALL_DIR}/lib64" \
-    -lcust_opapi -lnnopbase -lascendcl
+    -lcust_opapi -lnnopbase -lacl_rt
 ./example
 ```
 
@@ -640,8 +639,6 @@ int main()
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // 调用aclnnAddRmsNormDynamicMxQuantV2第一段接口
-    // beta传入nullptr表示不使用偏置；x3Optional传入非空指针启用V2的 x = (x3Optional+x1)+x2 路径
-    // roundMode传入"rint"（FP8输出仅支持"rint"）；rstdOut传nullptr（outputRstd=false时可不传）
     ret = aclnnAddRmsNormDynamicMxQuantV2GetWorkspaceSize(
         x1, x2, gamma, nullptr, x3Optional, epsilon, 0, const_cast<char*>("rint"), 36, false, y, x, mxscale, nullptr, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS,

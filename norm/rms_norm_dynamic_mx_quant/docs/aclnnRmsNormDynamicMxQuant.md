@@ -76,7 +76,7 @@
 
     - 计算块缩放因子：$S_{ue8m0}^b=2^{E_{int}^b}$
     - 计算块转换因子：$R_{fp32}^b=\frac{1}{fp32(S_{ue8m0}^b)}$
-    - 应用到量化的最终步骤：$d^i = DType(d_{fp32}^i \cdot R_{fp32}^n)$
+    - 应用到量化的最终步骤：$d^i = DType(d_{fp32}^i \cdot R_{fp32}^b)$
 
 ## 函数原型
 
@@ -226,7 +226,7 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
     <tr>
       <td>mxscaleOut（aclTensor*）</td>
       <td>输出</td>
-      <td>表示每个分组对应的量化尺度，对应公式中的mxscale和Sb。</td>
+      <td>表示每个分组对应的量化尺度，在场景 1 中对应 mxscale，在场景 2 中对应块缩放因子 S<sub>ue8m0</sub><sup>b</sup>。</td>
       <td><ul><li>支持空Tensor。</li><li>沿x的尾轴每32个元素对应一个量化尺度，尺度数量向上取整后补齐为偶数，补齐位置填0。</li><li>shape为x.shape[:-1] + (ceil(ceil(x.shape[-1] / 32) / 2), 2)。</li><li>具体计算过程见约束说明。</li></ul></td>
       <td>FLOAT8_E8M0</td>
       <td>ND</td>
@@ -418,16 +418,18 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-使用自行构建的算子包时，将下方代码保存为`test_aclnn_rms_norm_dynamic_mx_quant.cpp`。配置CANN环境后，将`VENDOR_OPP_PATH`设为自定义算子包的安装目录，加载该包的环境配置，编译并运行：
+使用本仓构建并按默认路径安装的 `custom_nn` 算子包时，将下方代码保存为 `test_aclnn_rms_norm_dynamic_mx_quant.cpp`，并将 `CANN_INSTALL_DIR` 替换为实际 CANN 安装目录。若安装算子包时指定了 `--install-path`，请将 `VENDOR_OPP_PATH` 改为 `<install-path>/vendors/custom_nn`，并在编译前加载该目录下的 `bin/set_env.bash`。
 
 ```bash
-export VENDOR_OPP_PATH="${ASCEND_HOME_PATH}/vendors/custom_nn"
-source "${VENDOR_OPP_PATH}/bin/set_env.bash"
+CANN_INSTALL_DIR=/path/to/Ascend/cann
+source "${CANN_INSTALL_DIR}/set_env.sh"
+VENDOR_OPP_PATH="${ASCEND_OPP_PATH}/vendors/custom_nn"
 g++ -std=c++11 test_aclnn_rms_norm_dynamic_mx_quant.cpp \
     -I"${VENDOR_OPP_PATH}/op_api/include" -I"${ASCEND_HOME_PATH}/include" \
     -I"${ASCEND_HOME_PATH}/include/aclnnop" \
     -L"${VENDOR_OPP_PATH}/op_api/lib" -L"${ASCEND_HOME_PATH}/lib64" \
-    -lcust_opapi -lascendcl -lnnopbase -o test_aclnn_rms_norm_dynamic_mx_quant
+    -Wl,-rpath,"${VENDOR_OPP_PATH}/op_api/lib" \
+    -lcust_opapi -lacl_rt -lnnopbase -o test_aclnn_rms_norm_dynamic_mx_quant
 ./test_aclnn_rms_norm_dynamic_mx_quant
 ```
 
@@ -435,6 +437,7 @@ g++ -std=c++11 test_aclnn_rms_norm_dynamic_mx_quant.cpp \
 #include <iostream>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 #include <cmath>
 #include "acl/acl.h"
@@ -528,6 +531,20 @@ bool CheckOutputs(const std::vector<uint8_t>& y, const std::vector<uint8_t>& mxs
     return true;
 }
 
+aclError WaitForStream(aclrtStream stream)
+{
+    const auto syncRet = aclrtSynchronizeStream(stream);
+    if (syncRet != ACL_SUCCESS) {
+        const auto abortRet = aclrtStreamAbort(stream);
+        if (abortRet != ACL_SUCCESS) {
+            // 流可能仍在使用缓冲区，直接结束示例进程，避免析构时提前释放设备内存。
+            std::fprintf(stderr, "Stream synchronization and abort failed. ERROR: %d, %d\n", syncRet, abortRet);
+            std::_Exit(EXIT_FAILURE);
+        }
+    }
+    return syncRet;
+}
+
 int main() {
   // 1. （固定写法）device/stream初始化，参考acl API手册
   // 根据自己的实际device填写deviceId
@@ -578,8 +595,6 @@ int main() {
       }
   };
   auto releaseResources = [&]() {
-      // Finish any submitted work before freeing tensors or device memory.
-      checkCleanup("aclrtSynchronizeStream", aclrtSynchronizeStream(stream));
       freeDeviceAddr(workspaceAddr);
       destroyTensor(x);
       destroyTensor(gamma);
@@ -611,7 +626,9 @@ int main() {
 
   double epsilon = 1e-6;
   char roundMode[] = "rint";
-  bool outputRstd = true;  // 设置为true，输出有效的rstdOut
+  constexpr int64_t ocpScaleAlg = 0;
+  constexpr auto dstType = aclDataType::ACL_FLOAT8_E4M3FN;
+  bool outputRstd = true;
 
   // 创建x aclTensor
   ret = CreateAclTensor(xHostData, xShape, &xDeviceAddr, aclDataType::ACL_FLOAT16, &x);
@@ -621,7 +638,7 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, releaseResources(); return ret);
 
   // 创建y aclTensor (FLOAT8_E4M3FN)
-  ret = CreateAclTensor(yHostData, xShape, &yDeviceAddr, aclDataType::ACL_FLOAT8_E4M3FN, &y);
+  ret = CreateAclTensor(yHostData, xShape, &yDeviceAddr, dstType, &y);
   CHECK_RET(ret == ACL_SUCCESS, releaseResources(); return ret);
   // 创建mxscale aclTensor (FLOAT8_E8M0)
   ret = CreateAclTensor(mxscaleHostData, mxscaleShape, &mxscaleDeviceAddr, aclDataType::ACL_FLOAT8_E8M0, &mxscale);
@@ -635,7 +652,7 @@ int main() {
   aclOpExecutor* executor = nullptr;
   // 调用aclnnRmsNormDynamicMxQuant第一段接口
   ret = aclnnRmsNormDynamicMxQuantGetWorkspaceSize(
-      x, gamma, nullptr, epsilon, 0, roundMode, 36, outputRstd, y, mxscale, rstd, &workspaceSize, &executor);
+      x, gamma, nullptr, epsilon, ocpScaleAlg, roundMode, dstType, outputRstd, y, mxscale, rstd, &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS,
       LOG_PRINT("aclnnRmsNormDynamicMxQuantGetWorkspaceSize failed. ERROR: %d\n", ret); releaseResources(); return ret);
   // 根据第一段接口计算出的workspaceSize申请device内存
@@ -645,11 +662,11 @@ int main() {
   }
   // 调用aclnnRmsNormDynamicMxQuant第二段接口
   ret = aclnnRmsNormDynamicMxQuant(workspaceAddr, workspaceSize, executor, stream);
+  // 4. （固定写法）同步等待任务执行结束
+  const auto syncRet = WaitForStream(stream);
   CHECK_RET(ret == ACL_SUCCESS,
       LOG_PRINT("aclnnRmsNormDynamicMxQuant failed. ERROR: %d\n", ret); releaseResources(); return ret);
-  // 4. （固定写法）同步等待任务执行结束
-  ret = aclrtSynchronizeStream(stream);
-  CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); releaseResources(); return ret);
+  CHECK_RET(syncRet == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", syncRet); releaseResources(); return syncRet);
 
   // 5. 获取并检查输出
   std::vector<uint8_t> yRet(xShapeSize, 0);
