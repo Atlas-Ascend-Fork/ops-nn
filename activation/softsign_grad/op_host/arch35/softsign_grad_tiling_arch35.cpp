@@ -63,24 +63,29 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
     auto outputShape = EnsureNotScalar(outputDesc->GetStorageShape());
 
     OP_CHECK_IF(gradientsShape != featuresShape || gradientsShape != outputShape,
-                OP_LOGE(context, "SoftsignGrad: shape mismatch: gradients=%s, features=%s, output=%s",
-                        Ops::Base::ToString(gradientsShape).c_str(), Ops::Base::ToString(featuresShape).c_str(),
-                        Ops::Base::ToString(outputShape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    Ops::Base::GetOpInfo(context), "gradients, features, output",
+                    Ops::Base::ToString({&gradientsDesc->GetStorageShape(), &featuresDesc->GetStorageShape(),
+                                         &outputDesc->GetStorageShape()}),
+                    "All three shapes must match after scalar normalization"),
                 return ge::GRAPH_FAILED);
 
     // rank ≤ 8（tiling 门独立拦截，与 Host 推理门各司其职；README/spec 0-8 维契约，
     // TF 标杆与 A2/A3 基线 TBE RANK_LIMIT=8 同限）
     constexpr size_t kMaxRank = 8;
     OP_CHECK_IF(gradientsShape.GetDimNum() > kMaxRank,
-                OP_LOGE(context, "SoftsignGrad: rank=%zu exceeds supported 0-8 dims", gradientsShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(Ops::Base::GetOpInfo(context), "gradients",
+                                                         std::to_string(gradientsShape.GetDimNum()),
+                                                         "The rank must not exceed " + std::to_string(kMaxRank)),
                 return ge::GRAPH_FAILED);
 
     // IsUnknownShape：任一维 -1 即返回 true（CANN 库实际语义，非"全维 -1"）。
     // 到达 tiling 的含 -1 维 shape 说明框架尚未定值，无法规划切分，显式拒绝。
     // 参照 TF "Dimension must be >= 0" + 基线 TBE 逐维域检查。
     if (Ops::Base::IsUnknownShape(gradientsShape) || Ops::Base::IsUnknownShape(featuresShape)) {
-        OP_LOGE(context, "SoftsignGrad: shape with unknown dim (-1) reached tiling; "
-                         "shape must be resolved before tiling");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(Ops::Base::GetOpInfo(context), "gradients",
+                                              Ops::Base::ToString(gradientsShape),
+                                              "All dimensions must be resolved before tiling");
         return ge::GRAPH_FAILED;
     }
 
@@ -90,8 +95,9 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
     // InferShape 侧不加此校验（-1 在推理阶段是合法占位，值域校验归 tiling 门）。
     for (size_t i = 0; i < gradientsShape.GetDimNum(); ++i) {
         OP_CHECK_IF(gradientsShape[i] < 0,
-                    OP_LOGE(context, "SoftsignGrad: invalid dimension %ld at axis %zu (must be >= 0 at tiling stage)",
-                            gradientsShape[i], i),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        Ops::Base::GetOpInfo(context), "gradients", Ops::Base::ToString(gradientsShape),
+                        "Dimension " + std::to_string(i) + " must be non-negative at tiling time"),
                     return ge::GRAPH_FAILED);
     }
 
@@ -102,26 +108,34 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     dataType = inputDesc->GetDataType();
     if (supportedDtype.count(dataType) == 0) {
-        OP_LOGE(context, "SoftsignGrad: invalid dtype=%d, supported: FP16/FP32/BF16", static_cast<int>(dataType));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(Ops::Base::GetOpInfo(context), "gradients", Ops::Base::ToString(dataType),
+                                              "Supported data types are float16, float32 and bfloat16");
         return ge::GRAPH_FAILED;
     }
 
     auto featuresDescInfo = context->GetInputDesc(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, featuresDescInfo);
     OP_CHECK_IF(featuresDescInfo->GetDataType() != dataType,
-                OP_LOGE(context, "SoftsignGrad: gradients and features dtype mismatch"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    Ops::Base::GetOpInfo(context), "gradients, features",
+                    Ops::Base::ToString(dataType) + ", " + Ops::Base::ToString(featuresDescInfo->GetDataType()),
+                    "Both inputs must have the same data type"),
+                return ge::GRAPH_FAILED);
 
     // 输出 dtype 域内且与输入一致（上板实测：complex128 输出产出错误结果、fp16 输出
     // 设备 VEC_ERROR——越域元数据必须受控拒绝，不得进入执行）
     auto outputDescInfo = context->GetOutputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, outputDescInfo);
     OP_CHECK_IF(supportedDtype.count(outputDescInfo->GetDataType()) == 0,
-                OP_LOGE(context, "SoftsignGrad: output dtype=%d not supported: only FP16/FP32/BF16",
-                        static_cast<int>(outputDescInfo->GetDataType())),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(Ops::Base::GetOpInfo(context), "output",
+                                                      Ops::Base::ToString(outputDescInfo->GetDataType()),
+                                                      "Supported data types are float16, float32 and bfloat16"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(outputDescInfo->GetDataType() != dataType,
-                OP_LOGE(context, "SoftsignGrad: output dtype=%d mismatch with gradients dtype=%d",
-                        static_cast<int>(outputDescInfo->GetDataType()), static_cast<int>(dataType)),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    Ops::Base::GetOpInfo(context), "gradients, output",
+                    Ops::Base::ToString(dataType) + ", " + Ops::Base::ToString(outputDescInfo->GetDataType()),
+                    "The output must have the same data type as gradients"),
                 return ge::GRAPH_FAILED);
 
     // format 三向 ND（README/spec ND-only 契约；家族先例 relu6_d_tiling 同款校验；
@@ -131,8 +145,13 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
     const auto outputFormat = outputDescInfo->GetFormat().GetStorageFormat();
     OP_CHECK_IF(
         inputFormat != ge::FORMAT_ND || featuresFormat != ge::FORMAT_ND || outputFormat != ge::FORMAT_ND,
-        OP_LOGE(context, "SoftsignGrad: format not supported (only ND): gradients=%d, features=%d, output=%d",
-                static_cast<int>(inputFormat), static_cast<int>(featuresFormat), static_cast<int>(outputFormat)),
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+            Ops::Base::GetOpInfo(context),
+            inputFormat != ge::FORMAT_ND ? "gradients" : (featuresFormat != ge::FORMAT_ND ? "features" : "output"),
+            Ops::Base::ToString(inputFormat != ge::FORMAT_ND ?
+                                    inputFormat :
+                                    (featuresFormat != ge::FORMAT_ND ? featuresFormat : outputFormat)),
+            "The storage format must be ND"),
         return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -160,7 +179,7 @@ static ge::graphStatus SoftsignGradTilingFunc(gert::TilingContext* context)
     int64_t totalNum;
     ge::DataType dataType;
     OP_CHECK_IF(GetShapeAttrsInfo(context, totalNum, dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
                 return ge::GRAPH_FAILED);
@@ -185,12 +204,12 @@ static ge::graphStatus SoftsignGradTilingFunc(gert::TilingContext* context)
     // 检测并返回 INT64_MIN 哨兵）或未知维/未知秩标记（-1/-2 使乘积为负）——两者均为
     // 非法元数据，显式拒绝（CODE.05/06：文案须描述实际条件，不得与已支持的空 shape
     // 场景混淆；空 shape 在上一分支已按受支持路径早退）。
-    OP_CHECK_IF(totalNum < 0,
-                OP_LOGE(context,
-                        "SoftsignGrad: invalid shape metadata: totalNum=%ld (negative shape-size product: "
-                        "dimension multiplication overflow or unknown-dim/-rank markers in static input)",
-                        totalNum),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        totalNum < 0,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(Ops::Base::GetOpInfo(context), "gradients",
+                                              Ops::Base::ToString(context->GetInputShape(0)->GetStorageShape()),
+                                              "The product of the dimensions must fit in a signed 64-bit integer"),
+        return ge::GRAPH_FAILED);
 
     tiling->totalNum = totalNum;
     tiling->blockFactor = CeilDiv(totalNum, coreNum);

@@ -17,6 +17,7 @@
 #include "ut_op_common.h"
 #include "infershape_test_util.h"
 #include "kernel_run_context_facker.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "log/log.h"
 
 class ScaledMaskedSoftmaxV2Proto : public testing::Test {
@@ -67,4 +68,29 @@ TEST_F(ScaledMaskedSoftmaxV2Proto, inferDataType)
 
     ASSERT_EQ(inferDataTypeFunc(holder.GetContext<gert::InferDataTypeContext>()), ge::GRAPH_SUCCESS);
     ASSERT_EQ(holder.GetContext<gert::InferDataTypeContext>()->GetOutputDataType(0), ge::DT_BF16);
+}
+
+TEST_F(ScaledMaskedSoftmaxV2Proto, infer_shape_reports_missing_mask)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ScaledMaskedSoftmaxV2");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+    gert::StorageShape xShape = {{1, 32, 32, 128}, {1, 32, 32, 128}};
+    gert::StorageShape yShape;
+    auto holder = gert::InferShapeContextFaker()
+                      .SetOpType("ScaledMaskedSoftmaxV2")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 0}, {1})
+                      .InputShapes({&xShape})
+                      .OutputShapes({&yShape})
+                      .Build();
+    auto* context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(context, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    (void)manager.GetRawErrorMessages();
+    EXPECT_EQ(impl->infer_shape(context), ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0037");
+    EXPECT_NE(errors[0].error_message.find("mask"), std::string::npos) << errors[0].error_message;
 }

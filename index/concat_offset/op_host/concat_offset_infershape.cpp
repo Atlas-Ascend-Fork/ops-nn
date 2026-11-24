@@ -27,7 +27,10 @@ static ge::graphStatus InferShape4ConcatOffset(gert::InferShapeContext* context)
     // get shape of the first input from dynamic x
     constexpr size_t dynamic_x = 1;
     const gert::Shape* x_shape_0 = context->GetDynamicInputShape(dynamic_x, 0);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, x_shape_0);
+    OP_CHECK_IF(x_shape_0 == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context), "x",
+                                                         "The shape of the first tensor in x must be available"),
+                return GRAPH_FAILED);
 
     // get dynamic num from attr N
     const gert::RuntimeAttrs* attrs = context->GetAttrs();
@@ -42,7 +45,10 @@ static ge::graphStatus InferShape4ConcatOffset(gert::InferShapeContext* context)
     OPS_CHECK_NULL_WITH_CONTEXT(context, anchorInstanceInfo);
     uint32_t inputNum = anchorInstanceInfo->GetInstanceNum();
     OP_CHECK_IF(inputNum != *dynamic_num,
-                OP_LOGE(context->GetNodeName(), "attr N should be same as input x tensor num"), return GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    Ops::Base::GetOpInfo(context), "N", std::to_string(*dynamic_num),
+                    "N must equal the number of tensors in x (" + std::to_string(inputNum) + ")"),
+                return GRAPH_FAILED);
 
     for (int64_t i = 0; i < *dynamic_num; i++) {
         gert::Shape* out_shape = context->GetOutputShape(i);

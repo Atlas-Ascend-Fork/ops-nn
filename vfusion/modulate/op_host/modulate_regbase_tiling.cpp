@@ -65,8 +65,10 @@ ge::graphStatus ModulateTilingForRegbase::GetShapeAttrsInfo()
     xDType_ = xDesc->GetDataType();
     xDtypeSize_ = ge::GetSizeByDataType(xDType_);
     OP_CHECK_IF(xDtypeSize_ <= 0,
-                OP_LOGE(opName_, "Get invalid dtype size. x dtype [%s], size: %u.",
-                        Ops::Base::ToString(xDType_).c_str(), xDtypeSize_),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    Ops::Base::GetOpInfo(context_), "x", Ops::Base::ToString(xDType_),
+                    "Tiling requires a positive size in bytes for this data type, but its size is " +
+                        std::to_string(xDtypeSize_)),
                 return ge::GRAPH_FAILED);
     xAlign_ = BLOCK_SIZE / xDtypeSize_;
     isScale_ = (scaleShape != nullptr);
@@ -139,7 +141,11 @@ ge::graphStatus ModulateTilingForRegbase::PostTiling()
     errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
                            &tilingData_, sizeof(ModulateRegbaseTilingData));
     if (ret != EOK) {
-        OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret=%d", ret);
+        const auto capacity = context_->GetRawTilingData()->GetCapacity();
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            Ops::Base::GetOpInfo(context_), "tiling data copy result", std::to_string(ret),
+            "memcpy_s failed to copy " + std::to_string(sizeof(ModulateRegbaseTilingData)) +
+                " bytes of tiling data into a buffer with capacity " + std::to_string(capacity) + " B");
         return ge::GRAPH_FAILED;
     }
     context_->GetRawTilingData()->SetDataSize(sizeof(ModulateRegbaseTilingData));

@@ -15,6 +15,7 @@
 #include "runtime/infer_shape_context.h"
 #include "register/op_impl_registry.h"
 #include "error_util.h"
+#include "log/log.h"
 
 using namespace gert;
 namespace {
@@ -30,7 +31,10 @@ static ge::graphStatus ScaledMaskedSoftmaxV2InferShape(gert::InferShapeContext* 
     const gert::Shape* xShape = context->GetInputShape(IDX_IN_X);
     OPS_CHECK_NULL_WITH_CONTEXT(context, xShape);
     const gert::Shape* maskShape = context->GetInputShape(IDX_IN_MASK);
-    OPS_CHECK_NULL_WITH_CONTEXT(context, maskShape);
+    OP_CHECK_IF(maskShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context), "mask",
+                                                         "The mask shape must be available during shape inference"),
+                return ge::GRAPH_FAILED);
     // get output shapes
     gert::Shape* yShape = context->GetOutputShape(IDX_OUT_Y);
     OPS_CHECK_NULL_WITH_CONTEXT(context, yShape);

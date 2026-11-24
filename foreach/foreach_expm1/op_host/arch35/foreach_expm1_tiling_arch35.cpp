@@ -67,7 +67,15 @@ static ge::graphStatus ForeachExpm1TilingFunc(gert::TilingContext* context)
         return ge::GRAPH_FAILED);
 
     auto inputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
+    if (inputDesc == nullptr) {
+        if (tensorNum == 0) {
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(context), "x",
+                                                     "Tiling requires at least one tensor in x");
+        } else {
+            OP_LOGE(context, "The descriptor for x[0] is missing from the tiling context.");
+        }
+        return ge::GRAPH_FAILED;
+    }
     ge::DataType dataType = inputDesc->GetDataType();
 
     ForeachExpm1TilingData* tiling = context->GetTilingData<ForeachExpm1TilingData>();
@@ -82,12 +90,12 @@ static ge::graphStatus ForeachExpm1TilingFunc(gert::TilingContext* context)
         auto currentInputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, i);
         OP_CHECK_NULL_WITH_CONTEXT(context, currentInputDesc);
         ge::DataType currentDataType = currentInputDesc->GetDataType();
-        OP_CHECK_IF(
-            currentDataType != dataType,
-            OP_LOGE(context, "The dtypes of all tensors in x must be the same, but x[%lu] is %s while x[0] is %s.", i,
-                    ge::TypeUtils::DataTypeToSerialString(currentDataType).c_str(),
-                    ge::TypeUtils::DataTypeToSerialString(dataType).c_str()),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(currentDataType != dataType,
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        Ops::Base::GetOpInfo(context), "x[0], x[" + std::to_string(i) + "]",
+                        Ops::Base::ToString(dataType) + ", " + Ops::Base::ToString(currentDataType),
+                        "All tensors in x must have the same data type"),
+                    return ge::GRAPH_FAILED);
 
         auto shapePtr = context->GetDynamicInputShape(INPUT_IDX_0, i);
         OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
@@ -178,7 +186,9 @@ static ge::graphStatus ForeachExpm1TilingFunc(gert::TilingContext* context)
     } else if (dataType == ge::DT_UINT8) {
         tilingKey = GET_TPL_TILING_KEY(FOREACH_EXPM1_TPL_SCH_MODE_UINT8);
     } else {
-        OP_LOGE(context, "unsupported dtype for foreach_expm1");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            Ops::Base::GetOpInfo(context), "x", Ops::Base::ToString(dataType),
+            "Supported data types are float32, float16, bfloat16, int16, int8 and uint8");
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(tilingKey);

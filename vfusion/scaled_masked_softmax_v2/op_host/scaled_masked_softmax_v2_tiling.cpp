@@ -95,7 +95,11 @@ bool ScaledMaskedSoftmaxV2Tiling::InitInputDtype()
     auto inputDtype = context->GetInputDesc(X_INDEX)->GetDataType();
     xDtypeSize = getDataTypeSize(inputDtype);
 
-    OP_CHECK_IF(xDtypeSize == 0, OP_LOGE(context, "[ScaledMaskedSoftmaxV2Tiling] X Dtype invalid."), return false);
+    OP_CHECK_IF(
+        xDtypeSize == 0,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(Ops::Base::GetOpInfo(context), "x", Ops::Base::ToString(inputDtype),
+                                              "Supported data types are float16, float32 and bfloat16"),
+        return false);
 
     return true;
 }
@@ -133,8 +137,8 @@ ge::graphStatus ScaledMaskedSoftmaxV2Tiling::Init()
 {
     OP_CHECK_IF(!InitPlatformInfo(), OP_LOGE(context, "InitPlatformInfo failed."), return ge::GRAPH_FAILED);
     OP_CHECK_IF(!InitAttr(), OP_LOGE(context, "InitAttr failed."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!InitInputDtype(), OP_LOGE(context, "InitInputDtype failed."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!InitInputShape(), OP_LOGE(context, "InitInputShape failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!InitInputDtype(), OP_LOGE_WITHOUT_REPORT(context, "InitInputDtype failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!InitInputShape(), OP_LOGE_WITHOUT_REPORT(context, "InitInputShape failed."), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -146,7 +150,11 @@ bool ScaledMaskedSoftmaxV2Tiling::InitInputShape()
     auto maskShapeVal = maskShape->GetStorageShape();
 
     OP_CHECK_IF(xShapeVal.GetDimNum() != DIM_NUM || maskShapeVal.GetDimNum() != DIM_NUM,
-                OP_LOGE(context, "x or mask DimNum is not 4."), return false);
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    Ops::Base::GetOpInfo(context), xShapeVal.GetDimNum() != DIM_NUM ? "x" : "mask",
+                    Ops::Base::ToString(xShapeVal.GetDimNum() != DIM_NUM ? xShapeVal : maskShapeVal),
+                    "The tensor must have four dimensions"),
+                return false);
 
     batch = xShapeVal.GetDim(DIM_0);
     channel = xShapeVal.GetDim(DIM_1);
@@ -160,18 +168,30 @@ bool ScaledMaskedSoftmaxV2Tiling::InitInputShape()
     if (IsRegbaseSocVersion(context)) {
         maxDimLimit = MAX_DIM_NUM_D;
     }
-    OP_CHECK_IF(width > maxDimLimit || width <= 0, OP_LOGE(context, "x dim 3 should in (0, 4096]."), return false);
+    OP_CHECK_IF(width > maxDimLimit || width <= 0,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    Ops::Base::GetOpInfo(context), "x", Ops::Base::ToString(xShapeVal),
+                    "Dimension 3 must be in the range (0, " + std::to_string(maxDimLimit) + "] on this platform"),
+                return false);
 
     maskBatch = maskShapeVal.GetDim(DIM_0);
     maskChannel = maskShapeVal.GetDim(DIM_1);
     uint64_t maskHeight = maskShapeVal.GetDim(DIM_2);
     uint64_t maskWidth = maskShapeVal.GetDim(DIM_3);
 
-    OP_CHECK_IF(maskHeight != height || maskWidth != width, OP_LOGE(context, "x and mask height or width not equal."),
+    OP_CHECK_IF(maskHeight != height || maskWidth != width,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    Ops::Base::GetOpInfo(context), "mask.shape", Ops::Base::ToString(maskShapeVal),
+                    "Dimensions 2 and 3 must match the corresponding dimensions of x with shape " +
+                        Ops::Base::ToString(xShapeVal)),
                 return false);
 
     OP_CHECK_IF((batch != maskBatch && maskBatch != 1) || (channel != maskChannel && maskChannel != 1),
-                OP_LOGE(context, "x and mask batch or channel can't broadcast."), return false);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    Ops::Base::GetOpInfo(context), "mask.shape", Ops::Base::ToString(maskShapeVal),
+                    "Dimensions 0 and 1 must each be 1 or match the corresponding dimension of x with shape " +
+                        Ops::Base::ToString(xShapeVal)),
+                return false);
     return true;
 }
 

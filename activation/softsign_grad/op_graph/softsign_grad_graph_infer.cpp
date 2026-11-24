@@ -35,15 +35,17 @@ static ge::graphStatus InferDataType4SoftsignGrad(gert::InferDataTypeContext* co
     // float/double，本算子交付域为其子集，int32 等域外值两方均拒绝）
     const std::set<ge::DataType> supportedDtype = {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16};
     if (supportedDtype.count(gradients_dtype) == 0) {
-        OP_LOGE("SoftsignGrad", "gradients dtype=%d not supported: only FP16/FP32/BF16",
-                static_cast<int>(gradients_dtype));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("SoftsignGrad", "gradients", Ops::Base::ToString(gradients_dtype),
+                                              "Supported data types are float16, float32 and bfloat16");
         return ge::GRAPH_FAILED;
     }
 
     // 双输入 dtype 一致：TF 标杆实测拒绝混合 dtype
     if (gradients_dtype != features_dtype) {
-        OP_LOGE("SoftsignGrad", "dtype mismatch: gradients=%d, features=%d", static_cast<int>(gradients_dtype),
-                static_cast<int>(features_dtype));
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            "SoftsignGrad", "gradients, features",
+            Ops::Base::ToString(gradients_dtype) + ", " + Ops::Base::ToString(features_dtype),
+            "Both inputs must have the same data type");
         return ge::GRAPH_FAILED;
     }
 

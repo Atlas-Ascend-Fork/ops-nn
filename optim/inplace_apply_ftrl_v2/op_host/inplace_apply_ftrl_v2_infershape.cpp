@@ -24,6 +24,7 @@ namespace ops {
 
 static constexpr size_t MAX_DIM_NUM = 8;
 static constexpr size_t NUM_TENSOR_INPUTS = 4;
+static constexpr const char* INPUT_NAMES[NUM_TENSOR_INPUTS] = {"var", "accum", "linear", "grad"};
 
 static ge::graphStatus InferShape4InplaceApplyFtrlV2(gert::InferShapeContext* context)
 {
@@ -37,14 +38,18 @@ static ge::graphStatus InferShape4InplaceApplyFtrlV2(gert::InferShapeContext* co
     OP_CHECK_NULL_WITH_CONTEXT(context, gradShape);
 
     if (*varShape != *accumShape || *varShape != *linearShape || *varShape != *gradShape) {
-        OP_LOGE(context, "var, accum, linear, grad shapes must be identical");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(Ops::Base::GetOpInfo(context), "var, accum, linear, grad",
+                                               Ops::Base::ToString({varShape, accumShape, linearShape, gradShape}),
+                                               "All four tensors must have the same shape");
         return ge::GRAPH_FAILED;
     }
     for (size_t i = 0; i < NUM_TENSOR_INPUTS; i++) {
         const gert::Shape* shape = context->GetInputShape(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, shape);
         if (shape->GetDimNum() > MAX_DIM_NUM) {
-            OP_LOGE(context, "input %zu dim num %zu exceeds max %zu", i, shape->GetDimNum(), MAX_DIM_NUM);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(Ops::Base::GetOpInfo(context), INPUT_NAMES[i],
+                                                     std::to_string(shape->GetDimNum()),
+                                                     "The rank must not exceed " + std::to_string(MAX_DIM_NUM));
             return ge::GRAPH_FAILED;
         }
     }

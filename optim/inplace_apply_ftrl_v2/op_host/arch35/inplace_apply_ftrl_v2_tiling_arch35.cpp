@@ -45,6 +45,7 @@ constexpr size_t ATTR_USE_LOCKING_INDEX = 0;
 constexpr size_t MAX_DIM_NUM = 8;
 constexpr size_t NUM_INPUTS = 9;
 constexpr size_t NUM_OUTPUTS = 3;
+constexpr const char* INPUT_NAMES[] = {"var", "accum", "linear", "grad", "lr", "l1", "l2", "l2_shrinkage", "lr_power"};
 constexpr size_t NUM_TENSOR_INPUTS = 4;
 constexpr size_t NUM_SCALAR_INPUTS = 5;
 constexpr size_t NUM_DTYPE_BITS = 8;
@@ -93,7 +94,9 @@ static ge::graphStatus ValidateInputShapes(gert::TilingContext* context, const c
     auto gradShape = inputGrad->GetStorageShape();
 
     if (varShape != accumShape || varShape != linearShape || varShape != gradShape) {
-        OP_LOGE(opName, "var, accum, linear, grad shapes must be identical");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(Ops::Base::GetOpInfo(opName), "var, accum, linear, grad",
+                                               Ops::Base::ToString({&varShape, &accumShape, &linearShape, &gradShape}),
+                                               "All four tensors must have the same shape");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -109,7 +112,13 @@ static ge::graphStatus ValidateScalarInputs(gert::TilingContext* context, const 
         const bool isLogicalScalar = shape.GetDimNum() == 0;
         const bool isSingleElementStorage = shape.GetDimNum() == 1 && shape.GetShapeSize() == 1;
         if (!isLogicalScalar && !isSingleElementStorage) {
-            OP_LOGE(opName, "%s must be rank-0 or shape [1]", scalarNames[i]);
+            const std::string incorrectDim = shape.GetDimNum() == 1 ?
+                                                 "axis 0 of size " + std::to_string(shape.GetDim(0)) :
+                                                 "rank " + std::to_string(shape.GetDimNum());
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                Ops::Base::GetOpInfo(opName), scalarNames[i], incorrectDim,
+                "A scalar (rank 0) or a one-dimensional tensor of length 1 is required. Actual shape: " +
+                    Ops::Base::ToString(shape));
             return ge::GRAPH_FAILED;
         }
     }
@@ -133,7 +142,10 @@ static ge::graphStatus ValidateInputDtypes(gert::TilingContext* context, const c
         auto desc = context->GetInputDesc(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, desc);
         if (desc->GetDataType() != *dataType) {
-            OP_LOGE(opName, "input %zu dtype mismatch, expected same as var", i);
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                Ops::Base::GetOpInfo(opName), std::string("var, ") + INPUT_NAMES[i],
+                Ops::Base::ToString(*dataType) + ", " + Ops::Base::ToString(desc->GetDataType()),
+                "All inputs must have the same data type as var");
             return ge::GRAPH_FAILED;
         }
     }
@@ -141,7 +153,10 @@ static ge::graphStatus ValidateInputDtypes(gert::TilingContext* context, const c
         auto desc = context->GetOutputDesc(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, desc);
         if (desc->GetDataType() != *dataType) {
-            OP_LOGE(opName, "output %zu dtype mismatch, expected same as var", i);
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                Ops::Base::GetOpInfo(opName), std::string("input var, output ") + INPUT_NAMES[i],
+                Ops::Base::ToString(*dataType) + ", " + Ops::Base::ToString(desc->GetDataType()),
+                "The output must have the same data type as input var");
             return ge::GRAPH_FAILED;
         }
     }
@@ -154,7 +169,9 @@ static ge::graphStatus ValidateFormats(gert::TilingContext* context, const char*
         const auto inputDesc = context->GetInputDesc(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
         if (inputDesc->GetStorageFormat() != ge::FORMAT_ND) {
-            OP_LOGE(opName, "input %zu only supports FORMAT_ND", i);
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(Ops::Base::GetOpInfo(opName), INPUT_NAMES[i],
+                                                   Ops::Base::ToString(inputDesc->GetStorageFormat()),
+                                                   "The input storage format must be ND");
             return ge::GRAPH_FAILED;
         }
     }
@@ -162,7 +179,9 @@ static ge::graphStatus ValidateFormats(gert::TilingContext* context, const char*
         const auto outputDesc = context->GetOutputDesc(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
         if (outputDesc->GetStorageFormat() != ge::FORMAT_ND) {
-            OP_LOGE(opName, "output %zu only supports FORMAT_ND", i);
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(Ops::Base::GetOpInfo(opName), INPUT_NAMES[i],
+                                                   Ops::Base::ToString(outputDesc->GetStorageFormat()),
+                                                   "The output storage format must be ND");
             return ge::GRAPH_FAILED;
         }
     }
@@ -189,18 +208,20 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     *totalElements = varShape.GetShapeSize();
 
     if (varShape.GetDimNum() > MAX_DIM_NUM) {
-        OP_LOGE(opName, "var dim num %zu exceeds max %zu", varShape.GetDimNum(), MAX_DIM_NUM);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(Ops::Base::GetOpInfo(opName), "var",
+                                                 std::to_string(varShape.GetDimNum()),
+                                                 "The rank must not exceed " + std::to_string(MAX_DIM_NUM));
         return ge::GRAPH_FAILED;
     }
 
     OP_CHECK_IF(ValidateInputShapes(context, opName, varShape) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "ValidateInputShapes error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "ValidateInputShapes error"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(ValidateScalarInputs(context, opName) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "ValidateScalarInputs error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "ValidateScalarInputs error"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(ValidateInputDtypes(context, opName, dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "ValidateInputDtypes error"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ValidateFormats(context, opName) != ge::GRAPH_SUCCESS, OP_LOGE(context, "ValidateFormats error"),
-                return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "ValidateInputDtypes error"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ValidateFormats(context, opName) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "ValidateFormats error"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(ValidateAttrs(context, opName) != ge::GRAPH_SUCCESS, OP_LOGE(context, "ValidateAttrs error"),
                 return ge::GRAPH_FAILED);
 
@@ -283,7 +304,7 @@ static ge::graphStatus InplaceApplyFtrlV2TilingFunc(gert::TilingContext* context
     int64_t totalElements;
     ge::DataType dataType;
     OP_CHECK_IF(GetShapeAttrsInfo(context, &totalElements, &dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
                 return ge::GRAPH_FAILED);

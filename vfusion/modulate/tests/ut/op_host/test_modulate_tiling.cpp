@@ -12,6 +12,9 @@
 #include <vector>
 #include <gtest/gtest.h>
 
+#include "../../../op_host/modulate_regbase_tiling.h"
+#include "../../../op_host/modulate_tiling.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -365,4 +368,40 @@ TEST_F(ModulateTiling, test_modulate_regbase_tiling_D)
 
     // workspaces nullptr return failed
     EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
+}
+
+TEST_F(ModulateTiling, post_tiling_reports_insufficient_buffer_capacity)
+{
+    class ModulatePostTiling : public optiling::ModulateTilingForRegbase {
+    public:
+        using ModulateTilingForRegbase::ModulateTilingForRegbase;
+        using ModulateTilingForRegbase::PostTiling;
+    };
+
+    optiling::ModulateCompileInfo compileInfo;
+    fe::PlatFormInfos platformInfo;
+    gert::StorageShape shape = {{1, 1, 8}, {1, 1, 8}};
+    auto buffer = gert::TilingData::CreateCap(1);
+    auto workspace = gert::ContinuousVector::Create<size_t>(1);
+    ASSERT_NE(buffer, nullptr);
+    ASSERT_NE(workspace, nullptr);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("Modulate")
+                      .NodeIoNum(3, 1)
+                      .InputShapes({&shape, &shape, &shape})
+                      .OutputShapes({&shape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(&platformInfo)
+                      .TilingData(buffer.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()))
+                      .Build();
+    auto* context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(context, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    (void)manager.GetRawErrorMessages();
+    EXPECT_EQ(ModulatePostTiling(context).PostTiling(), ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0026");
+    EXPECT_NE(errors[0].error_message.find("capacity 1 B"), std::string::npos) << errors[0].error_message;
 }

@@ -58,8 +58,9 @@ static ge::graphStatus InferShape4SoftsignGrad(gert::InferShapeContext* context)
     // 不等拒绝）+ 动态分支逐维取已知值精化输出；TF 图级 shape 推断同做未知维合并
     // （"must have the same size and shape" 系 TF kernel 运行时校验，非描述符层义务）。
     if (gradients_shape->GetDimNum() != features_shape->GetDimNum()) {
-        OP_LOGE("SoftsignGrad", "rank mismatch: gradients=%s, features=%s",
-                Ops::Base::ToString(*gradients_shape).c_str(), Ops::Base::ToString(*features_shape).c_str());
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            "SoftsignGrad", "features", std::to_string(features_shape->GetDimNum()),
+            "The rank must match the rank of gradients (" + std::to_string(gradients_shape->GetDimNum()) + ")");
         return ge::GRAPH_FAILED;
     }
     gert::Shape merged_shape = *gradients_shape;
@@ -76,7 +77,9 @@ static ge::graphStatus InferShape4SoftsignGrad(gert::InferShapeContext* context)
         if (dim_f == -1) {
             continue; // merged 已持有具体值 dim_g
         }
-        OP_LOGE("SoftsignGrad", "shape conflict at dim %zu: gradients=%ld, features=%ld", i, dim_g, dim_f);
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON("SoftsignGrad", "gradients, features",
+                                               Ops::Base::ToString({gradients_shape, features_shape}),
+                                               "Dimension " + std::to_string(i) + " must match in both inputs");
         return ge::GRAPH_FAILED;
     }
 
@@ -84,7 +87,9 @@ static ge::graphStatus InferShape4SoftsignGrad(gert::InferShapeContext* context)
     // up to 8"；A2/A3 基线 TBE RANK_LIMIT=8 框架级拦截。gert::Shape 上限 25，需显式拒绝。
     constexpr size_t kMaxRank = 8;
     if (gradients_shape->GetDimNum() > kMaxRank) {
-        OP_LOGE("SoftsignGrad", "rank=%zu exceeds supported 0-8 dims", gradients_shape->GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("SoftsignGrad", "gradients",
+                                                 std::to_string(gradients_shape->GetDimNum()),
+                                                 "The rank must not exceed " + std::to_string(kMaxRank));
         return ge::GRAPH_FAILED;
     }
 

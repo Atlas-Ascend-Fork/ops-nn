@@ -158,7 +158,11 @@ ge::graphStatus FusedCrossEntropyLossWithMaxSumRegbaseTiling::DoTilingFull()
     int64_t vMax = FloorAlign(ubAvail / perColBytes, FUSED_CE_MAX_SUM_V_ALIGN);
     int64_t vAligned = CeilAlign(v, FUSED_CE_MAX_SUM_V_ALIGN);
     int64_t vPerLoop = vMax < vAligned ? vMax : vAligned;
-    OP_CHECK_IF(vPerLoop < FUSED_CE_MAX_SUM_V_ALIGN, OP_LOGE(context_, "ub is not enough, vPerLoop is %ld", vPerLoop),
+    OP_CHECK_IF(vPerLoop < FUSED_CE_MAX_SUM_V_ALIGN,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    Ops::Base::GetOpInfo(context_), "vPerLoop", std::to_string(vPerLoop),
+                    "Each tiling loop requires at least " + std::to_string(FUSED_CE_MAX_SUM_V_ALIGN) +
+                        " vocabulary elements for alignment"),
                 return ge::GRAPH_FAILED);
 
     // bt不足占满核时按v维二次切核，总核数 = rowCores * vCores（不超过coreNum_）
@@ -260,7 +264,8 @@ ge::graphStatus TilingFusedCrossEntropyLossWithMaxSumRegbase(gert::TilingContext
         return ge::GRAPH_FAILED;
     }
     if (tilingImpl.DoTiling() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context, "TilingFusedCrossEntropyLossWithMaxSumRegbase do tiling failed.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                               "TilingFusedCrossEntropyLossWithMaxSumRegbase do tiling failed.");
         return ge::GRAPH_FAILED;
     }
     OP_LOGD(context, "End TilingFusedCrossEntropyLossWithMaxSumRegbase.");

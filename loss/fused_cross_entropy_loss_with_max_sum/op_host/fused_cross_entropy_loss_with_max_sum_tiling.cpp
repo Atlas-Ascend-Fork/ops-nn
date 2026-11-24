@@ -115,10 +115,14 @@ ge::graphStatus FusedCrossEntropyLossWithMaxSumTiling::Init()
                         "but bt is %u, v is %u",
                         bt, v),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(bt != static_cast<uint32_t>(logitsMaxTensor->GetStorageShape().GetDim(DIM_INDEX0)),
-                OP_LOGE(tilingContext_->GetNodeName(),
-                        "vocab_parallel_logits dim0 must be equal to logits_max dim0, but vocab dim0 is %u", bt),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        bt != static_cast<uint32_t>(logitsMaxTensor->GetStorageShape().GetDim(DIM_INDEX0)),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            Ops::Base::GetOpInfo(tilingContext_), "vocab_parallel_logits",
+            Ops::Base::ToString(tensor->GetStorageShape()),
+            "Dimension 0 must match dimension 0 of logits_max (" +
+                std::to_string(logitsMaxTensor->GetStorageShape().GetDim(DIM_INDEX0)) + ") after conversion to uint32"),
+        return ge::GRAPH_FAILED);
 
     formerCoreNum = bt % coreNum;
     latterbtCountLen = bt / coreNum;
@@ -171,11 +175,16 @@ ge::graphStatus FusedCrossEntropyLossWithMaxSumTiling::Init()
 ge::graphStatus FusedCrossEntropyLossWithMaxSumTiling::TilingForMenory()
 {
     auto tensor = tilingContext_->GetOptionalInputTensor(0);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, tensor);
+    OP_CHECK_IF(tensor == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(Ops::Base::GetOpInfo(tilingContext_), "logits_max",
+                                                         "The input tensor is required in memory-saving mode"),
+                return ge::GRAPH_FAILED);
     uint32_t bt = static_cast<uint32_t>(tensor->GetStorageShape().GetDim(DIM_INDEX0));
     // bt=0会使usedCoreNum为0进而导致后续对coreNum取模除零
     OP_CHECK_IF(bt == 0,
-                OP_LOGE(tilingContext_->GetNodeName(), "logits_max dim0 must be greater than 0, but is %u", bt),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(Ops::Base::GetOpInfo(tilingContext_), "logits_max",
+                                                      Ops::Base::ToString(tensor->GetStorageShape()),
+                                                      "Dimension 0 must be greater than 0 after conversion to uint32"),
                 return ge::GRAPH_FAILED);
 
     auto usedCoreNum = CeilDiv(bt, TILING_ELEMENTS);
@@ -242,7 +251,7 @@ ge::graphStatus TilingFusedCrossEntropyLossWithMaxSum(gert::TilingContext* conte
     }
     FusedCrossEntropyLossWithMaxSumTiling tilingObject(context);
     if (tilingObject.Init() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "tiling init fail");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "tiling init fail");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
