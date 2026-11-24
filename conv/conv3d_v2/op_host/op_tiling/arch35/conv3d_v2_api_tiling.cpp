@@ -47,7 +47,8 @@ constexpr uint64_t WEIGHT_5HD_MIN_CHANNEL = 64;
 } // namespace
 
 bool IsWeight5HDMode3D(NpuArch npuArch, uint64_t groups, ConvFormat weightFormat, ConvFormat outputFormat,
-                       ConvDtype weightDtype, uint64_t kernelHxkernelW, uint64_t orgCi, uint64_t orgCo, uint64_t ubSize)
+                       ConvDtype weightDtype, uint64_t kernelHxkernelW, uint64_t orgCi, uint64_t orgCo, uint64_t ubSize,
+                       bool quantConvFlag)
 {
     const uint64_t dtypeSize = DTYPE_SIZE_TAB.at(weightDtype);
     const uint64_t k0 = static_cast<uint64_t>(CUBE_MKN_MAP.GetMKN(weightDtype, optiling::conv_ops_tiling::MKN_K_IDX));
@@ -55,7 +56,7 @@ bool IsWeight5HDMode3D(NpuArch npuArch, uint64_t groups, ConvFormat weightFormat
     const uint64_t alignHwByte = AlignB(kernelHxkernelW, k0) * dtypeSize;
     return (npuArch == Ops::Base::DAV_9201 || npuArch == Ops::Base::DAV_9202) && groups == 1 &&
            weightFormat == ConvFormat::NCDHW && outputFormat == ConvFormat::NCDHW &&
-           weightDtype != ConvDtype::FLOAT8_E4M3FN && kernelHxkernelW >= WEIGHT_5HD_MIN_HW &&
+           weightDtype != ConvDtype::FLOAT8_E4M3FN && !quantConvFlag && kernelHxkernelW >= WEIGHT_5HD_MIN_HW &&
            orgCo > WEIGHT_5HD_MIN_CHANNEL && orgCi > WEIGHT_5HD_MIN_CHANNEL &&
            c0 * alignHwByte <= ubSize / DOUBLE_BUFFER_NUM &&
            alignHwByte / WEIGHT_5HD_DB_BYTES <= WEIGHT_5HD_REPEAT_TIMES_MAX;
@@ -388,7 +389,7 @@ void Conv3dTiling::SetTilingData(Ops::NN::Conv3dV2::Conv3DV2TilingDataV2& tiling
     const bool isWeight5HD = conv_tiling::IsWeight5HDMode3D(
         platformInfo.npuArch, static_cast<uint64_t>(attrInfo.groups), descInfo.weightType.format,
         descInfo.outputType.format, descInfo.weightType.dtype, kernelHxkernelW, shapeInfo.orgCi, shapeInfo.orgCo,
-        platformInfo.ubSize);
+        platformInfo.ubSize, this->quantConvFlag);
     if (isWeight5HD) {
         conv_tiling::CalcWeight5HDUbTiling(kernelHxkernelW, shapeInfo.orgCi, shapeInfo.orgCo, cubeInfo.k0,
                                            l1TilingInfo.kBL1, descInfo.weightType.dtype, platformInfo.ubSize,

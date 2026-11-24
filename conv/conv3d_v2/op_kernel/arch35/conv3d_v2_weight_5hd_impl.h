@@ -286,6 +286,15 @@ public:
         return false;
     }
 
+    __aicore__ inline void Weight5HDVecImplExited(Intf* self)
+    {
+        for (uint64_t chunk = 0; chunk < self->ctx.weight5hdChunkNum; ++chunk) {
+            Weight5HDConvertChunk(self, chunk);
+            CrossCoreSetFlag<0, PIPE_MTE3>(WEIGHT_5HD_BARRIER_ID);
+            CrossCoreWaitFlag<0>(WEIGHT_5HD_BARRIER_ID);
+        }
+    }
+
     __aicore__ inline void BL1WaitReady(Intf* self)
     {
         if (self->ctx.weight5hdLoadCount < self->ctx.weight5hdChunkNum) {
@@ -367,6 +376,40 @@ private:
         }
     }
 };
+
+template <typename W, typename TilingData>
+struct Weight5HDExitedCtx {
+    const TilingData* convTilingData = nullptr;
+    TPipe pipe;
+    TBuf<TPosition::VECIN> ndUbBuf;
+    TBuf<TPosition::VECOUT> nzUbBuf;
+    GlobalTensor<W> bgm;
+    GlobalTensor<W> weight5HDGM;
+    uint64_t singleCoreCi = 0;
+    uint64_t singleCoreCo = 0;
+    uint64_t weight5hdChunkNum = 0;
+    uint64_t weight5hdLoadCount = 0;
+};
+
+template <typename W, typename TilingData>
+struct Weight5HDExitedIntf {
+    using WeightT = W;
+    static constexpr uint64_t k0 = C0_SIZE / sizeof(W);
+    static constexpr uint8_t sizeOfWeight = sizeof(W);
+    Weight5HDExitedCtx<W, TilingData> ctx;
+};
+
+template <typename W, typename TilingData>
+__aicore__ inline void RunWeight5HDVecExited(const TilingData& tiling, GM_ADDR filter, GM_ADDR workspace)
+{
+    Weight5HDExitedIntf<W, TilingData> exited;
+    exited.ctx.convTilingData = &tiling;
+    exited.ctx.bgm.SetGlobalBuffer(reinterpret_cast<__gm__ W*>(filter));
+    exited.ctx.weight5HDGM.SetGlobalBuffer(reinterpret_cast<__gm__ W*>(workspace));
+    Weight5HDProcessTools<Weight5HDExitedIntf<W, TilingData>> tools;
+    tools.Weight5HDVecInit(&exited);
+    tools.Weight5HDVecImplExited(&exited);
+}
 
 } // namespace Conv3dFunc
 

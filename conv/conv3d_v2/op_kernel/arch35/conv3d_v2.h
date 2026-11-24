@@ -145,6 +145,12 @@ Conv3dV2Base<FMAP_TYPE, WEIGHT_TYPE, OUTPUT_TYPE, BIAS_TYPE, SCALE_TYPE, CONV_CF
     }
     if (Conv3dV2KernelInit(x, filter, bias, y, workspace, extendParams, convTilingData)) {
         Conv3dV2KernelImpl();
+    } else {
+        if constexpr (IS_WEIGHT_5HD) {
+            if ASCEND_IS_AIV {
+                Conv3dFunc::RunWeight5HDVecExited<WEIGHT_T>(convTilingData, filter, workspace);
+            }
+        }
     }
 }
 

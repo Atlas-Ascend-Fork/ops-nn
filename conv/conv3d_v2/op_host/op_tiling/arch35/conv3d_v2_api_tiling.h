@@ -25,8 +25,8 @@
 #include "conv/common/op_host/op_tiling/arch35/conv_api_strategy.h"
 namespace conv_tiling {
 bool IsWeight5HDMode3D(NpuArch npuArch, uint64_t groups, ConvFormat weightFormat, ConvFormat outputFormat,
-                       ConvDtype weightDtype, uint64_t kernelHxkernelW, uint64_t orgCi, uint64_t orgCo,
-                       uint64_t ubSize);
+                       ConvDtype weightDtype, uint64_t kernelHxkernelW, uint64_t orgCi, uint64_t orgCo, uint64_t ubSize,
+                       bool quantConvFlag);
 void CalcWeight5HDUbTiling(uint64_t kernelHxkernelW, uint64_t orgCi, uint64_t orgCo, uint64_t k0, uint64_t kBL1,
                            ConvDtype weightDtype, uint64_t ubSize, uint64_t aicoreNum, uint32_t& bUbKStep,
                            uint32_t& bUbNStep);
