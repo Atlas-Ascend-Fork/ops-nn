@@ -20,5 +20,8 @@
 #define BN3D_TRAINING_UPDATE_KEY_CHANNEL_FIRST 2000
 // x 的 format 为 NHWC / NDHWC(通道轴 = 末轴)。
 #define BN3D_TRAINING_UPDATE_KEY_CHANNEL_LAST 3000
+// 周期展平路径:通道数 C <= 2 且通道周期可整除展开块(C 与上两条路径按 TilingKey 严格隔离)。
+// 覆盖 channel-last(C = 1/2)与 channel-first(空间块 S 极小、周期 P = C·S 短)两类长尾形状。
+#define BN3D_TRAINING_UPDATE_KEY_FLAT 4000
 
 #endif // BN3_D_TRAINING_UPDATE_TILING_KEY_H

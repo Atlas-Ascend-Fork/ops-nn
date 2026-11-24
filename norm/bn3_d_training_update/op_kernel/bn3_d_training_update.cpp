@@ -17,6 +17,7 @@
 #include "arch35/bn3_d_training_update_channel_first.h"
 #include "arch35/bn3_d_training_update_channel_last.h"
 #include "arch35/bn3_d_training_update_common.h"
+#include "arch35/bn3_d_training_update_flat.h"
 #include "arch35/bn3_d_training_update_stat.h"
 #include "arch35/bn3_d_training_update_tiling_data.h"
 #include "arch35/bn3_d_training_update_tiling_key.h"
@@ -45,6 +46,13 @@ extern "C" __global__ __aicore__ void bn3_d_training_update(GM_ADDR x, GM_ADDR s
         REGISTER_TILING_FOR_TILINGKEY("TILING_KEY_VAR == 3000", Bn3dTrainingUpdateChannelLastTilingData);
         GET_TILING_DATA_WITH_STRUCT(Bn3dTrainingUpdateChannelLastTilingData, tilingData, tiling);
         Bn3dTrainingUpdateChannelLast<DTYPE_X> op;
+        op.Init(x, sum, square_sum, scale, offset, mean, variance, y, mean_out, variance_out, batch_mean,
+                batch_variance, &tilingData, &pipe);
+        op.Process();
+    } else if (TILING_KEY_IS(BN3D_TRAINING_UPDATE_KEY_FLAT)) {
+        REGISTER_TILING_FOR_TILINGKEY("TILING_KEY_VAR == 4000", Bn3dTrainingUpdateFlatTilingData);
+        GET_TILING_DATA_WITH_STRUCT(Bn3dTrainingUpdateFlatTilingData, tilingData, tiling);
+        Bn3dTrainingUpdateFlat<DTYPE_X> op;
         op.Init(x, sum, square_sum, scale, offset, mean, variance, y, mean_out, variance_out, batch_mean,
                 batch_variance, &tilingData, &pipe);
         op.Process();

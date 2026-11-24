@@ -52,6 +52,18 @@ constexpr int64_t kUnitsPerCoreTarget = 4;
 // 只有 saveVar 需要一个额外临时槽;相 S 的 4 个出参各落自己的结果槽(故相 S 不占此临时槽)。
 constexpr int64_t kFoldInputSlots = 4;
 constexpr int64_t kFoldScratchSlots = 1;
+// 周期展平路径的折叠出参槽位:mult / bm / offset / saveVar 各占一槽(4 槽)。
+// 不复用相 S 的槽 —— 相 S 的折叠 mult 落在一个随后被 VFStatEma 覆写的临时槽上。
+constexpr int64_t kFoldOutputSlots = 4;
+constexpr int64_t kFlatFoldMult = 0;
+constexpr int64_t kFlatFoldBm = 1;
+constexpr int64_t kFlatFoldOffset = 2;
+constexpr int64_t kFlatFoldSaveVar = 3;
+// 周期系数块(pattern 缓冲内的三路:mult / bm / offset)。
+constexpr int64_t kFlatPatternSlots = 3;
+constexpr int64_t kFlatPatMult = 0;
+constexpr int64_t kFlatPatBm = 1;
+constexpr int64_t kFlatPatOffset = 2;
 // 折叠槽下标(CF 与 CL 共用同一组折叠槽):4 路输入槽 + 1 个折叠出参槽(saveVar)。
 constexpr int64_t kFoldInSum = 0;
 constexpr int64_t kFoldInSquareSum = 1;
@@ -149,14 +161,45 @@ struct Bn3dTrainingUpdateChannelLastTilingData {
     uint32_t reserved;
 };
 
+// key 4000 —— 周期展平(x 视为一维连续数组):元素 j 的通道号 = (j % period) / channelRun。
+//   channel-last(NHWC / NDHWC):channelRun = 1、period = C(通道 j % C 紧邻排布);
+//   channel-first(NCHW / NCDHW):channelRun = S、period = C·S(同一通道连续出现 S 个元素)。
+// laneBlock = unroll·VL 是周期块的展开长度(period | laneBlock),也是瓦片长度的相位粒度。
+struct Bn3dTrainingUpdateFlatTilingData {
+    int64_t c;          // C
+    int64_t channelRun; // R:同一通道连续出现的元素数(channel-last 1 / channel-first S)
+    int64_t period;     // P = C·R
+    int64_t unroll;     // m:使 period | m·VL 的最小展开倍数
+    int64_t laneBlock;  // L = m·VL(周期块长度,瓦片长度必须是它的整数倍)
+    int64_t tileElems;  // 瓦片元素数
+    int64_t total;      // total = num·C(x/y 的总元素数)
+    int64_t tileCount;  // ceil(total / tileElems)
+    int64_t baseTilesPerCore;
+    int64_t extraCoreCount;
+    int64_t statUnitCount;
+    int64_t statChunk;
+    int64_t baseStatPerCore;
+    int64_t extraStatCount;
+    float numRec;
+    float besselScaler;
+    float factor;
+    float oneMinusFactor;
+    float epsilon;
+    // 显式 ABI 对齐填充(同 channel-first / channel-last 的口径)。
+    uint32_t reserved;
+};
+
 // ABI 锁:两份结构体的字段序列与对齐与 host 侧 TILING_DATA_DEF 生成类逐字段一致
 // (int64 → float → uint32 的声明次序保证自然对齐不插入填充)。
 constexpr size_t BN3D_TRAINING_UPDATE_CF_TILING_DATA_BYTES = 112U;
 constexpr size_t BN3D_TRAINING_UPDATE_CL_TILING_DATA_BYTES = 120U;
+constexpr size_t BN3D_TRAINING_UPDATE_FLAT_TILING_DATA_BYTES = 136U;
 static_assert(sizeof(Bn3dTrainingUpdateChannelFirstTilingData) == BN3D_TRAINING_UPDATE_CF_TILING_DATA_BYTES,
               "Bn3dTrainingUpdate channel-first tiling ABI size changed unexpectedly");
 static_assert(sizeof(Bn3dTrainingUpdateChannelLastTilingData) == BN3D_TRAINING_UPDATE_CL_TILING_DATA_BYTES,
               "Bn3dTrainingUpdate channel-last tiling ABI size changed unexpectedly");
+static_assert(sizeof(Bn3dTrainingUpdateFlatTilingData) == BN3D_TRAINING_UPDATE_FLAT_TILING_DATA_BYTES,
+              "Bn3dTrainingUpdate flat tiling ABI size changed unexpectedly");
 
 } // namespace Bn3dTrainingUpdateOps
 

@@ -26,7 +26,9 @@ using Bn3dTrainingUpdateOps::ChunkSlotBytes;
 using Bn3dTrainingUpdateOps::CoeffTileBytes;
 using Bn3dTrainingUpdateOps::CoeffTileCap;
 using Bn3dTrainingUpdateOps::kCoeffTileBufferNum;
+using Bn3dTrainingUpdateOps::kFlatPatternSlots;
 using Bn3dTrainingUpdateOps::kFoldInputSlots;
+using Bn3dTrainingUpdateOps::kFoldOutputSlots;
 using Bn3dTrainingUpdateOps::kFoldScratchSlots;
 using Bn3dTrainingUpdateOps::kParamChunkLen;
 using Bn3dTrainingUpdateOps::kPipeMetaReserveBytes;
@@ -93,6 +95,89 @@ inline int64_t StatPhaseBytes(const Bn3dTrainingUpdatePlatform& p)
     return (kStatInputSlots + kStatResultSlots) * ChunkSlotBytes(p.vlFp32, p.blockBytes);
 }
 
+// ======================= 周期展平路径(key 4000)的 UB 记账 =======================
+// 门限常量(设计 §10.3 v2 tier-1):通道数上界**按 layout 分治**——
+//   channel-last:保持 2(通道紧邻,旧路径 lane 利用率 = C/VL);
+//   channel-first:放宽到 4,并附加"内层游程 S < VL"判据(旧路径每单元只有 K·S 个元素、
+//     S 不满一个向量时固定开销主导;而 C=1/2 且大 S 的形状旧路径反而更快,必须挡在门外)。
+// 其余常量不变:最小元素数、展开倍数上界(L = m·VL <= 4·VL = 256)、每核期望瓦片数。
+constexpr int64_t kFlatMaxChannelsLast = 2;
+constexpr int64_t kFlatMaxChannelsFirst = 4;
+constexpr int64_t kFlatMinElements = 4096;
+constexpr int64_t kFlatMaxUnroll = 4;
+constexpr int64_t kFlatTilesPerCoreTarget = 4;
+
+// 周期展平相 X 的占用:x/y 瓦片 + 折叠 staging(4 路输入 + 4 路出参,各一槽)
+// + 周期系数块(3 × laneBlock 个 fp32)。
+inline int64_t FlatPhaseXBytes(int64_t tileElems, int64_t elemBytes, int64_t laneBlock,
+                               const Bn3dTrainingUpdatePlatform& p)
+{
+    return kXyQueueNum * kXyTileBufferNum * XyTileBufferBytes(tileElems, elemBytes, p.vlFp32, p.blockBytes) +
+           (kFoldInputSlots + kFoldOutputSlots) * ChunkSlotBytes(p.vlFp32, p.blockBytes) +
+           kFlatPatternSlots *
+               Bn3dTrainingUpdateOps::AlignUpBlock(laneBlock * static_cast<int64_t>(sizeof(float)), p.blockBytes);
+}
+
+// 整 kernel 占用:相 X + 相 S + 唯一的元数据预留(与 Cf/Cl 的合并口径一致)。
+inline int64_t FlatKernelBytes(int64_t tileElems, int64_t elemBytes, int64_t laneBlock,
+                               const Bn3dTrainingUpdatePlatform& p)
+{
+    return FlatPhaseXBytes(tileElems, elemBytes, laneBlock, p) + StatPhaseBytes(p) + kPipeMetaReserveBytes;
+}
+
+// 瓦片元素数:tileElems = min(UB 上界, 并行度目标, total),且 UB 上界与并行度目标都取整到 laneBlock 的倍数。
+//   ① UB 上界:占用对 tileElems 单调不减 ⇒ 二分取"占用 <= ubSize"的最大值,再向下取整到 laneBlock 的倍数;
+//   ② 并行度:ceil(total / (coreNum·kFlatTilesPerCoreTarget)) 向上取整到 laneBlock 的倍数(不小于 laneBlock);
+//   ③ 只有 ① ② 都大于 total 时才会取到 total,此时 tileCount == 1(单一瓦片,相位恒为 0)。
+inline int64_t SolveFlatTileElems(int64_t total, int64_t elemBytes, int64_t laneBlock,
+                                  const Bn3dTrainingUpdatePlatform& p)
+{
+    if (total < 1 || laneBlock < 1) {
+        return 0;
+    }
+    int64_t lower = laneBlock;
+    // VF 循环计数器是 uint16_t(见 kMaxTileElementsPerVf):瓦片元素数同时受该上界约束。
+    int64_t upper = total < kMaxTileElementsPerVf ? total : kMaxTileElementsPerVf;
+    if (upper < lower) {
+        upper = lower;
+    }
+    int64_t ubBound = 0;
+    int64_t lo = lower;
+    int64_t hi = upper;
+    while (lo <= hi) {
+        const int64_t mid = lo + (hi - lo) / 2;
+        // 二分必须落回 laneBlock 的整数倍格点(占用随元素数单调,格点之间的取值无意义)。
+        const int64_t probe = mid - mid % laneBlock;
+        if (probe < lower) {
+            lo = mid + 1;
+            continue;
+        }
+        if (FlatKernelBytes(probe, elemBytes, laneBlock, p) <= p.ubSize) {
+            ubBound = probe;
+            lo = probe + laneBlock;
+        } else {
+            hi = probe - laneBlock;
+        }
+    }
+    if (ubBound < lower) {
+        return 0;
+    }
+    const int64_t perCoreTarget = p.coreNum * kFlatTilesPerCoreTarget;
+    int64_t parBound = lower;
+    if (perCoreTarget > 0) {
+        const int64_t perTile = (total + perCoreTarget - 1) / perCoreTarget;
+        parBound = Bn3dTrainingUpdateOps::AlignUpValue(perTile, laneBlock);
+        if (parBound < lower) {
+            parBound = lower;
+        }
+    }
+    int64_t tileElems = ubBound < parBound ? ubBound : parBound;
+    if (tileElems > total) {
+        tileElems = total; // 单一瓦片(tileCount == 1),相位恒为 0
+    }
+    return tileElems;
+}
+
 // 整 kernel 占用:两相共用一个 TPipe ⇒ 只有**一份**元数据预留(两条布局函数各自记一次
 // kPipeMetaReserveBytes 会重复计入,故这里显式合并为单一函数)。
 inline int64_t CfKernelBytes(int64_t spatialTile, int64_t channelWindow, int64_t elemBytes,
@@ -156,6 +241,10 @@ private:
     ge::graphStatus TilingChannelLast();
     ge::graphStatus FillChannelFirst();
     ge::graphStatus FillChannelLast();
+    // 周期展平路径(key 4000)的唯一入口:门限判定 + 几何求解 + TilingData 填写。
+    bool FlatPathGate();
+    ge::graphStatus TilingFlat();
+    ge::graphStatus FillFlat();
 
     gert::TilingContext* context_ = nullptr;
     Bn3dTrainingUpdatePlatform plat_{};
@@ -179,6 +268,15 @@ private:
     int64_t rowsPerTile_ = 0;
     int64_t tilesPerBlock_ = 0;
     int64_t coeffCap_ = 0;
+
+    // 周期展平(key 4000)
+    bool flatPath_ = false;
+    int64_t channelRun_ = 0; // R:同一通道连续出现的元素数(channel-last 1 / channel-first S)
+    int64_t period_ = 0;     // P = C·R
+    int64_t unroll_ = 0;     // m:使 P | m·VL 的最小展开倍数
+    int64_t laneBlock_ = 0;  // L = m·VL
+    int64_t tileElems_ = 0;
+    int64_t tileCount_ = 0;
 
     int64_t xTileCount_ = 0;
     int64_t baseTilesPerCore_ = 0;

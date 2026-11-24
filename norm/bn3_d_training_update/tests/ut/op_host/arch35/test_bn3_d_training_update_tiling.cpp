@@ -28,8 +28,10 @@ namespace {
 
 using Bn3dTrainingUpdateOps::BN3D_TRAINING_UPDATE_CF_TILING_DATA_BYTES;
 using Bn3dTrainingUpdateOps::BN3D_TRAINING_UPDATE_CL_TILING_DATA_BYTES;
+using Bn3dTrainingUpdateOps::BN3D_TRAINING_UPDATE_FLAT_TILING_DATA_BYTES;
 using Bn3dTrainingUpdateOps::Bn3dTrainingUpdateChannelFirstTilingData;
 using Bn3dTrainingUpdateOps::Bn3dTrainingUpdateChannelLastTilingData;
+using Bn3dTrainingUpdateOps::Bn3dTrainingUpdateFlatTilingData;
 
 constexpr uint64_t kCoreNum = 64U;
 constexpr uint64_t kUbSize = 245760U;
@@ -103,6 +105,13 @@ const Bn3dTrainingUpdateChannelLastTilingData* AsCl(const TilingRun& run)
 {
     return reinterpret_cast<const Bn3dTrainingUpdateChannelLastTilingData*>(run.data.data());
 }
+
+const Bn3dTrainingUpdateFlatTilingData* AsFlat(const TilingRun& run)
+{
+    return reinterpret_cast<const Bn3dTrainingUpdateFlatTilingData*>(run.data.data());
+}
+
+int64_t ElemBytesOf(ge::DataType dtype) { return (dtype == ge::DT_FLOAT) ? 4 : 2; }
 
 optiling::Bn3dTrainingUpdatePlatform Platform()
 {
@@ -429,4 +438,206 @@ TEST_F(BN3DTrainingUpdateTilingTest, stat_output_shape_mismatch_rejected)
     // 输出 rank-1 但长度 (4,) != C = 3 → 仅"输出必须等于输入 (C,) 形状"能拒它。
     EXPECT_EQ(RunTiling({2, 3, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 3, 0.1f, 1.0e-5f, ge::FORMAT_ND, {}, {4}).status,
               ge::GRAPH_FAILED);
+}
+
+// ============================ 周期展平(key 4000)============================
+
+namespace {
+struct FlatGateCase {
+    std::vector<int64_t> dims;
+    ge::Format format;
+    ge::DataType dtype;
+    int64_t statLen;
+    int64_t expectKey;
+    int64_t expectPeriod;
+    int64_t expectUnroll;
+    const char* label;
+};
+} // namespace
+
+// 门限真值表(设计 §10.3 v2 tier-1):
+//   进 4000 ⇔ C >= 1 && num > 0 && total = num·C >= 4096
+//          && ( channelLast ? C <= 2 : (C <= 4 && S < VL) )
+//          && unroll <= 4 && UB 可解,  其中 period = (C == 1) ? 1 : C·S
+// 覆盖:issue 7 条(v1)形态、§10.4 的 4 条新吸收形态、以及必须留在老路径的对照
+// (channel-last C >= 3、channel-first S >= VL 含 C=1 大 S、极小形状、空 tensor)。
+TEST_F(BN3DTrainingUpdateTilingTest, flat_gate_truth_table)
+{
+    const FlatGateCase cases[] = {
+        // ---- 走 4000:channel-last 的 C = 1/2(通道紧邻,P = C)----
+        {{6, 2, 47590, 4, 1}, ge::FORMAT_NDHWC, ge::DT_FLOAT, 1, 4000, 1, 1, "L1_011 C=1 fp32"},
+        {{3, 1720023, 4, 1}, ge::FORMAT_NHWC, ge::DT_FLOAT16, 1, 4000, 1, 1, "L1_080 C=1 fp16"},
+        {{1, 2, 11738724, 1}, ge::FORMAT_NHWC, ge::DT_FLOAT16, 1, 4000, 1, 1, "L1_296 C=1 fp16"},
+        {{7872, 2, 2, 284, 2}, ge::FORMAT_NDHWC, ge::DT_FLOAT16, 2, 4000, 2, 1, "L1_089 C=2 fp16"},
+        {{2, 169, 2, 5705, 2}, ge::FORMAT_NDHWC, ge::DT_FLOAT, 2, 4000, 2, 1, "L1_333 C=2 fp32"},
+        {{1, 1, 271643, 2, 2}, ge::FORMAT_NDHWC, ge::DT_BF16, 2, 4000, 2, 1, "L1_096 C=2 bf16"},
+        {{1608871, 2, 2, 2}, ge::FORMAT_NHWC, ge::DT_FLOAT16, 2, 4000, 2, 1, "L1_302 C=2 fp16"},
+        // ---- 走 4000:channel-first 的 C = 2 小游程(S < VL,P = C·S)----
+        {{1272457, 2, 2, 2}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 2, 4000, 8, 1, "L1_038 C=2 S=4 m=1"},
+        {{382737, 2, 2, 3, 2}, ge::FORMAT_NCDHW, ge::DT_FLOAT16, 2, 4000, 24, 3, "L1_378 C=2 S=12 m=3"},
+        {{200000, 2, 2, 24}, ge::FORMAT_NCHW, ge::DT_FLOAT, 2, 4000, 96, 3, "CF C=2 S=48 m=3"},
+        // ---- 走 4000:v2 tier-1 新吸收的 4 条(S < VL、C <= 4)----
+        // §10.6 形态 1:C == 1 ⇒ 周期退化为 1,与 S 无关(S=9 非 2 的幂)
+        {{515998, 1, 3, 3}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 1, 4000, 1, 1, "L1_520 C=1 S=9 P=1 m=1"},
+        // §10.6 形态 2:C = 3/4 且 m = 3(现网此前只验证过 C=2, P=24, m=3)
+        {{1790118, 3, 2, 2}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 3, 4000, 12, 3, "L1_505 C=3 S=4 P=12 m=3"},
+        {{1314137, 4, 2, 2, 2}, ge::FORMAT_NCDHW, ge::DT_FLOAT16, 4, 4000, 32, 1, "L1_525 C=4 S=8 P=32 m=1"},
+        {{508680, 4, 2, 6}, ge::FORMAT_NCHW, ge::DT_BF16, 4, 4000, 48, 3, "rangebound_180 C=4 S=12 P=48 m=3"},
+        // C == 1 的 channel-first 也走"周期退化"路径(不再受 S 的整除性影响)
+        {{200000, 1, 1, 3}, ge::FORMAT_NCHW, ge::DT_FLOAT, 1, 4000, 1, 1, "CF C=1 S=3 P=1 m=1"},
+        // ---- 边界(显式钉住三条判据的临界值)----
+        // S 判据是严格小于 VL:S = VL-1 吸收、S = VL 拒收(两侧都要钉)
+        {{1000, 1, 7, 9}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 1, 4000, 1, 1, "边界 S=63(=VL-1)吸收"},
+        {{1000, 1, 8, 8}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 1, 2000, 0, 0, "边界 S=64(=VL)拒收"},
+        // 规模下限是 total >= 4096:4095 拒收、4096 吸收
+        {{1, 4095, 1, 1}, ge::FORMAT_NHWC, ge::DT_FLOAT16, 1, 3000, 0, 0, "边界 total=4095 拒收"},
+        {{1, 4096, 1, 1}, ge::FORMAT_NHWC, ge::DT_FLOAT16, 1, 4000, 1, 1, "边界 total=4096 吸收"},
+        // ---- 留在 3000:channel-last C >= 3(tier-1 结构性隔离)----
+        {{2, 4, 5, 3}, ge::FORMAT_NHWC, ge::DT_FLOAT, 3, 3000, 0, 0, "CL C=3"},
+        {{3, 622, 855, 3, 3}, ge::FORMAT_NDHWC, ge::DT_FLOAT16, 3, 3000, 0, 0, "L1_228 C=3"},
+        {{6144, 2, 2, 3}, ge::FORMAT_NHWC, ge::DT_FLOAT16, 3, 3000, 0, 0, "CL C=3 大 num"},
+        // ---- 留在 2000:channel-first 的 S >= VL(旧路径已能打满向量,C=1/2 大 S 反而更快)----
+        {{2, 2, 2, 2, 1100599}, ge::FORMAT_NCDHW, ge::DT_FLOAT, 2, 2000, 0, 0, "L1_338 S=4.4M"},
+        {{3, 2, 2, 2, 7598411}, ge::FORMAT_NCDHW, ge::DT_FLOAT, 2, 2000, 0, 0, "L1_356 S=30.4M"},
+        {{200000, 2, 2, 48}, ge::FORMAT_NCHW, ge::DT_FLOAT, 2, 2000, 0, 0, "CF C=2 S=96 >= VL"},
+        {{200000, 2, 1, 128}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 2, 2000, 0, 0, "CF C=2 S=128 >= VL"},
+        {{14, 1, 19, 6, 11}, ge::FORMAT_NCDHW, ge::DT_FLOAT16, 1, 2000, 0, 0, "L1_071 C=1 S=1254 >= VL"},
+        // ---- 留在 2000:C >= 5 的 channel-first(S < VL 也不行)----
+        {{100000, 4, 10, 10}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 4, 2000, 0, 0, "CF C=4 S=100 >= VL"},
+        {{200000, 5, 2, 4}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 5, 2000, 0, 0, "CF C=5 超上界"},
+        // ---- 留在老路径:total < 4096 / C == 0 / 空 tensor ----
+        {{1, 1, 1, 1}, ge::FORMAT_NHWC, ge::DT_FLOAT, 1, 3000, 0, 0, "total=1 极小"},
+        {{2, 0, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 0, 2000, 0, 0, "C=0 CF"},
+        {{2, 4, 5, 0}, ge::FORMAT_NHWC, ge::DT_FLOAT, 0, 3000, 0, 0, "C=0 CL"},
+        {{0, 3, 4, 5}, ge::FORMAT_NCHW, ge::DT_FLOAT, 3, 2000, 0, 0, "num=0 CF"},
+        {{2, 4, 0, 3}, ge::FORMAT_NHWC, ge::DT_FLOAT, 3, 3000, 0, 0, "num=0 CL"},
+    };
+    for (const auto& c : cases) {
+        const TilingRun run = RunTiling(c.dims, c.format, c.dtype, c.statLen);
+        ASSERT_EQ(run.status, ge::GRAPH_SUCCESS) << c.label;
+        EXPECT_EQ(run.key, c.expectKey) << c.label;
+        if (c.expectKey != static_cast<int64_t>(BN3D_TRAINING_UPDATE_KEY_FLAT)) {
+            continue;
+        }
+        EXPECT_EQ(run.dataSize, BN3D_TRAINING_UPDATE_FLAT_TILING_DATA_BYTES) << c.label;
+        const auto* td = AsFlat(run);
+        EXPECT_EQ(td->period, c.expectPeriod) << c.label;
+        EXPECT_EQ(td->unroll, c.expectUnroll) << c.label;
+        EXPECT_EQ(td->laneBlock, td->unroll * kVlFp32) << c.label;
+        // 周期必须整除展开块(保瓦片内相位为 0),展开倍数受上界约束。
+        EXPECT_EQ(td->laneBlock % td->period, 0) << c.label;
+        EXPECT_LE(td->unroll, optiling::kFlatMaxUnroll) << c.label;
+    }
+}
+
+// 瓦片切分不变量:UB 记账不超、laneBlock 对齐、切分和恒等于瓦片总数、VF 计数器上界。
+TEST_F(BN3DTrainingUpdateTilingTest, flat_tile_split_invariants)
+{
+    const FlatGateCase cases[] = {
+        {{6, 2, 47590, 4, 1}, ge::FORMAT_NDHWC, ge::DT_FLOAT, 1, 4000, 1, 1, "L1_011"},
+        {{7872, 2, 2, 284, 2}, ge::FORMAT_NDHWC, ge::DT_FLOAT16, 2, 4000, 2, 1, "L1_089"},
+        {{1272457, 2, 2, 2}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 2, 4000, 8, 1, "L1_038"},
+        {{382737, 2, 2, 3, 2}, ge::FORMAT_NCDHW, ge::DT_FLOAT16, 2, 4000, 24, 3, "L1_378"},
+        {{1, 2, 11738724, 1}, ge::FORMAT_NHWC, ge::DT_FLOAT16, 1, 4000, 1, 1, "L1_296"},
+        {{2, 169, 2, 5705, 2}, ge::FORMAT_NDHWC, ge::DT_FLOAT, 2, 4000, 2, 1, "L1_333"},
+        {{1024, 2, 2, 2}, ge::FORMAT_NCHW, ge::DT_FLOAT, 2, 4000, 8, 1, "CF 小 total=8192"},
+        // C == 1 的 channel-first:周期退化为 1(与 S 无关)—— 相位断言不能写成 C·R,本行负责盯住它
+        {{515998, 1, 3, 3}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 1, 4000, 1, 1, "L1_520 C=1 CF S=9"},
+    };
+    const auto plat = Platform();
+    for (const auto& c : cases) {
+        const TilingRun run = RunTiling(c.dims, c.format, c.dtype, c.statLen);
+        ASSERT_EQ(run.status, ge::GRAPH_SUCCESS) << c.label;
+        ASSERT_EQ(run.key, static_cast<int64_t>(BN3D_TRAINING_UPDATE_KEY_FLAT)) << c.label;
+        const auto* td = AsFlat(run);
+        const int64_t elemBytes = ElemBytesOf(c.dtype);
+        // ① UB 记账:整 kernel 占用不超 UB
+        EXPECT_LE(optiling::FlatKernelBytes(td->tileElems, elemBytes, td->laneBlock, plat), plat.ubSize) << c.label;
+        // ② 相位:P | L | tileElems(单一瓦片时 tileElems == total,相位恒为 0)。
+        //    C == 1 时周期退化为 1(通道恒为 0,与 S 无关)⇒ 不能用 C·R 表达。
+        EXPECT_EQ(td->period, td->c == 1 ? 1 : td->c * td->channelRun) << c.label;
+        EXPECT_EQ(td->laneBlock % td->period, 0) << c.label;
+        EXPECT_EQ(td->laneBlock, td->unroll * kVlFp32) << c.label;
+        if (td->tileCount > 1) {
+            EXPECT_EQ(td->tileElems % td->laneBlock, 0) << c.label;
+        }
+        // ③ 切分:瓦片总数与每核段之和恒等
+        EXPECT_EQ(td->tileCount, (td->total + td->tileElems - 1) / td->tileElems) << c.label;
+        EXPECT_EQ(td->baseTilesPerCore * static_cast<int64_t>(run.blockNum) + td->extraCoreCount, td->tileCount)
+            << c.label;
+        EXPECT_GE(td->tileCount, 1) << c.label;
+        // ④ VF 循环计数器(uint16_t)上界
+        EXPECT_LE(td->tileElems, optiling::kMaxTileElementsPerVf) << c.label;
+        // ⑤ total / numRec 自洽
+        EXPECT_GE(td->total, optiling::kFlatMinElements) << c.label;
+        EXPECT_GT(td->numRec, 0.0f) << c.label;
+    }
+}
+
+// 4000 的 ABI:结构体必须与宿主 TILING_DATA_DEF 序列化布局逐字节一致。
+TEST_F(BN3DTrainingUpdateTilingTest, flat_tiling_data_abi_size)
+{
+    EXPECT_EQ(sizeof(Bn3dTrainingUpdateFlatTilingData), 136U);
+    EXPECT_EQ(BN3D_TRAINING_UPDATE_FLAT_TILING_DATA_BYTES, 136U);
+    const TilingRun run = RunTiling({6, 2, 47590, 4, 1}, ge::FORMAT_NDHWC, ge::DT_FLOAT, 1);
+    ASSERT_EQ(run.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(run.dataSize, BN3D_TRAINING_UPDATE_FLAT_TILING_DATA_BYTES);
+}
+
+// 周期块解算:SolveFlatTileElems 的输出必须是 laneBlock 的整数倍(除非退化为单一瓦片),
+// 且调用方传入的 laneBlock 由 (C, R, VL) 唯一确定。
+TEST_F(BN3DTrainingUpdateTilingTest, flat_pattern_period_isolation)
+{
+    const auto plat = Platform();
+    // channel-last C=1/2:周期 <= VL ⇒ m = 1
+    EXPECT_EQ(optiling::SolveFlatTileElems(1000000, 4, 64, plat) % 64, 0);
+    // 极小 total(仍 >= kFlatMinElements)不得切出 0 长度瓦片,且瓦片数 >= 1
+    const int64_t tiny = optiling::SolveFlatTileElems(optiling::kFlatMinElements, 4, 64, plat);
+    EXPECT_GT(tiny, 0);
+    EXPECT_LE(tiny, optiling::kFlatMinElements);
+}
+
+// 4000 的两条拒收分支:**门限成立后不可达**,这里把"不可达"依赖的前提逐条钉死,
+// 使后续改动(改门限 / 改常量 / 改 TilingData 注册)一旦破坏前提就当场失败,而不是静默失效。
+//   ① TilingFlat() 的 `tileElems_ < 1`:只在 total <= 0 或 laneBlock <= 0 时发生,
+//      而 FlatPathGate() 已保证 num_ > 0 && total >= kFlatMinElements && laneBlock = m·VL >= VL;
+//      并且门限内的任何 (total, laneBlock) 都解出 >= laneBlock 的瓦片。
+//   ② FillFlat() 的容量分支:调用方给出的 tiling 容量(kTilingDataCap)远大于 ABI 136B。
+//   ③ FillFlat() 的 SetTilingKey 分支:4000 已 REGISTER_TILING_DATA_CLASS,key 恒为 4000。
+TEST_F(BN3DTrainingUpdateTilingTest, flat_reject_branches_unreachable_after_gate)
+{
+    const auto plat = Platform();
+
+    // ---- ① TilingFlat 的 tileElems_ < 1 ----
+    EXPECT_EQ(optiling::SolveFlatTileElems(0, 4, 64, plat), 0);      // total == 0:门限已排除
+    EXPECT_EQ(optiling::SolveFlatTileElems(-1, 4, 64, plat), 0);     // total < 0:门限已排除
+    EXPECT_EQ(optiling::SolveFlatTileElems(1000000, 4, 0, plat), 0); // L == 0:门限已保证 L >= VL
+    for (const int64_t total : {static_cast<int64_t>(optiling::kFlatMinElements), int64_t{1} << 20, int64_t{1} << 25}) {
+        for (const int64_t laneBlock : {int64_t{64}, int64_t{192}, int64_t{256}}) {
+            const int64_t te = optiling::SolveFlatTileElems(total, 4, laneBlock, plat);
+            EXPECT_GE(te, laneBlock) << "total=" << total << " L=" << laneBlock;
+        }
+    }
+
+    const FlatGateCase flats[] = {
+        {{6, 2, 47590, 4, 1}, ge::FORMAT_NDHWC, ge::DT_FLOAT, 1, 4000, 1, 1, "L1_011 m=1"},
+        {{382737, 2, 2, 3, 2}, ge::FORMAT_NCDHW, ge::DT_FLOAT16, 2, 4000, 24, 3, "L1_378 m=3"},
+        {{200000, 4, 2, 24}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 4, 4000, 96, 3, "CF C=4 S=48 m=3"},
+        {{515998, 1, 3, 3}, ge::FORMAT_NCHW, ge::DT_FLOAT16, 1, 4000, 1, 1, "L1_520 C=1 P=1"},
+    };
+    for (const auto& c : flats) {
+        const TilingRun run = RunTiling(c.dims, c.format, c.dtype, c.statLen);
+        ASSERT_EQ(run.status, ge::GRAPH_SUCCESS) << c.label;
+        ASSERT_EQ(run.key, static_cast<int64_t>(BN3D_TRAINING_UPDATE_KEY_FLAT)) << c.label;
+        const auto* td = AsFlat(run);
+        const int64_t elemBytes = ElemBytesOf(c.dtype);
+        // 门限的第 4 条(一个周期块的瓦片必须装得进 UB)⇒ TilingFlat 的 UB 反解恒成功
+        EXPECT_LE(optiling::FlatKernelBytes(td->laneBlock, elemBytes, td->laneBlock, plat), plat.ubSize) << c.label;
+        EXPECT_GE(td->tileElems, td->laneBlock) << c.label;
+        // ---- ② FillFlat 的容量分支 ----
+        EXPECT_GE(static_cast<size_t>(kTilingDataCap), BN3D_TRAINING_UPDATE_FLAT_TILING_DATA_BYTES) << c.label;
+        // ---- ③ FillFlat 的 SetTilingKey 分支(dataSize 未被截断 + key 确为 4000)----
+        EXPECT_EQ(run.dataSize, BN3D_TRAINING_UPDATE_FLAT_TILING_DATA_BYTES) << c.label;
+        EXPECT_EQ(run.key, 4000) << c.label;
+    }
 }

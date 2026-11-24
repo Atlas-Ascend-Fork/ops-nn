@@ -28,6 +28,7 @@
 using namespace optiling;
 using Bn3dTrainingUpdateOps::Bn3dTrainingUpdateChannelFirstTilingData;
 using Bn3dTrainingUpdateOps::Bn3dTrainingUpdateChannelLastTilingData;
+using Bn3dTrainingUpdateOps::Bn3dTrainingUpdateFlatTilingData;
 
 // ---------------------------- TilingData 注册(宿主侧与内核侧 struct 字段/次序逐条一致)-----------
 BEGIN_TILING_DATA_DEF(Bn3dTrainingUpdateChannelFirstTilingDataDef)
@@ -71,9 +72,33 @@ TILING_DATA_FIELD_DEF(float, epsilon);
 TILING_DATA_FIELD_DEF(uint32_t, reserved);
 END_TILING_DATA_DEF;
 
+// key 4000 —— 周期展平(字段次序与 Bn3dTrainingUpdateFlatTilingData 逐条一致)。
+BEGIN_TILING_DATA_DEF(Bn3dTrainingUpdateFlatTilingDataDef)
+TILING_DATA_FIELD_DEF(int64_t, c);
+TILING_DATA_FIELD_DEF(int64_t, channelRun);
+TILING_DATA_FIELD_DEF(int64_t, period);
+TILING_DATA_FIELD_DEF(int64_t, unroll);
+TILING_DATA_FIELD_DEF(int64_t, laneBlock);
+TILING_DATA_FIELD_DEF(int64_t, tileElems);
+TILING_DATA_FIELD_DEF(int64_t, total);
+TILING_DATA_FIELD_DEF(int64_t, tileCount);
+TILING_DATA_FIELD_DEF(int64_t, baseTilesPerCore);
+TILING_DATA_FIELD_DEF(int64_t, extraCoreCount);
+TILING_DATA_FIELD_DEF(int64_t, statUnitCount);
+TILING_DATA_FIELD_DEF(int64_t, statChunk);
+TILING_DATA_FIELD_DEF(int64_t, baseStatPerCore);
+TILING_DATA_FIELD_DEF(int64_t, extraStatCount);
+TILING_DATA_FIELD_DEF(float, numRec);
+TILING_DATA_FIELD_DEF(float, besselScaler);
+TILING_DATA_FIELD_DEF(float, factor);
+TILING_DATA_FIELD_DEF(float, oneMinusFactor);
+TILING_DATA_FIELD_DEF(float, epsilon);
+TILING_DATA_FIELD_DEF(uint32_t, reserved);
+END_TILING_DATA_DEF;
+
 REGISTER_TILING_DATA_CLASS(BN3DTrainingUpdate_2000, Bn3dTrainingUpdateChannelFirstTilingDataDef);
 REGISTER_TILING_DATA_CLASS(BN3DTrainingUpdate_3000, Bn3dTrainingUpdateChannelLastTilingDataDef);
-
+REGISTER_TILING_DATA_CLASS(BN3DTrainingUpdate_4000, Bn3dTrainingUpdateFlatTilingDataDef);
 namespace {
 // 算子操作数次序(与 def.cpp / proto.h 一致,供校验收敛取用):
 //   输入 0=x, 1=sum, 2=square_sum, 3=scale, 4=offset, 5=mean, 6=variance
@@ -91,6 +116,17 @@ constexpr int64_t ATTR_EPSILON = 1;
 inline bool IsChannelLastFormat(ge::Format format) { return format == ge::FORMAT_NHWC || format == ge::FORMAT_NDHWC; }
 
 inline int64_t ChannelAxis(ge::Format format, int64_t rank) { return IsChannelLastFormat(format) ? (rank - 1) : 1; }
+
+// 最大公约数(周期展开倍数 m = P / gcd(P, VL) 的唯一输入)。a、b 均 > 0。
+inline int64_t GcdPositive(int64_t a, int64_t b)
+{
+    while (b != 0) {
+        const int64_t r = a % b;
+        a = b;
+        b = r;
+    }
+    return a;
+}
 } // namespace
 
 ge::graphStatus Bn3dTrainingUpdateTiling::GetPlatformInfo()
@@ -487,6 +523,105 @@ ge::graphStatus Bn3dTrainingUpdateTiling::FillChannelLast()
     return ge::GRAPH_SUCCESS;
 }
 
+// ======================= 周期展平路径(key 4000) =======================
+
+// 4000 的唯一入口(设计 §10.3 v2 tier-1):
+//   channelRun = channelLast ? 1 : S
+//   period     = (C == 1) ? 1 : C·channelRun    // C == 1 时通道恒为 0,周期退化为 1(与 S 无关)
+//   unroll     = period / gcd(period, VL)
+//   进 4000 ⇔ C >= 1 && num > 0 && total = num·C >= kFlatMinElements
+//            && ( channelLast ? C <= kFlatMaxChannelsLast
+//                             : (C <= kFlatMaxChannelsFirst && S < vlFp32) )   // CF 只看"内层游程"
+//            && unroll <= kFlatMaxUnroll && 一个 laneBlock 的瓦片装得进 UB
+bool Bn3dTrainingUpdateTiling::FlatPathGate()
+{
+    flatPath_ = false;
+    if (channel_ < 1) {
+        return false; // C == 0(空张量)走既有路径
+    }
+    if (num_ <= 0) {
+        return false; // 空 tensor:既有零统计契约不变
+    }
+    const int64_t total = num_ * channel_;
+    if (total < kFlatMinElements) {
+        return false; // 极小形状(已是 2 μs 量级)不值得切路径
+    }
+    channelRun_ = channelLast_ ? 1 : spatial_;
+    if (channelRun_ < 1) {
+        return false; // S == 0 时 num_ == 0(已被上面的 num_ 判定拦下),此处仅避免除零
+    }
+    // 通道数 / 内层游程:旧路径的病理是"有效 lane 或单元元素数塌陷",两种 layout 的判据不同。
+    // channel-last 的 lane 利用率就是 C/VL ⇒ 仍按 C 上界;channel-first 的单元是 K·S,
+    // S >= VL 时旧路径已能打满向量且并不慢(C=1/2 大 S 的 l1 用例实测反而快于 flat)⇒ 挡在门外。
+    const bool channelFits = channelLast_ ? (channel_ <= kFlatMaxChannelsLast) :
+                                            (channel_ <= kFlatMaxChannelsFirst && spatial_ < plat_.vlFp32);
+    if (!channelFits) {
+        return false;
+    }
+    period_ = (channel_ == 1) ? 1 : channel_ * channelRun_;
+    unroll_ = period_ / GcdPositive(period_, plat_.vlFp32);
+    if (unroll_ < 1 || unroll_ > kFlatMaxUnroll) {
+        return false; // 周期过长、展开表放不进 kFlatMaxUnroll 个块 ⇒ 保留原路径
+    }
+    laneBlock_ = unroll_ * plat_.vlFp32;
+    if (FlatKernelBytes(laneBlock_, elemBytes_, laneBlock_, plat_) > plat_.ubSize) {
+        return false; // 连一个周期块的瓦片都装不进 UB:不进本路径(而非报错)
+    }
+    flatPath_ = true;
+    return true;
+}
+
+ge::graphStatus Bn3dTrainingUpdateTiling::TilingFlat()
+{
+    const int64_t total = num_ * channel_;
+    tileElems_ = SolveFlatTileElems(total, elemBytes_, laneBlock_, plat_);
+    if (tileElems_ < 1) {
+        OP_LOGE(context_, "BN3DTrainingUpdate: cannot fit one flat tile in UB (ub=%ld laneBlock=%ld total=%ld)",
+                plat_.ubSize, laneBlock_, total);
+        return ge::GRAPH_FAILED;
+    }
+    tileCount_ = (total + tileElems_ - 1) / tileElems_;
+    xTileCount_ = tileCount_;
+    OP_LOGI(context_, "BN3DTrainingUpdate tiling flat: C=%ld R=%ld P=%ld m=%ld L=%ld total=%ld tileElems=%ld tiles=%ld",
+            channel_, channelRun_, period_, unroll_, laneBlock_, total, tileElems_, tileCount_);
+    return ge::GRAPH_SUCCESS;
+}
+
+ge::graphStatus Bn3dTrainingUpdateTiling::FillFlat()
+{
+    auto raw = context_->GetRawTilingData();
+    OP_CHECK_NULL_WITH_CONTEXT(context_, raw);
+    OP_CHECK_IF(raw->GetData() == nullptr ||
+                    raw->GetCapacity() < Bn3dTrainingUpdateOps::BN3D_TRAINING_UPDATE_FLAT_TILING_DATA_BYTES,
+                OP_LOGE(context_, "BN3DTrainingUpdate: raw tiling capacity %zu is too small", raw->GetCapacity()),
+                return ge::GRAPH_FAILED);
+    auto* data = reinterpret_cast<Bn3dTrainingUpdateFlatTilingData*>(raw->GetData());
+    data->c = channel_;
+    data->channelRun = channelRun_;
+    data->period = period_;
+    data->unroll = unroll_;
+    data->laneBlock = laneBlock_;
+    data->tileElems = tileElems_;
+    data->total = num_ * channel_;
+    data->tileCount = tileCount_;
+    data->baseTilesPerCore = baseTilesPerCore_;
+    data->extraCoreCount = extraCoreCount_;
+    data->statUnitCount = statUnitCount_;
+    data->statChunk = statChunk_;
+    data->baseStatPerCore = baseStatPerCore_;
+    data->extraStatCount = extraStatCount_;
+    data->numRec = numRec_;
+    data->besselScaler = besselScaler_;
+    data->factor = factor_;
+    data->oneMinusFactor = oneMinusFactor_;
+    data->epsilon = epsilon_;
+    data->reserved = 0;
+    raw->SetDataSize(Bn3dTrainingUpdateOps::BN3D_TRAINING_UPDATE_FLAT_TILING_DATA_BYTES);
+    OP_CHECK_IF(context_->SetTilingKey(BN3D_TRAINING_UPDATE_KEY_FLAT) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context_, "BN3DTrainingUpdate: failed to set the flat tiling key"), return ge::GRAPH_FAILED);
+    return ge::GRAPH_SUCCESS;
+}
+
 ge::graphStatus Bn3dTrainingUpdateTiling::DoTiling()
 {
     OP_CHECK_IF(context_ == nullptr, OP_LOGE("BN3DTrainingUpdate", "Tiling context is null"), return ge::GRAPH_FAILED);
@@ -501,7 +636,12 @@ ge::graphStatus Bn3dTrainingUpdateTiling::DoTiling()
     besselScaler_ = (num_ > 1) ? static_cast<float>(static_cast<double>(num_) / (static_cast<double>(num_) - 1.0)) :
                                  0.0f;
 
-    if (channelLast_) {
+    // 三条路径互斥分发:4000 门限不过则逐字走既有两条路径(其 TilingData / 内核代码不变)。
+    if (FlatPathGate()) {
+        if (TilingFlat() != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+    } else if (channelLast_) {
         if (TilingChannelLast() != ge::GRAPH_SUCCESS) {
             return ge::GRAPH_FAILED;
         }
@@ -523,7 +663,12 @@ ge::graphStatus Bn3dTrainingUpdateTiling::DoTiling()
     baseStatPerCore_ = statUnitCount_ / usedCoreNum_;
     extraStatCount_ = statUnitCount_ % usedCoreNum_;
 
-    const ge::graphStatus fill = channelLast_ ? FillChannelLast() : FillChannelFirst();
+    ge::graphStatus fill = ge::GRAPH_SUCCESS;
+    if (flatPath_) {
+        fill = FillFlat();
+    } else {
+        fill = channelLast_ ? FillChannelLast() : FillChannelFirst();
+    }
     if (fill != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
