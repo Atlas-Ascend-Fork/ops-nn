@@ -257,7 +257,7 @@ aclnnStatus aclnnExpandIntoJaggedPermute(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```c++
 #include "aclnnop/aclnn_expand_into_jagged_permute.h"
 #include <iostream>
 #include <vector>
@@ -296,23 +296,19 @@ int64_t GetShapeSize(const std::vector<int64_t>& shape)
 template <typename T>
 bool ReadFile(const std::string &filePath, std::vector<int64_t> shape, std::vector<T>& hostData)
 {
-    size_t fileSize = 1;
+    size_t elementCount = 1;
     for (int64_t i : shape){
-        fileSize *= i;
+        elementCount *= i;
     }
     std::ifstream file(filePath, std::ios::binary);
     if (!file.is_open()) {
         std::cerr << "无法打开文件" << std::endl;
-        return 1;
+        return false;
     }
-    // 获取文件大小
-    file.seekg(0, std::ios::end);
-    file.seekg(0, std::ios::beg);
-    hostData.resize(fileSize);
-    if (file.read(reinterpret_cast<char*>(hostData.data()), fileSize * sizeof(T))) {
-    } else {
+    hostData.resize(elementCount);
+    if (!file.read(reinterpret_cast<char*>(hostData.data()), elementCount * sizeof(T))) {
         std::cerr << "读取文件失败" << std::endl;
-        return 1;
+        return false;
     }
     file.close();
     return true;
@@ -421,22 +417,22 @@ int main()
   std::vector<int64_t> permuteShape = {3};
   std::vector<int64_t>inputOffsetsShape = {4};
   std::vector<int64_t> outputOffsetsShape = {4};
-  std::vector<int64_t> outputPermuteShape= {6};
+  std::vector<int64_t> outShape = {6};
   void* permuteDeviceAddr = nullptr;
   void* inputOffsetsDeviceAddr = nullptr;
   void* outputOffsetsDeviceAddr = nullptr;
-  void* outputPermuteDeviceAddr = nullptr;
+  void* outDeviceAddr = nullptr;
 
   aclTensor* permute = nullptr;
   aclTensor* inputOffsets = nullptr;
   aclTensor* outputOffsets = nullptr;
-  aclTensor* outputPermute = nullptr;
+  aclTensor* out = nullptr;
   int64_t outputSize = 6;
 
   std::vector<int32_t> permuteHostData = {1, 0, 2};
   std::vector<int32_t> inputOffsetsHostData = {0, 3, 5, 8};
   std::vector<int32_t>outputOffsetsHostData = {0, 2, 4, 6};
-  std::vector<int32_t> outputPermuteHostData = {3, 4, 0, 1, 5, 6};
+  std::vector<int32_t> outHostData = {3, 4, 0, 1, 5, 6};
 
   uint64_t workspaceSize = 0;
   void* workspaceAddr = nullptr;
@@ -452,8 +448,8 @@ int main()
     if (outputOffsets != nullptr) {
       aclDestroyTensor(outputOffsets);
     }
-    if (outputPermute != nullptr) {
-      aclDestroyTensor(outputPermute);
+    if (out != nullptr) {
+      aclDestroyTensor(out);
     }
     if (permuteDeviceAddr != nullptr) {
       (void)aclrtFree(permuteDeviceAddr);
@@ -464,8 +460,8 @@ int main()
     if (outputOffsetsDeviceAddr != nullptr) {
       (void)aclrtFree(outputOffsetsDeviceAddr);
     }
-    if (outputPermuteDeviceAddr != nullptr) {
-      (void)aclrtFree(outputPermuteDeviceAddr);
+    if (outDeviceAddr != nullptr) {
+      (void)aclrtFree(outDeviceAddr);
     }
     if (workspaceAddr != nullptr) {
       (void)aclrtFree(workspaceAddr);
@@ -499,10 +495,9 @@ int main()
       break;
     }
 
-    ret = CreateAclTensor(outputPermuteHostData, outputPermuteShape, &outputPermuteDeviceAddr,
-                          aclDataType::ACL_INT32, &outputPermute);
+    ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_INT32, &out);
     if (ret != ACL_SUCCESS) {
-      LOG_PRINT("create outputPermute tensor failed. ERROR: %d\n", ret);
+      LOG_PRINT("create out tensor failed. ERROR: %d\n", ret);
       result = ret;
       break;
     }
@@ -511,7 +506,7 @@ int main()
 
     // 调用aclnnExpandIntoJaggedPermute第一段接口
     ret = aclnnExpandIntoJaggedPermuteGetWorkspaceSize(permute, inputOffsets, outputOffsets,
-                                                       outputSize, outputPermute, &workspaceSize, &executor);
+                                                       outputSize, out, &workspaceSize, &executor);
     if (ret != ACL_SUCCESS) {
       LOG_PRINT("aclnnExpandIntoJaggedPermuteGetWorkspaceSize failed. ERROR: %d\n", ret);
       result = ret;
@@ -545,7 +540,7 @@ int main()
     }
 
     // 5.获取输出的值,将device侧内存上的结果拷贝至host侧,需要根据具体API的接口定义修改
-    ret = PrintOutResult(outputPermuteShape, &outputPermuteDeviceAddr);
+    ret = PrintOutResult(outShape, &outDeviceAddr);
     if (ret != ACL_SUCCESS) {
       result = ret;
       break;

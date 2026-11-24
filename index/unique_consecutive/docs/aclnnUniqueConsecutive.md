@@ -273,7 +273,9 @@ aclnnStatus aclnnUniqueConsecutive(
 - 确定性计算：
   - aclnnUniqueConsecutive默认确定性实现。
 - 性能：
-  - A2、A3 及训练系列产品上，当self在dim上的维度值超过2亿时，性能很差甚至是运行超时。
+  <!-- npu="A3,910b" id8 -->
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：当self在dim上的维度值超过2亿时，性能很差甚至运行超时。
+  <!-- end id8 -->
 
 ## 调用示例
 
@@ -393,7 +395,7 @@ int main() {
   void* workspaceAddr = nullptr;
   if (workspaceSize > 0) {
     ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret;);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
   }
   // 调用aclnnUniqueConsecutive第二段接口
   ret = aclnnUniqueConsecutive(workspaceAddr, workspaceSize, executor, stream);

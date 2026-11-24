@@ -73,8 +73,8 @@ aclnnStatus aclnnInplaceMaskedScatter(
     <tbody>
       <tr>
         <td>selfRef</td>
-        <td>输入</td>
-        <td>输入Tensor。</td>
+        <td>输入/输出</td>
+        <td>输入/输出Tensor。</td>
         <td>-</td>
         <td>FLOAT、FLOAT16、DOUBLE、INT8、INT16、INT32、INT64、UINT8、BOOL、BFLOAT16</td>
         <td>ND</td>
@@ -285,20 +285,20 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
   // 2. 构造输入与输出，需要根据API的接口自定义构造
-  std::vector<int64_t> selfShape = {4, 2};
+  std::vector<int64_t> selfRefShape = {4, 2};
   std::vector<int64_t> maskShape = {4, 2};
   std::vector<int64_t> sourceShape = {4, 2};
-  void* selfDeviceAddr = nullptr;
+  void* selfRefDeviceAddr = nullptr;
   void* maskDeviceAddr = nullptr;
   void* sourceDeviceAddr = nullptr;
-  aclTensor* self = nullptr;
+  aclTensor* selfRef = nullptr;
   aclTensor* mask = nullptr;
   aclTensor* source = nullptr;
-  std::vector<float> selfHostData = {0, 1, 2, 3, 4, 5, 6, 7};
+  std::vector<float> selfRefHostData = {0, 1, 2, 3, 4, 5, 6, 7};
   std::vector<int8_t> maskHostData = {false,false,false,false,true,true,true,true};
   std::vector<float> sourceHostData={10,10,10,10,10,10,10,10};
-  // 创建self aclTensor
-  ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
+  // 创建selfRef aclTensor
+  ret = CreateAclTensor(selfRefHostData, selfRefShape, &selfRefDeviceAddr, aclDataType::ACL_FLOAT, &selfRef);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 创建mask aclTensor
   ret = CreateAclTensor(maskHostData, maskShape, &maskDeviceAddr, aclDataType::ACL_BOOL, &mask);
@@ -311,7 +311,7 @@ int main() {
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
   // 调用aclnnInplaceMaskedScatter第一段接口
-  ret = aclnnInplaceMaskedScatterGetWorkspaceSize(self, mask, source, &workspaceSize, &executor);
+  ret = aclnnInplaceMaskedScatterGetWorkspaceSize(selfRef, mask, source, &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnInplaceMaskedScatterGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
   // 根据第一段接口计算出的workspaceSize申请device内存
   void* workspaceAddr = nullptr;
@@ -328,9 +328,9 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
   // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
-  auto size = GetShapeSize(selfShape);
+  auto size = GetShapeSize(selfRefShape);
   std::vector<float> resultData(size, 0);
-  ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), selfDeviceAddr,
+  ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), selfRefDeviceAddr,
                     size * sizeof(float), ACL_MEMCPY_DEVICE_TO_HOST);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
   for (int64_t i = 0; i < size; i++) {
@@ -338,12 +338,12 @@ int main() {
   }
 
   // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
-  aclDestroyTensor(self);
+  aclDestroyTensor(selfRef);
   aclDestroyTensor(mask);
   aclDestroyTensor(source);
 
   // 7. 释放device资源，需要根据具体API的接口定义修改
-  aclrtFree(selfDeviceAddr);
+  aclrtFree(selfRefDeviceAddr);
   aclrtFree(maskDeviceAddr);
   aclrtFree(sourceDeviceAddr);
   if (workspaceSize > 0) {
