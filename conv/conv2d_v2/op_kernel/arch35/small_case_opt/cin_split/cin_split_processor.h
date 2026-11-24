@@ -159,7 +159,7 @@ struct CinSplitProcessor {
         uint32_t elemCount = k1Block * perK1;
         uint32_t l1ByteOff = state.l1.bl1OffBytes + k1Start * perK1 * sizeof(WeightT);
         LocalTensor<WeightT> bl1(TPosition::B1, l1ByteOff, elemCount);
-        if (tiling.nDim == 1) {
+        if (tiling.nDim == 1 && state.n1PerCore == state.n1Total) {
             uint32_t gmOff = k1Start * state.n1Total * GN0 * GK0;
             DataCopy(bl1, state.filterGm[gmOff], elemCount);
         } else {

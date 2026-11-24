@@ -335,10 +335,8 @@ struct LoadBiasToBTTool {
         constexpr uint32_t BT_ALIGN = 64;
         // N tiles reuse BT address zero; finish the preceding MMAD before
         // replacing the bias it reads as cmatrix source.
-        if (tiling.nL0 < tiling.nBL1) {
-            SetFlag<HardEvent::M_MTE1>(EVT_BIAS_DONE);
-            WaitFlag<HardEvent::M_MTE1>(EVT_BIAS_DONE);
-        }
+        SetFlag<HardEvent::M_MTE1>(EVT_BIAS_DONE);
+        WaitFlag<HardEvent::M_MTE1>(EVT_BIAS_DONE);
         uint32_t btElemNum = static_cast<uint32_t>(AlignB(curN * sizeof(L0cT), BT_ALIGN)) / sizeof(L0cT);
         LocalTensor<L0cT> biasBT(TPosition::C2, 0, btElemNum);
         LocalTensor<BiasT> biasL1src(TPosition::A1, l1.biasL1OffBytes, tiling.singleCoreCo);

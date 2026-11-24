@@ -171,11 +171,21 @@ public:
     {
         intriParams.ndNum = this->hiLoadL1;
         intriParams.nValue = this->wiLoadL1;
-        if constexpr (Intf::isKL1NL0FullLoad) {
-            intriParams.dValue = self_->ctx.convTilingData->cinATailInCore;
+        if constexpr (Intf::groupOptFlag) {
+            if constexpr (Intf::isKL1NL0FullLoad) {
+                intriParams.dValue = self_->ctx.kAL1Tail / self_->ctx.convTilingData->kernelHxkernelW;
+            } else {
+                intriParams.dValue = kAL1Iter == self_->ctx.maxKAL1Iter ?
+                                         (self_->ctx.kAL1Tail / self_->ctx.convTilingData->kernelHxkernelW) :
+                                         self_->ctx.convTilingData->cinAInCore;
+            }
         } else {
-            intriParams.dValue = kAL1Iter == self_->ctx.maxKAL1Iter ? self_->ctx.convTilingData->cinATailInCore :
-                                                                      self_->ctx.convTilingData->cinAInCore;
+            if constexpr (Intf::isKL1NL0FullLoad) {
+                intriParams.dValue = self_->ctx.convTilingData->cinATailInCore;
+            } else {
+                intriParams.dValue = kAL1Iter == self_->ctx.maxKAL1Iter ? self_->ctx.convTilingData->cinATailInCore :
+                                                                          self_->ctx.convTilingData->cinAInCore;
+            }
         }
         intriParams.srcNdMatrixStride = self_->ctx.convTilingData->orgWi * self_->ctx.convTilingData->orgCi;
         intriParams.srcDValue = self_->ctx.convTilingData->orgCi;
@@ -594,11 +604,21 @@ private:
         uint64_t aL1Mi = this->hiLoadL1 * self_->ctx.convTilingData->orgWi;
         intriParams.ndNum = 1;
         intriParams.nValue = aL1Mi;
-        if constexpr (Intf::isKL1NL0FullLoad) {
-            intriParams.dValue = self_->ctx.convTilingData->cinATailInCore;
+        if constexpr (Intf::groupOptFlag) {
+            if constexpr (Intf::isKL1NL0FullLoad) {
+                intriParams.dValue = self_->ctx.kAL1Tail / self_->ctx.convTilingData->kernelHxkernelW;
+            } else {
+                intriParams.dValue = IsKAL1Tail(kAL1Iter) ?
+                                         (self_->ctx.kAL1Tail / self_->ctx.convTilingData->kernelHxkernelW) :
+                                         self_->ctx.convTilingData->cinAInCore;
+            }
         } else {
-            intriParams.dValue = IsKAL1Tail(kAL1Iter) ? self_->ctx.convTilingData->cinATailInCore :
-                                                        self_->ctx.convTilingData->cinAInCore;
+            if constexpr (Intf::isKL1NL0FullLoad) {
+                intriParams.dValue = self_->ctx.convTilingData->cinATailInCore;
+            } else {
+                intriParams.dValue = IsKAL1Tail(kAL1Iter) ? self_->ctx.convTilingData->cinATailInCore :
+                                                            self_->ctx.convTilingData->cinAInCore;
+            }
         }
         intriParams.srcDValue = self_->ctx.convTilingData->orgCi;
         intriParams.dstNzNStride = 1;

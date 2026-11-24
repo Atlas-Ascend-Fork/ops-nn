@@ -63,6 +63,9 @@ static __aicore__ inline void A16W8KIterKAL0Updata(Intf* self)
     self->ctx.kAL0Tail = AlignB(self->ctx.singleCoreCi, Intf::k0FmapTail) * self->ctx.convTilingData->kernelHxkernelW %
                          self->ctx.convTilingData->kL0;
     self->ctx.kAL0Tail = self->ctx.kAL0Tail == 0 ? self->ctx.convTilingData->kL0 : self->ctx.kAL0Tail;
+    self->ctx.kL0Tail = AlignB(self->ctx.singleCoreCi, Intf::k0FmapTail) * self->ctx.convTilingData->kernelHxkernelW %
+                        self->ctx.convTilingData->kL0;
+    self->ctx.kL0Tail = self->ctx.kL0Tail == 0 ? self->ctx.convTilingData->kL0 : self->ctx.kL0Tail;
     // update A16W8 loopk iter num
     self->ctx.ddr2l0LoopK = CeilDiv(
         AlignB(self->ctx.singleCoreCi, Intf::k0FmapTail) * self->ctx.convTilingData->kernelHxkernelW,
