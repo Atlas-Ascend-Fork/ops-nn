@@ -69,7 +69,9 @@ static graphStatus InferDataType4RmsNormQuantV2(gert::InferDataTypeContext* cont
             int32_t dstDtype = *pDstDtype;
             yDtype = static_cast<ge::DataType>(dstDtype);
             OP_CHECK_IF(std::find(OUT_TYPE_LIST.begin(), OUT_TYPE_LIST.end(), yDtype) == OUT_TYPE_LIST.end(),
-                        OP_LOGE(context, "attr dst_type only support int8, int4, hifloat8, float8_e5m2, float8_e4m3fn"),
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            context->GetNodeName(), "dst_type", std::to_string(dstDtype).c_str(),
+                            "attr dst_type only supports int8, int4, hifloat8, float8_e5m2 or float8_e4m3fn"),
                         return ge::GRAPH_FAILED);
         }
     }

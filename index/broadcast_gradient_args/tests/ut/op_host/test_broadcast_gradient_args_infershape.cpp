@@ -9,6 +9,7 @@
  */
 
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -408,3 +409,61 @@ TEST_F(BroadcastGradientArgsOpUT, rt2_dtype_test)
 //   auto output0_desc2 = test_op.GetOutputDesc(1);
 //   EXPECT_EQ(output0_desc2.GetShape().GetDims(), expected_y2_shape);
 // }
+
+namespace {
+class BroadcastGradientArgsErrorCode : public testing::TestWithParam<int> {};
+
+TEST_P(BroadcastGradientArgsErrorCode, RejectsInvalidValuesWithSpecificError)
+{
+    // Exercise both template types and both rank-length comparison branches.
+    const int scenario = GetParam();
+    const bool useInt64 = scenario >= 2 && scenario < 4;
+    const bool shorterFirst = scenario % 2 == 0;
+    const bool mismatchedTypes = scenario >= 4;
+    const ge::DataType firstType = useInt64 || mismatchedTypes ? ge::DT_INT64 : ge::DT_INT32;
+    const ge::DataType secondType = mismatchedTypes ? ge::DT_INT32 : firstType;
+    const std::vector<int64_t> first = shorterFirst ? std::vector<int64_t>{2} : std::vector<int64_t>{3, 2};
+    const std::vector<int64_t> second = shorterFirst ? std::vector<int64_t>{3, 4} : std::vector<int64_t>{4};
+    std::unique_ptr<uint8_t[]> firstHolder;
+    std::unique_ptr<uint8_t[]> secondHolder;
+    auto makeTensor = [](const std::vector<int64_t>& values, ge::DataType type, std::unique_ptr<uint8_t[]>& owner) {
+        const gert::Shape shape{static_cast<int64_t>(values.size())};
+        if (type == ge::DT_INT64) {
+            return CreateConstTensor(shape, values, type, owner);
+        }
+        const std::vector<int32_t> values32(values.begin(), values.end());
+        return CreateConstTensor(shape, values32, type, owner);
+    };
+    auto* firstTensor = makeTensor(first, firstType, firstHolder);
+    auto* secondTensor = makeTensor(second, secondType, secondHolder);
+    ASSERT_NE(firstTensor, nullptr);
+    ASSERT_NE(secondTensor, nullptr);
+    gert::Shape output0;
+    gert::Shape output1;
+    auto holder = gert::InferShapeContextFaker()
+                      .SetOpType("BroadcastGradientArgs")
+                      .NodeIoNum(2, 2)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes(std::vector<void*>{firstTensor, secondTensor})
+                      .OutputShapes({&output0, &output1})
+                      .NodeInputTd(0, firstType, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, secondType, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, firstType, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, firstType, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+    auto* context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(context, nullptr);
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("BroadcastGradientArgs");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    (void)manager.GetRawErrorMessages();
+    EXPECT_EQ(impl->infer_shape(context), ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, mismatchedTypes ? "EZ0021" : "EZ0010");
+}
+
+INSTANTIATE_TEST_SUITE_P(Int32Int64AndDtype, BroadcastGradientArgsErrorCode, testing::Values(0, 1, 2, 3, 4));
+} // namespace

@@ -161,8 +161,15 @@ ge::graphStatus LayerNormV3WelfordMultiReduceTiling::DoLibApiTiling()
     while (IsValidTileLength(tileLengthCutR0 + CONSTANT_TWO * TILELENGTH_STEP_SIZE, 0)) {
         tileLengthCutR0 += TILELENGTH_STEP_SIZE;
     }
-    OP_CHECK_IF((tileLengthCutR0 == 0), OP_LOGE(context_->GetNodeName(), "tileLengthCutR0 must greater than 0"),
-                return ge::GRAPH_FAILED);
+    if (tileLengthCutR0 == 0) {
+        // 合法输入下 tiling 内部切分不变量破坏：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "tileLengthCutR0 must greater than 0");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "tileLengthCutR0 calculated by tiling must be positive"}));
+        return ge::GRAPH_FAILED;
+    }
     // Step 2: decide cutR1 or cutR0
     int64_t r0Align = td_.get_r0Align();
     int64_t vlFp32 = commonParams.vlFp32;
@@ -183,11 +190,25 @@ ge::graphStatus LayerNormV3WelfordMultiReduceTiling::DoLibApiTiling()
         while (IsValidTileLength(tileLength + CONSTANT_TWO * TILELENGTH_STEP_SIZE, r0)) {
             tileLength += TILELENGTH_STEP_SIZE;
         }
-        OP_CHECK_IF((tileLength == 0), OP_LOGE(context_->GetNodeName(), "tileLength must greater than 0"),
-                    return ge::GRAPH_FAILED);
+        if (tileLength == 0) {
+            // 合法输入下 tiling 内部切分不变量破坏：按已注册语义码 EZ1008 正式上报
+            const std::string msgOpName = std::string(context_->GetNodeName());
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "tileLength must greater than 0");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(), "tileLength calculated by tiling must be positive"}));
+            return ge::GRAPH_FAILED;
+        }
         td_.set_tileLength(tileLength);
-        OP_CHECK_IF((r0Align == 0), OP_LOGE(context_->GetNodeName(), "r0Align must greater than 0"),
-                    return ge::GRAPH_FAILED);
+        if (r0Align == 0) {
+            // 合法输入下 tiling 内部切分不变量破坏：按已注册语义码 EZ1008 正式上报
+            const std::string msgOpName = std::string(context_->GetNodeName());
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "r0Align must greater than 0");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(), "r0Align calculated by tiling must be positive"}));
+            return ge::GRAPH_FAILED;
+        }
         int64_t r1Factor = tileLength / r0Align;
         if (r1Factor < 1) {
             r1Factor = 1;
@@ -224,8 +245,15 @@ ge::graphStatus LayerNormV3WelfordMultiReduceTiling::DoLibApiTiling()
     }
 
     int64_t tileLength = td_.get_tileLength();
-    OP_CHECK_IF((tileLength == 0), OP_LOGE(context_->GetNodeName(), "tileLength must greater than 0"),
-                return ge::GRAPH_FAILED);
+    if (tileLength == 0) {
+        // 合法输入下 tiling 内部切分不变量破坏：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "tileLength must greater than 0");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "tileLength calculated by tiling must be positive"}));
+        return ge::GRAPH_FAILED;
+    }
     int64_t welfordUpdateTimes = n / tileLength;
     int64_t welfordUpdateTail = n - welfordUpdateTimes * tileLength;
     td_.set_welfordUpdateTimes(welfordUpdateTimes);

@@ -126,14 +126,15 @@ ge::graphStatus Tiling4BroadcastGradientArgs(gert::TilingContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Start BroadcastGradientArgsTiling!");
     BroadcastGradientArgsTilingImpl impl(context);
+    // impl 内层（DoTiling 的 dtype/shape 检查）已正式上报，外层仅日志透传
     ge::graphStatus status = impl.Init();
     if (status != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "Init failed!");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Init failed!");
         return status;
     }
     status = impl.DoTiling();
     if (status != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "DoTiling failed!");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "DoTiling failed!");
         return status;
     }
     OP_LOGD(context->GetNodeName(), "End BroadcastGradientArgsTiling!");

@@ -12,6 +12,7 @@
 #include <fstream>
 #include <vector>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "log/log.h"
 #include "ut_op_util.h"
 #include "platform/platform_infos_def.h"
@@ -1191,3 +1192,123 @@ TEST_F(InstanceNormTilingTest, instance_norm_reduce_empty_fp16_nc_aligned)
     EXPECT_EQ(td.lastCorePerLoopElements, 16);
     EXPECT_EQ(td.lastCoreLastLoopElements, 16);
 }
+
+class InstanceNormGovernanceShape : public testing::TestWithParam<int> {};
+TEST_P(InstanceNormGovernanceShape, ReportsShapeCauseWithoutGenericWrapper)
+{
+    // dlog_setlevel(0, 0, 0);
+    gert::StorageShape x_shape = {{4, 3, 2, 2}, {4, 3, 2, 2}};
+    gert::StorageShape gamma_shape = {{3}, {3}};
+    gert::StorageShape beta_shape = {{3}, {3}};
+
+    gert::StorageShape out_y_shape = {{4, 3, 2, 2}, {4, 3, 2, 2}};
+    gert::StorageShape out_mean_shape = {{4, 3, 1, 1}, {4, 3, 1, 1}};
+    gert::StorageShape out_variance_shape = {{4, 3, 1, 1}, {4, 3, 1, 1}};
+
+    const int variant = GetParam();
+    if (variant == 1)
+        x_shape = gert::StorageShape({4, 3, -1, 2}, {4, 3, -1, 2});
+    if (variant == 2)
+        out_y_shape = gert::StorageShape({4, 4, 2, 2}, {4, 4, 2, 2});
+    if (variant == 3)
+        gamma_shape = gert::StorageShape({4}, {4});
+    if (variant == 4)
+        beta_shape = gert::StorageShape({4}, {4});
+    if (variant == 5)
+        out_mean_shape = gert::StorageShape({4, 4, 1, 1}, {4, 4, 1, 1});
+    if (variant == 6)
+        out_variance_shape = gert::StorageShape({4, 4, 1, 1}, {4, 4, 1, 1});
+    if (variant == 7)
+        gamma_shape = gert::StorageShape({3, 1}, {3, 1});
+
+    std::map<std::string, std::string> soc_version_infos = {{"NpuArch", "3510"}};
+    string compile_info_string = R"({
+       "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                         "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true,
+                         "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
+                         "UB_SIZE": 245760, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                         "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                         "CORE_NUM": 64, "socVersion": "Ascend950"}
+                })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+
+    // platform info
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    // compile info
+    optiling::InstanceNormCompileInfo compile_info;
+
+    std::string op_type("InstanceNorm");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
+
+    // tilingParseFunc simulate
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(3, 3)
+                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
+                                      reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+
+    ASSERT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version",
+                                                                                            soc_version_infos);
+
+    ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+
+    // tilingFunc simulate
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    ASSERT_NE(param, nullptr);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(3, 3)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&x_shape, &gamma_shape, &beta_shape})
+                      .OutputShapes({&out_y_shape, &out_mean_shape, &out_variance_shape})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                                  {"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-06)}})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+    // workspaces nullptr return failed
+    tiling_context->GetPlatformInfo()->SetPlatformRes("version", soc_version_infos);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    (void)manager.GetRawErrorMessages();
+    EXPECT_EQ(tiling_func(tiling_context), variant == 0 ? ge::GRAPH_SUCCESS : ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    if (variant != 0) {
+        ASSERT_FALSE(errors.empty());
+        for (const auto& error : errors) {
+            EXPECT_NE(error.error_id, "EZ9999");
+        }
+    }
+}
+INSTANTIATE_TEST_SUITE_P(InvalidShape, InstanceNormGovernanceShape, testing::Range(0, 8));

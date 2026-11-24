@@ -77,7 +77,9 @@ ge::graphStatus InstanceNormRegbaseTilingBase::GetShapeAttrsInfo()
     OP_CHECK_NULL_WITH_CONTEXT(context_, xShape);
     xStorageShape = xShape->GetStorageShape();
     if (CheckShapeAllNotNegative(xStorageShape) != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Not supported shape info.");
+        std::string reasonMsg = "all dimensions of x must be non-negative";
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "x", Ops::Base::ToString(xStorageShape).c_str(),
+                                              reasonMsg.c_str());
         return ge::GRAPH_FAILED;
     }
     auto xDesc = context_->GetInputDesc(INPUT_X_INDEX);
@@ -167,8 +169,9 @@ ge::graphStatus InstanceNormRegbaseTilingBase::GetShapeAttrsInfo()
         OP_LOGE(context_->GetNodeName(), "Not supported datatype info.");
         return ge::GRAPH_FAILED;
     }
+    // CheckShapeValid 内层（X Y/gamma beta/mean variance 检查）已正式上报，外层仅日志透传
     if (CheckShapeValid() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Not supported shape info.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Not supported shape info.");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -237,20 +240,23 @@ ge::graphStatus InstanceNormRegbaseTilingBase::CheckDtypeValid()
 ge::graphStatus InstanceNormRegbaseTilingBase::CheckShapeValid()
 {
     // Step1.校验y的shape与x是否一致
+    // CheckXYShapeValid 内层已正式上报，外层仅日志透传
     if (CheckXYShapeValid() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Not supported X Y shape info.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Not supported X Y shape info.");
         return ge::GRAPH_FAILED;
     }
 
     // Step2.校验gamma/betta的shape
+    // CheckGammaBettaShapeValid 内层已正式上报，外层仅日志透传
     if (CheckGammaBettaShapeValid() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Not supported gamma beta shape info.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Not supported gamma beta shape info.");
         return ge::GRAPH_FAILED;
     }
 
     // Step3.校验输出mean/varience的shape
+    // CheckMeanVarianceShapeValid 内层已正式上报，外层仅日志透传
     if (CheckMeanVarianceShapeValid() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Not supported mean variance shape info.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Not supported mean variance shape info.");
         return ge::GRAPH_FAILED;
     }
 

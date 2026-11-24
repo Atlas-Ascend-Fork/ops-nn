@@ -111,8 +111,15 @@ static ge::graphStatus LayerNormV3UnknownAxisTiling(gert::TilingContext* context
                 OP_LOGD(context->GetNodeName(), "LayerNormV3UnknownAxisTiling end"), return ge::GRAPH_SUCCESS);
 
     OP_LOGD(context->GetNodeName(), "LayerNormV3UnknownAxisTiling will do AddReduceMeanCof");
-    OP_CHECK_IF(!AddReduceMeanCof(input_shape, op_info->reduce_mean_cof_ge_dtype, reduce_axis, tiling_data),
-                OP_LOGE(context->GetNodeName(), "do AddReduceMeanCof failed"), return ge::GRAPH_FAILED);
+    if (!AddReduceMeanCof(input_shape, op_info->reduce_mean_cof_ge_dtype, reduce_axis, tiling_data)) {
+        // 合法输入下 tiling 内部计算失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "do AddReduceMeanCof failed");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "failed to calculate the reduce mean coefficient in tiling"}));
+        return ge::GRAPH_FAILED;
+    }
 
     if (hash_item.SetContext(*context, hash_input)) {
         op_tiling_cache.Add(hash_key, hash_input, hash_item);

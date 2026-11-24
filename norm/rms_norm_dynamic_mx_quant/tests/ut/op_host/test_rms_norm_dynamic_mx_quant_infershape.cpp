@@ -625,3 +625,39 @@ TEST(RmsNormDynamicMxQuantMetadataError, MissingXMetadataReportsExecutionErrorOn
     ASSERT_EQ(fields.count("reason"), 1U);
     EXPECT_NE(fields.at("reason").find("input x shape metadata"), std::string::npos);
 }
+
+TEST(RmsNormDynamicMxQuantMetadataError, RankEightReportsShapeDimensionError)
+{
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("RmsNormDynamicMxQuant");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+    gert::StorageShape x = {{1, 1, 1, 1, 1, 1, 2, 64}, {1, 1, 1, 1, 1, 1, 2, 64}};
+    gert::StorageShape gamma = {{64}, {64}};
+    auto faker = gert::InferShapeContextFaker();
+    faker.SetOpType("RmsNormDynamicMxQuant")
+        .NodeIoNum(3, 3)
+        .IrInstanceNum({1, 1, 1}, {1, 1, 1})
+        .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(0, ge::DT_FLOAT4_E2M1, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(1, ge::DT_FLOAT8_E8M0, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .InputShapes(std::vector<gert::StorageShape*>{&x, &gamma, &gamma})
+        .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-6f)},
+                    {"scale_alg", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                    {"round_mode", Ops::NN::AnyValue::CreateFrom<std::string>("rint")},
+                    {"dst_type", Ops::NN::AnyValue::CreateFrom<int64_t>(40)},
+                    {"output_rstd", Ops::NN::AnyValue::CreateFrom<bool>(false)}});
+    auto holder = faker.Build();
+    auto* ctx = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_NE(ctx->GetInputShape(0), nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    (void)manager.GetRawErrorMessages();
+    EXPECT_EQ(impl->infer_shape(ctx), ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0012");
+}

@@ -94,13 +94,33 @@ private:
 
 bool GroupNormGradTiling::CheckCompileInfo()
 {
-    OP_TILING_CHECK((compileInfo->totalCoreNum <= 0),
-                    OP_LOGE(tilingContext->GetNodeName(), "core num should be greater than zero."), return false);
-    OP_TILING_CHECK((static_cast<int32_t>(compileInfo->sysWorkspaceSize) < 0),
-                    OP_LOGE(tilingContext->GetNodeName(), "sysWorkspaceSize should be greater than zero."),
-                    return false);
-    OP_TILING_CHECK((static_cast<int64_t>(compileInfo->ubSizePlatForm) <= 0),
-                    OP_LOGE(tilingContext->GetNodeName(), "ubSizePlatForm should be greater than zero."), return false);
+    if (compileInfo->totalCoreNum <= 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(tilingContext->GetNodeName());
+        std::string msgReason = "failed to get the AIV core number, totalCoreNum must be positive";
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "core num should be greater than zero.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return false;
+    }
+    if (static_cast<int32_t>(compileInfo->sysWorkspaceSize) < 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(tilingContext->GetNodeName());
+        std::string msgReason = "failed to get the system workspace size, sysWorkspaceSize must be non-negative";
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "sysWorkspaceSize should be greater than zero.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return false;
+    }
+    if (static_cast<int64_t>(compileInfo->ubSizePlatForm) <= 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(tilingContext->GetNodeName());
+        std::string msgReason = "failed to get the platform ub size, ubSizePlatForm must be positive";
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "ubSizePlatForm should be greater than zero.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return false;
+    }
     return true;
 }
 
@@ -389,9 +409,16 @@ ge::graphStatus GroupNormGradTiling::CalStage1TilingInfo(uint32_t reserveSpace)
         tilingParams->tilingKey = MODE_3;
         tilingParams->mode2UbCapacityEle = static_cast<uint32_t>(Floor(
             (compileInfo->ubSizePlatForm - reserveSpace) / (dtypeBytes * UB_COPIES_1), elePerBlock * EIGHT_BLOCK));
-        OP_TILING_CHECK(tilingParams->mode2UbCapacityEle == 0,
-                        OP_LOGE(tilingContext->GetNodeName(), "tilingParams->mode2UbCapacityEle should not be zero!"),
-                        return ge::GRAPH_FAILED);
+        if (tilingParams->mode2UbCapacityEle == 0) {
+            // 合法输入下 tiling 内部计算失败：按已注册语义码 EZ1008 正式上报
+            const std::string msgOpName = std::string(tilingContext->GetNodeName());
+            OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "tilingParams->mode2UbCapacityEle should not be zero!");
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{msgOpName.c_str(),
+                                          "mode2UbCapacityEle calculated by tiling must be positive"}));
+            return ge::GRAPH_FAILED;
+        }
         tilingParams->mode2UbIterationNum = static_cast<uint32_t>(
             Ceil(tilingParams->hxw, tilingParams->mode2UbCapacityEle) / tilingParams->mode2UbCapacityEle);
         tilingParams->mode2UbTailNum = (tilingParams->hxw -
@@ -635,18 +662,39 @@ ge::graphStatus TilingPrepareForGroupNormGrad(gert::TilingParseContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_TILING_CHECK((compileInfo->totalCoreNum <= 0), OP_LOGE(context->GetNodeName(), "Failed to get core num."),
-                    return ge::GRAPH_FAILED);
+    if (compileInfo->totalCoreNum <= 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Failed to get core num.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "failed to get the AIV core number from the current chip"}));
+        return ge::GRAPH_FAILED;
+    }
     compileInfo->sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
-    OP_TILING_CHECK((compileInfo->sysWorkspaceSize < 0),
-                    OP_LOGE(context->GetNodeName(), "sysWorkspaceSize should be greater than or equal to zero"),
-                    return ge::GRAPH_FAILED);
+    if (compileInfo->sysWorkspaceSize < 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "sysWorkspaceSize should be greater than or equal to zero");
+        std::string msgReason = "failed to get the system workspace size, sysWorkspaceSize=" +
+                                std::to_string(compileInfo->sysWorkspaceSize);
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    }
     compileInfo->isRegBase = IsRegbaseSocVersion(context);
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<int64_t>(ubSizePlatForm);
-    OP_TILING_CHECK((compileInfo->ubSizePlatForm <= 0), OP_LOGE(context->GetNodeName(), "Failed to get ub size."),
-                    return ge::GRAPH_FAILED);
+    if (compileInfo->ubSizePlatForm <= 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Failed to get ub size.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "failed to get the UB size from the current chip"}));
+        return ge::GRAPH_FAILED;
+    }
     compileInfo->vectorLen = Ops::Base::GetVRegSize(context);
     OP_TILING_CHECK((compileInfo->vectorLen <= 0),
                     OP_LOGE(context->GetNodeName(), "Get vector Length failed, vector Length: %u",

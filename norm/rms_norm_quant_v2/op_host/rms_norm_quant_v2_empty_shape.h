@@ -120,9 +120,13 @@ inline bool CheckEmptyInputShapes(gert::InferShapeContext* context)
     const auto* zp1 = context->GetOptionalInputShape(4);
     const auto* zp2 = context->GetOptionalInputShape(5);
     const auto* beta = context->GetOptionalInputShape(6);
-    for (const auto* shape : {x, gamma, scale, scale2, zp1, zp2, beta}) {
-        if (shape != nullptr && !Ops::Base::IsUnknownRank(*shape) && shape->GetDimNum() > 8) {
-            OP_LOGE(context, "Input rank must not exceed 8.");
+    const gert::Shape* rankShapes[] = {x, gamma, scale, scale2, zp1, zp2, beta};
+    const char* rankShapeNames[] = {"x", "gamma", "scales1", "scales2", "zero_points1", "zero_points2", "beta"};
+    for (size_t i = 0; i < sizeof(rankShapes) / sizeof(rankShapes[0]); ++i) {
+        if (rankShapes[i] != nullptr && !Ops::Base::IsUnknownRank(*rankShapes[i]) && rankShapes[i]->GetDimNum() > 8) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), rankShapeNames[i],
+                                                     std::to_string(rankShapes[i]->GetDimNum()).c_str(),
+                                                     "rank must not exceed 8");
             return false;
         }
     }

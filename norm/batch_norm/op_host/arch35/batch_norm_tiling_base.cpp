@@ -169,8 +169,7 @@ ge::graphStatus BatchNormTilingBase::CheckSmallShapesValid(int64_t aDimLen)
     for (int64_t i = CONST_THREE; i < CONST_FIVE; i++) {
         auto desc = context_->GetOptionalInputDesc(i);
         OP_CHECK_IF(desc == nullptr && !isTraining_,
-                    OP_LOGE(context_->GetNodeName(), "Input %ld is required in inference mode.", i),
-                    return ge::GRAPH_FAILED);
+                    OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), inputParamNames[i]), return ge::GRAPH_FAILED);
         if (!desc) {
             // 和71保持兼容，training模式下，没有输入mean或者var时exponentialAvgFactor置成"1.0"
             OP_LOGD(context_->GetNodeName(), "Input %ld is None in training mode, reset exponentialAvgFactor to 1.0.",

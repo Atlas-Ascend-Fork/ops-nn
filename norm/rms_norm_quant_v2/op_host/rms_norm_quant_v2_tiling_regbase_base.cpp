@@ -702,21 +702,25 @@ ge::graphStatus RmsNormQuantV2RegbaseTilingBase::SetInputParams()
 ge::graphStatus RmsNormQuantV2RegbaseTilingBase::GetShapeAttrsInfo()
 {
     OP_LOGD(context_->GetNodeName(), "Enter RmsNormQuantV2RegbaseTiling GetShapeAttrsInfo.");
+    // 以下 Check*（清单内候选）内层失败路径均已正式上报，对应外层摘要仅日志透传；
+    // CheckShapeNull/SetInputParams 内层未上报，其外层保留原上报行为（范围外观察项，不在本批清单）
     OP_CHECK_IF(!CheckShapeNull(), OP_LOGE(context_->GetNodeName(), "The not optional input is null."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!CheckOptionalInput(), , return ge::GRAPH_FAILED);
     OP_CHECK_IF(!CheckInputOutputShapeSize(), , return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputShapeDim(), OP_LOGE(context_->GetNodeName(), "The input shape dim is invalid."),
+    OP_CHECK_IF(!CheckInputShapeDim(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The input shape dim is invalid."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputShapeValue(), OP_LOGE(context_->GetNodeName(), "The input shape relationship is invalid."),
+    OP_CHECK_IF(!CheckInputShapeValue(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The input shape relationship is invalid."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputDtype(), OP_LOGE(context_->GetNodeName(), "The input dtype is invalid."),
+    OP_CHECK_IF(!CheckInputDtype(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The input dtype is invalid."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(ge::GRAPH_SUCCESS != SetInputParams(), OP_LOGE(context_->GetNodeName(), "Set input shape failed."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckOutputDtype(), OP_LOGE(context_->GetNodeName(), "The output dtype is invalid."),
+    OP_CHECK_IF(!CheckOutputDtype(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The output dtype is invalid."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckOutputShape(), OP_LOGE(context_->GetNodeName(), "The output shape is invalid."),
+    OP_CHECK_IF(!CheckOutputShape(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "The output shape is invalid."),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }

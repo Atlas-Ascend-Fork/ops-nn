@@ -634,6 +634,7 @@ static void SetTilingForAscend950(const gert::TilingContext* context, GroupNormV
 ge::graphStatus SetTilingData(gert::TilingContext* context)
 {
     OP_LOGD(context->GetNodeName(), "Start running Tiling4GroupNormV2.");
+    // CheckInputParams 内层已正式上报，外层仅日志透传
     OP_CHECK_IF((CheckInputParams(context) != ge::GRAPH_SUCCESS),
                 OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "InputParams is invalid."), return ge::GRAPH_FAILED);
     OP_CHECK_IF((CheckAttrParams(context) != ge::GRAPH_SUCCESS),

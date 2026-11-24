@@ -35,7 +35,12 @@ ge::graphStatus Tiling4RmsNormQuantV2(gert::TilingContext* context)
     if (Ops::NN::OpTiling::IsRegbaseSocVersion(context)) {
         return Ops::NN::Optiling::TilingRegistry::GetInstance().DoTilingImpl(context);
     }
-    OP_LOGE(context, "RmsNormQuantV2 is not supported on the current chip!");
+    // 当前 SoC 能力不支持：按已注册执行类语义码 EZ1009 正式上报（Arglist: opName, reason）
+    const std::string msgOpName = std::string(context->GetNodeName());
+    OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "RmsNormQuantV2 is not supported on the current chip!");
+    REPORT_PREDEFINED_ERR_MSG(
+        "EZ1009", (std::vector<const char*>{"opName", "reason"}),
+        (std::vector<const char*>{msgOpName.c_str(), "RmsNormQuantV2 is not supported on the current chip"}));
     return ge::GRAPH_FAILED;
 }
 
@@ -115,8 +120,16 @@ inline ge::graphStatus GenSimplifiedKey4RmsNormQuantV2(gert::TilingContext* cont
     errno_t err = strcat_s(simplifiedKey, DEST_MAX, simpleKeyTemp.c_str());
     OP_CHECK_IF((err != 0), OP_LOGE(context, "Error: strcat_s failed with error code %d.", err),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(strlen(simplifiedKey) > MAX_LEN_SIMPLIFIED_KEY,
-                OP_LOGE(context, "Len of simplifiedKey exceeds max length."), return ge::GRAPH_FAILED);
+    // 合法输入下 tiling 内部序列化失败：按已注册执行类语义码 EZ1008 正式上报
+    if (strlen(simplifiedKey) > MAX_LEN_SIMPLIFIED_KEY) {
+        const std::string msgOpName = std::string(context->GetNodeName());
+        std::string reasonMsg = "the length of the simplified key exceeds the maximum of " +
+                                std::to_string(MAX_LEN_SIMPLIFIED_KEY);
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Len of simplifiedKey exceeds max length.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), reasonMsg.c_str()}));
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGW(context, "Finish RmsNormQuantV2 genSimplifiedKey.");
     return ge::GRAPH_SUCCESS;
 }

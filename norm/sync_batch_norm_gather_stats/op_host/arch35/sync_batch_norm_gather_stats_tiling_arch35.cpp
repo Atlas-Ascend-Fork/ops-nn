@@ -656,7 +656,15 @@ ge::graphStatus SyncBatchNormGatherStatsTiling::DoNNotFullLoadTiling()
         cTailTail_ = cTailTail;
     }
 
-    OP_CHECK_IF((cTileNum_ <= 0), OP_LOGE(opName, "The axis of C can not be Tiled"), return ge::GRAPH_FAILED);
+    if (cTileNum_ <= 0) {
+        // 合法输入下 tiling 切分失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(opName);
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "The axis of C can not be Tiled");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "failed to tile the C axis, cTileNum must be positive"}));
+        return ge::GRAPH_FAILED;
+    }
 
     nNotFullLoadTilingData.set_blockDim(blockNum);
     nNotFullLoadTilingData.set_cLen(cLen);

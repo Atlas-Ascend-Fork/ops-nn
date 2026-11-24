@@ -62,10 +62,16 @@ ge::graphStatus RmsNormDynamicMxQuantTilingBase::GetPlatformInfo()
     ubBlockFp32Num_ = ubBlockSize_ / FP32_BYTES;
     ubBlockB16Num_ = ubBlockSize_ / FP16_BYTES;
 
-    OP_CHECK_IF(totalCoreNum_ <= 0, OP_LOGE(context_->GetNodeName(), "Failed to get core num."),
-                return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF(ubSize_ <= 0, OP_LOGE(context_->GetNodeName(), "Failed to get ub size."), return ge::GRAPH_FAILED);
+    // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+    if (totalCoreNum_ <= 0 || ubSize_ <= 0) {
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        std::string reasonMsg = "failed to get platform info from the current chip, coreNum=" +
+                                std::to_string(totalCoreNum_) + ", ubSize=" + std::to_string(ubSize_);
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Failed to get core num or ub size.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), reasonMsg.c_str()}));
+        return ge::GRAPH_FAILED;
+    }
 
     OP_LOGD(context_->GetNodeName(), "GetPlatformInfo: totalCoreNum: %ld, ubSize: %ld", totalCoreNum_, ubSize_);
 
@@ -400,14 +406,20 @@ ge::graphStatus TilingPrepareForRmsNormDynamicMxQuant(gert::TilingParseContext* 
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNum <= 0), OP_LOGE(context->GetNodeName(), "Failed to get core num."),
-                return ge::GRAPH_FAILED);
-
     uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSize = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF((compileInfo->ubSize <= 0), OP_LOGE(context->GetNodeName(), "Failed to get ub size."),
-                return ge::GRAPH_FAILED);
+    if (compileInfo->coreNum <= 0 || compileInfo->ubSize <= 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context->GetNodeName());
+        std::string reasonMsg = "failed to get platform info from the current chip, coreNum=" +
+                                std::to_string(compileInfo->coreNum) +
+                                ", ubSize=" + std::to_string(compileInfo->ubSize);
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Failed to get core num or ub size.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), reasonMsg.c_str()}));
+        return ge::GRAPH_FAILED;
+    }
 
     OP_LOGD(context->GetNodeName(), "TilingPrepareForRmsNormDynamicMxQuant: coreNum: %ld, ubSize: %ld",
             compileInfo->coreNum, compileInfo->ubSize);

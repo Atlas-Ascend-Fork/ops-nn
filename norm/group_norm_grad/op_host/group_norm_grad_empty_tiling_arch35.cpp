@@ -76,8 +76,9 @@ ge::graphStatus GroupNormGradEmptyTiling::GetShapeAttrsInfo()
 
     commonParams.CPerG = commonParams.C / commonParams.G;
 
-    OP_TILING_CHECK(ParamsCheck() == ge::GRAPH_FAILED, OP_LOGE(context_->GetNodeName(), "Params check failed."),
-                    return ge::GRAPH_FAILED);
+    // ParamsCheck 内层（CheckInputAndOutput/CheckShapeAndType）已正式上报，外层仅日志透传
+    OP_TILING_CHECK(ParamsCheck() == ge::GRAPH_FAILED,
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Params check failed."), return ge::GRAPH_FAILED);
 
     // 计算x/gamma总元素数供IsCapable空tensor判断使用
     auto xShapePtr = context_->GetInputShape(INPUT_IDX_X);

@@ -98,12 +98,20 @@ static ge::graphStatus InferShape4BroadcastGradientArgsImpl(const gert::InferSha
     bool shape_equal_flag = true;
     if (x1_shape_len < max_shape_len) {
         if (!BroadcastGradientArgsTensorCheck<T>(x1_tensor, x2_tensor, x1_shape_len, x2_shape_len, shape_equal_flag)) {
-            OP_LOGE(context->GetNodeName(), "Inputs x1 and x2 do not satisfy broadcasting rules");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), "x1 and x2",
+                (std::to_string(x1_shape_len) + " and " + std::to_string(x2_shape_len)).c_str(),
+                "the shapes of x1 and x2 do not satisfy broadcasting rules (each dimension must be equal, or one of "
+                "them must be 1)");
             return ge::GRAPH_FAILED;
         }
     } else {
         if (!BroadcastGradientArgsTensorCheck<T>(x2_tensor, x1_tensor, x2_shape_len, x1_shape_len, shape_equal_flag)) {
-            OP_LOGE(context->GetNodeName(), "Inputs x1 and x2 do not satisfy broadcasting rules");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), "x1 and x2",
+                (std::to_string(x1_shape_len) + " and " + std::to_string(x2_shape_len)).c_str(),
+                "the shapes of x1 and x2 do not satisfy broadcasting rules (each dimension must be equal, or one of "
+                "them must be 1)");
             return ge::GRAPH_FAILED;
         }
     }
@@ -150,7 +158,10 @@ graphStatus InferShape4BroadcastGradientArgs(gert::InferShapeContext* context)
     ge::DataType x1_dtype = x1_tensor->GetDataType();
     ge::DataType x2_dtype = x2_tensor->GetDataType();
     if (x1_dtype != x2_dtype) {
-        OP_LOGE(context->GetNodeName(), "x1 and x2 must have same data type!");
+        std::string dtypeMsg = std::to_string(static_cast<int64_t>(x1_dtype)) + " and " +
+                               std::to_string(static_cast<int64_t>(x2_dtype));
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "x1 and x2", dtypeMsg.c_str(),
+                                               "x1 and x2 must have the same dtype");
         return ge::GRAPH_FAILED;
     }
     // 设置输出shape为-1

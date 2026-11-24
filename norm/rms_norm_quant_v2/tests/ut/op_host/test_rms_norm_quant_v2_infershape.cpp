@@ -458,3 +458,12 @@ TEST_F(RmsNormQuantV2, RmsNormQuantV2_InferDtype_case_4)
         EXPECT_EQ(context->GetOutputDataType(1), output_ref);
     }
 }
+
+TEST_F(RmsNormQuantV2, empty_input_rank_nine_is_rejected)
+{
+    ge::op::RmsNormQuantV2 op;
+    op.UpdateInputDesc("x", create_desc({0, 1, 1, 1, 1, 1, 1, 1, 64}, ge::DT_FLOAT16));
+    op.UpdateInputDesc("gamma", create_desc({64}, ge::DT_FLOAT16));
+    op.UpdateInputDesc("scales1", create_desc({1}, ge::DT_FLOAT));
+    EXPECT_EQ(InferShapeTest(op), ge::GRAPH_FAILED);
+}

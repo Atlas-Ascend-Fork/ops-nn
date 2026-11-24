@@ -857,6 +857,53 @@ TEST_P(BatchNormMetadataError, ReportsOneFormalErrorThroughCaller)
     EXPECT_NE(fields.at("reason").find("shape metadata is missing"), std::string::npos);
     EXPECT_NE(fields.at("reason").find(p.missing == 3 ? "mean" : "variance"), std::string::npos);
 }
+TEST_P(BatchNormMetadataError, MissingOptionalDescriptorRejectedOnlyInInference)
+{
+    const auto p = GetParam();
+    const bool training = p.training;
+    gert::StorageShape x = {{2, 4, 2}, {2, 4, 2}};
+    gert::StorageShape a = {{4}, {4}};
+    gert::StorageShape reserve = {{1}, {1}};
+    auto f = gert::TilingContextFaker();
+    f.SetOpType("BatchNorm").NodeIoNum(3, 6).IrInstanceNum({1, 1, 1, 0U, 0U}, {1, 1, 1, 1, 1, 1});
+    for (int i = 0; i < 3; ++i)
+        f.NodeInputTd(i, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    for (int i = 0; i < 6; ++i)
+        f.NodeOutputTd(i, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    std::vector<gert::StorageShape*> in = {&x, &a, &a};
+    f.InputShapes(in)
+        .OutputShapes(std::vector<gert::StorageShape*>{&x, &a, &a, &a, &a, &reserve})
+        .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-5f)},
+                    {"exponential_avg_factor", Ops::NN::AnyValue::CreateFrom<float>(0.1f)},
+                    {"is_training", Ops::NN::AnyValue::CreateFrom<bool>(training)}});
+    static fe::PlatFormInfos platform;
+    platform.Init();
+    static optiling::BatchNormCompileInfo compileInfo{};
+    static auto data = gert::TilingData::CreateCap(10240);
+    static auto workspace = gert::ContinuousVector::Create<size_t>(4096);
+    f.CompileInfo(&compileInfo)
+        .PlatformInfo(&platform)
+        .TilingData(data.get())
+        .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()));
+    auto h = f.Build();
+    auto* c = h.GetContext<gert::TilingContext>();
+    ASSERT_NE(c, nullptr);
+    ASSERT_EQ(c->GetOptionalInputDesc(3), nullptr);
+    ASSERT_EQ(c->GetOptionalInputDesc(4), nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    (void)manager.GetRawErrorMessages();
+    const auto status = p.training ? TrainProbe(c).GetShapeAttrsInfo() : InferProbe(c).GetShapeAttrsInfo();
+    const auto errors = manager.GetRawErrorMessages();
+    if (training) {
+        EXPECT_EQ(status, ge::GRAPH_SUCCESS);
+        EXPECT_TRUE(errors.empty());
+    } else {
+        EXPECT_EQ(status, ge::GRAPH_FAILED);
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_NE(errors[0].error_id, "EZ9999");
+    }
+}
 INSTANTIATE_TEST_SUITE_P(TrainingAndInference, BatchNormMetadataError,
                          testing::Values(MetadataCase{true, 3}, MetadataCase{true, 4}, MetadataCase{false, 3},
                                          MetadataCase{false, 4}));

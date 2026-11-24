@@ -245,8 +245,15 @@ ge::graphStatus LpNormV2Tiling::TilingReduce(const ReduceOpCompileInfo* compileI
     // 获取确定性级别，如果为3开启batch一致性
     key_.reduceTiling.batchInvariant = tilingContext_->GetDeterministicLevel() == BATCH_INVARIANT_LEVEL;
     OP_LOGD(tilingContext_->GetNodeName(), "deterministic_level=%d", tilingContext_->GetDeterministicLevel());
-    OP_CHECK_IF((ReduceOpTmpl::GetInputParam(tilingContext_, opInput, 0, key_.reduceTiling) == ge::GRAPH_FAILED),
-                OP_LOGE(tilingContext_->GetNodeName(), "ReduceOp get x input failed"), return ge::GRAPH_FAILED);
+    if (ReduceOpTmpl::GetInputParam(tilingContext_, opInput, 0, key_.reduceTiling) == ge::GRAPH_FAILED) {
+        // 合法输入下 tiling 取参失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(tilingContext_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "ReduceOp get x input failed");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "failed to get the input x from the reduce op template"}));
+        return ge::GRAPH_FAILED;
+    }
 
     opInput.axes = reduceAxis_;
 

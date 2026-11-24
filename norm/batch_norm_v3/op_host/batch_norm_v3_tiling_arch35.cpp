@@ -73,9 +73,16 @@ ge::graphStatus BatchNormV3RegbaseTilingBase::GetPlatformInfo()
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     aicoreParams_.numBlocks = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF(aicoreParams_.numBlocks <= 0,
-                OP_LOGE(context_->GetNodeName(), "numBlocks should not be less than or equal to zero."),
-                return ge::GRAPH_FAILED);
+    if (aicoreParams_.numBlocks <= 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        std::string reasonMsg = "failed to get the AIV core number from the current chip, numBlocks=" +
+                                std::to_string(aicoreParams_.numBlocks);
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "numBlocks should not be less than or equal to zero.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), reasonMsg.c_str()}));
+        return ge::GRAPH_FAILED;
+    }
     arch = ascendcPlatform.GetCurNpuArch();
     uint64_t ubSizePlatForm;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
@@ -111,8 +118,9 @@ ge::graphStatus BatchNormV3RegbaseTilingBase::GetShapeAttrsInfo()
     auto xShape = context_->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context_, xShape);
     auto xStorageShape = xShape->GetStorageShape();
+    // CheckShapeAllPositive 内层已正式上报，外层仅日志透传（避免具体+具体二次上报）
     if (CheckShapeAllPositive(xStorageShape) != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Not supported shape info.");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "%s", "Not supported shape info.");
         return ge::GRAPH_FAILED;
     }
     auto xDesc = context_->GetInputDesc(0);
@@ -181,7 +189,8 @@ ge::graphStatus BatchNormV3RegbaseTilingBase::GetShapeAttrsInfo()
     }
 
     if (CheckInputValid() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Not supported input info.");
+        // CheckInputValid 内层（CheckOneInputShape/dtype 检查）已正式上报，外层仅日志透传
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Not supported input info.");
         return ge::GRAPH_FAILED;
     }
 

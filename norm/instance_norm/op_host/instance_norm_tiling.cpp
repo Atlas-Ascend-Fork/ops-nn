@@ -21,7 +21,12 @@ static ge::graphStatus Tiling4InstanceNorm(gert::TilingContext* context)
     if (Ops::NN::OpTiling::IsRegbaseSocVersion(context)) {
         return Ops::NN::Optiling::TilingRegistry::GetInstance().DoTilingImpl(context);
     }
-    OP_LOGE(context, "InstanceNorm is not supported on the current chip!");
+    // 当前 SoC 能力不支持：按已注册执行类语义码 EZ1009 正式上报（Arglist: opName, reason）
+    const std::string msgOpName = std::string(context->GetNodeName());
+    OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "InstanceNorm is not supported on the current chip!");
+    REPORT_PREDEFINED_ERR_MSG(
+        "EZ1009", (std::vector<const char*>{"opName", "reason"}),
+        (std::vector<const char*>{msgOpName.c_str(), "InstanceNorm is not supported on the current chip"}));
     return ge::GRAPH_FAILED;
 }
 

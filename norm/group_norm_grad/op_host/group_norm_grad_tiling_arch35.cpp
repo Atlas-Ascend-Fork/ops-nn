@@ -238,19 +238,32 @@ ge::graphStatus GroupNormGradRegBaseMixTiling::Mode2UbTiling()
     mode2MainLoopCnt_ = Ops::Base::CeilDiv(this->binaryAddQuotient_, static_cast<int64_t>(this->mode2OneLoopSize_));
     mode2FoldLoopCnt_ = Ops::Base::CeilDiv((this->commonParams.HxW - this->binaryAddQuotient_),
                                            static_cast<int64_t>(this->mode2OneLoopSize_));
-    OP_TILING_CHECK(
-        this->binaryAddQuotient_ % this->mode2OneLoopSize_ != 0,
-        OP_LOGE(context_->GetNodeName(),
-                "Error:[UbTiling] the main block can't have tail. binaryAddQuotient = %ld, mode2OneLoopSize = %u.",
-                this->binaryAddQuotient_, this->mode2OneLoopSize_),
-        return ge::GRAPH_FAILED);
+    if (this->binaryAddQuotient_ % this->mode2OneLoopSize_ != 0) {
+        // 合法输入下 tiling 内部切分不变量破坏：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Error:[UbTiling] the main block can't have tail.");
+        std::string msgReason = "[UbTiling] the main block can't have tail, binaryAddQuotient=" +
+                                std::to_string(this->binaryAddQuotient_) +
+                                ", mode2OneLoopSize=" + std::to_string(this->mode2OneLoopSize_);
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    }
     mode2FoldTail_ = (this->commonParams.HxW - this->binaryAddQuotient_) % this->mode2OneLoopSize_ == 0 ?
                          this->mode2OneLoopSize_ :
                          (this->commonParams.HxW - this->binaryAddQuotient_) % this->mode2OneLoopSize_;
-    OP_TILING_CHECK(
-        this->mode2MainLoopCnt_ < 1 || this->mode2FoldLoopCnt_ < 1,
-        OP_LOGE(context_->GetNodeName(), "Error:[UbTiling] mode2MainLoopCnt or mode2FoldLoopCnt less than 1"),
-        return ge::GRAPH_FAILED);
+    if (this->mode2MainLoopCnt_ < 1 || this->mode2FoldLoopCnt_ < 1) {
+        // 合法输入下 tiling 内部切分不变量破坏：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s",
+                               "Error:[UbTiling] mode2MainLoopCnt or mode2FoldLoopCnt less than 1");
+        std::string msgReason = "[UbTiling] mode2MainLoopCnt and mode2FoldLoopCnt must be at least 1, got " +
+                                std::to_string(this->mode2MainLoopCnt_) + " and " +
+                                std::to_string(this->mode2FoldLoopCnt_);
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), msgReason.c_str()}));
+        return ge::GRAPH_FAILED;
+    }
     mode2UbCapEle_ = mode2OneLoopSize_ * BINARY_ADD_COEF;
     if (mode2UbCapEle_ == 0) {
         OP_LOGE(context_->GetNodeName(), "Error:[UbTiling] mode2UbCapEle_ less than 1");

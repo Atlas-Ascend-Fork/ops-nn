@@ -17,10 +17,11 @@
 #include <fstream>
 #include <vector>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "log/log.h"
 #include "ut_op_util.h"
 #include "platform/platform_infos_def.h"
-#include "test_batch_norm_v3_tiling.h"
+#include "../../../op_host/batch_norm_v3_tiling.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -4755,6 +4756,152 @@ TEST_F(BatchNormV3Tiling, batch_norm_v3_welford_parallel_n_below_vl)
     gert::StorageShape xShape = {{256, 512, 8}, {256, 512, 8}};
     RunBatchNormV3TrainingTilingForTest(xShape, ge::FORMAT_ND, 512, 0, 2752, true);
 }
+
+// Expose the real protected platform query without entering template selection.
+// Unused abstract tiling stages fail closed if accidentally invoked by this probe.
+class BatchNormV3PlatformProbe final : public optiling::BatchNormV3RegbaseTilingBase {
+public:
+    explicit BatchNormV3PlatformProbe(gert::TilingContext* context) : BatchNormV3RegbaseTilingBase(context) {}
+    using BatchNormV3RegbaseTilingBase::GetPlatformInfo;
+
+protected:
+    bool IsCapable() override { return false; }
+    ge::graphStatus DoOpTiling() override { return ge::GRAPH_FAILED; }
+    uint64_t GetTilingKey() const override { return 0; }
+    ge::graphStatus PostTiling() override { return ge::GRAPH_FAILED; }
+};
+
+class BatchNormV3FailureCoverage : public testing::TestWithParam<int> {};
+TEST_P(BatchNormV3FailureCoverage, PlatformOrInputErrorIsReported)
+{
+    gert::StorageShape x_shape = {{2, 64, 8, 8}, {2, 64, 8, 8}};
+    gert::StorageShape gamma_shape = {{64}, {64}};
+    gert::StorageShape beta_shape = {{64}, {64}};
+    gert::StorageShape mean_shape = {{64}, {64}};
+    gert::StorageShape variance_shape = {{64}, {64}};
+    gert::StorageShape y_shape = {{2, 64, 8, 8}, {2, 64, 8, 8}};
+    gert::StorageShape outmean_shape = {{64}, {64}};
+    gert::StorageShape outvariance_shape = {{64}, {64}};
+    gert::StorageShape batchmean_shape = {{64}, {64}};
+    gert::StorageShape batchrstd_shape = {{64}, {64}};
+
+    const int fault = GetParam();
+    if (fault == 1) {
+        x_shape = {{2, 0, 8, 8}, {2, 0, 8, 8}};
+    } else if (fault == 2) {
+        gamma_shape = {{63}, {63}};
+    }
+    string compile_info_string = R"({
+        "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                          "Intrinsic_fix_pipe_l0c2out": false,
+                          "Intrinsic_data_move_l12ub": true,
+                          "Intrinsic_data_move_l0c2ub": true,
+                          "Intrinsic_data_move_out2l1_nd2nz": false,
+                          "UB_SIZE": 245760, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                          "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                          "CORE_NUM": 64, "socVersion": "Ascend950"}
+                          })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    map<string, string> soc_version;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics, soc_version);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    optiling::BatchNormV3CompileInfo compile_info;
+
+    std::string op_type("BatchNormV3");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
+
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
+                                      reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+
+    ASSERT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", soc_version);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+    ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+
+    // Parse valid hardware first. Inject only the execution-time platform query fault,
+    // so this case reaches GetPlatformInfo instead of failing in tiling_parse.
+    if (fault == 0) {
+        soc_infos["ai_core_cnt"] = "0";
+        soc_infos["vector_core_cnt"] = "0";
+        soc_infos["cube_core_cnt"] = "0";
+        aicore_spec["core_num"] = "0";
+    }
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    ASSERT_NE(param, nullptr);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(5, 5)
+                      .IrInstanceNum({1, 1, 1, 1, 1})
+                      .InputShapes({&x_shape, &gamma_shape, &beta_shape, &mean_shape, &variance_shape})
+                      .OutputShapes({&y_shape, &outmean_shape, &outvariance_shape, &batchmean_shape, &batchrstd_shape})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-05)},
+                                  {"momentum", Ops::NN::AnyValue::CreateFrom<float>(0.1)},
+                                  {"is_training", Ops::NN::AnyValue::CreateFrom<bool>(true)}})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    (void)manager.GetRawErrorMessages();
+    const auto status = fault == 0 ? BatchNormV3PlatformProbe(tiling_context).GetPlatformInfo() :
+                                     tiling_func(tiling_context);
+    EXPECT_EQ(status, ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    ASSERT_FALSE(errors.empty());
+    const std::string expected = fault == 0 ? "EZ1008" : (fault == 1 ? "EZ0009" : "EZ0009");
+    bool found = false;
+    for (const auto& error : errors) {
+        found = found || error.error_id == expected;
+        EXPECT_NE(error.error_id, "EZ9999");
+        if (fault == 0 && error.error_id == "EZ1008") {
+            ASSERT_EQ(error.args_map.count("opName"), 1U);
+            EXPECT_EQ(error.args_map.at("opName"), tiling_context->GetNodeName());
+            ASSERT_EQ(error.args_map.count("reason"), 1U);
+            EXPECT_EQ(error.args_map.at("reason"),
+                      "failed to get the AIV core number from the current chip, numBlocks=0");
+        }
+    }
+    EXPECT_TRUE(found);
+}
+INSTANTIATE_TEST_SUITE_P(CoreAndInput, BatchNormV3FailureCoverage, testing::Values(0, 1, 2));
+
 namespace {
 static ge::graphStatus RunBatchNormV3BlockSplitR(gert::StorageShape& x_shape, int64_t channel, int64_t ubSize,
                                                  uint64_t& tilingKey)

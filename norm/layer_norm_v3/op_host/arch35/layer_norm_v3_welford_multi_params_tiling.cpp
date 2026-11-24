@@ -122,8 +122,15 @@ ge::graphStatus LayerNormV3WelfordMultiParamsTiling::DoLibApiTiling()
     while (IsValidTileLength(tileLength + WELFORD_MP_CONSTANT_TWO * WELFORD_MP_TILELENGTH_STEP_SIZE)) {
         tileLength += WELFORD_MP_TILELENGTH_STEP_SIZE;
     }
-    OP_CHECK_IF((tileLength == 0), OP_LOGE(context_->GetNodeName(), "tileLength must greater than 0"),
-                return ge::GRAPH_FAILED);
+    if (tileLength == 0) {
+        // 合法输入下 tiling 内部切分不变量破坏：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "tileLength must greater than 0");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(), "tileLength calculated by tiling must be positive"}));
+        return ge::GRAPH_FAILED;
+    }
 
     int64_t welfordUpdateTimes = td_.get_N() / tileLength;
     int64_t welfordUpdateTail = td_.get_N() - welfordUpdateTimes * tileLength;

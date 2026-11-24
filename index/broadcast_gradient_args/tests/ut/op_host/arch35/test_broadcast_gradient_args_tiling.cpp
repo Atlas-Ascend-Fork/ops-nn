@@ -12,6 +12,7 @@
 #include <fstream>
 #include <vector>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "log/log.h"
 #include "ut_op_util.h"
 #include "platform/platform_infos_def.h"
@@ -1454,3 +1455,56 @@ TEST_F(BroadcastGradientArgsTilingTest, BroadcastGradientArgsTiling_parital_load
     ASSERT_NE(tilingData, nullptr);
     EXPECT_EQ(to_string<int32_t>(tilingData->GetData(), tilingData->GetDataSize()), "88888 0 0 0 88888 0 12208 0 ");
 }
+
+namespace optiling {
+ge::graphStatus Tiling4BroadcastGradientArgs(gert::TilingContext* context);
+}
+namespace {
+class BroadcastGradientArgsTilingErrors : public testing::TestWithParam<int> {};
+TEST_P(BroadcastGradientArgsTilingErrors, ReportsSpecificInputErrorOnce)
+{
+    const int scenario = GetParam();
+    gert::StorageShape x1 = {{2}, {2}};
+    gert::StorageShape x2 = {{2}, {2}};
+    if (scenario == 2) {
+        x1 = gert::StorageShape{{2, 1}, {2, 1}};
+    } else if (scenario == 3) {
+        x2 = gert::StorageShape{{-1}, {-1}};
+    }
+    const auto firstType = scenario == 0 ? ge::DT_FLOAT : ge::DT_INT32;
+    const auto secondType = scenario == 1 ? ge::DT_INT64 : ge::DT_INT32;
+    optiling::BroadcastGradientArgsCompileInfo info;
+    info.coreNum = 48;
+    info.ubSize = 196608;
+    fe::PlatFormInfos platform;
+    ASSERT_TRUE(platform.Init());
+    auto data = gert::TilingData::CreateCap(4096);
+    auto workspace = gert::ContinuousVector::Create<size_t>(4096);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("BroadcastGradientArgs")
+                      .NodeIoNum(2, 2)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&x1, &x2})
+                      .OutputShapes({&x1, &x2})
+                      .CompileInfo(&info)
+                      .PlatformInfo(&platform)
+                      .TilingData(data.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()))
+                      .NodeInputTd(0, firstType, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, secondType, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+    auto* context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(context, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    (void)manager.GetRawErrorMessages();
+    EXPECT_EQ(optiling::Tiling4BroadcastGradientArgs(context), ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    const char* expected[] = {"EZ0019", "EZ0021", "EZ0013", "EZ0010"};
+    EXPECT_EQ(errors[0].error_id, expected[scenario]);
+}
+INSTANTIATE_TEST_SUITE_P(DtypeRankAndLength, BroadcastGradientArgsTilingErrors, testing::Values(0, 1, 2, 3));
+} // namespace

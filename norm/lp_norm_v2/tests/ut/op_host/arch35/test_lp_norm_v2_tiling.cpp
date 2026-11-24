@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include <iostream>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include <fstream>
 #include <vector>
 #include "log/log.h"
@@ -238,4 +239,78 @@ TEST_F(LpNormV2DavidTiling, lp_norm_v2_david_tiling3_difftype)
         std::cout << "test>> tilingFunc is valid" << std::endl;
         EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
     }
+}
+
+TEST_F(LpNormV2DavidTiling, dynamic_input_shape_reports_reduce_input_failure)
+{
+    std::string opType("LpNormV2");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str()), nullptr);
+    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
+
+    string compileInfoString = R"({
+                                            "hardware_info": {
+                                                "UB_SIZE": 253952,
+                                                "CORE_NUM": 64,
+                                                "socVersion": "Ascend950"
+                                            }
+                                        })";
+    map<string, string> socInfos;
+    map<string, string> aicoreSpec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compileInfoString.c_str(), socInfos, aicoreSpec, intrinsics);
+
+    // platform info
+    fe::PlatFormInfos platformInfo;
+    platformInfo.Init();
+    // compile info
+    Ops::Base::ReduceOpCompileInfo compileInfo;
+    compileInfo.vectorCoreNum = 64;
+
+    // tilingFunc simulate
+    auto param = gert::TilingData::CreateCap(4096);
+    ASSERT_NE(param, nullptr);
+    auto workspaceSizeHoler = gert::ContinuousVector::Create<size_t>(16 * 4096);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(workspaceSizeHoler.get());
+    gert::StorageShape x = {{2, 2, -1}, {2, 2, -1}};
+    gert::StorageShape y = {{2, 2, 1}, {2, 2, 1}};
+
+    auto holder = gert::TilingContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1}, {1})
+                      .InputShapes({&x})
+                      .OutputShapes({&y})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"p", Ops::NN::AnyValue::CreateFrom<float>(1.0)},
+                                  {"axes", Ops::NN::AnyValue::CreateFrom<vector<int64_t>>({2})},
+                                  {"keepdim", Ops::NN::AnyValue::CreateFrom<bool>(true)},
+                                  {"epsilon", Ops::NN::AnyValue::CreateFrom<float>(0)}})
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+
+    gert::TilingContext* tilingContext = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tilingContext->GetPlatformInfo(), nullptr);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+    ASSERT_NE(tilingFunc, nullptr);
+    auto& manager = ErrorManager::GetInstance();
+    ASSERT_EQ(manager.Init(), 0);
+    (void)manager.GetRawErrorMessages();
+    EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_FAILED);
+    const auto errors = manager.GetRawErrorMessages();
+    bool found = false;
+    for (const auto& error : errors) {
+        const auto reason = error.args_map.find("reason");
+        if (error.error_id == "EZ1008" && reason != error.args_map.end() &&
+            reason->second.find("failed to get the input x from the reduce op template") != std::string::npos) {
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
 }

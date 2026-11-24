@@ -40,7 +40,11 @@ ge::graphStatus SoftmaxV2ARATiling::BinaryAddTiling()
         binaryAddK -= 1;
         binaryAddLast = 1;
     } else if (curBinaryAddNum != binaryAddNum) {
-        OP_LOGE(context_->GetNodeName(), "Binary add calculate error.");
+        // 合法输入下 tiling 内部计算失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "Binary add calculate error.");
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                                  (std::vector<const char*>{msgOpName.c_str(), "binary add tiling calculation error"}));
         return ge::GRAPH_FAILED;
     }
 

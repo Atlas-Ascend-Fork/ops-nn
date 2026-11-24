@@ -155,10 +155,14 @@ ge::graphStatus SyncBatchNormBackwardReduceTiling::RunTiling()
         return ge::GRAPH_FAILED;
     }
 
-    OP_CHECK_IF(res == ge::GRAPH_FAILED,
-                OP_LOGE(tilingContext, "SyncBatchNormBackwardReduce DoTiling failed, outputDtype=%s",
-                        ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str()),
-                return ge::GRAPH_FAILED);
+    if (res == ge::GRAPH_FAILED) {
+        // 内层 DoTiling 已有具体上报（dtype 检查等），外层仅日志透传，不再追加 EZ1008 兜底（避免稀释内层语义码）；
+        // 日志保留 outputDtype 占位符与参数（合入上游 975294f9a3 的格式串修复意图）
+        OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(),
+                               "SyncBatchNormBackwardReduce DoTiling failed, outputDtype=%s",
+                               ge::TypeUtils::DataTypeToSerialString(this->outputDtype).c_str());
+        return ge::GRAPH_FAILED;
+    }
 
     ge::graphStatus result = SetTilingData();
     return result;

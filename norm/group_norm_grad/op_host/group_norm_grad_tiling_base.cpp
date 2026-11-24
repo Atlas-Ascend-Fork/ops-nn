@@ -41,19 +41,49 @@ ge::graphStatus GroupNormGradTilingBase::GetPlatformInfo()
     auto compileInfo = context_->GetCompileInfo<GroupNormGradCompileInfo>();
     OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
     commonParams.ubSizePlatForm = compileInfo->ubSizePlatForm;
-    OP_TILING_CHECK((commonParams.ubSizePlatForm <= 0),
-                    OP_LOGE(context_->GetNodeName(), "ubSize should be greater than zero."), return ge::GRAPH_FAILED);
+    if (commonParams.ubSizePlatForm <= 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "ubSize should be greater than zero.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "failed to get the platform ub size, ubSize must be positive"}));
+        return ge::GRAPH_FAILED;
+    }
     commonParams.coreNum = compileInfo->totalCoreNum;
-    OP_TILING_CHECK((commonParams.coreNum <= 0),
-                    OP_LOGE(context_->GetNodeName(), "core num should be greater than zero."), return ge::GRAPH_FAILED);
+    if (commonParams.coreNum <= 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "core num should be greater than zero.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "failed to get the AIV core number, coreNum must be positive"}));
+        return ge::GRAPH_FAILED;
+    }
     commonParams.vectorLen = compileInfo->vectorLen / FLOAT_DTYPE_BYTES;
-    OP_TILING_CHECK((commonParams.vectorLen <= 0),
-                    OP_LOGE(context_->GetNodeName(), "vectorLen should be greater than zero."),
-                    return ge::GRAPH_FAILED);
+    if (commonParams.vectorLen <= 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "vectorLen should be greater than zero.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "failed to get the platform vector length, vectorLen must be positive"}));
+        return ge::GRAPH_FAILED;
+    }
     commonParams.blockSize = compileInfo->blockSize;
-    OP_TILING_CHECK((commonParams.blockSize <= 0),
-                    OP_LOGE(context_->GetNodeName(), "blockSize should be greater than zero."),
-                    return ge::GRAPH_FAILED);
+    if (commonParams.blockSize <= 0) {
+        // 平台信息查询失败属于合法输入下的 tiling 失败：按已注册语义码 EZ1008 正式上报
+        const std::string msgOpName = std::string(context_->GetNodeName());
+        OP_LOGE_WITHOUT_REPORT(msgOpName.c_str(), "%s", "blockSize should be greater than zero.");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{msgOpName.c_str(),
+                                      "failed to get the platform block size, blockSize must be positive"}));
+        return ge::GRAPH_FAILED;
+    }
     commonParams.sysWorkspaceSize = compileInfo->sysWorkspaceSize;
     commonParams.isRegBase = compileInfo->isRegBase;
     return ge::GRAPH_SUCCESS;
