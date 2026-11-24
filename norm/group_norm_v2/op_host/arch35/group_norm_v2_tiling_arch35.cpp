@@ -36,6 +36,8 @@ static const int64_t INPUT_IDX_GAMMA = 1;
 static const int64_t INPUT_IDX_BETA = 2;
 static const int64_t PROCESSSIZE = 8192;
 static const int64_t RESERVED_WORKSPACE_SIZE_950 = 0;
+// Welford 预算固定预留：tiling 预算与 kernel 布局公式独立演进时的工程冗余，避免布局漂移直接踩到 UB 上限
+static const int64_t UB_RESERVED_SIZE = 512;
 static const int64_t FOUR_BUFFER = 4;
 static const int64_t BUFFER_NUM = 2;
 static const int64_t DOUBLE_BUFFER = 2;
@@ -220,6 +222,7 @@ static ge::graphStatus CheckAttrParams(const gert::TilingContext* context)
     auto attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const int64_t* numGroups = attrs->GetAttrPointer<int64_t>(INDEX_NUM_GROUPS);
+    OP_CHECK_NULL_WITH_CONTEXT(context, numGroups);
     OP_CHECK_IF(
         (*numGroups <= 0),
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "num_groups", std::to_string(*numGroups).c_str(),
@@ -243,6 +246,7 @@ static int64_t GetOptionalInputTensorSize(const gert::TilingContext* context, in
         return 0;
     }
     auto compileInfo = context->GetCompileInfo<GroupNormV2CompileInfo>();
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGW(context->GetNodeName(), "compileInfo is nullptr"), return 0);
     int64_t blockSize = compileInfo->blockSize;
     auto dtypeSize = ge::GetSizeByDataType(tensorDesc->GetDataType());
     if (specifiedValue != 0) {
@@ -250,7 +254,7 @@ static int64_t GetOptionalInputTensorSize(const gert::TilingContext* context, in
     }
 
     auto storageShape = context->GetInputShape(index);
-    OP_CHECK_NULL_WITH_CONTEXT(context, storageShape);
+    OP_CHECK_IF(storageShape == nullptr, OP_LOGW(context->GetNodeName(), "storageShape is nullptr"), return 0);
     auto shape = storageShape->GetStorageShape();
     int64_t num = 1;
     for (size_t i = 0; i < shape.GetDimNum(); i++) {
@@ -289,6 +293,7 @@ static ge::graphStatus SetAttrParams(const gert::TilingContext* context, GroupNo
     auto attrs = context->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
     const int64_t* numGroups = attrs->GetAttrPointer<int64_t>(INDEX_NUM_GROUPS);
+    OP_CHECK_NULL_WITH_CONTEXT(context, numGroups);
     const float* epsilonPtr = attrs->GetAttrPointer<float>(INDEX_EPSILON);
     float eps = epsilonPtr == nullptr ? DEFAULT_EPS : *epsilonPtr;
     tilingData.set_numGroups(*numGroups);
@@ -423,13 +428,13 @@ static void SetTilingKey4Ascend950(const gert::TilingContext* context, int64_t& 
     isReduceFullLoad = false;
     int64_t meanAndRstdSize = meanUbSize + rstdUbSize + meanUbExtraSize + rstdUbExtraSize;
     if (isLargeChannel) {
-        ubRemain = ubSize - meanAndRstdSize;
+        ubRemain = ubSize - meanAndRstdSize - UB_RESERVED_SIZE;
         int64_t tilingKey = mixType ?
                                 static_cast<int64_t>(GroupNormV2TilingKey::TILINGKEY_WELFORD_GENERALIZED_MIX_TYPE) :
                                 static_cast<int64_t>(GroupNormV2TilingKey::TILINGKEY_WELFORD_GENERALIZED);
         tilingData.set_tilingKey(tilingKey);
     } else {
-        ubRemain = ubSize - meanAndRstdSize - gammaUbSize - betaUbSize;
+        ubRemain = ubSize - meanAndRstdSize - gammaUbSize - betaUbSize - UB_RESERVED_SIZE;
         int64_t tilingKey = mixType ? static_cast<int64_t>(GroupNormV2TilingKey::TILINGKEY_WELFORD_PERF_MIX_TYPE) :
                                       static_cast<int64_t>(GroupNormV2TilingKey::TILINGKEY_WELFORD_PERF);
         tilingData.set_tilingKey(tilingKey);
@@ -563,8 +568,8 @@ static void SetUbTiling4WelfordGeneralized(const gert::TilingContext* context, G
                         count * result.hwNumAlign * xDtypeSize * BUFFER_NUM * DOUBLE_BUFFER;
     while (curUbSize > ubRemain && count >= 1) {
         count--;
-        int64_t gammaRealSize = GetOptionalInputTensorSize(context, INPUT_IDX_GAMMA, count);
-        int64_t betaRealSize = GetOptionalInputTensorSize(context, INPUT_IDX_BETA, count);
+        gammaRealSize = GetOptionalInputTensorSize(context, INPUT_IDX_GAMMA, count);
+        betaRealSize = GetOptionalInputTensorSize(context, INPUT_IDX_BETA, count);
         curUbSize = gammaRealSize + betaRealSize + count * result.hwNumAlign * xDtypeSize * BUFFER_NUM * DOUBLE_BUFFER;
     }
     if (count >= 1) {
