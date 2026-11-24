@@ -158,7 +158,7 @@ aclnnStatus aclnnCrossEntropySumExpAndIndexLogit(
       <td>-</td>
     </tr>
     <tr>
-      <td>predictedLogits (aclTensor*)</td>
+      <td>predictedLogitsOut (aclTensor*)</td>
       <td>Output</td>
       <td>The result of subtracting global_max from the logit corresponding to target, predictedLogits in the formula.</td>
       <td>Same shape as target; positions corresponding to targets not in the current rank shard are set to 0.</td>
@@ -168,7 +168,7 @@ aclnnStatus aclnnCrossEntropySumExpAndIndexLogit(
       <td>-</td>
     </tr>
     <tr>
-      <td>sumExpLogits (aclTensor*)</td>
+      <td>sumExpLogitsOut (aclTensor*)</td>
       <td>Output</td>
       <td>The sum of local exp(logits - global_max) along the last dimension, sumExpLogits in the formula.</td>
       <td>Same shape as target.</td>
@@ -178,7 +178,7 @@ aclnnStatus aclnnCrossEntropySumExpAndIndexLogit(
       <td>-</td>
     </tr>
     <tr>
-      <td>expLogits (aclTensor*)</td>
+      <td>expLogitsOut (aclTensor*)</td>
       <td>Output</td>
       <td>exp(vocabParallelLogits - globalLogitsMax), the expLogits in the formula.</td>
       <td>Same shape as vocabParallelLogits.</td>
@@ -188,7 +188,7 @@ aclnnStatus aclnnCrossEntropySumExpAndIndexLogit(
       <td>-</td>
     </tr>
     <tr>
-      <td>targetOffset (aclTensor*)</td>
+      <td>targetOffsetOut (aclTensor*)</td>
       <td>Output</td>
       <td>target - vocabStartIndex, which is targetOffset in the formula.</td>
       <td>Shape is the same as target. Set to 0 if target is not in the current rank shard.</td>
@@ -198,7 +198,7 @@ aclnnStatus aclnnCrossEntropySumExpAndIndexLogit(
       <td>-</td>
     </tr>
     <tr>
-      <td>targetMask (aclTensor*)</td>
+      <td>targetMaskOut (aclTensor*)</td>
       <td>Output</td>
       <td>Vocab out-of-bounds mask. The value 1 indicates that the target is not in the current rank shard, and the value 0 indicates that it is within. This is the targetMask in the formula.</td>
       <td>Same shape as target.</td>
