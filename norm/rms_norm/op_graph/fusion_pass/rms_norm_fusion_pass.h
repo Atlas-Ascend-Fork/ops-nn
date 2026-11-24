@@ -12,7 +12,7 @@
 #include "ge/fusion/pass/fusion_base_pass.h"
 
 namespace ops {
-class RmsNormFusionPass : public ge::fusion::FusionBasePass {
+class __attribute__((visibility("default"))) RmsNormFusionPass : public ge::fusion::FusionBasePass {
 public:
     ge::Status Run(ge::GraphPtr& graph, ge::CustomPassContext& context) override;
 

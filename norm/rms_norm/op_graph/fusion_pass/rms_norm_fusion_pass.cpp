@@ -489,7 +489,14 @@ bool OutputConsumers(const Match& match)
                 return false;
             }
             if (type == "Add" || type == "AddV2") {
-                if (Half(match.computeType) || !ResidualAdd(output, consumer, prefixRank)) {
+                if (Half(match.computeType)) {
+                    OPS_LOG_D(kPassName, "skip: residual with half-precision statistics: %s",
+                              Name(*consumer.first).c_str());
+                    return false;
+                }
+                if (!ResidualAdd(output, consumer, prefixRank)) {
+                    OPS_LOG_D(kPassName, "skip: Add consumer is not a full elementwise residual: %s",
+                              Name(*consumer.first).c_str());
                     return false;
                 }
                 // Keep these layout checks for diagnosing the precision risk.
@@ -1049,7 +1056,7 @@ bool RmsNormFusionPass::CheckOpSupported(const ge::GNode& node) const
 ge::Status RmsNormFusionPass::Run(ge::GraphPtr& graph, ge::CustomPassContext& context)
 {
     if (graph == nullptr) {
-        return ge::FAILED;
+        return ge::GRAPH_NOT_CHANGED;
     }
     if (!ops::CheckNpuArch(kPassName, kSupportedNpuArchs)) {
         return ge::GRAPH_NOT_CHANGED;

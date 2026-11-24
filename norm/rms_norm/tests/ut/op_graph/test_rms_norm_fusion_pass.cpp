@@ -982,7 +982,7 @@ TEST_P(RmsNormFusionPassTest, Contract)
     if (c.name == "null_graph") {
         ge::GraphPtr graph;
         TestRmsNormFusionPass pass;
-        EXPECT_EQ(RunPass(pass, graph), ge::FAILED);
+        EXPECT_EQ(RunPass(pass, graph), ge::GRAPH_NOT_CHANGED);
         return;
     }
     if (c.name == "interleaved_callbacks") {
