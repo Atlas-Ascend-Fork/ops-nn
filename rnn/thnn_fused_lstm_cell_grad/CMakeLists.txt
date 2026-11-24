@@ -12,5 +12,5 @@ add_modules_sources(HOSTNAME ${OPHOST_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOU
 
 add_kernel_sources(
     KERNEL_SRC thnn_fused_lstm_cell_grad.cpp
-    COMPUTE_UNITS ascend910b ascend910_93 ascend950
+    COMPUTE_UNITS ascend910b ascend910_93 dav_3510
 )
