@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Backward propagation of [aclnnSoftplus](../../softplus_v2/docs/aclnnSoftplus.md).
+- Description: Backward propagation of [aclnnSoftplus](../../softplus_v2/docs/aclnnSoftplus_en.md).
 
 - Formula:
 
