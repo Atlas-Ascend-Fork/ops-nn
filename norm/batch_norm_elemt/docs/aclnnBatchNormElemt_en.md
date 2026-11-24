@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Takes the global mean and the reciprocal of the standard deviation as operator inputs and performs BatchNorm computation on x. This operator is an element-wise BatchNorm function used to normalize input data in specific use cases. Compared with [aclnnBatchNorm](../../batch_norm_v3/docs/aclnnBatchNorm.md), aclnnBatchNormElemt may be adjusted for specific hardware or optimization requirements.
+- Description: Takes the global mean and the reciprocal of the standard deviation as operator inputs and performs BatchNorm computation on x. This operator is an element-wise BatchNorm function used to normalize input data in specific use cases. Compared with [aclnnBatchNorm](../../batch_norm_v3/docs/aclnnBatchNorm_en.md), aclnnBatchNormElemt may be adjusted for specific hardware or optimization requirements.
 
 - Formula:
 
