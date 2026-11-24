@@ -62,7 +62,7 @@ $$
 
 | 调用方式 | 调用样例 | 说明 |
 |:--|:--|:--|
-| `aclnn` 直调 | [test_aclnn_elu_grad_v2.cpp](./examples/test_aclnn_elu_grad_v2.cpp) | 通过[aclnnEluV2](./docs/aclnnEluBackward.md)接口方式调用EluV2算子 |
+| `aclnn` 直调 | [test_aclnn_elu_grad_v2.cpp](./examples/test_aclnn_elu_grad_v2.cpp) | 通过 [aclnnEluBackward](./docs/aclnnEluBackward.md) 接口计算 ELU 的反向梯度。 |
 
 ## 贡献说明
 
