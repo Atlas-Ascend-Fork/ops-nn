@@ -47,9 +47,16 @@ def _dtype_name(value):
 
 def _numpy_dtype(dtype_name):
     if dtype_name == "bfloat16":
-        import ml_dtypes
+        # bf16 numpy 载体优先复用 ttk 的 dtype 解析（ml_dtypes 缺失时自动
+        # 兜底 tensorflow.bfloat16），不硬依赖单一第三方包。
+        try:
+            from ttk.utilities.dtypes import resolve_numpy_dtype
 
-        return ml_dtypes.bfloat16
+            return resolve_numpy_dtype("bfloat16")
+        except Exception:
+            import ml_dtypes
+
+            return ml_dtypes.bfloat16
     return np.dtype(dtype_name)
 
 
@@ -81,11 +88,11 @@ def apply_rms_prop_golden(
     if _numel(var) == 0:
         # 空输入分支同样按 dtype 转换：torch.bfloat16 无法直接 np.asarray
         # （TypeError: Got unsupported ScalarType BFloat16），经 uint16 位视图
-        # 无损转 ml_dtypes.bfloat16 空数组，与 _to_torch 的非空路径同口径
+        # 无损转 numpy bf16 载体空数组（ttk resolve_numpy_dtype 解析，缺失
+        # ml_dtypes 时兜底 tensorflow），与 _to_torch 的非空路径同口径
         if isinstance(var, torch.Tensor) and var.dtype == torch.bfloat16:
-            import ml_dtypes
-
-            return [var.view(torch.uint16).numpy().view(ml_dtypes.bfloat16).copy()]
+            bf16_view = var.view(torch.uint16).numpy()
+            return [bf16_view.view(_numpy_dtype("bfloat16")).copy()]
         return [np.asarray(var).copy()]
 
     target_dtype_name = _dtype_name(var)

@@ -49,11 +49,13 @@ __golden__ = {
 
 
 def _to_numpy(t):
-    """Torch → NumPy：bfloat16 经 uint16 位视图无损转 ml_dtypes.bfloat16 载体。"""
+    """Torch → NumPy：bfloat16 经 uint16 位视图无损转 numpy bf16 载体。
+    numpy bf16 载体经 ttk resolve_numpy_dtype 解析（ml_dtypes 缺失时自动
+    兜底 tensorflow.bfloat16），不硬依赖单一第三方包。"""
     if t.dtype == torch.bfloat16:
-        import ml_dtypes
+        from ttk.utilities.dtypes import resolve_numpy_dtype
 
-        return t.view(torch.uint16).numpy().view(ml_dtypes.bfloat16)
+        return t.view(torch.uint16).numpy().view(resolve_numpy_dtype("bfloat16"))
     return t.numpy()
 
 
@@ -128,6 +130,15 @@ def _explicit_formula(x, scale, zero_point, axis, quant_min, quant_max):
     """特殊值/超大商域显式公式：rint(Cast int32 饱和语义) + 契约化特殊值映射
     （NaN/−Inf→INT32_MIN→quant_min、+Inf→INT32_MAX→quant_max，mask=False，
     对齐 docs「特殊值语义」与 kernel 的 ForceNonFiniteToSentinel 哨兵路径）。"""
+    # 标量 zp 按类型分域：整数→int32 两步式，浮点→fp32 一步式（int() 截断会差 1 量化级）
+    if not torch.is_tensor(scale):
+        scale = torch.tensor(float(scale), dtype=torch.float32)
+    if not torch.is_tensor(zero_point):
+        is_float_scalar = isinstance(zero_point, float) or hasattr(zero_point, "dtype")
+        if is_float_scalar:
+            zero_point = torch.tensor(float(zero_point), dtype=torch.float32)
+        else:
+            zero_point = torch.tensor(int(zero_point), dtype=torch.int32)
     orig_scalar = x.dim() == 0
     if orig_scalar:
         x = x.reshape(1)
@@ -223,12 +234,14 @@ __spec__ = {
     "FakeQuantAffineCachemask": "FakeQuantAffineCachemaskKernelSpec",
     "aclnnFakeQuantPerTensorAffineCachemask": "AclnnFakeQuantPerTensorSpec",
     "aclnnFakeQuantPerChannelAffineCachemask": "AclnnFakeQuantPerChannelSpec",
+    "torch.ops.aten.fake_quantize_per_tensor_affine_cachemask": "TorchFakeQuantPerTensorAffineCachemaskTestSpec",
+    "torch.ops.aten.fake_quantize_per_channel_affine_cachemask": "TorchFakeQuantPerChannelAffineCachemaskTestSpec",
 }
 
 _TOLERANCE = {
-    "float16": {"standard": "mix_tolerance"},
-    "float32": {"standard": "mix_tolerance"},
-    "bfloat16": {"standard": "mix_tolerance"},
+    "float16": {"standard": "cross_check", "level": "L1"},
+    "float32": {"standard": "cross_check", "level": "L1"},
+    "bfloat16": {"standard": "cross_check", "level": "L1"},
     "bool": {"standard": "binary_equal"},
 }
 
@@ -349,28 +362,39 @@ def _aten_per_tensor(x, scale, zero_point, quant_min, quant_max):
     """ATen per-tensor 独立参考（scale 标量、zp int）。
 
     ATen 支持域外退显式公式：zp 越出 [quant_min, quant_max]（ATen 前置拒绝）、
-    NaN/±Inf、超大商（int64 wrap 域）。
+    NaN/±Inf、超大商（int64 wrap 域）。显式公式要求 scale/zero_point 为
+    tensor（_to_fp32/​.to 链路），python 标量先包装。
     """
     x2 = _to_fp32(x.reshape(1) if x.dim() == 0 else x)
     # 空张量短路（与 _aten_per_channel 同口径）：kernel/aclnn 对空输入不执行
     if x2.numel() == 0:
         return x2.to(x.dtype), torch.zeros(x2.shape, dtype=torch.bool)
-    scale_v = float(scale.reshape(-1)[0]) if torch.is_tensor(scale) else float(scale)
-    zp_t = zero_point if torch.is_tensor(zero_point) else torch.tensor(zero_point)
+    scale_t = (
+        scale
+        if torch.is_tensor(scale)
+        else torch.tensor(float(scale), dtype=torch.float32)
+    )
+    # zp 显式 int32：默认 int64 会误入浮点一步式分支，半整数商处差 1 个量化级
+    zp_t = (
+        zero_point
+        if torch.is_tensor(zero_point)
+        else torch.tensor(int(zero_point), dtype=torch.int32)
+    )
+    scale_v = float(scale_t.reshape(-1)[0])
     zp_v = int(zp_t.reshape(-1)[0])
     # zp 越界：ATen 前置拒绝（zp 必须落在 quant 边界内）——退显式公式
     if not (quant_min <= zp_v <= quant_max):
-        y, m = _explicit_formula(x, scale, zero_point, 0, quant_min, quant_max)
+        y, m = _explicit_formula(x, scale_t, zp_t, 0, quant_min, quant_max)
         return y, m
     # NaN/±Inf / 超大商域
     if torch.isnan(x2).any() or torch.isinf(x2).any():
-        y, m = _explicit_formula(x, scale, zero_point, 0, quant_min, quant_max)
+        y, m = _explicit_formula(x, scale_t, zp_t, 0, quant_min, quant_max)
         return y, m
     if (
         abs(scale_v) < 1e-30
         or (x2.abs().max().item() / max(abs(scale_v), 1e-38)) > 4.6e18
     ):
-        y, m = _explicit_formula(x, scale, zero_point, 0, quant_min, quant_max)
+        y, m = _explicit_formula(x, scale_t, zp_t, 0, quant_min, quant_max)
         return y, m
     y, m = _ATEN_PT(x2, scale_v, zp_v, quant_min, quant_max)
     y = y.to(x.dtype)
@@ -378,3 +402,129 @@ def _aten_per_tensor(x, scale, zero_point, quant_min, quant_max):
         y = y.reshape(())
         m = m.reshape(())
     return y, m
+
+
+# ====================================================================
+# Torch Single / Graph 通路（从 opencann/operator-artifacts 旧版 golden 移植）
+# ====================================================================
+
+
+def _torch_norm_scale_dtype(scale_t):
+    """aten fake_quant 系列要求 scale 为 Float/BFloat16；FP16 scale 无损升到 FP32。"""
+    if scale_t.dtype not in (torch.float32, torch.bfloat16):
+        return scale_t.to(torch.float32)
+    return scale_t
+
+
+def _torch_norm_zp_dtype(zp_t):
+    """aten per-channel 要求 zero_point 为 Int32/Float/Half；浮点域统一保留 FP32（保住一步式取整），其他整型收敛到 INT32。"""
+    if zp_t.dtype in (torch.int32, torch.float32, torch.float16):
+        return zp_t
+    if zp_t.is_floating_point():
+        return zp_t.to(torch.float32)
+    return zp_t.to(torch.int32)
+
+
+def torch_fake_quant_per_tensor_golden(
+    self, scale, zero_point, quant_min=-128, quant_max=127, **kwargs
+):
+    """Torch Single golden：直调 ATen per-tensor 原生算子。
+
+    签名对齐 torch.ops.aten.fake_quantize_per_tensor_affine_cachemask
+    (Tensor self, float scale, int zero_point, int quant_min, int quant_max)
+    -> (Tensor output, Tensor mask)。
+    复用 _aten_per_tensor 的支持域适配（0 维 reshape、空张量短路、越界 zp
+    退显式公式、输出回转输入 dtype），与 third_party 参考口径一致。
+    """
+    out_t, mask_t = _aten_per_tensor(
+        _to_fp32(self), scale, zero_point, int(quant_min), int(quant_max)
+    )
+    return [out_t.to(self.dtype), mask_t]
+
+
+def torch_fake_quant_per_channel_golden(
+    self, scale, zero_point, axis=0, quant_min=-128, quant_max=127, **kwargs
+):
+    """Torch Single golden：直调 ATen per-channel 原生算子。
+
+    签名对齐 torch.ops.aten.fake_quantize_per_channel_affine_cachemask
+    (Tensor self, Tensor scale, Tensor zero_point, int axis, int quant_min, int quant_max)
+    -> (Tensor output, Tensor mask)。
+    复用 _aten_per_channel 的支持域适配（负 axis 归一化、0 维 reshape、空张量
+    短路、越界 zp 退显式公式、输出回转输入 dtype），与 third_party 参考口径一致。
+    """
+    out_t, mask_t = _aten_per_channel(
+        _to_fp32(self),
+        _torch_norm_scale_dtype(_to_fp32(scale)),
+        _torch_norm_zp_dtype(zero_point),
+        int(axis),
+        int(quant_min),
+        int(quant_max),
+    )
+    return [out_t.to(self.dtype), mask_t]
+
+
+class FakeQuantPerTensorAffineCachemaskGraph(torch.nn.Module):
+    """Graph module consumed by TTK E2E torch.compile modes.
+
+    forward 仅做可捕图操作（张量 dtype 归一化 + 原生 ATen 直调 + 输出回转
+    输入 dtype）：不含读运行时张量值的 Python 分支（.any()/.item() 等），
+    否则 fullgraph 捕图报 Data-dependent branching。支持域适配（空张量/
+    0 维/越界 zp/NaN/±Inf 退显式公式）由 single golden 的 _aten_per_* 兜底。
+    """
+
+    def __init__(self, quant_min=-128, quant_max=127, **kwargs):
+        super().__init__()
+        self.quant_min = int(quant_min)
+        self.quant_max = int(quant_max)
+
+    def forward(self, input, scale, zero_point):
+        out_t, mask_t = _ATEN_PT(
+            input.float(), scale, zero_point, self.quant_min, self.quant_max
+        )
+        return out_t.to(input.dtype), mask_t
+
+
+class FakeQuantPerChannelAffineCachemaskGraph(torch.nn.Module):
+    """Graph module consumed by TTK E2E torch.compile modes.
+
+    forward 仅做可捕图操作（张量 dtype 归一化 + 原生 ATen 直调 + 输出回转
+    输入 dtype）：_torch_norm_scale_dtype/_torch_norm_zp_dtype 只做 dtype 元
+    信息判断（dynamo 静态特化为 guard），与 single golden 共用同一归一化；
+    支持域适配由 single golden 的 _aten_per_* 兜底。
+    """
+
+    def __init__(self, axis=0, quant_min=-128, quant_max=127, **kwargs):
+        super().__init__()
+        self.axis = int(axis)
+        self.quant_min = int(quant_min)
+        self.quant_max = int(quant_max)
+
+    def forward(self, input, scale, zero_point):
+        out_t, mask_t = _ATEN_PC(
+            input.float(),
+            _torch_norm_scale_dtype(scale.float()),
+            _torch_norm_zp_dtype(zero_point),
+            self.axis,
+            self.quant_min,
+            self.quant_max,
+        )
+        return out_t.to(input.dtype), mask_t
+
+
+class TorchFakeQuantPerTensorAffineCachemaskTestSpec:
+    """Shared Torch Single/Graph spec registered by CSV ``api_name``."""
+
+    golden = staticmethod(torch_fake_quant_per_tensor_golden)
+    third_party = {"torch": "torch.ops.aten.fake_quantize_per_tensor_affine_cachemask"}
+    torch_graph = FakeQuantPerTensorAffineCachemaskGraph
+    tolerance = _TOLERANCE
+
+
+class TorchFakeQuantPerChannelAffineCachemaskTestSpec:
+    """Shared Torch Single/Graph spec registered by CSV ``api_name``."""
+
+    golden = staticmethod(torch_fake_quant_per_channel_golden)
+    third_party = {"torch": "torch.ops.aten.fake_quantize_per_channel_affine_cachemask"}
+    torch_graph = FakeQuantPerChannelAffineCachemaskGraph
+    tolerance = _TOLERANCE
