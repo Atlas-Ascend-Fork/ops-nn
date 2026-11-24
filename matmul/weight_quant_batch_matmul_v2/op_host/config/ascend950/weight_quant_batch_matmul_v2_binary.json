@@ -2220,10 +2220,6 @@
                         "float16",
                         "float16"
                     ],
-                    "dtypeForBinQuery":[
-                        "float16",
-                        "float16"
-                    ],
                     "format": "ND",
                     "formatForBinQuery": [
                         "ND",
