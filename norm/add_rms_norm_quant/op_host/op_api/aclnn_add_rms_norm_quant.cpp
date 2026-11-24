@@ -7,6 +7,8 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <cmath>
+
 #include "aclnn/aclnn_base.h"
 #include "op_api/op_api_def_nn.h"
 #include "opdev/common_types.h"
@@ -346,6 +348,18 @@ aclnnStatus aclnnAddRmsNormQuantGetWorkspaceSize(const aclTensor* x1, const aclT
     auto ret = AddRmsNormQuantACLNN::CheckParams(x1, x2, gamma, scales1, scales2Optional, zeroPoints1Optional,
                                                  zeroPoints2Optional, y1Out, y2Out, xOut);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
+
+    // epsilon 值域校验：接口入参为 double，但经 l0op（add_rms_norm_quant.cpp:46/:110）与 tiling
+    // （add_rms_norm_quant_tiling.h:35/:56）按 float32 承载，校验必须在窄化后的值上判定——
+    // 直接判 double 会留下可达窗口：1e300 → float +Inf、1e-300 → float 0.0，均绕过校验后
+    // 使 kernel 静默清零/等价 eps=0（issue #9032 及检视意见）。IEEE-754 下 NaN 的任何比较恒为假，
+    // `eps < 0` 类写法无法拦截；资料约束「建议传较小的正数」⇒ 负值/0/非有限值均按 161002 拒绝
+    // （同族先例：GroupNorm `!(*epsilon > 0.0F)` → 161002、add_rms_norm #7397 的 isfinite 范式）。
+    const float epsilonF32 = static_cast<float>(epsilon);
+    OP_CHECK(std::isfinite(epsilonF32) && epsilonF32 > 0.0f,
+             OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                     "epsilon must be a finite positive number at float32 precision, but got %lf.", epsilon),
+             return ACLNN_ERR_PARAM_INVALID);
 
     // 支持空tensor
     bool hasEmptyTensor = x1->IsEmpty() || gamma->IsEmpty() || y2Out->IsEmpty();

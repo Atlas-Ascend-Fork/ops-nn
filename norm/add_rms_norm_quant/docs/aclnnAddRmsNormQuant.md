@@ -194,7 +194,7 @@ aclnnStatus aclnnAddRmsNormQuant(
     <tr>
       <td>epsilon（double）</td>
       <td>输入</td>
-      <td>公式中的输入eps，用于防止除0错误，数据类型为double。建议传较小的正数。</td>
+      <td>公式中的输入eps，用于防止除0错误，数据类型为double。须为有限正数，负值、0或非有限值（NaN/±Inf）时返回161002；建议传较小的正数。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

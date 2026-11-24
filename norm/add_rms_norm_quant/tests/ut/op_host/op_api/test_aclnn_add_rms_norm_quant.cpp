@@ -8,6 +8,7 @@
  * the software repository for the full text of the License.
  */
 #include <array>
+#include <limits>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -440,6 +441,133 @@ TEST_F(l2_add_rms_norm_quant_test, ascend950PR_zeroPoints2_only_no_scales2)
 
     uint64_t workspace_size = 0;
     EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACL_SUCCESS);
+}
+
+// A2 上 epsilon 值域校验：NaN 的任何比较恒为假、+Inf 恒为正，`eps < 0` 类写法无法拦截；
+// 修复前 -1/0/NaN/+Inf 四档两段全返回 0，NaN/+Inf 使 y1Out 静默清零（issue #9032）。
+// 资料约束「建议传较小的正数」⇒ 负值/0/非有限值均按 161002 拒绝（同族先例：GroupNorm、add_rms_norm #7397）
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_epsilon_negative_rejected)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, -1.0, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_epsilon_zero_rejected)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, 0.0, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_epsilon_nan_rejected)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(
+        aclnnAddRmsNormQuant,
+        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, std::numeric_limits<double>::quiet_NaN(), true),
+        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_epsilon_inf_rejected)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(
+        aclnnAddRmsNormQuant,
+        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, std::numeric_limits<double>::infinity(), true),
+        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+// 窄化窗口：epsilon 为 double 有限正数但窄化为 float32 后非法——1e300 → +Inf、1e-300 → 0.0f，
+// 修复前在 double 域校验可绕过（检视意见）；校验已改为对窄化后的 float 值判定
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_epsilon_overflow_to_inf_rejected)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, 1e300, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_add_rms_norm_quant_test, ascend910B_epsilon_underflow_to_zero_rejected)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    auto tensor_desc_x1 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_x2 = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_gamma = TensorDesc({64}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto tensor_desc_s1 = TensorDesc({64}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto tensor_desc_y1 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_y2 = TensorDesc({8, 64}, ACL_INT8, ACL_FORMAT_ND);
+    auto tensor_desc_x = TensorDesc({8, 64}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnAddRmsNormQuant,
+                        INPUT(tensor_desc_x1, tensor_desc_x2, tensor_desc_gamma, tensor_desc_s1, (aclTensor*)nullptr,
+                              (aclTensor*)nullptr, (aclTensor*)nullptr, -1, 1e-300, true),
+                        OUTPUT(tensor_desc_y1, tensor_desc_y2, tensor_desc_x));
+
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
 }
 
 TEST_F(l2_add_rms_norm_quant_test, dtype_relation_x2_mismatch)
