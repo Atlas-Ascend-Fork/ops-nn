@@ -9,11 +9,65 @@
  */
 
 #include <gtest/gtest.h>
+#include "ut_op_common.h"
 
 #include "../../../op_graph/ascend_weight_quant_proto.h"
 #include "../../../op_host/ascend_weight_quant_def.cpp"
 
 namespace {
+// ge dtype raw values (graph/c_types.h): DT_INT8 = 2, DT_INT4 = 29
+constexpr int64_t DST_TYPE_INT8 = 2;
+constexpr int64_t DST_TYPE_INT4 = 29;
+constexpr int64_t DST_TYPE_UNSUPPORTED = 0;
+
+gert::StorageShape MakeStorageShape(const std::vector<int64_t>& dims)
+{
+    gert::StorageShape shape;
+    for (int64_t d : dims) {
+        shape.MutableOriginShape().AppendDim(d);
+        shape.MutableStorageShape().AppendDim(d);
+    }
+    return shape;
+}
+
+struct AscendWeightQuantInferOpt {
+    int64_t dstType = DST_TYPE_INT8;
+    bool withDstType = true;
+};
+
+ge::graphStatus RunAscendWeightQuantInfer(const std::vector<int64_t>& xDims, std::vector<int64_t>* yDims,
+                                          const AscendWeightQuantInferOpt& opt = {})
+{
+    auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("AscendWeightQuant");
+    if (impl == nullptr || impl->infer_shape == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    gert::StorageShape xShape = MakeStorageShape(xDims);
+    gert::StorageShape offsetShape = MakeStorageShape(xDims);
+    gert::StorageShape yShape;
+    std::vector<gert::StorageShape*> inputs{&xShape, &offsetShape};
+
+    gert::InferShapeContextFaker faker;
+    faker.NodeIoNum(2, 1).IrInstanceNum({1, 1});
+    faker.NodeInputTd(0, ge::DT_INT8, ge::FORMAT_HWCN, ge::FORMAT_HWCN);
+    faker.NodeInputTd(1, ge::DT_INT8, ge::FORMAT_HWCN, ge::FORMAT_HWCN);
+    faker.NodeOutputTd(0, ge::DT_INT8, ge::FORMAT_HWCN, ge::FORMAT_HWCN);
+    if (opt.withDstType) {
+        faker.NodeAttrs({{"dst_type", Ops::NN::AnyValue::CreateFrom<int64_t>(opt.dstType)}});
+    }
+    faker.InputShapes(inputs).OutputShapes({&yShape});
+    auto holder = faker.Build();
+    const ge::graphStatus ret = impl->infer_shape(holder.GetContext<gert::InferShapeContext>());
+    if (yDims != nullptr && ret == ge::GRAPH_SUCCESS) {
+        const gert::Shape* outShape = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
+        yDims->clear();
+        for (size_t i = 0; i < outShape->GetDimNum(); i++) {
+            yDims->push_back(outShape->GetDim(i));
+        }
+    }
+    return ret;
+}
+
 // 断言算子原型（ge::op::AscendWeightQuant）注册内容：2 输入 1 输出，
 // dst_type 默认 DT_INT8、支持 DT_INT4
 TEST(AscendWeightQuantProtoTest, RegistersInputsOutputsAndDefaultAttr)
@@ -97,5 +151,78 @@ TEST_F(AscendWeightQuantDefTest, RegistersDstTypeAttrWithDefault)
 
     EXPECT_EQ(std::string(attrs[0].GetName().GetString()), "dst_type");
     EXPECT_EQ(std::string(attrs[0].GetAttrDefaultVal("").GetString()), "2");
+}
+
+// ------------------ 迁移自 canndev op_proto quantize_ops.cc 的 InferShape 能力 ------------------
+// 原实现：y.shape = x.shape；dst_type 仅支持 DT_INT8/DT_INT4，否则返回 GRAPH_FAILED。
+
+class AscendWeightQuantInferShapeTest : public testing::Test {
+protected:
+    AscendWeightQuantInferOpt opt;
+};
+
+TEST_F(AscendWeightQuantInferShapeTest, CopiesXShapeToY)
+{
+    const std::vector<std::vector<int64_t>> cases = {{4, 1, 1, 1}, {8, 16, 3, 3}, {1}, {}};
+    for (const auto& xDims : cases) {
+        std::vector<int64_t> yDims;
+        EXPECT_EQ(RunAscendWeightQuantInfer(xDims, &yDims, opt), ge::GRAPH_SUCCESS);
+        EXPECT_EQ(yDims, xDims);
+    }
+}
+
+TEST_F(AscendWeightQuantInferShapeTest, PreservesDynamicShape)
+{
+    const std::vector<std::vector<int64_t>> cases = {{-1, 2, 3, 4}, {2, -1, -1, -1}, {-1}};
+    for (const auto& xDims : cases) {
+        std::vector<int64_t> yDims;
+        EXPECT_EQ(RunAscendWeightQuantInfer(xDims, &yDims, opt), ge::GRAPH_SUCCESS);
+        EXPECT_EQ(yDims, xDims);
+    }
+}
+
+TEST_F(AscendWeightQuantInferShapeTest, PreservesUnknownRank)
+{
+    std::vector<int64_t> yDims;
+    EXPECT_EQ(RunAscendWeightQuantInfer({-2}, &yDims, opt), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(yDims.size(), 1U);
+    EXPECT_EQ(yDims[0], -2);
+}
+
+TEST_F(AscendWeightQuantInferShapeTest, DefaultDstTypeInt8Success)
+{
+    AscendWeightQuantInferOpt noAttrOpt;
+    noAttrOpt.withDstType = false;
+    std::vector<int64_t> yDims;
+    EXPECT_EQ(RunAscendWeightQuantInfer({4, 1, 1, 1}, &yDims, noAttrOpt), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(yDims, std::vector<int64_t>({4, 1, 1, 1}));
+}
+
+TEST_F(AscendWeightQuantInferShapeTest, DstTypeInt4Success)
+{
+    AscendWeightQuantInferOpt int4Opt;
+    int4Opt.dstType = DST_TYPE_INT4;
+    std::vector<int64_t> yDims;
+    EXPECT_EQ(RunAscendWeightQuantInfer({4, 1, 1, 1}, &yDims, int4Opt), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(yDims, std::vector<int64_t>({4, 1, 1, 1}));
+}
+
+TEST_F(AscendWeightQuantInferShapeTest, RejectsUnsupportedDstType)
+{
+    const std::vector<int64_t> unsupported = {DST_TYPE_UNSUPPORTED, 1, 3, 4, 5, 6};
+    for (int64_t dstType : unsupported) {
+        AscendWeightQuantInferOpt badOpt;
+        badOpt.dstType = dstType;
+        std::vector<int64_t> yDims;
+        EXPECT_EQ(RunAscendWeightQuantInfer({4, 1, 1, 1}, &yDims, badOpt), ge::GRAPH_FAILED);
+    }
+}
+
+TEST_F(AscendWeightQuantInferShapeTest, RejectsNullContext)
+{
+    auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("AscendWeightQuant");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+    EXPECT_EQ(impl->infer_shape(nullptr), ge::GRAPH_FAILED);
 }
 } // namespace
