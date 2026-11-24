@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Divides tensor list x by scalar scalar. Compared with [aclnnForeachDivScalar](aclnnForeachDivScalar.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Select an appropriate API based on actual requirements.
+- Description: Divides tensor list x by scalar scalar. Compared with [aclnnForeachDivScalar](aclnnForeachDivScalar_en.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Select an appropriate API based on actual requirements.
 - Formula:
 
   $$
