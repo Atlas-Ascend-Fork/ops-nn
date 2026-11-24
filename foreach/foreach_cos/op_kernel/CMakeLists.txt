@@ -12,8 +12,16 @@ add_kernel_sources(
     COMPUTE_UNITS ascend910b ascend910_93 kirinx90 kirin9030
     AUTO_SYNC false
 )
+# arch35: ascend950, ascend350
+add_kernel_sources(
+    # ascend950 only: RegBase SIMD TU (one TU cannot mix SIMT and the Reg API)
+    KERNEL_SRC arch35/foreach_cos_arch35.cpp
+    COMPUTE_UNITS ascend950
+    AUTO_SYNC false
+)
+# ascend350 keeps the original SIMT TU
 add_kernel_sources(
     KERNEL_SRC arch35/foreach_cos.cpp
-    COMPUTE_UNITS ascend950 ascend350
+    COMPUTE_UNITS ascend350
     AUTO_SYNC false
 )

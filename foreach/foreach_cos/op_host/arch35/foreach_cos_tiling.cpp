@@ -21,6 +21,7 @@
 #include "../../op_kernel/arch35/foreach_cos_tiling_data.h"
 #include "../../op_kernel/arch35/foreach_cos_tiling_key.h"
 #include "../../../foreach_utils/op_host/foreach_flat_regbase_validator.h"
+#include "../../../foreach_utils/op_host/foreach_flat_regbase_tiling.h"
 
 namespace optiling {
 
@@ -51,11 +52,83 @@ static bool IsForeachCosDtype(ge::DataType dtype)
     return dtype == ge::DT_FLOAT || dtype == ge::DT_FLOAT16 || dtype == ge::DT_BF16;
 }
 
+/*
+ * Ascend950 transport: RegBase flat tiling.  The shared Build<1> fills a ForeachFlatTilingData
+ * (the caller already ran the same ValidateHomogeneous<1>), sets the block dim / UB and requests a
+ * 32B workspace.  This operator does not use workspace, so the public dtype tiling key is
+ * re-derived, the workspace is overwritten to 0, and tileElems is clamped so the double-buffered
+ * in+out tile plus the tiling copy fits the UB.  Build's core split depends only on
+ * MIN_CORE_WORK_BYTES, not on tileElems.
+ */
+static ge::graphStatus ForeachCosRegbaseTiling(gert::TilingContext* context)
+{
+    auto rawTiling = context->GetRawTilingData();
+    OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
+    OP_CHECK_IF(rawTiling->GetCapacity() < sizeof(ForeachFlatTilingData),
+                OP_LOGE(context, "tiling capacity[%zu] is smaller than ForeachFlatTilingData[%zu]",
+                        rawTiling->GetCapacity(), sizeof(ForeachFlatTilingData)),
+                return ge::GRAPH_FAILED);
+
+    if (ForeachFlatRegbaseTiling::Build<1>(context) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
+    auto xDesc = context->GetDynamicInputDesc(0, 0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
+    ge::DataType xDtype = xDesc->GetDataType();
+
+    uint64_t tilingKey = 0;
+    if (xDtype == ge::DT_FLOAT) {
+        tilingKey = GET_TPL_TILING_KEY(FOREACH_COS_TPL_SCH_MODE_FLOAT);
+    } else if (xDtype == ge::DT_FLOAT16) {
+        tilingKey = GET_TPL_TILING_KEY(FOREACH_COS_TPL_SCH_MODE_FLOAT16);
+    } else if (xDtype == ge::DT_BF16) {
+        tilingKey = GET_TPL_TILING_KEY(FOREACH_COS_TPL_SCH_MODE_BF16);
+    } else {
+        OP_LOGE(context, "Unsupported x dtype");
+        return ge::GRAPH_FAILED;
+    }
+    context->SetTilingKey(tilingKey);
+
+    size_t* wsSizes = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, wsSizes);
+    wsSizes[0] = 0;
+
+    ForeachFlatTilingData* tiling = context->GetTilingData<ForeachFlatTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
+    uint64_t ubSize = 0;
+    int64_t maxCoreNum = 0;
+    OP_CHECK_IF(GetPlatformInfo(context, ubSize, maxCoreNum) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "GetPlatformInfo failed"), return ge::GRAPH_FAILED);
+    constexpr uint64_t TILING_RESERVE_BYTES = 16384U;
+    constexpr uint64_t TILE_VL_ELEMS = 64U;
+    constexpr uint64_t BUFFER_COPIES = 4U; // BUFFER_DEPTH(2) * (one input flow + one output)
+    uint64_t budget = ubSize > TILING_RESERVE_BYTES ? ubSize - TILING_RESERVE_BYTES : 0U;
+    uint64_t storageBytes = (xDtype == ge::DT_FLOAT16 || xDtype == ge::DT_BF16) ? 2U : 4U;
+    uint64_t maxTileElems = budget / (BUFFER_COPIES * storageBytes);
+    maxTileElems = maxTileElems / TILE_VL_ELEMS * TILE_VL_ELEMS;
+    OP_CHECK_IF(maxTileElems == 0U, OP_LOGE(context, "UB[%lu] is too small for one vector tile", ubSize),
+                return ge::GRAPH_FAILED);
+    if (static_cast<uint64_t>(tiling->tileElems) > maxTileElems) {
+        tiling->tileElems = static_cast<uint32_t>(maxTileElems);
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 static ge::graphStatus ForeachCosTilingFunc(gert::TilingContext* context)
 {
     // 0. Validate tensor-list size, dtype homogeneity, rank and output capacity
     if (ForeachFlatRegbaseValidation::ValidateHomogeneous<1>(context, IsForeachCosDtype) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
+    }
+
+    // Ascend950 routes to the RegBase flat transport (arch35/foreach_cos_arch35.cpp). Every other SoC
+    // keeps the baseline SIMT tiling body below, verbatim.
+    auto socPlatformInfo = context->GetPlatformInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, socPlatformInfo);
+    auto socPlatform = platform_ascendc::PlatformAscendC(socPlatformInfo);
+    if (socPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) {
+        return ForeachCosRegbaseTiling(context);
     }
 
     // 1. Get platform info

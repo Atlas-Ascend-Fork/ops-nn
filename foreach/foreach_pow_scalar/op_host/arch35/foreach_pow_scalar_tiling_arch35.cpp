@@ -23,6 +23,8 @@
 #include "foreach/foreach_pow_scalar/op_kernel/arch35/foreach_pow_scalar_tiling_data.h"
 #include "foreach/foreach_pow_scalar/op_kernel/arch35/foreach_pow_scalar_tiling_key.h"
 #include "../../../foreach_utils/op_host/foreach_flat_regbase_validator.h"
+// Ascend950 transport: shared flat tiling builder (only reached from the ASCEND950 branch below).
+#include "../../../foreach_utils/op_host/foreach_flat_regbase_tiling.h"
 
 namespace optiling {
 
@@ -52,11 +54,23 @@ static bool IsForeachPowScalarDtype(ge::DataType dtype)
     return dtype == ge::DT_FLOAT || dtype == ge::DT_FLOAT16 || dtype == ge::DT_BF16 || dtype == ge::DT_INT32;
 }
 
+// Ascend950 transport: target-private RegBase flat tiling body (kept out of the shared legacy code).
+#include "foreach_pow_scalar_regbase_tiling.h"
+
 static ge::graphStatus ForeachPowScalarTilingFunc(gert::TilingContext* context)
 {
     // 0. Validate list size/dtype and y storage capacity (y storage size >= x storage size)
     if (ForeachFlatRegbaseValidation::ValidateHomogeneous<1>(context, IsForeachPowScalarDtype) != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
+    }
+
+    // Ascend950 routes to the RegBase flat transport (arch35/foreach_pow_scalar_arch35.cpp); every other
+    // SoC falls through to the baseline flat-free tiling and SIMT kernel body below, verbatim.
+    auto socPlatformInfo = context->GetPlatformInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, socPlatformInfo);
+    auto socPlatform = platform_ascendc::PlatformAscendC(socPlatformInfo);
+    if (socPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) {
+        return ForeachPowScalarRegbaseTiling(context);
     }
 
     // 1. Get platform info
