@@ -28,6 +28,7 @@ __spec__ = {
     "deep_norm": "DeepNormKernelSpec",
     "DeepNorm": "DeepNormKernelSpec",
     "aclnnDeepNorm": "DeepNormAclnnSpec",
+    "torch_npu.npu_deep_norm": "TorchDeepNormSpec",
 }
 
 __golden__ = {
@@ -36,6 +37,7 @@ __golden__ = {
         "DeepNorm": "deep_norm_golden",
     },
     "aclnn": {"aclnnDeepNorm": "deep_norm_aclnn_golden"},
+    "e2e": {"torch_npu.npu_deep_norm": "deep_norm_e2e_golden"},
 }
 
 __input__ = {
@@ -44,6 +46,7 @@ __input__ = {
         "DeepNorm": "deep_norm_input",
     },
     "aclnn": {"aclnnDeepNorm": "deep_norm_aclnn_input"},
+    "e2e": {"torch_npu.npu_deep_norm": "deep_norm_input"},
 }
 
 _KERNEL_TOLERANCE = {
@@ -414,4 +417,37 @@ class DeepNormAclnnSpec:
     tolerance = _ACLNN_TOLERANCE
 
 
-# 【不存在】e2e 通路: 未发现 torch_npu eager/aten 绑定到 aclnnDeepNorm.
+def deep_norm_e2e_golden(
+    x,
+    gx,
+    beta,
+    gamma,
+    alpha=0.3,
+    epsilon=1e-6,
+    output_dtypes=None,
+    golden_mode=None,
+    **kwargs,
+):
+    """Return [mean, rstd, y] for the torch_npu.npu_deep_norm e2e API.
+
+    The e2e API mirrors the ACLNN outputs (mean/rstd/y) but has no output
+    slots, so this wrapper takes the torch API signature directly. E2E golden
+    receives CPU host-side torch.Tensor inputs, at the declared dtype in
+    Enable mode and promoted dtype under --golden-mode Promote.
+    """
+    promoted = golden_mode == "Promote"
+    mean, rstd, y = _compute_deep_norm(x, gx, beta, gamma, alpha, epsilon, promoted)
+    if promoted:
+        return [mean, rstd, y]
+    y_dtype = _dtype_name(output_dtypes[2]) if output_dtypes else _dtype_name(x.dtype)
+    return [
+        mean.to(torch.float32),
+        rstd.to(torch.float32),
+        y.to(_torch_dtype_from_name(y_dtype)),
+    ]
+
+
+class TorchDeepNormSpec(DeepNormAclnnSpec):
+    """torch_npu.npu_deep_norm: outputs and tolerance follow the ACLNN path."""
+
+    golden = staticmethod(deep_norm_e2e_golden)

@@ -19,6 +19,7 @@ __spec__ = {
     "deep_norm_grad": "DeepNormGradKernelSpec",
     "DeepNormGrad": "DeepNormGradKernelSpec",
     "aclnnDeepNormGrad": "DeepNormGradAclnnSpec",
+    "torch_npu.npu_deep_norm_backward": "TorchDeepNormGradSpec",
 }
 
 __golden__ = {
@@ -27,10 +28,12 @@ __golden__ = {
         "DeepNormGrad": "deep_norm_grad_golden",
     },
     "aclnn": {"aclnnDeepNormGrad": "deep_norm_grad_aclnn_golden"},
+    "e2e": {"torch_npu.npu_deep_norm_backward": "deep_norm_grad_e2e_golden"},
 }
 __input__ = {
     "kernel": {"deep_norm_grad": "deep_norm_grad_input"},
     "aclnn": {"aclnnDeepNormGrad": "deep_norm_grad_input"},
+    "e2e": {"torch_npu.npu_deep_norm_backward": "deep_norm_grad_input"},
 }
 
 _TOLERANCE = {
@@ -495,4 +498,18 @@ class DeepNormGradAclnnSpec:
     tolerance = _TOLERANCE
 
 
-# 【不存在】e2e 通路: 未发现 torch_npu eager/aten 绑定到 aclnnDeepNormGrad.
+def deep_norm_grad_e2e_golden(dy, x, gx, gamma, mean, rstd, alpha=0.3, **kwargs):
+    """Return [dx, dgx, dbeta, dgamma] for torch_npu.npu_deep_norm_backward.
+
+    The e2e API output order/dtypes match the ACLNN path (dbeta/dgamma are
+    FP32), so the ACLNN golden is reused directly.
+    """
+    return deep_norm_grad_aclnn_golden(
+        dy, x, gx, gamma, mean, rstd, alpha=alpha, **kwargs
+    )
+
+
+class TorchDeepNormGradSpec(DeepNormGradAclnnSpec):
+    """torch_npu.npu_deep_norm_backward: outputs follow the ACLNN path."""
+
+    golden = staticmethod(deep_norm_grad_e2e_golden)
