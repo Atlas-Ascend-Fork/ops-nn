@@ -14,6 +14,8 @@
 #include "kernel_tiling/kernel_tiling.h"
 #include "kernel_operator.h"
 #include "arch35/arg_max_grad_nd.h"
+#include "arch35/arg_max_grad_short_axis.h"
+#include "arch35/arg_max_grad_sparse_copy.h"
 #include "arch35/arg_max_grad_tiling_data.h"
 #include "arch35/arg_max_grad_tiling_key.h"
 
@@ -29,6 +31,20 @@ __global__ __aicore__ void arg_max_grad(GM_ADDR var, GM_ADDR indices, GM_ADDR up
     GET_TILING_DATA_WITH_STRUCT(ArgMaxGradArch35TilingData, tilingData, tiling);
 
     TPipe pipe;
+    if (tilingData.mergeMode == ARG_MAX_GRAD_SHORT_AXIS) {
+        ArgMaxGrad::ArgMaxGradShortAxis<DTYPE_VAR, innerIsOne == 1> op;
+        op.Init(var, indices, updates, y, &tilingData, &pipe);
+        op.Process();
+        return;
+    }
+    if constexpr (innerIsOne != 1 && IsSameType<DTYPE_VAR, half>::value) {
+        if (tilingData.mergeMode == ARG_MAX_GRAD_SPARSE_COPY) {
+            ArgMaxGrad::ArgMaxGradSparseCopy<DTYPE_VAR> op;
+            op.Init(var, indices, updates, y, &tilingData, &pipe);
+            op.Process();
+            return;
+        }
+    }
     ArgMaxGrad::ArgMaxGradND<DTYPE_VAR, innerIsOne == 1> op;
     op.Init(var, indices, updates, y, &tilingData, &pipe);
     op.Process();

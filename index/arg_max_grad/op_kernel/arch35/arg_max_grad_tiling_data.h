@@ -16,6 +16,9 @@
 
 #include <cstdint>
 
+constexpr int64_t ARG_MAX_GRAD_SPARSE_COPY = 4;
+constexpr int64_t ARG_MAX_GRAD_SHORT_AXIS = 5;
+
 struct ArgMaxGradArch35TilingData {
     int64_t outer = 0;        // ∏ dims[0..dimension-1]
     int64_t dimSize = 0;      // D = dims[dimension], 被选择的轴长
@@ -37,7 +40,7 @@ struct ArgMaxGradArch35TilingData {
     int64_t rowElems = 0; // MERGE_PAD 下一行在 UB 里的跨度(元素), 取 T 域与 int32 域的公共 32B 粒度
     int64_t dstStrideT = 0; // MERGE_PAD 下 T 域(var/updates/y)的 burst 间隔, 单位 32B 块
     int64_t dstStrideI = 0; // MERGE_PAD 下 int32 域(indices)的 burst 间隔, 单位 32B 块
-    int64_t mergeMode = 0; // 见 op_host 同名常量: 0=按行补齐, 1=紧排逐行直算, 2=紧排铺 tile, 3=紧排流式铺设
+    int64_t mergeMode = 0;  // 0–3: 原逐行选择路径，4–5: 连续搬运后仅更新命中位置
 };
 
 #endif // ARG_MAX_GRAD_TILING_DATA_H

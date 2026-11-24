@@ -11,6 +11,7 @@
  * \file arg_max_grad_tiling_arch35.cpp
  * \brief
  */
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include "error_util.h"
@@ -66,6 +67,12 @@ constexpr int64_t MERGE_PAD = 0;
 constexpr int64_t MERGE_COMPACT_DIRECT = 1;
 constexpr int64_t MERGE_COMPACT_FILL = 2;
 constexpr int64_t MERGE_COMPACT_STREAM = 3;
+constexpr int64_t SHORT_AXIS_MAX_LENGTH = 32;
+constexpr int64_t SHORT_AXIS_MAX_INNER = 32;
+constexpr int64_t SCATTER_TILE_MAX_ELEMS = static_cast<int64_t>(std::numeric_limits<uint16_t>::max()) + 1;
+constexpr int64_t SPARSE_COPY_MIN_LENGTH = 65536;
+constexpr int64_t SPARSE_COPY_MAX_INNER = 128;
+constexpr int64_t SPARSE_COPY_MAX_OUTER = 4;
 // SIMD/SIMT 共用的 dcache, 与参照算子一致预留
 constexpr uint64_t SIMD_SIMT_DCACHE_SIZE = static_cast<uint64_t>(32 * 1024);
 
@@ -99,6 +106,7 @@ private:
     ge::graphStatus CheckShape();
     ge::graphStatus CheckAttrAndSplitLayout();
     ge::graphStatus CalUbSplit();
+    bool TrySparseUpdatePlan();
     UbLayout MakeUbLayout(int64_t cols, bool rowDirect) const;
     int64_t SolveColsPerChunk(bool rowDirect, int64_t upperCols) const;
     void CalMergeParams(int64_t cols) const;
@@ -380,6 +388,58 @@ void ArgMaxGradTiling::CalMergeParams(int64_t cols) const
     }
 }
 
+bool ArgMaxGradTiling::TrySparseUpdatePlan()
+{
+    auto& data = *tilingData_;
+    const int64_t vectorBytes = vlInt32_ * DTYPE_LEN_INT32;
+    const int64_t ubBytes = static_cast<int64_t>(ubSize_);
+    const bool shortLastAxis = data.inner == 1 && data.dimSize > 0 && data.dimSize <= SHORT_AXIS_MAX_LENGTH;
+    const bool shortNonLastAxis = data.dimSize == 2 && data.inner > 1 && data.inner <= SHORT_AXIS_MAX_INNER;
+    if ((shortLastAxis || shortNonLastAxis) && data.outer >= coreNum_ * UB_BLOCK_BYTES) {
+        const int64_t rowElems = data.inner * data.dimSize;
+        const int64_t updateElems = vlInt32_ * data.inner;
+        const int64_t groupElems = vlInt32_ * rowElems;
+        const int64_t tileBytes = Ops::Base::CeilAlign(groupElems * varDtypeLen_, vectorBytes);
+        const int64_t indexBytes = updateElems * DTYPE_LEN_INT32;
+        const int64_t updateBytes = Ops::Base::CeilAlign(updateElems * varDtypeLen_, vectorBytes);
+        const int64_t groupsByUb = ubBytes / (BUFFER_NUM * (tileBytes + indexBytes + updateBytes));
+        const int64_t groupsByScatter = SCATTER_TILE_MAX_ELEMS / groupElems;
+        const int64_t groups = std::min(groupsByUb, groupsByScatter);
+        if (groups == 0) {
+            return false;
+        }
+        // Whole rows and 32B ownership avoid sharing a destination DMA block between cores.
+        const int64_t rowsPerCore = Ops::Base::CeilAlign(Ops::Base::CeilDiv(data.outer, coreNum_), UB_BLOCK_BYTES);
+        const int64_t tileGroups = Ops::Base::CeilDiv(rowsPerCore, vlInt32_);
+        const int64_t usedGroups = groups < tileGroups ? groups : tileGroups;
+        data.elemsPerCore = rowsPerCore * rowElems;
+        realCoreNum_ = Ops::Base::CeilDiv(data.outer, rowsPerCore);
+        data.rowsPerChunk = usedGroups * vlInt32_;
+        data.tBufBytes = usedGroups * tileBytes;
+        data.idxBufBytes = usedGroups * indexBytes;
+        data.updBufBytes = usedGroups * updateBytes;
+        data.mergeMode = ARG_MAX_GRAD_SHORT_AXIS;
+        return true;
+    }
+    if (varDtypeLen_ != DTYPE_LEN_HALF || data.dimSize < SPARSE_COPY_MIN_LENGTH || data.inner <= 1 ||
+        data.inner > SPARSE_COPY_MAX_INNER || data.outer <= 0 || data.outer > SPARSE_COPY_MAX_OUTER ||
+        data.elemsPerCore > MAX_DIM_SIZE) {
+        return false;
+    }
+    const int64_t updates = data.outer * data.inner;
+    const int64_t indexBytes = Ops::Base::CeilAlign(updates * DTYPE_LEN_INT32, vectorBytes);
+    const int64_t updateBytes = Ops::Base::CeilAlign(updates * varDtypeLen_, vectorBytes);
+    const int64_t available = ubBytes - indexBytes - updateBytes;
+    if (available < BUFFER_NUM * vectorBytes) {
+        return false;
+    }
+    data.tBufBytes = available / (BUFFER_NUM * vectorBytes) * vectorBytes;
+    data.idxBufBytes = indexBytes;
+    data.updBufBytes = updateBytes;
+    data.mergeMode = ARG_MAX_GRAD_SPARSE_COPY;
+    return true;
+}
+
 ge::graphStatus ArgMaxGradTiling::CalUbSplit()
 {
     const bool innerIsOne = (tilingData_->inner == 1);
@@ -486,8 +546,10 @@ ge::graphStatus ArgMaxGradTiling::DoTiling()
     }
 
     CalCoreSplit();
-    OP_CHECK_IF((CalUbSplit() != ge::GRAPH_SUCCESS), OP_LOGE(context_->GetNodeName(), "CalUbSplit failed"),
-                return ge::GRAPH_FAILED);
+    if (!TrySparseUpdatePlan()) {
+        OP_CHECK_IF((CalUbSplit() != ge::GRAPH_SUCCESS), OP_LOGE(context_->GetNodeName(), "CalUbSplit failed"),
+                    return ge::GRAPH_FAILED);
+    }
     PrintTilingData();
 
     context_->SetTilingKey(GET_TPL_TILING_KEY(innerIsOne ? KEY_INNER_ONE : KEY_INNER_MULTI));

@@ -475,20 +475,86 @@ TEST_F(ArgMaxGradTiling, test_tiling_rank_full_range)
     }
 }
 
-// 多核切分: elemsPerCore 必须 32B 对齐(跨核不共享搬运块), 且能覆盖全部元素
-// inner==1 且 D 很小、outer 很大: 每段能装 colsPerChunk/D 个 outer, indices/updates 各要
-// 一个与之等长的标量缓冲, 但 bytesPerPoint 对 inner==1 把这两块记成 0 —— 段长按不含它们的
-// 口径算满 UB 后再分配, 总量必然超。这类形状在支持面之内, 不该被 tiling 拒收。
+// 大 outer 的短末轴按整行切核，每核需要多个 UB tile。
 TEST_F(ArgMaxGradTiling, test_tiling_inner_one_small_axis_large_outer)
 {
+    constexpr int64_t availableUb = 253952 - 32 * 1024;
     uint64_t tilingKey = 0;
     uint32_t blockDim = 0;
     ArgMaxGradArch35TilingData td{};
     for (int64_t d : {2, 4, 8}) {
-        EXPECT_EQ(DoArgMaxGradTilingCase({{1000000, d, 1}, 1, ge::DT_FLOAT}, tilingKey, blockDim, &td),
+        ASSERT_EQ(DoArgMaxGradTilingCase({{1000000, d, 1}, 1, ge::DT_FLOAT}, tilingKey, blockDim, &td),
                   ge::GRAPH_SUCCESS)
             << "d=" << d;
+        EXPECT_EQ(td.mergeMode, ARG_MAX_GRAD_SHORT_AXIS);
+        EXPECT_EQ(blockDim, 64U);
+        EXPECT_EQ(td.elemsPerCore, 15648 * d);
+        EXPECT_GT(td.rowsPerChunk, 0);
+        EXPECT_EQ(td.rowsPerChunk % 64, 0);
+        EXPECT_LT(td.rowsPerChunk * d, td.elemsPerCore);
+        EXPECT_EQ(td.tBufBytes, td.rowsPerChunk * d * static_cast<int64_t>(sizeof(float)));
+        EXPECT_EQ(td.idxBufBytes, td.rowsPerChunk * static_cast<int64_t>(sizeof(int32_t)));
+        EXPECT_EQ(td.updBufBytes, td.rowsPerChunk * static_cast<int64_t>(sizeof(float)));
+        EXPECT_LE(2 * (td.tBufBytes + td.idxBufBytes + td.updBufBytes), availableUb);
+        EXPECT_EQ(td.colsPerChunk, 0);
     }
+}
+
+TEST_F(ArgMaxGradTiling, test_tiling_short_last_axis_tail)
+{
+    uint64_t tilingKey = 0;
+    uint32_t blockDim = 0;
+    ArgMaxGradArch35TilingData td{};
+    ASSERT_EQ(DoArgMaxGradTilingCase({{2047, 31, 1}, 1, ge::DT_INT8}, tilingKey, blockDim, &td), ge::GRAPH_SUCCESS);
+    EXPECT_NE(td.mergeMode, ARG_MAX_GRAD_SHORT_AXIS);
+    EXPECT_GT(td.colsPerChunk, 0);
+
+    ASSERT_EQ(DoArgMaxGradTilingCase({{4097, 31, 1}, 1, ge::DT_INT8}, tilingKey, blockDim, &td), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(td.mergeMode, ARG_MAX_GRAD_SHORT_AXIS);
+    EXPECT_EQ(blockDim, 43U);
+    EXPECT_EQ(td.elemsPerCore, 96 * 31);
+    EXPECT_EQ(td.rowsPerChunk, 128);
+    EXPECT_EQ(td.tBufBytes, 4096);
+    EXPECT_EQ(td.idxBufBytes, 512);
+    EXPECT_EQ(td.updBufBytes, 512);
+    EXPECT_EQ(td.colsPerChunk, 0);
+}
+
+TEST_F(ArgMaxGradTiling, test_tiling_short_non_last_axis_uses_ub_budget)
+{
+    constexpr int64_t availableUb = 253952 - 32 * 1024;
+    uint64_t tilingKey = 0;
+    uint32_t blockDim = 0;
+    ArgMaxGradArch35TilingData td{};
+    ASSERT_EQ(DoArgMaxGradTilingCase({{65537, 2, 15}, 1, ge::DT_INT8}, tilingKey, blockDim, &td), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(td.mergeMode, ARG_MAX_GRAD_SHORT_AXIS);
+    EXPECT_EQ(blockDim, 63U);
+    EXPECT_EQ(td.elemsPerCore, 1056 * 2 * 15);
+    EXPECT_EQ(td.rowsPerChunk, 1024);
+    EXPECT_EQ(td.tBufBytes, 32768);
+    EXPECT_EQ(td.idxBufBytes, 61440);
+    EXPECT_EQ(td.updBufBytes, 16384);
+    EXPECT_EQ(2 * (td.tBufBytes + td.idxBufBytes + td.updBufBytes), availableUb);
+    EXPECT_EQ(td.colsPerChunk, 0);
+}
+
+TEST_F(ArgMaxGradTiling, test_tiling_long_axis_sparse_copy)
+{
+    constexpr int64_t availableUb = 253952 - 32 * 1024;
+    uint64_t tilingKey = 0;
+    uint32_t blockDim = 0;
+    ArgMaxGradArch35TilingData td{};
+    ASSERT_EQ(DoArgMaxGradTilingCase({{2, 65537, 33}, 1, ge::DT_FLOAT16}, tilingKey, blockDim, &td), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(td.mergeMode, ARG_MAX_GRAD_SPARSE_COPY);
+    EXPECT_EQ(blockDim, 64U);
+    EXPECT_EQ(td.elemsPerCore, 67600);
+    EXPECT_EQ(td.tBufBytes, 110080);
+    EXPECT_EQ(td.idxBufBytes, 512);
+    EXPECT_EQ(td.updBufBytes, 256);
+    EXPECT_LE(2 * td.tBufBytes + td.idxBufBytes + td.updBufBytes, availableUb);
+    EXPECT_GT(td.elemsPerCore * static_cast<int64_t>(sizeof(uint16_t)), td.tBufBytes);
+    EXPECT_EQ(td.colsPerChunk, 0);
+    EXPECT_EQ(td.rowsPerChunk, 0);
 }
 
 // 平台信息异常时必须干净拒收(而不是拿非法值继续算)。这三条对应 tiling 里三处拒收分支:
