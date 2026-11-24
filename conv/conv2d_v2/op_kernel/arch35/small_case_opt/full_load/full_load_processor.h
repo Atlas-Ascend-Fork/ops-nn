@@ -48,6 +48,7 @@ struct FullLoadProcessor {
     Scheme scheme_;
     ComputeL1LayoutTool<BlockCtx, TilingData> l1Layout_;
     SetupGmTool<BlockCtx, TilingData> setupGm_;
+    SetupFmapGmBatchTool<BlockCtx, TilingData> setupFmapGmBatch_;
     LoadWeightL1Tool<BlockCtx, TilingData> loadWeight_;
     LoadBiasScaleL1Tool<BlockCtx, TilingData> loadBiasScale_;
     LoadBiasToBTTool<BlockCtx, TilingData> loadBiasToBt_;
@@ -75,7 +76,7 @@ struct FullLoadProcessor {
 
         // enableBatchDoubleBuffer: only when the complete two-buffer layout
         // (fmap x2 + weight + bias/scale/relu tails) fits in L1.
-        L1Layout l1Two = l1Layout_(tiling, 2, al1ElemPerBuf, bl1ElemCount);
+        L1Layout l1Two = l1Layout_(tiling, DOUBLE_BUFFER_NUM, al1ElemPerBuf, bl1ElemCount);
         bool enableBatchDoubleBuffer = (blockCtx.singleCoreBatch > 1) && (l1Two.endBytes <= TOTAL_L1_SIZE);
         L1Layout l1Layout = enableBatchDoubleBuffer ? l1Two : l1Layout_(tiling, 1, al1ElemPerBuf, bl1ElemCount);
 
@@ -169,7 +170,7 @@ protected:
                 for (uint32_t batchIdx = 0; batchIdx < blockCtx.singleCoreBatch; batchIdx++) {
                     blockCtx.curBatchIdx = blockCtx.batchStart + batchIdx;
                     GlobalTensor<FmapT> fmapGmB;
-                    setupFmapGmBatch(tiling, x, blockCtx.batchStart + batchIdx, groupPlan.groupChanOff, fmapGmB);
+                    setupFmapGmBatch_(tiling, x, blockCtx.batchStart + batchIdx, groupPlan.groupChanOff, fmapGmB);
                     scheme_.LoadFmapWindow(tiling, fmapGmB, al1, blockWindow.curHi, blockWindow.hiStart,
                                            blockWindow.curWi, blockWindow.wiStart, 0, curGroupCin);
                     SetFlag<HardEvent::MTE2_MTE1>(EVT_BATCH_BUF0);
@@ -185,10 +186,10 @@ protected:
                 loadWeight_(blockCtx, tiling, filterGm, bl1);
                 SetFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_DONE);
                 WaitFlag<HardEvent::MTE2_MTE1>(EVT_MTE2_DONE);
-                uint32_t al1ElemPerBuf = l1Layout.al1ElemCount / 2;
+                uint32_t al1ElemPerBuf = l1Layout.al1ElemCount / DOUBLE_BUFFER_NUM;
                 {
                     GlobalTensor<FmapT> fmapGm0;
-                    setupFmapGmBatch(tiling, x, blockCtx.batchStart, groupPlan.groupChanOff, fmapGm0);
+                    setupFmapGmBatch_(tiling, x, blockCtx.batchStart, groupPlan.groupChanOff, fmapGm0);
                     LocalTensor<FmapT> al1Buf0(TPosition::A1, 0, al1ElemPerBuf);
                     scheme_.LoadFmapWindow(tiling, fmapGm0, al1Buf0, blockWindow.curHi, blockWindow.hiStart,
                                            blockWindow.curWi, blockWindow.wiStart, 0, curGroupCin);
@@ -200,8 +201,8 @@ protected:
                     uint32_t nextBuf = 1 - curBuf;
                     if (batchIdx + 1 < blockCtx.singleCoreBatch) {
                         GlobalTensor<FmapT> fmapGmN;
-                        setupFmapGmBatch(tiling, x, blockCtx.batchStart + batchIdx + 1, groupPlan.groupChanOff,
-                                         fmapGmN);
+                        setupFmapGmBatch_(tiling, x, blockCtx.batchStart + batchIdx + 1, groupPlan.groupChanOff,
+                                          fmapGmN);
                         if (batchIdx > 0) {
                             WaitFlag<HardEvent::MTE1_MTE2>(nextBuf ? EVT_BATCH_BUF1 : EVT_BATCH_BUF0);
                         }
@@ -388,20 +389,6 @@ protected:
                 }
             }
         }
-    }
-
-    __aicore__ inline void setupFmapGmBatch(const TilingData& tiling, GM_ADDR x, uint32_t curBatch,
-                                            uint32_t groupChanOff, GlobalTensor<FmapT>& fmapGm) const
-    {
-        uint64_t groupFmapOff;
-        if constexpr (BlockCtx::isNHWCin) {
-            groupFmapOff = groupChanOff;
-        } else {
-            groupFmapOff = static_cast<uint64_t>(groupChanOff) * tiling.hin * tiling.win;
-        }
-        uint64_t batchFmapOff = static_cast<uint64_t>(curBatch) * tiling.cin * tiling.hin * tiling.win;
-        fmapGm.SetGlobalBuffer(reinterpret_cast<__gm__ FmapT*>(x) + batchFmapOff + groupFmapOff,
-                               tiling.cin * tiling.hin * tiling.win);
     }
 };
 

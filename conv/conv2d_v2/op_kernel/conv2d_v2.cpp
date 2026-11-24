@@ -29,6 +29,7 @@ using Conv2DTilingData = Ops::NN::Conv2dV2::Conv2DTilingData;
 #include "arch35/small_case_opt/full_load/full_load_pipeline.h"
 #include "arch35/small_case_opt/cin_split/cin_split_pipeline.h"
 #include "arch35/small_case_opt/fm_partload/fm_partload_pipeline.h"
+#include "arch35/small_case_opt/weight_partload/weight_partload_pipeline.h"
 #include "arch35/conv2d_v2_depthwise_simplify.h"
 #include "conv2d_v2_tiling_data.h"
 #include "arch35/full_mn_kernel/full_mn_kernel_pipeline.h"
@@ -167,12 +168,46 @@ __global__ __aicore__ void conv2dv2(GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_
 
     CONV2D_V2_ASWT_FULL_MN_DISPATCH();
 
-    if constexpr (SmallKernel == CONV_SMALL_KERNEL_FM_PARTLOAD) {
+    // Weight partload (dedicated key, NZ weight only; not arch-gated — every build that
+    // can instantiate the key must also compile its dispatch branch).
+    if constexpr (SmallKernel == CONV_SMALL_KERNEL_WEIGHT_PARTLOAD) {
+        if constexpr (weightFormat == ConvFormat::FRACTAL_Z) {
+            constexpr bool isNHWCin = (fmapFormat == ConvFormat::NHWC);
+            constexpr bool isNHWCout = (outputFormat == ConvFormat::NHWC);
+            constexpr bool isHw = (OutputOrder == static_cast<int8_t>(ConvOutputOrder::HW_MODE));
+            constexpr bool oneBatch = (BatchOne == CONV_ONE_BATCH);
+            // FmapLoadMode: SPLIT when kAL1 < full K or the block window cannot stay
+            // A1-resident (hoL1/woL1 below the core's range — the tiling's streaming
+            // decision); FULL otherwise. FULL sizes its A1 as the whole block window,
+            // so routing a non-resident window there overflows the A1 reservation.
+            const uint32_t GK0Fmap = C0_SIZE / sizeof(DTYPE_X);
+            const uint32_t cinFullFmap = AlignB(static_cast<uint32_t>(tilingData.singleCoreCi), GK0Fmap);
+            const uint32_t fullKFmap = cinFullFmap * static_cast<uint32_t>(tilingData.kernelHxkernelW);
+            const bool blockWindowResident = isHw ? (tilingData.singleCoreHo <= tilingData.hoL1 &&
+                                                     tilingData.singleCoreWo <= tilingData.woL1) :
+                                                    (tilingData.singleCoreHo <= tilingData.hoL1);
+            const bool fmChunked = static_cast<uint32_t>(tilingData.kAL1) < fullKFmap || !blockWindowResident;
+            if (fmChunked) {
+                small_conv::WeightPartloadPipeline<DTYPE_X, DTYPE_FILTER, biasType::T, DTYPE_Y, half, isNHWCin,
+                                                   isNHWCout, ConvFormat::FRACTAL_Z, isHw,
+                                                   small_conv::FmapLoadMode::SPLIT, oneBatch, Conv2DTilingData>
+                    op;
+                op(tilingData, x, filter, bias, y, nullptr);
+            } else {
+                small_conv::WeightPartloadPipeline<DTYPE_X, DTYPE_FILTER, biasType::T, DTYPE_Y, half, isNHWCin,
+                                                   isNHWCout, ConvFormat::FRACTAL_Z, isHw,
+                                                   small_conv::FmapLoadMode::FULL, oneBatch, Conv2DTilingData>
+                    op;
+                op(tilingData, x, filter, bias, y, nullptr);
+            }
+        }
+    } else if constexpr (SmallKernel == CONV_SMALL_KERNEL_FM_PARTLOAD) {
         constexpr bool isNHWCin = (fmapFormat == ConvFormat::NHWC);
         constexpr bool isNHWCout = (outputFormat == ConvFormat::NHWC);
         constexpr bool isHw = (OutputOrder == static_cast<int8_t>(ConvOutputOrder::HW_MODE));
+        constexpr bool oneBatch = (BatchOne == CONV_ONE_BATCH);
         small_conv::FmPartloadPipeline<DTYPE_X, DTYPE_FILTER, biasType::T, DTYPE_Y, half, isNHWCin, isNHWCout,
-                                       ConvFormat::FRACTAL_Z, isHw, Conv2DTilingData>
+                                       ConvFormat::FRACTAL_Z, isHw, oneBatch, Conv2DTilingData>
             op;
         op(tilingData, x, filter, bias, y, nullptr);
     } else if constexpr (SmallKernel == CONV_SMALL_KERNEL) {
@@ -183,6 +218,7 @@ __global__ __aicore__ void conv2dv2(GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_
         // the pipeline (ConvInnerBatch definitions). Innerbatch only routes to
         // the base class (FullLoadProcessor); the dispatch's isParallelism gate
         // below keeps CinSplit/FmPartload on SINGLE maps.
+        constexpr bool oneBatch = (BatchOne == CONV_ONE_BATCH);
 
         if constexpr (weightFormat == ConvFormat::FRACTAL_Z && AscendC::IsSameType<DTYPE_X, half>::value) {
             const static uint32_t GK0 = C0_SIZE / sizeof(DTYPE_FILTER);
@@ -200,7 +236,7 @@ __global__ __aicore__ void conv2dv2(GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_
 
             if (isParallelism) {
                 small_conv::CinSplitPipeline<DTYPE_X, DTYPE_FILTER, biasType::T, DTYPE_Y, half, isNHWCin, isNHWCout,
-                                             ConvFormat::FRACTAL_Z, isHw, Conv2DTilingData>
+                                             ConvFormat::FRACTAL_Z, isHw, oneBatch, Conv2DTilingData>
                     op;
                 op(tilingData, x, filter, bias, y, nullptr);
             } else {

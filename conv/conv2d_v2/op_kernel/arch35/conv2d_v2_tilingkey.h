@@ -52,7 +52,7 @@ ASCENDC_TPL_ARGS_DECL(
     ASCENDC_TPL_UINT_DECL(SmallWeight, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST, CONV_NOT_SMALL_WEIGHT,
                           CONV_FULLLOAD_KL1_NL0, CONV_WEIGHT_SMALLER_THAN_BL0),
     ASCENDC_TPL_UINT_DECL(SmallKernel, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST, CONV_NOT_SMALL_KERNEL, CONV_SMALL_KERNEL,
-                          CONV_SMALL_KERNEL_FM_PARTLOAD),
+                          CONV_SMALL_KERNEL_FM_PARTLOAD, CONV_SMALL_KERNEL_WEIGHT_PARTLOAD),
     ASCENDC_TPL_UINT_DECL(IsASWT, ASCENDC_TPL_1_BW, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE, CONV_ASWT_ENABLE),
     ASCENDC_TPL_UINT_DECL(ConvToL1, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST, CONV_TO_L1_DISABLE,
                           CONV_TO_L1_ENABLE_WEIGHT_BY_PASS, CONV_TO_L1_ENABLE_L1, CONV_TO_L1_ENABLE_TILING_KH));
@@ -78,6 +78,40 @@ ASCENDC_TPL_ARGS_DECL(
         ASCENDC_TPL_UINT_SEL(SmallWeight, ASCENDC_TPL_UI_LIST, 0),                                                   \
         ASCENDC_TPL_UINT_SEL(SmallKernel, ASCENDC_TPL_UI_LIST, CONV_SMALL_KERNEL),                                   \
         ASCENDC_TPL_UINT_SEL(ConvToL1, ASCENDC_TPL_UI_LIST, CONV_TO_L1_DISABLE)
+#endif
+
+// Small kernel with weight partially loaded in L1 (dedicated key, decided first in
+// GetSmallKernelVal). FRACTAL_Z builds only — matching the kernel's block loader (the
+// [k1][n1][n0][k0] slice copy; C04 is rejected by IsSmallKernelBlocked on the host side,
+// so registering C04 instances would be dead code). NOT gated on __DAV_35_FAMILY__:
+// op_host includes this header without the device macro, and an arch-gated SEL would
+// leave the host key table empty while the tiling still emits the key.
+#if defined(FORMAT_FILTER) && (FORMAT_FILTER == FORMAT_FRACTAL_Z)
+#define CONV2D_SMALL_KERNEL_WEIGHT_PARTLOAD_SEL()                                                                    \
+    ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_AIC_ONLY),                                                               \
+        ASCENDC_TPL_UINT_SEL(FmapTiling, ASCENDC_TPL_UI_LIST, CONV_FMAP_TILING_FULLLOAD_AL1,                         \
+                             CONV_FMAP_TILING_ONLY_M_FULLLOAD_AL1_AL0, CONV_FMAP_TILING_OTHER),                      \
+        ASCENDC_TPL_UINT_SEL(WeightTiling, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_TILING_ONLY_N_FULLLOAD_BL1_BL0,          \
+                             CONV_WEIGHT_TILING_OTHER),                                                              \
+        ASCENDC_TPL_UINT_SEL(L1PingPong, ASCENDC_TPL_UI_LIST, CONV_L1_PINGPONG_ALL_CLOSE, CONV_L1_PINGPONG_AL1_OPEN, \
+                             CONV_L1_PINGPONG_BL1_OPEN, CONV_L1_PINGPONG_ALL_OPEN),                                  \
+        ASCENDC_TPL_UINT_SEL(L0PingPong, ASCENDC_TPL_UI_LIST, CONV_L0_PINGPONG_ALL_CLOSE, CONV_L0_PINGPONG_AL0_OPEN, \
+                             CONV_L0_PINGPONG_BL0_OPEN, CONV_L0_PINGPONG_ALL_OPEN),                                  \
+        ASCENDC_TPL_UINT_SEL(OutputOrder, ASCENDC_TPL_UI_LIST, CONV_OUTPUT_ORDER_HW_MODE, CONV_OUTPUT_ORDER_M_MODE), \
+        ASCENDC_TPL_UINT_SEL(GroupType, ASCENDC_TPL_UI_LIST, CONV_GROUP_TYPE_NORMAL_CONV,                            \
+                             CONV_GROUP_TYPE_OPT_GROUP_CONV),                                                        \
+        ASCENDC_TPL_UINT_SEL(EnableSmallChannel, ASCENDC_TPL_UI_LIST, CONV_ENABLE_SMALL_CHANNEL_CLOSE),              \
+        ASCENDC_TPL_UINT_SEL(WeightUbTrans, ASCENDC_TPL_UI_LIST, CONV_WEIGHT_UB_TRANS_CLOSE),                        \
+        ASCENDC_TPL_UINT_SEL(FmapCopyMode, ASCENDC_TPL_UI_LIST, CONV_FMAP_LOAD3D_MODE),                              \
+        ASCENDC_TPL_UINT_SEL(InnerBatch, ASCENDC_TPL_UI_LIST, CONV_INNER_BATCH_SINGLE),                              \
+        ASCENDC_TPL_UINT_SEL(BatchOne, ASCENDC_TPL_UI_LIST, CONV_MULTI_BATCH, CONV_ONE_BATCH),                       \
+        ASCENDC_TPL_UINT_SEL(NoPad, ASCENDC_TPL_UI_LIST, CONV_HAS_PAD, CONV_NO_PAD),                                 \
+        ASCENDC_TPL_UINT_SEL(SmallWeight, ASCENDC_TPL_UI_LIST, 0),                                                   \
+        ASCENDC_TPL_UINT_SEL(SmallKernel, ASCENDC_TPL_UI_LIST, CONV_SMALL_KERNEL_WEIGHT_PARTLOAD),                   \
+        ASCENDC_TPL_UINT_SEL(IsASWT, ASCENDC_TPL_UI_LIST, CONV_ASWT_DISABLE),                                        \
+        ASCENDC_TPL_UINT_SEL(ConvToL1, ASCENDC_TPL_UI_LIST, CONV_TO_L1_DISABLE)
+#else
+#define CONV2D_SMALL_KERNEL_WEIGHT_PARTLOAD_SEL()
 #endif
 
 #define CONV2D_CONV_TO_L1_SEL()                                                                                      \
@@ -432,6 +466,7 @@ ASCENDC_TPL_SEL(
     ASCENDC_TPL_ARGS_SEL(CONV2D_NO_FULLLOAD_BL0_OPEN_SEL()), ASCENDC_TPL_ARGS_SEL(CONV2D_NO_FULLLOAD_ALL_OPEN_SEL()),
     ASCENDC_TPL_ARGS_SEL(CONV2D_ONLY_AL1_FULLLOAD_SEL()), ASCENDC_TPL_ARGS_SEL(CONV2D_ONLY_BL1_FULLLOAD_SEL()),
     ASCENDC_TPL_ARGS_SEL(CONV2D_ABL1_FULLLOAD_M_FIRST_SEL()), ASCENDC_TPL_ARGS_SEL(CONV2D_SMALL_KERNEL_NCHW_SEL()),
+    ASCENDC_TPL_ARGS_SEL(CONV2D_SMALL_KERNEL_WEIGHT_PARTLOAD_SEL()),
     ASCENDC_TPL_ARGS_SEL(CONV2D_ONLY_MN_FULLLOAD_MIXCORE_SEL()),
     ASCENDC_TPL_ARGS_SEL(CONV2D_NO_FULLLOAD_AL0_OPEN_MIXCORE_SEL()),
     ASCENDC_TPL_ARGS_SEL(CONV2D_NO_FULLLOAD_BL0_OPEN_MIXCORE_SEL()),

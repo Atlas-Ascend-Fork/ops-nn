@@ -188,6 +188,8 @@ uint64_t Conv2dBaseTiling::GetSmallKernelVal()
     bool nL1FullloadFlag = tilingData_.get_nBL1() == singleCoreNSize;
 
     bool bl1Fullload = kBL1FullloadFlag && nL1FullloadFlag;
+    bool weightFull = bl1Fullload;
+    bool groupOk = (flagInfo_.convGroupType == ConvGroupType::NORMAL_CONV || tilingData_.get_groupOpt() == 1);
 
     bool al1Fullload;
     if (flagInfo_.mSplitModeFlag) {
@@ -198,6 +200,30 @@ uint64_t Conv2dBaseTiling::GetSmallKernelVal()
         bool hoL1FullloadFlag = tilingData_.get_singleCoreHo() <= tilingData_.get_hoL1();
         bool woL1FullloadFlag = tilingData_.get_singleCoreWo() <= tilingData_.get_woL1();
         al1Fullload = kAL1FullloadFlag && hoL1FullloadFlag && woL1FullloadFlag;
+    }
+
+    // Highest priority: weight partially loaded in L1 goes to the dedicated weight-partload
+    // kernel (decided before the legacy keys; constraints mirror the kernel template).
+    uint64_t kL0 = tilingData_.get_kL0();
+    bool vectorFixpParam = tilingData_.get_quantMode0() == static_cast<uint8_t>(QuantMode::VECTOR_QUANT) ||
+                           tilingData_.get_reluMode0() == static_cast<uint8_t>(ReluMode::VECTORRELU) ||
+                           tilingData_.get_quantMode1() == static_cast<uint8_t>(QuantMode::VECTOR_QUANT) ||
+                           tilingData_.get_reluMode1() == static_cast<uint8_t>(ReluMode::VECTORRELU);
+    bool fixpParamOk = !vectorFixpParam || tilingData_.get_fixpParamsFullLoadFlag() != 0;
+    bool biasParamOk = !flagInfo_.hasBias || tilingData_.get_biasFullLoadFlag() != 0;
+    bool kSplitOk = kL0 != 0 && tilingData_.get_kAL1() >= kL0 && tilingData_.get_kBL1() >= kL0 &&
+                    tilingData_.get_kAL1() % kL0 == 0 && tilingData_.get_kBL1() % kL0 == 0;
+    bool fmapCopyOk = tilingData_.get_khUb() == 0 || tilingData_.get_kwUb() == 0;
+    bool dtypePairOk = descInfo_.fMapDtype == descInfo_.weightDtype ||
+                       (descInfo_.fMapDtype == ge::DataType::DT_FLOAT16 &&
+                        descInfo_.weightDtype == ge::DataType::DT_INT8);
+    // ORI group is not supported on 3510 (all group convs arrive as OPT fweights).
+    bool groupPartloadOk = flagInfo_.convGroupType == ConvGroupType::NORMAL_CONV ||
+                           (flagInfo_.mSplitModeFlag && flagInfo_.convGroupType == ConvGroupType::OPT_GROUP_CONV);
+    bool weightPartloadOk = !weightFull && groupPartloadOk && IsWeightNZFormat(descInfo_.weightFormat) && dtypePairOk &&
+                            kSplitOk && fixpParamOk && biasParamOk && fmapCopyOk && tilingData_.get_innerBatch() == 1;
+    if (weightPartloadOk) {
+        return CONV_SMALL_KERNEL_WEIGHT_PARTLOAD;
     }
 
     // FmPartload: FM not fullload L1, Weight fullload L1, NZ format, FP16*FP16, INT8*INT8 or FP16*INT8.
@@ -379,9 +405,13 @@ void Conv2dBaseTiling::ReSetTilingKeyPara()
     if (fmpTilingResetFlag) {
         tilingKeyPara_.fmpTiling = FMP_OTHER;
     }
+    // The scene routes keys into CONV2D_OPT_GROUP_PRELOAD_SEL (SmallKernel {0,1,2} only);
+    // the weight-partload key must keep its natural fmp/weight tiling values to land in
+    // its dedicated SEL instead.
     bool sceneFlag = flagInfo_.convGroupType == ConvGroupType::OPT_GROUP_CONV &&
                      tilingKeyPara_.fmapCppyMode == FMAP_LOAD3D_MODE && tilingData_.get_innerBatch() == 1 &&
-                     tilingData_.get_hoL1() == tilingData_.get_hoL0();
+                     tilingData_.get_hoL1() == tilingData_.get_hoL0() &&
+                     tilingKeyPara_.smallKernel != CONV_SMALL_KERNEL_WEIGHT_PARTLOAD;
     if (!flagInfo_.mSplitModeFlag) {
         sceneFlag = sceneFlag && tilingData_.get_woL1() == tilingData_.get_woL0();
     }

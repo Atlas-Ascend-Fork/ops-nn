@@ -12,7 +12,7 @@
  * InnerBatchProcessor: batch-folded variant of the full-load base class (the
  * pipeline selects it only when the InnerBatch SEL != SINGLE). It INHERITS
  * FullLoadProcessor and reuses the per-instruction level (MmadAccumulateTile /
- * ProcessChunks with the fold-mode branches, tools, setupFmapGmBatch); only
+ * ProcessChunks with the fold-mode branches, tools, setupFmapGmBatch_); only
  * the flow level differs: the core's singleCoreBatch maps are folded into
  * groups of innerBatch maps (legacy batchIter semantics) — one GM->L1 DMA per
  * group, one compute pass, one fixpipe — and when the two-group AL1 layout
@@ -59,7 +59,7 @@ struct InnerBatchProcessor : FullLoadProcessor<BlockCtx, TilingData, Scheme, Inn
         // alternate AL1 buffer while the current group computes; only when the
         // complete two-buffer layout fits in L1 — otherwise groups reload
         // serially.
-        L1Layout l1Two = this->l1Layout_(tiling, 2, al1ElemPerBuf, bl1ElemCount);
+        L1Layout l1Two = this->l1Layout_(tiling, DOUBLE_BUFFER_NUM, al1ElemPerBuf, bl1ElemCount);
         bool enableGroupDoubleBuffer = (loopBatch > 1) && (l1Two.endBytes <= TOTAL_L1_SIZE);
         L1Layout l1Layout = enableGroupDoubleBuffer ? l1Two : this->l1Layout_(tiling, 1, al1ElemPerBuf, bl1ElemCount);
 
@@ -153,7 +153,7 @@ private:
             Load3DCtx ctxG = this->setupLoad3d_(blockCtx, tiling, blockWindow,
                                                 this->scheme_.BlockBasePosM(blockCtx, tiling));
             GlobalTensor<FmapT> fmapGmG;
-            this->setupFmapGmBatch(tiling, x, blockCtx.curBatchIdx, groupChanOff, fmapGmG);
+            this->setupFmapGmBatch_(tiling, x, blockCtx.curBatchIdx, groupChanOff, fmapGmG);
             loadFmapIb_(blockCtx, tiling, fmapGmG, al1, blockWindow.curHi, blockWindow.hiStart, blockWindow.curWi);
             if (batchGroupIdx == 0) {
                 // Per-channel bias/scale/relu: load once, queued behind the
@@ -191,13 +191,13 @@ private:
         const uint32_t innerBatch = static_cast<uint32_t>(tiling.innerBatch);
         const uint32_t loopBatch = CeilDiv(blockCtx.singleCoreBatch, innerBatch);
         const uint32_t tail = blockCtx.singleCoreBatch - (loopBatch - 1) * innerBatch;
-        uint32_t al1ElemPerBuf = l1Layout.al1ElemCount / 2;
+        uint32_t al1ElemPerBuf = l1Layout.al1ElemCount / DOUBLE_BUFFER_NUM;
         uint32_t lastGroup = loopBatch - 1;
         // Preload group 0 into buffer 0.
         BlockCtx bcPre = blockCtx;
         bcPre.curIb = (lastGroup == 0) ? tail : innerBatch;
         GlobalTensor<FmapT> fmapGm0;
-        this->setupFmapGmBatch(tiling, x, blockCtx.batchStart, groupChanOff, fmapGm0);
+        this->setupFmapGmBatch_(tiling, x, blockCtx.batchStart, groupChanOff, fmapGm0);
         LocalTensor<FmapT> al1Buf0(TPosition::A1, 0, al1ElemPerBuf);
         loadFmapIb_(bcPre, tiling, fmapGm0, al1Buf0, blockWindow.curHi, blockWindow.hiStart, blockWindow.curWi);
         // Per-channel bias/scale/relu: load once, behind the group-0 preload.
@@ -218,8 +218,8 @@ private:
                 BlockCtx bcNext = blockCtx;
                 bcNext.curIb = (batchGroupIdx + 1 == lastGroup) ? tail : innerBatch;
                 GlobalTensor<FmapT> fmapGmN;
-                this->setupFmapGmBatch(tiling, x, blockCtx.batchStart + (batchGroupIdx + 1) * innerBatch, groupChanOff,
-                                       fmapGmN);
+                this->setupFmapGmBatch_(tiling, x, blockCtx.batchStart + (batchGroupIdx + 1) * innerBatch, groupChanOff,
+                                        fmapGmN);
                 if (batchGroupIdx > 0) {
                     WaitFlag<HardEvent::MTE1_MTE2>(nextBuf ? EVT_BATCH_BUF1 : EVT_BATCH_BUF0);
                 }

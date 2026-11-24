@@ -23,7 +23,7 @@
 namespace small_conv {
 
 template <typename FmapT, typename WeightT, typename BiasT, typename OutputT, typename Output1T, bool IsNHWCin,
-          bool IsNHWCout, ConvFormat WeightFmt, bool IsHwMode, typename TilingData>
+          bool IsNHWCout, ConvFormat WeightFmt, bool IsHwMode, bool OneBatch, typename TilingData>
 struct CinSplitPipeline {
     using Traits = SmallTraits<FmapT, WeightT, BiasT, OutputT, Output1T>;
     using BlockCtxT = BlockCtx<Traits, IsNHWCin, IsNHWCout, WeightFmt>;
@@ -37,7 +37,7 @@ struct CinSplitPipeline {
         BlockCtxT blockCtx = scheduler(tiling);
         if (!blockCtx.active || blockCtx.actualCo == 0)
             return;
-        CinSplitProcessor<BlockCtxT, TilingData, Scheme> processor;
+        CinSplitProcessor<BlockCtxT, TilingData, Scheme, OneBatch> processor;
         processor(blockCtx, tiling, x, filter, bias, y, ep);
     }
 };

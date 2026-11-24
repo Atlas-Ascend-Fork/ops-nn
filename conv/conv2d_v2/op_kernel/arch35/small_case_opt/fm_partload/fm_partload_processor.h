@@ -24,7 +24,7 @@
 
 namespace small_conv {
 
-template <typename BlockCtx, typename TilingData, typename Scheme>
+template <typename BlockCtx, typename TilingData, typename Scheme, bool OneBatch = false>
 struct FmPartloadProcessor {
     using FmapT = typename BlockCtx::FmapT;
     using WeightT = typename BlockCtx::WeightT;
@@ -35,8 +35,9 @@ struct FmPartloadProcessor {
     using State = CinState<BlockCtx, TilingData>;
 
     Scheme scheme_;
-    CinSplitProcessor<BlockCtx, TilingData, Scheme> base_;
+    CinSplitProcessor<BlockCtx, TilingData, Scheme, OneBatch> base_;
     SetupGmTool<BlockCtx, TilingData> setupGm_;
+    SetupFmapGmBatchTool<BlockCtx, TilingData> setupFmapGmBatch_;
     LoadWeightL1Tool<BlockCtx, TilingData> loadWeight_;
     LoadBiasScaleL1Tool<BlockCtx, TilingData> loadBiasScale_;
 
@@ -70,7 +71,7 @@ struct FmPartloadProcessor {
 
         ComputeL1LayoutTool<BlockCtx, TilingData> l1Layout;
         uint32_t bl1ElemCount = k1Total * state.n1PerCore * GN0 * GK0;
-        state.l1 = l1Layout(tiling, state.al1Db ? 2 : 1, al1ElemPerBuf, bl1ElemCount);
+        state.l1 = l1Layout(tiling, state.al1Db ? DOUBLE_BUFFER_NUM : 1, al1ElemPerBuf, bl1ElemCount);
     }
 
     __aicore__ inline void operator()(const BlockCtx& blockCtx, const TilingData& tiling, GM_ADDR x, GM_ADDR filter,
@@ -142,12 +143,20 @@ private:
 
             uint32_t kL0 = static_cast<uint32_t>(tiling.kL0);
             uint32_t kL0Iters = static_cast<uint32_t>(CeilDiv(blockCtx.kTotalFmap, kL0));
-            for (uint32_t batchIdx = 0; batchIdx < blockCtx.singleCoreBatch; batchIdx++) {
-                blockCtx.curBatchIdx = blockCtx.batchStart + batchIdx;
-                base_.setupFmapGmBatch(tiling, x, blockCtx.curBatchIdx, groupPlan.groupChanOff, state.fmapGm);
+            if constexpr (OneBatch) {
+                // BatchOne key: fmapGm is already based at batchStart (SetupGmTool) and
+                // curBatchIdx was set by the scheduler; skip the loop and the re-base.
                 base_.ProcessOneBatch(blockCtx, tiling, state, scale0Gm, scale1Gm, reluWeight0Gm, reluWeight1Gm, kL0,
-                                      kL0Iters, y, y1, x, groupPlan.groupCoutOff, groupPlan.groupChanOff, batchIdx,
-                                      false, needLoadBias);
+                                      kL0Iters, y, y1, x, groupPlan.groupCoutOff, groupPlan.groupChanOff, 0, false,
+                                      needLoadBias);
+            } else {
+                for (uint32_t batchIdx = 0; batchIdx < blockCtx.singleCoreBatch; batchIdx++) {
+                    blockCtx.curBatchIdx = blockCtx.batchStart + batchIdx;
+                    setupFmapGmBatch_(tiling, x, blockCtx.curBatchIdx, groupPlan.groupChanOff, state.fmapGm);
+                    base_.ProcessOneBatch(blockCtx, tiling, state, scale0Gm, scale1Gm, reluWeight0Gm, reluWeight1Gm,
+                                          kL0, kL0Iters, y, y1, x, groupPlan.groupCoutOff, groupPlan.groupChanOff,
+                                          batchIdx, false, needLoadBias);
+                }
             }
             if (tiling.hasBias && tiling.nL0 < tiling.nBL1) {
                 SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);

@@ -30,6 +30,9 @@
 
 namespace small_conv {
 
+// DataCopyParams block granularity: blockLen/srcGap count 32-byte blocks.
+constexpr uint32_t CP_BLK_BYTES = 32;
+
 struct Load3DCtx {
     uint64_t xtBase;
     uint64_t xmTmp;
@@ -37,16 +40,18 @@ struct Load3DCtx {
 
 // ----------------------------------------------------------------- L1 layout
 // Full dual-output offset chain (mirrors ops-nn SetupL1Layout / SetupL1SplitLayout).
+// bl1ElemCount is the per-buffer size; bl1BufCount > 1 (weight-partload BL1 ping-pong)
+// scales l1.bl1ElemCount to the total.
 template <typename BlockCtx, typename TilingData>
 struct ComputeL1LayoutTool {
     __aicore__ inline L1Layout operator()(const TilingData& tiling, uint32_t al1BufCount, uint32_t al1ElemPerBuf,
-                                          uint32_t bl1ElemCount) const
+                                          uint32_t bl1ElemCount, uint32_t bl1BufCount = 1) const
     {
         L1Layout l1;
         uint32_t al1BufBytes = al1ElemPerBuf * sizeof(typename BlockCtx::FmapT);
         l1.al1ElemCount = al1BufCount * al1ElemPerBuf;
         l1.al1BufBytes = al1BufBytes;
-        l1.bl1ElemCount = bl1ElemCount;
+        l1.bl1ElemCount = bl1BufCount * bl1ElemCount;
         l1.bl1OffBytes = al1BufCount * al1BufBytes;
 
         uint32_t afterBl1 = l1.bl1OffBytes + l1.bl1ElemCount * sizeof(typename BlockCtx::WeightT);
@@ -190,6 +195,25 @@ struct SetupGmTool {
     }
 };
 
+// Per-batch fmap GM re-base (batch + group channel offset); the initial base is
+// set by SetupGmTool.
+template <typename BlockCtx, typename TilingData>
+struct SetupFmapGmBatchTool {
+    __aicore__ inline void operator()(const TilingData& tiling, GM_ADDR x, uint32_t curBatch, uint32_t groupChanOff,
+                                      GlobalTensor<typename BlockCtx::FmapT>& fmapGm) const
+    {
+        using FmapT = typename BlockCtx::FmapT;
+        uint64_t groupFmapOff;
+        if constexpr (BlockCtx::isNHWCin) {
+            groupFmapOff = groupChanOff;
+        } else {
+            groupFmapOff = static_cast<uint64_t>(groupChanOff) * tiling.hin * tiling.win;
+        }
+        uint64_t batchFmapOff = static_cast<uint64_t>(curBatch) * tiling.cin * tiling.hin * tiling.win;
+        fmapGm.SetGlobalBuffer(reinterpret_cast<__gm__ FmapT*>(x) + batchFmapOff + groupFmapOff);
+    }
+};
+
 // ------------------------------------------------------------ weight L1 load
 template <typename BlockCtx, typename TilingData>
 struct LoadWeightL1Tool {
@@ -233,12 +257,36 @@ struct LoadWeightL1Tool {
                 uint32_t tileBytes = GN0 * BlockCtx::GK0 * sizeof(WeightT);
                 uint32_t srcGmOff = n1Start * GN0 * BlockCtx::GK0;
                 uint32_t n1PerGroup = static_cast<uint32_t>(AlignB(blockCtx.groupCoutStep, GN0)) / GN0;
-                uint16_t blkLen = static_cast<uint16_t>((blockCtx.n1PerCore * tileBytes) / 32);
-                uint16_t srcGap = static_cast<uint16_t>(((n1PerGroup - blockCtx.n1PerCore) * tileBytes) / 32);
+                uint16_t blkLen = static_cast<uint16_t>((blockCtx.n1PerCore * tileBytes) / CP_BLK_BYTES);
+                uint16_t srcGap = static_cast<uint16_t>(((n1PerGroup - blockCtx.n1PerCore) * tileBytes) / CP_BLK_BYTES);
                 DataCopyParams cp(static_cast<uint16_t>(blockCtx.k1Total), blkLen, srcGap, 0);
                 DataCopy(bl1, filterGm[srcGmOff], cp);
             }
         }
+    }
+};
+
+// GM -> L1 copy of one (K block x N tile) FRACTAL_Z weight slice (weight-partload):
+// dst-gap 0, so BL1 holds the compact [k1Block][n1Tile][GN0][GK0] slice. The tail
+// block is ceil-padded to GK0 (A16W8: curK is fmap-aligned).
+template <typename BlockCtx, typename TilingData>
+struct LoadWeightBlockTool {
+    __aicore__ inline void operator()(const BlockCtx& blockCtx, const TilingData& tiling,
+                                      const GlobalTensor<typename BlockCtx::WeightT>& filterGm,
+                                      LocalTensor<typename BlockCtx::WeightT>& bl1, uint32_t kOff, uint32_t curK,
+                                      uint32_t nOff, uint32_t n1Tile, uint32_t n1Total) const
+    {
+        using WeightT = typename BlockCtx::WeightT;
+        uint32_t k1Block = static_cast<uint32_t>(CeilDiv(curK, BlockCtx::GK0));
+        uint32_t k1Start = kOff / BlockCtx::GK0;
+        uint32_t n1Start = (blockCtx.nIdx * tiling.singleCoreCo + nOff) / GN0;
+
+        uint64_t srcGmOff = (static_cast<uint64_t>(k1Start) * n1Total + n1Start) * GN0 * BlockCtx::GK0;
+        uint32_t tileBytes = GN0 * BlockCtx::GK0 * sizeof(WeightT);
+        uint16_t blkLen = static_cast<uint16_t>((n1Tile * tileBytes) / CP_BLK_BYTES);
+        uint16_t srcGap = static_cast<uint16_t>(((n1Total - n1Tile) * tileBytes) / CP_BLK_BYTES);
+        DataCopyParams cp(static_cast<uint16_t>(k1Block), blkLen, srcGap, 0);
+        DataCopy(bl1, filterGm[srcGmOff], cp);
     }
 };
 
@@ -294,7 +342,7 @@ struct LoadBiasToBTTool {
         uint32_t btElemNum = static_cast<uint32_t>(AlignB(curN * sizeof(L0cT), BT_ALIGN)) / sizeof(L0cT);
         LocalTensor<L0cT> biasBT(TPosition::C2, 0, btElemNum);
         LocalTensor<BiasT> biasL1src(TPosition::A1, l1.biasL1OffBytes, tiling.singleCoreCo);
-        uint32_t blkCnt = static_cast<uint32_t>(AlignB(curN * sizeof(BiasT), BT_ALIGN)) / 32;
+        uint32_t blkCnt = static_cast<uint32_t>(AlignB(curN * sizeof(BiasT), BT_ALIGN)) / CP_BLK_BYTES;
         DataCopyParams cp(1, static_cast<uint16_t>(blkCnt), 0, 0);
 #if defined(__DAV_35_FAMILY__)
         if constexpr (AscendC::IsSameType<typename BlockCtx::WeightT, half>::value) {
@@ -351,6 +399,49 @@ struct SetupLoad3DBaseTool {
     }
 };
 
+// Chunk-level Load3D context for the streaming strategies (one chunk window per L1
+// buffer); POSM comes from the scheme-produced SpatialChunk. xt reuses the tiling-side
+// pre-packed unionDataXt bit field (stride/kernel/dilation are shape constants), only
+// channelSize is updated per chunk.
+template <typename BlockCtx, typename TilingData>
+struct SetupLoad3DChunkTool {
+    __aicore__ inline Load3DCtx operator()(const TilingData& tiling, const SpatialChunk& c, uint32_t curCin) const
+    {
+        uint8_t padList[PAD_LIST_NUM] = {static_cast<uint8_t>(c.l3dPadLeft), static_cast<uint8_t>(c.l3dPadRight),
+                                         static_cast<uint8_t>(c.padTop), static_cast<uint8_t>(PAD_BOTTOM_VALUE)};
+        Load3DSetFMatrixCal(c.curHi, c.curWi, padList);
+        Load3DSetPaddingCal(tiling.offsetx);
+
+        Load3DCtx ctx;
+        UnionDataXt xt;
+        xt.n = static_cast<uint64_t>(tiling.unionDataXt);
+        xt.bf.channelSize = curCin;
+        ctx.xtBase = xt.n;
+        UnionDataXm xm;
+        xm.n = 0;
+        xm.bf.mExtension_ = c.curMAlign;
+        xm.bf.mStartPt_ = c.chunkWinPosM;
+        ctx.xmTmp = xm.n;
+        SetLoadDataRepeatWithStride(LoadDataRepeatParamWithStride(0, 1, 0, static_cast<uint16_t>(c.curMAlign / GM0)));
+        return ctx;
+    }
+};
+
+// One fmap GM-window -> L1 ping-pong buffer copy (scheme-driven Nd2Nz/Dn2Nz).
+template <typename BlockCtx, typename TilingData>
+struct LoadFmapChunkTool {
+    template <typename Scheme>
+    __aicore__ inline void operator()(const Scheme& scheme, const TilingData& tiling,
+                                      const GlobalTensor<typename BlockCtx::FmapT>& fmapGm, uint32_t al1BufBytes,
+                                      uint32_t bufIdx, uint32_t curHi, uint32_t hiLoadOff, uint32_t curWi,
+                                      uint32_t wiLoadOff, uint32_t cinOff, uint32_t curCin) const
+    {
+        uint32_t elemCount = curHi * curWi * curCin;
+        LocalTensor<typename BlockCtx::FmapT> al1(TPosition::A1, bufIdx * al1BufBytes, elemCount);
+        scheme.LoadFmapWindow(tiling, fmapGm, al1, curHi, hiLoadOff, curWi, wiLoadOff, cinOff, curCin);
+    }
+};
+
 // ------------------------------------------------------------------ L0 loads
 template <typename BlockCtx>
 struct LoadAL0Tool {
@@ -385,6 +476,30 @@ struct LoadBL0Tool {
         param.SetMStep(static_cast<uint16_t>(mStep));
         param.SetKStep(static_cast<uint16_t>(kStep));
         param.SetSrcStride(static_cast<int32_t>(blockCtx.n1PerCore));
+        param.SetDstStride(static_cast<uint16_t>(mStep));
+        param.SetIfTranspose(false);
+        LoadData<TPosition::B2, TPosition::B1, WeightT>(bl0, bl1, param);
+    }
+};
+
+// L1 -> L0B slice load (weight-partload): BL1 holds only the current slice, so the
+// addressing is slice-relative (MStartPosition 0, SrcStride = n1Tile), unlike
+// LoadBL0Tool's whole-core N range.
+template <typename BlockCtx>
+struct LoadBL0BlockTool {
+    __aicore__ inline void operator()(LocalTensor<typename BlockCtx::WeightT>& bl0,
+                                      LocalTensor<typename BlockCtx::WeightT>& bl1, uint32_t kOff, uint32_t curK,
+                                      uint32_t n1Tile) const
+    {
+        using WeightT = typename BlockCtx::WeightT;
+        uint32_t kStep = static_cast<uint32_t>(CeilDiv(curK, BlockCtx::GK0));
+        uint32_t mStep = n1Tile;
+        Load2DBitModeParam param;
+        param.SetMStartPosition(0);
+        param.SetKStartPosition(kOff / BlockCtx::GK0);
+        param.SetMStep(static_cast<uint16_t>(mStep));
+        param.SetKStep(static_cast<uint16_t>(kStep));
+        param.SetSrcStride(static_cast<int32_t>(n1Tile));
         param.SetDstStride(static_cast<uint16_t>(mStep));
         param.SetIfTranspose(false);
         LoadData<TPosition::B2, TPosition::B1, WeightT>(bl0, bl1, param);
@@ -512,7 +627,9 @@ struct CopyOutTool {
             outputGm.SetGlobalBuffer(reinterpret_cast<__gm__ OutputT*>(yAddr) + batchOutOff + nOutOff);
             fixpipeParams.dstStride = static_cast<uint32_t>(effectiveCout);
             fixpipeParams.params.ndNum = fpDnNum;
-            fixpipeParams.params.srcNdStride = (fpDnNum == 1) ? 0 : AlignB(curM, GM0);
+            // Row-split dn stride: raw curM (never GM0-padded — padding misreads L0C
+            // when curWo % 16 != 0 and faults the fixpipe).
+            fixpipeParams.params.srcNdStride = (fpDnNum == 1) ? 0 : curM;
             fixpipeParams.params.dstNdStride = fpDstDnStride * effectiveCout;
         } else {
             uint64_t nOutOff = (groupCoutOff + blockCtx.nIdxStart + nOff) * hwOut;
@@ -520,8 +637,7 @@ struct CopyOutTool {
             outputGm.SetGlobalBuffer(reinterpret_cast<__gm__ OutputT*>(yAddr) + batchOutOff + nOutOff);
             fixpipeParams.dstStride = static_cast<uint32_t>(hwOut);
             fixpipeParams.params.dnNum = fpDnNum;
-            fixpipeParams.params.srcNzMatrixStride = (fpDnNum == 1) ? (curMAlign * CeilDiv(actualCo, GM0)) :
-                                                                      AlignB(curM, GM0);
+            fixpipeParams.params.srcNzMatrixStride = (fpDnNum == 1) ? (curMAlign * CeilDiv(actualCo, GM0)) : curM;
             fixpipeParams.params.dstDnMatrixStride = fpDstDnStride;
             fixpipeParams.params.srcNzC0Stride = 1;
         }

@@ -61,7 +61,7 @@ struct NextUnitInfo {
     uint32_t nextWiLoadOff;
 };
 
-template <typename BlockCtx, typename TilingData, typename Scheme>
+template <typename BlockCtx, typename TilingData, typename Scheme, bool OneBatch = false>
 struct CinSplitProcessor {
     using FmapT = typename BlockCtx::FmapT;
     using WeightT = typename BlockCtx::WeightT;
@@ -75,6 +75,9 @@ struct CinSplitProcessor {
 
     Scheme scheme_;
     SetupGmTool<BlockCtx, TilingData> setupGm_;
+    SetupFmapGmBatchTool<BlockCtx, TilingData> setupFmapGmBatch_;
+    SetupLoad3DChunkTool<BlockCtx, TilingData> setupLoad3dChunk_;
+    LoadFmapChunkTool<BlockCtx, TilingData> loadFmapChunk_;
     LoadBiasScaleL1Tool<BlockCtx, TilingData> loadBiasScale_;
     LoadBiasToBTTool<BlockCtx, TilingData> loadBiasToBt_;
     LoadAL0Tool<BlockCtx> loadAl0_;
@@ -129,14 +132,15 @@ struct CinSplitProcessor {
 
         ComputeL1LayoutTool<BlockCtx, TilingData> l1Layout;
         uint32_t bl1ElemCount = k1Total * state.n1PerCore * GN0 * GK0;
-        state.l1 = l1Layout(tiling, 2, al1ElemPerBuf, bl1ElemCount);
+        state.l1 = l1Layout(tiling, DOUBLE_BUFFER_NUM, al1ElemPerBuf, bl1ElemCount);
     }
 
     // Largest factor of (cinL1*kernelHxW/GK0) not exceeding kL0/GK0, in K0 units.
     __aicore__ inline uint32_t CalcKL0(const TilingData& tiling, const State& state) const
     {
         uint32_t kL1OverK0 = state.cinL1 * tiling.kernelHxkernelW / GK0;
-        uint32_t maxFactor = kL1OverK0 / 2;
+        constexpr uint32_t MIN_COFACTOR = 2; // largest proper factor <= n / MIN_COFACTOR
+        uint32_t maxFactor = kL1OverK0 / MIN_COFACTOR;
         uint32_t maxAllowedFactor = tiling.kL0 / GK0;
         uint32_t upperBound = (maxFactor < maxAllowedFactor) ? maxFactor : maxAllowedFactor;
         for (uint32_t i = upperBound; i > 0; --i) {
@@ -144,15 +148,6 @@ struct CinSplitProcessor {
                 return i * GK0;
         }
         return GK0;
-    }
-
-    __aicore__ inline void LoadFmapL1Chunk(const TilingData& tiling, State& state, uint32_t bufIdx, uint32_t curHi,
-                                           uint32_t hiLoadOff, uint32_t curWi, uint32_t wiLoadOff, uint32_t cinOff,
-                                           uint32_t curCin) const
-    {
-        uint32_t elemCount = curHi * curWi * curCin;
-        LocalTensor<FmapT> al1(TPosition::A1, bufIdx * state.al1BufBytes, elemCount);
-        scheme_.LoadFmapWindow(tiling, state.fmapGm, al1, curHi, hiLoadOff, curWi, wiLoadOff, cinOff, curCin);
     }
 
     __aicore__ inline void LoadWeightL1Block(const BlockCtx& blockCtx, const TilingData& tiling, State& state,
@@ -176,31 +171,6 @@ struct CinSplitProcessor {
             DataCopyParams cp(static_cast<uint16_t>(k1Block), blkLen, srcGap, 0);
             DataCopy(bl1, state.filterGm[srcGmOff], cp);
         }
-    }
-
-    __aicore__ inline Load3DCtx SetupLoad3DForChunk(const BlockCtx& blockCtx, const TilingData& tiling,
-                                                    const SpatialChunk& c, uint32_t curCin) const
-    {
-        (void)blockCtx;
-        uint8_t padList[PAD_LIST_NUM] = {static_cast<uint8_t>(c.l3dPadLeft), static_cast<uint8_t>(c.l3dPadRight),
-                                         static_cast<uint8_t>(c.padTop), static_cast<uint8_t>(PAD_BOTTOM_VALUE)};
-        Load3DSetFMatrixCal(c.curHi, c.curWi, padList);
-        Load3DSetPaddingCal(tiling.offsetx);
-
-        Load3DCtx ctx;
-        ctx.xmTmp = ((static_cast<uint64_t>(c.curMAlign) & MASK_16) << MSTEP_OFFSET) |
-                    ((static_cast<uint64_t>(c.chunkWinPosM) & MASK_16) << POSM_OFFSET);
-        ctx.xtBase = ((static_cast<uint64_t>(tiling.strideW) & MASK_6) << 0) |
-                     ((static_cast<uint64_t>(tiling.kw) & MASK_8) << KERNELW_OFFSET) |
-                     ((static_cast<uint64_t>(tiling.kh) & MASK_8) << KERNELH_OFFSET) |
-                     ((static_cast<uint64_t>(tiling.strideH) & MASK_6) << STRIDEH_OFFSET) |
-                     ((static_cast<uint64_t>(tiling.kw) & NINTH_BIT_MASK) << KERNELW_HIGHEST_BIT_OFFSET) |
-                     ((static_cast<uint64_t>(tiling.kh) & NINTH_BIT_MASK) << KERNELH_HIGHEST_BIT_OFFSET) |
-                     ((static_cast<uint64_t>(tiling.dilationW) & MASK_8) << DILATIONW_OFFSET) |
-                     ((static_cast<uint64_t>(tiling.dilationH) & MASK_8) << DILATIONH_OFFSET) |
-                     ((static_cast<uint64_t>(curCin) & MASK_16) << CIN_OFFSET);
-        SetLoadDataRepeatWithStride(LoadDataRepeatParamWithStride(0, 1, 0, static_cast<uint16_t>(c.curMAlign / GM0)));
-        return ctx;
     }
 
     __aicore__ inline void RunKL0Loop(const BlockCtx& blockCtx, const TilingData& tiling, State& state,
@@ -273,7 +243,8 @@ struct CinSplitProcessor {
     {
         event_t ev = (bufIdx == 0) ? EVT_FMAP_BUF0 : EVT_FMAP_BUF1;
         WaitFlag<HardEvent::MTE1_MTE2>(ev);
-        LoadFmapL1Chunk(tiling, state, bufIdx, hi, hiLoadOff, wi, wiLoadOff, cinOff, curCinOri);
+        loadFmapChunk_(scheme_, tiling, state.fmapGm, state.al1BufBytes, bufIdx, hi, hiLoadOff, wi, wiLoadOff, cinOff,
+                       curCinOri);
         if (withWeight) {
             LoadWeightL1Block(blockCtx, tiling, state, cinOff * kernelHxW,
                               static_cast<uint32_t>(AlignB(curCinOri, GK0Fmap)) * kernelHxW);
@@ -349,17 +320,17 @@ struct CinSplitProcessor {
                 // while MTE1/MMAD consume the current one (overlapped).
                 uint32_t nBuf = (state.l1Pingpong + 1) & 1;
                 if (pfBatchGm) {
-                    setupFmapGmBatch(tiling, x, nextUnit.nextBatchIdx, curGroupChanOff, state.fmapGm);
+                    setupFmapGmBatch_(tiling, x, nextUnit.nextBatchIdx, curGroupChanOff, state.fmapGm);
                 }
                 PrefetchAl1Chunk(blockCtx, tiling, state, nBuf, pfCinOff, pfCurCinOri, pfHi, pfHiLoadOff, pfWi,
                                  pfWiLoadOff, pfNextBlock && loadWeight, kernelHxW);
                 if (pfBatchGm) {
-                    setupFmapGmBatch(tiling, x, blockCtx.curBatchIdx, curGroupChanOff, state.fmapGm);
+                    setupFmapGmBatch_(tiling, x, blockCtx.curBatchIdx, curGroupChanOff, state.fmapGm);
                 }
             }
 
             WaitFlag<HardEvent::MTE2_MTE1>(curEv);
-            Load3DCtx ctx = SetupLoad3DForChunk(blockCtx, tiling, chunk, curCin);
+            Load3DCtx ctx = setupLoad3dChunk_(tiling, chunk, curCin);
             uint32_t al1ElemCount = chunk.curHi * chunk.curWi * curCin;
             LocalTensor<FmapT> al1(TPosition::A1, curBuf * state.al1BufBytes, al1ElemCount);
             RunKL0Loop(blockCtx, tiling, state, al1, bl1Full, cl0, mmadParams, cinOff * kernelHxW, curCin * kernelHxW,
@@ -369,12 +340,12 @@ struct CinSplitProcessor {
                 // wait until this L0 loop releases the buffer, so it is issued
                 // after RunKL0Loop, serialized into buffer 0.
                 if (pfBatchGm) {
-                    setupFmapGmBatch(tiling, x, nextUnit.nextBatchIdx, curGroupChanOff, state.fmapGm);
+                    setupFmapGmBatch_(tiling, x, nextUnit.nextBatchIdx, curGroupChanOff, state.fmapGm);
                 }
                 PrefetchAl1Chunk(blockCtx, tiling, state, 0, pfCinOff, pfCurCinOri, pfHi, pfHiLoadOff, pfWi,
                                  pfWiLoadOff, pfNextBlock && loadWeight, kernelHxW);
                 if (pfBatchGm) {
-                    setupFmapGmBatch(tiling, x, blockCtx.curBatchIdx, curGroupChanOff, state.fmapGm);
+                    setupFmapGmBatch_(tiling, x, blockCtx.curBatchIdx, curGroupChanOff, state.fmapGm);
                 }
             }
             state.l1Pingpong++;
@@ -454,12 +425,20 @@ struct CinSplitProcessor {
             SetFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
             WaitFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
 
-            for (uint32_t batchIdx = 0; batchIdx < blockCtx.singleCoreBatch; batchIdx++) {
-                blockCtx.curBatchIdx = blockCtx.batchStart + batchIdx;
-                setupFmapGmBatch(tiling, x, blockCtx.curBatchIdx, groupPlan.groupChanOff, state.fmapGm);
+            if constexpr (OneBatch) {
+                // BatchOne key: fmapGm is already based at batchStart (SetupGmTool) and
+                // curBatchIdx was set by the scheduler; skip the loop and the re-base.
                 ProcessOneBatch(blockCtx, tiling, state, scale0Gm, scale1Gm, reluWeight0Gm, reluWeight1Gm, kL0,
-                                kL0Iters, y, y1, x, groupPlan.groupCoutOff, groupPlan.groupChanOff, batchIdx, true,
+                                kL0Iters, y, y1, x, groupPlan.groupCoutOff, groupPlan.groupChanOff, 0, true,
                                 needLoadBias);
+            } else {
+                for (uint32_t batchIdx = 0; batchIdx < blockCtx.singleCoreBatch; batchIdx++) {
+                    blockCtx.curBatchIdx = blockCtx.batchStart + batchIdx;
+                    setupFmapGmBatch_(tiling, x, blockCtx.curBatchIdx, groupPlan.groupChanOff, state.fmapGm);
+                    ProcessOneBatch(blockCtx, tiling, state, scale0Gm, scale1Gm, reluWeight0Gm, reluWeight1Gm, kL0,
+                                    kL0Iters, y, y1, x, groupPlan.groupCoutOff, groupPlan.groupChanOff, batchIdx, true,
+                                    needLoadBias);
+                }
             }
             if (tiling.hasBias && tiling.nL0 < tiling.nBL1) {
                 SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
@@ -467,20 +446,6 @@ struct CinSplitProcessor {
             needLoadBias = true;
         }
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
-    }
-
-    __aicore__ inline void setupFmapGmBatch(const TilingData& tiling, GM_ADDR x, uint32_t curBatch,
-                                            uint32_t groupChanOff, GlobalTensor<FmapT>& fmapGm) const
-    {
-        uint64_t groupFmapOff;
-        if constexpr (BlockCtx::isNHWCin) {
-            groupFmapOff = groupChanOff;
-        } else {
-            groupFmapOff = static_cast<uint64_t>(groupChanOff) * tiling.hin * tiling.win;
-        }
-        uint64_t batchFmapOff = static_cast<uint64_t>(curBatch) * tiling.cin * tiling.hin * tiling.win;
-        fmapGm.SetGlobalBuffer(reinterpret_cast<__gm__ FmapT*>(x) + batchFmapOff + groupFmapOff,
-                               tiling.cin * tiling.hin * tiling.win);
     }
 
     // One inner batch: scheme-driven spatial chunk loop x N-tile loop. Shared

@@ -143,6 +143,13 @@ struct TilingParam {
     uint32_t cinOpt;
     uint32_t coutOpt;
     uint32_t groupOpt;
+    uint32_t mWindows;
+    uint32_t adaptBaseM;
+    uint32_t adaptBaseN;
+    uint32_t tailRegionCuts[3];
+    uint32_t tailRegionOrgM[3];
+    uint32_t tailRegionOrgN[3];
+    uint32_t tailRegionBatchTailNs[2];
 
     uint8_t iterateMNOrder;
     uint8_t biasFullLoadFlag;
@@ -158,8 +165,12 @@ struct TilingParam {
     uint8_t quantMode1;
     uint8_t reluMode1;
     uint8_t clipMode1;
+    uint8_t fixedShiftValue;
     int8_t offsetx;
     int8_t roundMode;
+    uint8_t disContinuous;
+    uint64_t total_shape_cout;
+    uint64_t strideWriteDstStride;
 };
 
 struct KParmas {
@@ -1586,4 +1597,205 @@ TEST_F(ExtendConv2dTiling, run_ExtendConv2D_case_conv2d_dma_nhwc_group_case)
                          true, false, false,     // enableRelu0, enableRelu1, dualOutput
                          false, 2,               // enableHf32Mode, groups
                          "SPECIFIC", 0, "NHWC"); // errorCaseStatus, format
+}
+
+// ---------------------------------------------------------------------------
+// A16W8 multi-batch weight-partload cases for the CONV_SMALL_KERNEL_WEIGHT_PARTLOAD
+// gate. ExtendConv2DTestCase forces weight dtype == fmap dtype and an ND weight, so
+// the A16W8 setup (fp16 fmap x int8 FRACTAL_Z weight) needs its own driver; on 3510
+// it only passes the format checks on a cube-vector-fuse SoC. Shapes are chosen so
+// kBL1 < full K (weight several MB vs 512KB L1) and singleCoreBatch > 1.
+//
+// Tiling-key layout (upstream fe954de05 dropped IterOrder/DisContinuous):
+// FmapTiling[0:1] WeightTiling[2:3] L1PingPong[4:5] L0PingPong[6:7] OutputOrder[8]
+// GroupType[9:10] EnableSmallChannel[11] WeightUbTrans[12] FmapCopyMode[13:14]
+// InnerBatch[15:16] BatchOne[17] NoPad[18] SmallWeight[19:20] SmallKernel[21:22]
+// IsASWT[23].
+struct A16W8WeightPartloadCase {
+    int64_t batch;
+    int64_t cin;
+    int64_t hi;
+    int64_t wi;
+    int64_t cout;
+    int64_t kH;
+    int64_t kW;
+    uint32_t padu;
+    uint32_t padd;
+    uint32_t padl;
+    uint32_t padr;
+    uint32_t strideH;
+    uint32_t strideW;
+    bool hasBias;
+};
+
+void RunA16W8WeightPartloadCase(const A16W8WeightPartloadCase& tc, const char* caseName)
+{
+    int64_t ho = (tc.hi + tc.padu + tc.padd - tc.kH) / tc.strideH + 1;
+    int64_t wo = (tc.wi + tc.padl + tc.padr - tc.kW) / tc.strideW + 1;
+    ASSERT_GE(ho, 1);
+    ASSERT_GE(wo, 1);
+
+    // fp16 fmap NCHW; int8 weight with NCHW origin shape and FRACTAL_Z storage.
+    gert::StorageShape featuremap = {{tc.batch, tc.cin, tc.hi, tc.wi}, {tc.batch, tc.cin, tc.hi, tc.wi}};
+    gert::StorageShape weight = {{tc.cout, tc.cin, tc.kH, tc.kW}, {tc.cout, tc.cin, tc.kH, tc.kW}};
+    gert::StorageShape bias = {{tc.cout}, {tc.cout}};
+    gert::StorageShape scale0 = {{tc.cout}, {tc.cout}};
+    gert::StorageShape output0 = {{tc.batch, tc.cout, ho, wo}, {tc.batch, tc.cout, ho, wo}};
+    gert::StorageShape output1 = output0;
+
+    // Mirror ExtendConv2DTestCase's shape lists: the bias case passes 4 entries (the
+    // 4th being scale0 at the offset_w slot), the no-bias case passes 5 entries with
+    // nullptr placeholders; deviating from these breaks the faker's context slot layout.
+    std::vector<void*> inputShapeRef;
+    if (tc.hasBias) {
+        inputShapeRef = {&featuremap, &weight, &bias, &scale0};
+    } else {
+        inputShapeRef = {&featuremap, &weight, nullptr, nullptr, &scale0};
+    }
+    std::vector<void*> outputShapesRef = {&output0, &output1};
+
+    std::string opType = "ExtendConv2D";
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str()), nullptr);
+    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
+    auto tilingParseFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling_parse;
+
+    std::string compileInfoString = R"({"hardware_info":
+      {"BT_SIZE": 4096, "load3d_constraints": "1", "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true,
+       "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false, "UB_SIZE": 253952,
+       "L2_SIZE": 134217728, "L1_SIZE": 524288, "L0A_SIZE": 65536, "L0B_SIZE": 65536, "FB_SIZE": 4096,
+       "BT_SIZE": 4096, "L0C_SIZE": 262144, "CORE_NUM": 32, "cube_core_cnt": 32, "vector_core_cnt": 64,
+       "core_type_list": "CubeCore,VectorCore"}})";
+    std::map<std::string, std::string> socInfos, aicoreSpec, intrinsics;
+    GetPlatFormInfos(compileInfoString.c_str(), socInfos, aicoreSpec, intrinsics);
+    // A16W8 + FRACTAL_Z weight only passes the format check on a fuse SoC:
+    // paramsFormat maps the FRACTAL_Z storage weight back to its NCHW origin.
+    socInfos["cube_vector_combine"] = "fuse";
+    std::map<std::string, std::string> socVersionInfos = {{"NpuArch", "3510"}};
+    aicoreSpec.insert({"fb0_size", "4096"});
+
+    fe::PlatFormInfos platformInfo;
+    platformInfo.Init();
+    optiling::conv_ops_tiling::ConvTilingParseInfo compileInfo;
+
+    auto tilingDataPtr = gert::TilingData::CreateCap(SIZE_4096);
+    auto workspaceHolder = gert::ContinuousVector::Create<size_t>(SIZE_4096);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(workspaceHolder.get());
+    ASSERT_NE(tilingDataPtr, nullptr);
+
+    auto parseHolder = gert::KernelRunContextFaker()
+                           .KernelIONum(NUM_2, 1)
+                           .Inputs(
+                               {const_cast<char*>(compileInfoString.c_str()), reinterpret_cast<void*>(&platformInfo)})
+                           .Outputs({&compileInfo})
+                           .Build();
+    ASSERT_TRUE(parseHolder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
+    parseHolder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", socVersionInfos);
+    parseHolder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    parseHolder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    parseHolder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    parseHolder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                          intrinsics);
+    ASSERT_EQ(tilingParseFunc(parseHolder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(opType)
+                      .NodeIoNum(NUM_4, NUM_2)
+                      .IrInstanceNum({1, 1, 1, 0, 1})
+                      .InputShapes(inputShapeRef)
+                      .OutputShapes(outputShapesRef)
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      // A16W8: fp16 fmap / int8 weight (NCHW origin, FRACTAL_Z storage) /
+                      // int32 bias / fp16 out — the {FP16, INT8, FP16, INT32} dtype row.
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeInputTd(1, ge::DT_INT8, ge::FORMAT_NCHW, ge::FORMAT_FRACTAL_Z)
+                      .NodeInputTd(DIM_2, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(DIM_3, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeOutputTd(1, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeAttrs({{"strides",
+                                   Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, tc.strideH, tc.strideW})},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(
+                                               {tc.padu, tc.padd, tc.padl, tc.padr})},
+                                  {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 1, 1})},
+                                  {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                                  {"offset_x", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                                  {"round_mode", Ops::NN::AnyValue::CreateFrom<std::string>("rint")},
+                                  {"pad_mode", Ops::NN::AnyValue::CreateFrom<std::string>("SPECIFIC")},
+                                  {"enable_hf32", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"enable_relu0", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"enable_relu1", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"dual_output", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"dtype0", Ops::NN::AnyValue::CreateFrom<int64_t>(-1)},
+                                  {"dtype1", Ops::NN::AnyValue::CreateFrom<int64_t>(-1)},
+                                  // Attr list is positional: the fuse+fp16 path reads
+                                  // fixed_shift_value at EXTENDCONV_ATTR_FIXED_SHIFT_VALUE_INDEX (15);
+                                  // pad index 14 with the same _reserved_slot convention as the
+                                  // stridewrite tiling UT.
+                                  {"_reserved_slot", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                                  {"fixed_shift_value", Ops::NN::AnyValue::CreateFrom<int64_t>(0)}})
+                      .TilingData(tilingDataPtr.get())
+                      .Workspace(wsSize)
+                      .Build();
+
+    gert::TilingContext* tilingContext = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tilingContext->GetPlatformInfo(), nullptr);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("version", socVersionInfos);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    tilingContext->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+    ASSERT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS) << caseName << " tiling failed";
+    TilingParam tilingParam = *reinterpret_cast<TilingParam*>(tilingContext->GetRawTilingData()->GetData());
+    uint64_t tilingKey = tilingContext->GetTilingKey();
+
+    // Case premise: several batches land on one core (the batch axis is the only
+    // dimension with more work than the 32 cube cores can absorb).
+    EXPECT_GT(tilingParam.singleCoreBatch, 1) << caseName << " singleCoreBatch: " << tilingParam.singleCoreBatch;
+    // The dedicated weight-partload small-kernel key must be selected.
+    EXPECT_EQ((tilingKey >> 21) & 0x3, 3)
+        << caseName << " smallKernel: " << ((tilingKey >> 21) & 0x3) << ", full key: " << tilingKey;
+    // FmapTiling/WeightTiling/L1PingPong/L0PingPong now follow the tiling decision — only
+    // assert they stay inside the dedicated SEL's value lists (FmapTiling <= 2,
+    // WeightTiling in {ONLY_N(1), OTHER(2)}, pingpong <= 3).
+    EXPECT_LE((tilingKey >> 0) & 0x3, 2) << caseName << " fmpTiling";
+    uint64_t weightTiling = (tilingKey >> 2) & 0x3;
+    EXPECT_TRUE(weightTiling == 1 || weightTiling == 2) << caseName << " weightTiling: " << weightTiling;
+    EXPECT_LE((tilingKey >> 4) & 0x3, 3) << caseName << " l1PingPong";
+    EXPECT_LE((tilingKey >> 6) & 0x3, 3) << caseName << " l0PingPong";
+    EXPECT_EQ((tilingKey >> 9) & 0x3, 0) << caseName << " groupType"; // NORMAL_CONV (groups == 1)
+    // A16W8: tiling k0 follows the int8 weight (32), weightKSize = ceil(ci/32)*kh*kw*32.
+    uint64_t weightKSize = ((tc.cin + 31) / 32) * tc.kH * tc.kW * 32;
+    bool kPartload = tilingParam.kBL1 < weightKSize;
+    bool nPartload = tilingParam.nBL1 < tilingParam.singleCoreCo;
+    EXPECT_TRUE(kPartload || nPartload) << caseName << " kBL1: " << tilingParam.kBL1 << ", weightKSize: " << weightKSize
+                                        << ", nBL1: " << tilingParam.nBL1
+                                        << ", singleCoreCo: " << tilingParam.singleCoreCo;
+}
+
+TEST_F(ExtendConv2dTiling, run_ExtendConv2D_case_a16w8_multibatch_weight_partload_k_split)
+{
+    // Probed tiling output: key 6291720, smallKernel=3, singleCoreBatch=16, kAL1=4608,
+    // kBL1=576 (< weightKSize 4608, K split), nBL1=256 == singleCoreCo (N full), bias=1.
+    RunA16W8WeightPartloadCase({64, 512, 14, 14, 2048, 3, 3, 1, 1, 1, 1, 1, 1, true}, "a16w8_mb_k_split");
+}
+
+TEST_F(ExtendConv2dTiling, run_ExtendConv2D_case_a16w8_multibatch_weight_partload_n_split)
+{
+    // Probed tiling output: key 6291720, smallKernel=3, singleCoreBatch=4, kAL1=4608,
+    // kBL1=288 (< 4608, K split), nBL1=512 < singleCoreCo 2048 (N split), bias=1.
+    RunA16W8WeightPartloadCase({32, 512, 7, 7, 8192, 3, 3, 1, 1, 1, 1, 1, 1, true}, "a16w8_mb_n_split");
+}
+
+TEST_F(ExtendConv2dTiling, run_ExtendConv2D_case_a16w8_multibatch_weight_partload_k_split_small_spatial)
+{
+    // 3x3 variant with a different core split for coverage:
+    // probed key 6291720, smallKernel=3, singleCoreBatch=16, kBL1=288 < 4608 (K split),
+    // nBL1=512 == singleCoreCo=512 (N full), bias=1.
+    // 1x1 A16W8 shapes are deliberately NOT covered: probed 1x1 shapes either keep
+    // kBL1 == ci (weight K full) or drive biasFullLoadFlag to 0, so the gate
+    // legitimately falls back to the base kernel.
+    RunA16W8WeightPartloadCase({64, 512, 7, 7, 4096, 3, 3, 1, 1, 1, 1, 1, 1, true}, "a16w8_mb_k_split_small_spatial");
 }
