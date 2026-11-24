@@ -40,7 +40,7 @@ void PrintOutResult(std::vector<int64_t>& shape, void** deviceAddr)
     std::vector<float> resultData(size, 0);
     auto ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), *deviceAddr,
                            size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return );
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return);
     for (int64_t i = 0; i < size; i++) {
         LOG_PRINT("mean result[%ld] is: %f\n", i, resultData[i]);
     }
@@ -98,9 +98,9 @@ int main()
     std::vector<float> mHostData = {1, 2, 3, 4, 5, 6, 7, 8};
     std::vector<float> vHostData = {1, 2, 3, 4, 5, 6, 7, 8};
     std::vector<float> sHostData = {1, 2, 3, 4, 5, 6, 7, 8};
-    std::vector<float> stepHostData = {10, 10, 10, 10};
+    std::vector<int64_t> stepHostData = {10};
     std::vector<int64_t> inputShape = {2, 2, 2};
-    std::vector<int64_t> stepShape = {2, 2};
+    std::vector<int64_t> stepShape = {1};
     void* gradDeviceAddr = nullptr;
     void* varDeviceAddr = nullptr;
     void* mDeviceAddr = nullptr;
