@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Performs a power operation on each tensor in the input tensor list x. The exponent is the scalar exponent. Compared with [aclnnForeachPowScalar](aclnnForeachPowScalar.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Choose an appropriate API based on your actual needs.
+- Description: Performs a power operation on each tensor in the input tensor list x. The exponent is the scalar exponent. Compared with [aclnnForeachPowScalar](aclnnForeachPowScalar_en.md), this API changes the structure type of the input parameter scalar from aclTensor to aclScalar. Choose an appropriate API based on your actual needs.
 - Formula:
 
   $$
