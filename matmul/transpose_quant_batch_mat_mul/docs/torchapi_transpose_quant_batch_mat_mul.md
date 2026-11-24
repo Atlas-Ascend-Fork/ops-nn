@@ -30,7 +30,7 @@
   | --- | --- | --- | --- | --- |
   | MX | torch.float8_e4m3fn（MXFP8）或torch.uint8（MXFP4，x1_dtype/x2_dtype指定为float4_e2m1fn_x2） | torch.float8_e8m0fnu，4维 | torch.float8_e8m0fnu，4维 | K为64的倍数，N无限制 |
   | FP8（K-C） | torch.float8_e4m3fn与torch.float8_e5m2（可任意组合） | torch.float32，1维(M,) | torch.float32，1维(N,) | K=512，N=128 |
-  | HIFP8 | torch.uint8（hifloat8存储，x1_dtype/x2_dtype指定为torch_npu.hifloat8） | 不传（None） | torch.uint64或torch.int64（按位解释，低32位为float32位模式），1维(N,)，per-channel FIXPIPE反量化缩放因子 | K、N无限制，均为正数 |
+  | HIFP8 | torch.uint8（hifloat8存储，x1_dtype/x2_dtype指定为torch_npu.hifloat8） | 可传可不传 | torch.uint64或torch.int64（按位解释，低32位为float32位模式），1维(N,)，per-channel FIXPIPE反量化缩放因子 | K、N无限制，均为正数 |
   | INT8 W8A8（K-C） | torch.int8 | torch.float32，2维(M, B) | torch.float32，2维(B, N) | K为32的倍数，N为16的倍数 |
 
 - 计算公式（以batch维的每个切片为例）：
@@ -98,8 +98,8 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
 | x2 | Tensor | 必选 | 矩阵乘运算中的右矩阵，数据类型与x1一致，K轴长度与x1一致。perm_x2为[0, 1, 2]时shape为(B, K, N)；perm_x2为[0, 2, 1]时shape为(B, N, K)。MXFP4场景Tensor最后一维为FP4拼包后的物理长度（N/2或K/2）。 | 同x1 | 3维 |
 | dtype | int | 必选 | 输出y的数据类型枚举值：1表示torch.float16，27表示torch.bfloat16，34表示HIFLOAT8（仅T-C量化支持，torch侧以torch.uint8承载）。INT8 W8A8 仅支持 27。 | int64 | - |
 | bias | Tensor | 可选 | 矩阵乘运算后累加的偏置。预留参数，当前暂不支持，必须传入None。 | - | - |
-| x1_scale | Tensor | 可选 | x1的量化缩放因子。MX场景必选；FP8（K-C）场景必选，为per-token缩放因子；INT8 W8A8必选，shape为(M, B)；HIFP8场景不参与计算，传入None。 | MX：torch.float8_e8m0fnu；FP8、INT8 W8A8：torch.float32 | MX：4维，(M, B, K/64, 2)；FP8：1维，(M,)；INT8 W8A8：2维，(M, B) |
-| x2_scale | Tensor | 可选 | x2的量化缩放因子。MX场景必选；FP8（K-C）场景必选，为per-channel缩放因子；INT8 W8A8必选，shape为(B, N)；HIFP8场景必选，为per-channel FIXPIPE缩放因子。 | MX：torch.float8_e8m0fnu；FP8、INT8 W8A8：torch.float32；HIFP8：torch.uint64或torch.int64（按位解释为uint64） | MX：4维，perm_x2为[0, 1, 2]时为(B, K/64, N, 2)，perm_x2为[0, 2, 1]时为(B, N, K/64, 2)；FP8：1维，(N,)；INT8 W8A8：2维，(B, N)；HIFP8：1维，(N,) |
+| x1_scale | Tensor | 可选 | x1的量化缩放因子。MX场景必选；FP8（K-C）场景必选，为per-token缩放因子；INT8 W8A8必选，shape为(M, B)；HIFP8场景不参与计算，可传可不传。 | MX：torch.float8_e8m0fnu；FP8、INT8 W8A8：torch.float32 | MX：4维，(M, B, K/64, 2)；FP8：1维，(M,)；INT8 W8A8：2维，(M, B) |
+| x2_scale | Tensor | 可选 | x2的量化缩放因子。MX场景必选；FP8（K-C）场景必选，为per-channel缩放因子；INT8 W8A8必选，shape为(B, N)；HIFP8场景必选，为per-channel FIXPIPE缩放因子，需提前调用torch_npu.npu_trans_quant_param将FLOAT32缩放因子转换为torch.int64/torch.uint64后传入。 | MX：torch.float8_e8m0fnu；FP8、INT8 W8A8：torch.float32；HIFP8：torch.uint64或torch.int64（按位解释为uint64） | MX：4维，perm_x2为[0, 1, 2]时为(B, K/64, N, 2)，perm_x2为[0, 2, 1]时为(B, N, K/64, 2)；FP8：1维，(N,)；INT8 W8A8：2维，(B, N)；HIFP8：1维，(N,) |
 | group_sizes | List[int] | 可选 | 量化分组大小[groupSizeM, groupSizeN, groupSizeK]，每个元素取值范围为[0, 65535]。MX量化场景groupSizeM和groupSizeN仅支持0或1（取值为0时由接口根据scale的shape推断），groupSizeK仅支持32；FP8（K-C）场景固定传[0, 0, 0]；HIFP8场景传[0, 0, 0]。 | int64 | - |
 | perm_x1 | List[int] | 可选 | x1的转置序列，仅支持[1, 0, 2]，默认值[1, 0, 2]。 | int64 | - |
 | perm_x2 | List[int] | 可选 | x2的转置序列，支持[0, 1, 2]和[0, 2, 1]，默认值[0, 1, 2]。FP8（K-C）与 INT8 W8A8 仅支持[0, 1, 2]。 | int64 | - |
@@ -147,7 +147,7 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
 - **HIFP8量化模式**：
   - x1与x2的存储类型为torch.uint8，必须通过x1_dtype、x2_dtype指定为torch_npu.hifloat8。
   - x2_scale的数据类型必须为torch.uint64或torch.int64，shape为(N,)；两者均按64位**位模式**解释，int64不是数值语义。其每个元素的**低32位存放torch.float32的位模式**（1.0编码为0x000000003F800000），高32位无意义。不要传入数值语义的整数（例如scale=2就传2），否则2会被按位重解释为float32的denormal位模式，导致结果错误且无告警。
-  - x1_scale传入None，该参数不参与计算。
+  - x1_scale可传可不传，该参数不参与计算。
   - K、N无特殊对齐约束（均为正数即可），perm_x2支持[0, 1, 2]和[0, 2, 1]。
   - x2支持FRACTAL_NZ格式（与MXFP8一致，x2的NZ转换为viewshape视角下shape不变，仅物理排布不同）。
   - dtype支持1（fp16）、27（bf16）、34（HIFLOAT8）；dtype=34（T-C）时输出HIFLOAT8，torch侧以torch.uint8承载，需自行按HIFLOAT8解析；x2是否NZ均支持。
@@ -248,7 +248,6 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
   - HIFP8场景示例：
 
     ```python
-    import numpy as np
     import torch
     import torch_npu
     import cann_ops_nn
@@ -257,12 +256,10 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
     # HIFLOAT8按uint8存储，通过x1_dtype/x2_dtype指定逻辑类型
     x1 = torch.randint(0, 128, (M, B, K), dtype=torch.uint8).npu()
     x2 = torch.randint(0, 128, (B, K, N), dtype=torch.uint8).npu()
-    # x2_scale为64位 per-channel编码：每个元素的低32位存放float32位模式（1.0=0x000000003F800000）
-    # 可传torch.uint64或torch.int64，两者均按位解释，不是数值语义（不要直接传2这类整数当scale）
-    f32_bits = np.full(N, np.float32(1.0).view(np.uint32), dtype=np.uint32)
-    x2_scale = torch.from_numpy(f32_bits.astype(np.uint64)).npu()
-    # int64构造方式（与上面uint64位模式等价）：
-    # x2_scale = torch.from_numpy(f32_bits.astype(np.uint64).view(np.int64)).npu()
+    # x2_scale为per-channel FLOAT32缩放因子经torch_npu.npu_trans_quant_param转换得到的
+    # int64位模式数据，按位解释、不是数值语义；HIFP8场景不使用offset，offset不传入
+    scale = torch.rand(N, dtype=torch.float32)
+    x2_scale = torch_npu.npu_trans_quant_param(scale.npu())
 
     y = cann_ops_nn.transpose_quant_batch_mat_mul(
         x1,
@@ -310,7 +307,6 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
   - HIFP8场景示例：
 
     ```python
-    import numpy as np
     import torch
     import torch_npu
     import cann_ops_nn
@@ -330,8 +326,9 @@ cann_ops_nn.transpose_quant_batch_mat_mul(
     M, B, K, N = 64, 16, 128, 96
     x1 = torch.randint(0, 128, (M, B, K), dtype=torch.uint8).npu()
     x2 = torch.randint(0, 128, (B, K, N), dtype=torch.uint8).npu()
-    f32_bits = np.full(N, np.float32(1.0).view(np.uint32), dtype=np.uint32)
-    x2_scale = torch.from_numpy(f32_bits.astype(np.uint64)).npu()
+    # x2_scale由per-channel FLOAT32缩放因子经torch_npu.npu_trans_quant_param转换得到
+    scale = torch.rand(N, dtype=torch.float32)
+    x2_scale = torch_npu.npu_trans_quant_param(scale.npu())
     y = func(x1, x2, x2_scale)
     print(y.shape, y.dtype)
     ```
