@@ -141,9 +141,17 @@ bool AddRmsNormCastRegbaseTiling::CheckInputDtype()
     std::vector<ge::DataType> supportedXGammaDtypes = {ge::DataType::DT_FLOAT16, ge::DataType::DT_BF16,
                                                        ge::DataType::DT_FLOAT};
 
-    ge::DataType x1Dtype = context_->GetInputTensor(X1_INDEX)->GetDataType();
-    ge::DataType x2Dtype = context_->GetInputTensor(X2_INDEX)->GetDataType();
-    ge::DataType gammaDtype = context_->GetInputTensor(GAMMA_INDEX)->GetDataType();
+    // x1/x2/gamma 为普通设备输入，图模式下 tiling 阶段不携带 host 侧 tensor，
+    // dtype 只能从编译期 desc 读取，不得使用 GetInputTensor。
+    const auto* x1Desc = context_->GetInputDesc(X1_INDEX);
+    const auto* x2Desc = context_->GetInputDesc(X2_INDEX);
+    const auto* gammaDesc = context_->GetInputDesc(GAMMA_INDEX);
+    OP_CHECK_IF((nullptr == x1Desc) || (nullptr == x2Desc) || (nullptr == gammaDesc),
+                OP_LOGE(nodeName.c_str(), "The input desc of x1, x2 or gamma is null."), return false);
+
+    ge::DataType x1Dtype = x1Desc->GetDataType();
+    ge::DataType x2Dtype = x2Desc->GetDataType();
+    ge::DataType gammaDtype = gammaDesc->GetDataType();
     if ((x1Dtype != x2Dtype) || (x1Dtype != gammaDtype)) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(nodeName.c_str(), "x1, x2 and gamma",
                                                (Ops::Base::ToString(x1Dtype) + ", " + Ops::Base::ToString(x2Dtype) +
@@ -152,6 +160,9 @@ bool AddRmsNormCastRegbaseTiling::CheckInputDtype()
                                                "The dtypes of x1, x2 and gamma should be the same");
         return false;
     }
+
+    // x1/x2/gamma 一致，仅需按白名单校验 x1，避免非法 dtype 进入后续对齐派生（如 xDtypeSize）。
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckDtypeVaild(x1Dtype, supportedXGammaDtypes, "x1"), , return false);
 
     return true;
 }
@@ -196,7 +207,10 @@ ge::graphStatus AddRmsNormCastRegbaseTiling::SetInputParams()
     tilingParams.numN = numN;
 
     // Set input dtype
-    auto xDataType = context_->GetInputTensor(X1_INDEX)->GetDataType();
+    // 图模式下 tiling 阶段 GetInputTensor 对设备输入恒为空，dtype 从编译期 desc 读取。
+    const auto* x1Desc = context_->GetInputDesc(X1_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context_, x1Desc);
+    auto xDataType = x1Desc->GetDataType();
     tilingParams.xDtypeSize = GetSizeByDataType(xDataType);
     tilingParams.ubBlockSize = Ops::Base::GetUbBlockSize(context_);
     tilingParams.b32BlockNum = tilingParams.ubBlockSize / sizeof(float);
