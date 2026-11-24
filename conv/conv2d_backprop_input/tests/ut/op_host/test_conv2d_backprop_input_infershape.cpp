@@ -11,7 +11,7 @@
 /*!
  * \file test_conv2d_backprop_input_infershape.cpp
  * \brief 覆盖迁移自1.0(nn_calculation_ops.cc Conv2DBackpropInputInfer)的显式校验：
- *        input_size为const且out_backprop为静态shape时，filter的H/W维度不支持-1/-2
+ *        input_size为const且out_backprop为静态shape时，input_size推导的dx经attr正推需与out_backprop的H/W一致
  */
 
 #include "exe_graph/runtime/storage_format.h"
@@ -21,6 +21,8 @@
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -29,10 +31,25 @@ constexpr size_t kInputSizeEleNum = 4;
 
 class Conv2DBackpropInputRuntimeInferShape : public testing::Test {};
 
+// 组装Conv2DBackpropInput的def序attrs(strides/pads/dilations/groups/data_format/padding/_op_impl_mode_enum)
+static std::vector<std::pair<std::string, Ops::NN::AnyValue>> MakeConv2DBpInputAttrs(
+    const std::vector<int64_t>& strides, const std::vector<int64_t>& pads, const std::vector<int64_t>& dilations,
+    const std::string& dataFormat)
+{
+    return {{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(strides)},
+            {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(pads)},
+            {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(dilations)},
+            {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+            {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>(dataFormat)},
+            {"padding", Ops::NN::AnyValue::CreateFrom<std::string>("")},
+            {"_op_impl_mode_enum", Ops::NN::AnyValue::CreateFrom<int64_t>(0)}};
+}
+
 static gert::KernelRunContextHolder BuildConv2DBackpropInputContext(
     std::unique_ptr<uint8_t[]>& tensor_holder, bool with_const_input_size, const std::vector<int64_t>& input_size,
     gert::StorageShape& filter_shape, ge::Format filter_format, gert::StorageShape& dedy_shape,
-    ge::Format y_format = ge::FORMAT_NCHW)
+    ge::Format y_format = ge::FORMAT_NCHW, ge::Format dedy_format = ge::FORMAT_NCHW,
+    const std::vector<std::pair<std::string, Ops::NN::AnyValue>>& node_attrs = {})
 {
     gert::StorageShape output_shape = {{}, {}};
     gert::InferShapeContextFaker faker;
@@ -40,8 +57,11 @@ static gert::KernelRunContextHolder BuildConv2DBackpropInputContext(
         .IrInstanceNum({1, 1, 1})
         .NodeInputTd(0, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeInputTd(1, ge::DT_FLOAT16, filter_format, filter_format)
-        .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+        .NodeInputTd(2, ge::DT_FLOAT16, dedy_format, dedy_format)
         .NodeOutputTd(0, ge::DT_FLOAT16, y_format, y_format);
+    if (!node_attrs.empty()) {
+        faker.NodeAttrs(node_attrs);
+    }
     if (with_const_input_size) {
         size_t total_size = 0;
         tensor_holder = gert::Tensor::CreateFollowing(kInputSizeEleNum, ge::DT_INT64, total_size);
@@ -77,9 +97,11 @@ TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyFilterNegat
     std::unique_ptr<uint8_t[]> tensor_holder;
     gert::StorageShape filter_shape = {{32, 64, -1, 3}, {32, 64, -1, 3}};
     gert::StorageShape dedy_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
-    EXPECT_EQ(RunConv2DBackpropInputInferShape(tensor_holder, true, {2, 32, 32, 32}, filter_shape, ge::FORMAT_NCHW,
-                                               dedy_shape),
-              ge::GRAPH_FAILED);
+    auto attrs = MakeConv2DBpInputAttrs({1, 1, 1, 1}, {0, 0, 0, 0}, {1, 1, 1, 1}, "NCHW");
+    auto holder = BuildConv2DBackpropInputContext(tensor_holder, true, {2, 32, 32, 32}, filter_shape, ge::FORMAT_NCHW,
+                                                  dedy_shape, ge::FORMAT_NCHW, ge::FORMAT_NCHW, attrs);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DBackpropInput")->infer_shape;
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
 }
 
 TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyFilterNegativeWFhwcnFail)
@@ -87,9 +109,11 @@ TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyFilterNegat
     std::unique_ptr<uint8_t[]> tensor_holder;
     gert::StorageShape filter_shape = {{-2, 3, 64, 32}, {-2, 3, 64, 32}};
     gert::StorageShape dedy_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
-    EXPECT_EQ(RunConv2DBackpropInputInferShape(tensor_holder, true, {2, 32, 32, 32}, filter_shape, ge::FORMAT_HWCN,
-                                               dedy_shape),
-              ge::GRAPH_FAILED);
+    auto attrs = MakeConv2DBpInputAttrs({1, 1, 1, 1}, {0, 0, 0, 0}, {1, 1, 1, 1}, "NCHW");
+    auto holder = BuildConv2DBackpropInputContext(tensor_holder, true, {2, 32, 32, 32}, filter_shape, ge::FORMAT_HWCN,
+                                                  dedy_shape, ge::FORMAT_NCHW, ge::FORMAT_NCHW, attrs);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DBackpropInput")->infer_shape;
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
 }
 
 TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyFilterUnknownRankFail)
@@ -107,11 +131,53 @@ TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyFilterPosit
     std::unique_ptr<uint8_t[]> tensor_holder;
     gert::StorageShape filter_shape = {{32, 64, 3, 3}, {32, 64, 3, 3}};
     gert::StorageShape dedy_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
+    // 正推一致：Hout' = (32 + 1 + 1 - 3) / 2 + 1 = 16，与dedy一致
+    auto attrs = MakeConv2DBpInputAttrs({1, 1, 2, 2}, {1, 1, 1, 1}, {1, 1, 1, 1}, "NCHW");
     auto holder = BuildConv2DBackpropInputContext(tensor_holder, true, {2, 32, 32, 32}, filter_shape, ge::FORMAT_NCHW,
-                                                  dedy_shape);
+                                                  dedy_shape, ge::FORMAT_NCHW, ge::FORMAT_NCHW, attrs);
     auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DBackpropInput")->infer_shape;
     EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
     EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)), "[2, 32, 32, 32]");
+}
+
+// input_size推导的dx与out_backprop经attr正推不一致时报错(对齐1.0 Hout != Hout'校验)：
+// dx=32、filter=3、stride=1、padSum=0时Hout'=(32-3)/1+1=30，与dedy的16不一致
+TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyInconsistentHwFail)
+{
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape filter_shape = {{32, 64, 3, 3}, {32, 64, 3, 3}};
+    gert::StorageShape dedy_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
+    auto attrs = MakeConv2DBpInputAttrs({1, 1, 1, 1}, {0, 0, 0, 0}, {1, 1, 1, 1}, "NCHW");
+    auto holder = BuildConv2DBackpropInputContext(tensor_holder, true, {2, 32, 32, 32}, filter_shape, ge::FORMAT_NCHW,
+                                                  dedy_shape, ge::FORMAT_NCHW, ge::FORMAT_NCHW, attrs);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DBackpropInput")->infer_shape;
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+// NHWC布局：y/dedy按各自format取H/W维，strides/dilations按y格式H/W下标(1,2)索引
+TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyNhwcConsistentHwSuccess)
+{
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape filter_shape = {{3, 3, 64, 32}, {3, 3, 64, 32}};
+    gert::StorageShape dedy_shape = {{2, 16, 16, 64}, {2, 16, 16, 64}};
+    auto attrs = MakeConv2DBpInputAttrs({1, 2, 2, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}, "NHWC");
+    auto holder = BuildConv2DBackpropInputContext(tensor_holder, true, {2, 32, 32, 32}, filter_shape, ge::FORMAT_HWCN,
+                                                  dedy_shape, ge::FORMAT_NHWC, ge::FORMAT_NHWC, attrs);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DBackpropInput")->infer_shape;
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)), "[2, 32, 32, 32]");
+}
+
+TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyFilterUnknownHwNhwcConsistentSuccess)
+{
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape filter_shape = {{-1, -1, -1, -1}, {-1, -1, -1, -1}};
+    gert::StorageShape dedy_shape = {{2, 14, 8, 12}, {2, 14, 8, 12}};
+    auto attrs = MakeConv2DBpInputAttrs({1, 4, 7, 1}, {0, 0, 0, 0}, {1, 1, 3, 1}, "NHWC");
+    auto holder = BuildConv2DBackpropInputContext(tensor_holder, true, {2, 53, 50, 8}, filter_shape, ge::FORMAT_NHWC,
+                                                  dedy_shape, ge::FORMAT_NHWC, ge::FORMAT_NHWC, attrs);
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DBackpropInput")->infer_shape;
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
 }
 
 TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeDynamicDedyFilterNegativeSuccess)

@@ -26,6 +26,23 @@ static constexpr size_t kConv2dDimSizeLimit = 4;
 constexpr size_t kInputSizeIndex = 0;
 constexpr size_t kFilterIndex = 1;
 constexpr size_t kOutBackpropIndex = 2;
+constexpr size_t kStridesIdx = 0;
+constexpr size_t kPadsIdx = 1;
+constexpr size_t kDilationsIdx = 2;
+constexpr size_t kConv2dAttrListLen = 4;
+constexpr size_t kPadTopIdx = 0;
+constexpr size_t kPadBottomIdx = 1;
+constexpr size_t kPadLeftIdx = 2;
+constexpr size_t kPadRightIdx = 3;
+
+// 按下标读const input_size的数据值(input_size按data_format序存放输出shape，dtype支持int32/int64)
+static int64_t GetInputSizeDimValue(const gert::Tensor* inputSizeTensor, size_t index)
+{
+    if (inputSizeTensor->GetDataType() == ge::DT_INT32) {
+        return static_cast<int64_t>(inputSizeTensor->GetData<int32_t>()[index]);
+    }
+    return inputSizeTensor->GetData<int64_t>()[index];
+}
 
 // input_size为const且out_backprop为静态shape时，filter的H/W维度不支持-1/-2
 static ge::graphStatus CheckFilterShapeForConv2DBackpropInput(gert::InferShapeContext* context)
@@ -65,11 +82,61 @@ static ge::graphStatus CheckFilterShapeForConv2DBackpropInput(gert::InferShapeCo
     }
     const int64_t filterH = filterShape->GetDim(hIndex);
     const int64_t filterW = filterShape->GetDim(wIndex);
-    if (filterH < 0 || filterW < 0) {
-        OP_LOGE(context->GetNodeName(),
-                "filter shape h = %ld, w = %ld should be positive when input_size is const and out_backprop shape is "
-                "static.",
-                filterH, filterW);
+
+    const auto yShape = context->GetOutputShape(0);
+    OP_CHECK_IF(yShape == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get y shape."),
+                return ge::GRAPH_FAILED);
+    const auto yDesc = context->GetOutputDesc(0);
+    OP_CHECK_IF(yDesc == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get y tensor desc."),
+                return ge::GRAPH_FAILED);
+    size_t yHIndex = 0;
+    size_t yWIndex = 0;
+    if (yShape->GetDimNum() != kConv2dDimSizeLimit || outBackpropShape->GetDimNum() != kConv2dDimSizeLimit ||
+        !GetHwDimIndex(yDesc->GetOriginFormat(), yHIndex, yWIndex)) {
+        return ge::GRAPH_SUCCESS;
+    }
+
+    const int64_t dxH = GetInputSizeDimValue(inputSizeTensor, yHIndex);
+    const int64_t dxW = GetInputSizeDimValue(inputSizeTensor, yWIndex);
+    const int64_t dyH = outBackpropShape->GetDim(yHIndex);
+    const int64_t dyW = outBackpropShape->GetDim(yWIndex);
+
+    const auto runtimeAttrs = context->GetAttrs();
+    OP_CHECK_IF(runtimeAttrs == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get runtime attrs."),
+                return ge::GRAPH_FAILED);
+    const auto stridesList = runtimeAttrs->GetAttrPointer<gert::ContinuousVector>(kStridesIdx);
+    const auto padsList = runtimeAttrs->GetAttrPointer<gert::ContinuousVector>(kPadsIdx);
+    const auto dilationsList = runtimeAttrs->GetAttrPointer<gert::ContinuousVector>(kDilationsIdx);
+    OP_CHECK_IF(stridesList == nullptr || padsList == nullptr || dilationsList == nullptr ||
+                    stridesList->GetSize() < kConv2dAttrListLen || padsList->GetSize() < kConv2dAttrListLen ||
+                    dilationsList->GetSize() < kConv2dAttrListLen,
+                CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get strides/pads/dilations attrs."),
+                return ge::GRAPH_FAILED);
+    const auto strides = static_cast<const int64_t*>(stridesList->GetData());
+    const auto pads = static_cast<const int64_t*>(padsList->GetData());
+    const auto dilations = static_cast<const int64_t*>(dilationsList->GetData());
+    const int64_t strideH = strides[yHIndex];
+    const int64_t strideW = strides[yWIndex];
+    const int64_t kernelH = (filterH - 1) * dilations[yHIndex] + 1;
+    const int64_t kernelW = (filterW - 1) * dilations[yWIndex] + 1;
+    OP_CHECK_IF(strideH <= 0 || strideW <= 0 || dilations[yHIndex] <= 0 || dilations[yWIndex] <= 0,
+                OP_LOGE(context->GetNodeName(), "strides and dilations should be positive."), return ge::GRAPH_FAILED);
+    const int64_t dyHNew = (dxH + pads[kPadTopIdx] + pads[kPadBottomIdx] - kernelH) / strideH + 1;
+    const int64_t dyWNew = (dxW + pads[kPadLeftIdx] + pads[kPadRightIdx] - kernelW) / strideW + 1;
+    if (dyHNew != dyH || dyWNew != dyW) {
+        if (filterH < 0 || filterW < 0) {
+            OP_LOGE(context->GetNodeName(),
+                    "filter shape h = %ld, w = %ld should be positive when input_size is const and out_backprop shape "
+                    "is static.",
+                    filterH, filterW);
+        } else {
+            OP_LOGE(context->GetNodeName(),
+                    "the output Hout=%ld or Wout=%ld is not equal with the Hout'=%ld or Wout'=%ld which is calculated "
+                    "by input and attr. \n"
+                    "Hout' = (Hin + 2 * (PaddingUp + PaddingDown) - DilationH * (FilterH - 1) - 1) / strideH + 1 \n"
+                    "Wout' = (Win + 2 * (PaddingLeft + PaddingRight) - DilationW * (FilterW - 1) - 1) / strideW + 1",
+                    dxH, dxW, dyHNew, dyWNew);
+        }
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
