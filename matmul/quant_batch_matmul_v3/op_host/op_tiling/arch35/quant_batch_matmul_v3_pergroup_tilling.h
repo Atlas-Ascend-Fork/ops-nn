@@ -32,6 +32,8 @@ public:
     explicit X2PerGroupTiling(gert::TilingContext* context);
     ~X2PerGroupTiling() override = default;
 
+    void Reset(gert::TilingContext* context) override;
+
     // DoTiling(): GetShapeAttrsInfo -> GetPlatformInfo -> IsCapable -> DoOpTiling -> DoLibApiTiling ->
     // GetWorkspaceSize -> PostTiling -> GetTilingKey. First two are swapped vs some headers' numbering.
     ge::graphStatus GetShapeAttrsInfo() override;
@@ -51,7 +53,7 @@ protected:
 private:
     // False when clearing the raw tiling data fails. The constructor cannot report that, so the
     // result is kept in resetFailed_ and DoOpTiling() fails before it writes into a dirty buffer.
-    bool Reset();
+    bool ResetPerGroup();
     // DoOpTiling() helpers, in call order. CheckCoreNum() comes first because this strategy requires
     // AIC:AIV = 1:1 and the base class offers no hook for that check.
     bool CheckCoreNum() const;

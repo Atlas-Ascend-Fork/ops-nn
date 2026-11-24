@@ -42,10 +42,16 @@ using X2Config = X2PerGroupConfig;
 X2PerGroupTiling::X2PerGroupTiling(gert::TilingContext* context)
     : QuantBatchMatmulV3TilingBase(context, false), tilingData_(tilingDataSelf_)
 {
-    resetFailed_ = !Reset();
+    resetFailed_ = !ResetPerGroup();
 }
 
-bool X2PerGroupTiling::Reset()
+void X2PerGroupTiling::Reset(gert::TilingContext* context)
+{
+    TilingBaseClass::Reset(context);
+    resetFailed_ = !ResetPerGroup();
+}
+
+bool X2PerGroupTiling::ResetPerGroup()
 {
     bFullLoad_ = false;
     aFullLoad_ = false;

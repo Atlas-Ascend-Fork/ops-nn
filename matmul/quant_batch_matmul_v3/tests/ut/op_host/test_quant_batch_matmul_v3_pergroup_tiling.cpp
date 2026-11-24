@@ -21,6 +21,7 @@
 #include "platform/platform_infos_def.h"
 #include "test_cube_util.h"
 #include "ut_op_util.h"
+#include "matmul/quant_batch_matmul_v3/op_host/op_tiling/arch35/quant_batch_matmul_v3_pergroup_tilling.h"
 #include "matmul/quant_batch_matmul_v3/op_host/op_tiling/quant_batch_matmul_v3_tiling.h"
 #include "matmul/quant_batch_matmul_v3/op_kernel/arch35/quant_batch_matmul_v3_tiling_data.h"
 
@@ -244,6 +245,56 @@ void RunCase(const PerGroupCase& param, uint64_t kernelType, bool success = true
     CheckResources(param, tiling, kernelType);
 }
 } // namespace
+
+TEST(QuantBatchMatmulV3PerGroupTiling, ResetClearsOnlyTheNewContextTilingBuffer)
+{
+    constexpr size_t capacity = 64;
+    constexpr uint8_t oldValue = 0xA5;
+    constexpr uint8_t newValue = 0x5A;
+    auto oldRawTiling = gert::TilingData::CreateCap(capacity);
+    auto newRawTiling = gert::TilingData::CreateCap(capacity);
+    ASSERT_NE(oldRawTiling, nullptr);
+    ASSERT_NE(newRawTiling, nullptr);
+    auto shape = MakeShape(gert::Shape({1, 1}));
+    fe::PlatFormInfos platform;
+    platform.Init();
+    optiling::QuantBatchMatmulV3CompileInfo compileInfo{};
+    auto buildContext = [&](const void* rawTiling) {
+        return gert::TilingContextFaker()
+            .NodeIoNum(1, 1)
+            .InputShapes({&shape})
+            .OutputShapes({&shape})
+            .NodeInputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+            .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+            .CompileInfo(&compileInfo)
+            .PlatformInfo(reinterpret_cast<char*>(&platform))
+            .TilingData(rawTiling)
+            .SetOpType("QuantBatchMatmulV3")
+            .Build();
+    };
+    auto oldHolder = buildContext(oldRawTiling.get());
+    auto newHolder = buildContext(newRawTiling.get());
+    auto* oldContext = oldHolder.GetContext<gert::TilingContext>();
+    auto* newContext = newHolder.GetContext<gert::TilingContext>();
+    ASSERT_NE(oldContext, nullptr);
+    ASSERT_NE(newContext, nullptr);
+    auto* oldTilingData = oldContext->GetRawTilingData();
+    auto* newTilingData = newContext->GetRawTilingData();
+    ASSERT_EQ(oldTilingData, reinterpret_cast<gert::TilingData*>(oldRawTiling.get()));
+    ASSERT_EQ(newTilingData, reinterpret_cast<gert::TilingData*>(newRawTiling.get()));
+
+    optiling::X2PerGroupTiling tiling(oldContext);
+    Ops::NN::Optiling::TilingBaseClass& strategy = tiling;
+    auto* oldData = static_cast<uint8_t*>(oldTilingData->GetData());
+    auto* newData = static_cast<uint8_t*>(newTilingData->GetData());
+    std::fill_n(oldData, capacity, oldValue);
+    std::fill_n(newData, capacity, newValue);
+
+    strategy.Reset(newContext);
+
+    EXPECT_TRUE(std::all_of(newData, newData + capacity, [](uint8_t value) { return value == 0; }));
+    EXPECT_TRUE(std::all_of(oldData, oldData + capacity, [](uint8_t value) { return value == oldValue; }));
+}
 
 TEST(QuantBatchMatmulV3PerGroupTiling, ChecksAllLoadModesForBothWeightTypesAndTransposes)
 {
