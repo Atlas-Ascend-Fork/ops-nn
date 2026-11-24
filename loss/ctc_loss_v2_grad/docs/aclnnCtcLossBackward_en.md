@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: performs backward propagation of [aclnnCtcLoss](../../ctc_loss_v2/docs/aclnnCtcLoss.md) and calculates the CTC loss gradient.
+- Description: performs backward propagation of [aclnnCtcLoss](../../ctc_loss_v2/docs/aclnnCtcLoss_en.md) and calculates the CTC loss gradient.
 - Formula:
 Define $y_{k}^{t}$ as the probability that the true character is $k$ at time $t$. (Generally, $y_{k}^{t}$ is an element of the output matrix after softmax.) The set of all sequences that can be formed from the character set $L^{'}$ is denoted as $L^{'T}$. Any sequence in $L^{'T}$ is called a path, denoted as $π$. The distribution of $π$ is formula (1):
 
