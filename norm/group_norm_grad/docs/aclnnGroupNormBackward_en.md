@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Backward computation of [aclnnGroupNorm](../../group_norm/docs/aclnnGroupNorm.md). Computes the gradients of the input tensor to update model parameters during backward propagation.
+- Description: Backward computation of [aclnnGroupNorm](../../group_norm/docs/aclnnGroupNorm_en.md). Computes the gradients of the input tensor to update model parameters during backward propagation.
 - Formula:
 
   $$
