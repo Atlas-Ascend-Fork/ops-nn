@@ -26,7 +26,7 @@
 ## Function
 
 - Description: Performs element-wise subtraction on elements in two tensor lists, and adjusts the subtraction coefficient using the alpha parameter.
-  Compared with [aclnnForeachSubList](aclnnForeachSubList.md), this API changes the structure type of the input parameter alpha from aclTensor to aclScalar. Choose an appropriate API based on the actual requirements.
+  Compared with [aclnnForeachSubList](aclnnForeachSubList_en.md), this API changes the structure type of the input parameter alpha from aclTensor to aclScalar. Choose an appropriate API based on the actual requirements.
 - Formula:
 
   $$
