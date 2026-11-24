@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Fuses matrix multiplication and general vector computation. Compared with [aclnnFusedMatmul](aclnnFusedMatmul.md), this API adds the optional inputs alphaOptional and betaOptional, which scale the matrix multiplication result and x3, respectively. Both parameters default to 1.0 when a null pointer is passed in. Choose an appropriate API based on the actual use case.
+- Description: Fuses matrix multiplication and general vector computation. Compared with [aclnnFusedMatmul](aclnnFusedMatmul_en.md), this API adds the optional inputs alphaOptional and betaOptional, which scale the matrix multiplication result and x3, respectively. Both parameters default to 1.0 when a null pointer is passed in. Choose an appropriate API based on the actual use case.
 - Formula:
 
   $$
