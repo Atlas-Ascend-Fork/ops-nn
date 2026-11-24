@@ -27,6 +27,9 @@ constexpr uint32_t COSINE_EMBEDDING_LOSS_GENERIC_PATH = 0;
 constexpr uint32_t COSINE_EMBEDDING_LOSS_CONTIG_2D_PATH = 1;
 constexpr uint32_t COSINE_EMBEDDING_LOSS_CONST_REDUCTION_PATH = 2;
 constexpr uint32_t COSINE_EMBEDDING_LOSS_FEATURE_BROADCAST_REDUCTION_PATH = 3;
+constexpr uint32_t COSINE_EMBEDDING_LOSS_LONG_FEATURE_PATH = 4;
+constexpr int64_t COSINE_EMBEDDING_LOSS_LONG_FEATURE_ACC_PLANES = 4;
+constexpr int64_t COSINE_EMBEDDING_LOSS_LONG_FEATURE_MEAN_PITCH = 64;
 constexpr uint32_t COSINE_EMBEDDING_LOSS_REDUCTION_NONE = 0;
 constexpr uint32_t COSINE_EMBEDDING_LOSS_REDUCTION_SUM = 1;
 constexpr uint32_t COSINE_EMBEDDING_LOSS_REDUCTION_MEAN = 2;
@@ -35,11 +38,10 @@ constexpr int64_t COSINE_EMBEDDING_LOSS_MAX_CORE_NUM = 64;
 // Row chunk size used by the kernel to split very large row counts into bounded loops.
 constexpr int64_t COSINE_EMBEDDING_LOSS_MAX_UB_TILE_ROWS = 1 << 20;
 constexpr int64_t COSINE_EMBEDDING_LOSS_CONST_REDUCTION_MIN_N = 1 << 20;
+constexpr int64_t COSINE_EMBEDDING_LOSS_MAX_SMALL_TARGET = 64;
+constexpr int64_t COSINE_EMBEDDING_LOSS_TARGET_SCAN_MIN_ROWS = 1 << 18;
+constexpr int64_t COSINE_EMBEDDING_LOSS_TARGET_SCAN_MIN_REUSE = 4;
 constexpr int64_t COSINE_EMBEDDING_LOSS_MAX_SORTED_STATS = 256;
-constexpr int64_t COSINE_EMBEDDING_LOSS_EXACT_FEATURE_REDUCTION_MAX_X1_VISITS = 1 << 20;
-constexpr int64_t COSINE_EMBEDDING_LOSS_MAX_FEATURE_SHARED_SAMPLES = 64;
-constexpr int64_t COSINE_EMBEDDING_LOSS_MAX_FEATURE_X1_SAMPLES = 8;
-constexpr int64_t COSINE_EMBEDDING_LOSS_MAX_FEATURE_X2_SAMPLES = 16;
 constexpr int64_t COSINE_EMBEDDING_LOSS_PARTIAL_BUF_ELEMS = COSINE_EMBEDDING_LOSS_MAX_CORE_NUM *
                                                             COSINE_EMBEDDING_LOSS_WS_CORE_STRIDE;
 
@@ -70,6 +72,7 @@ struct CosineEmbeddingLossTilingData {
     int64_t targetOutStrides[COSINE_EMBEDDING_LOSS_MAX_RANK] = {};
     int64_t x1ReduceStride = 0;
     int64_t x2ReduceStride = 0;
+    int64_t featureSplit = 0; // AIVs per group of contiguous output columns
 };
 
 #endif // OPS_LOSS_COSINE_EMBEDDING_LOSS_TILING_DATA_H_

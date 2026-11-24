@@ -50,6 +50,13 @@ constexpr int64_t VECTOR_LENGTH_FP32 = 64;
 constexpr int64_t OUTPUT_BLOCK_ELEMENTS_FP32 = 8;
 constexpr uint64_t UB_RESERVED_BYTES = 4UL * 1024UL;
 constexpr size_t SYS_WORKSPACE_BYTES = 16UL * 1024UL * 1024UL;
+constexpr int64_t LONG_FEATURE_MIN_LENGTH = 4096;
+constexpr int64_t LONG_FEATURE_MAX_LENGTH = 1 << 24;
+constexpr int64_t LONG_FEATURE_MAX_OUTPUTS = 512;
+constexpr int64_t LONG_FEATURE_MAX_MEAN_OUTPUTS = 1024;
+constexpr int64_t LONG_FEATURE_MIN_COLUMNS = 32;
+constexpr int64_t LONG_FEATURE_MAX_COLUMNS = 256;
+constexpr uint64_t LONG_FEATURE_MAX_INPUT_BYTES = 64UL * 1024UL;
 namespace cel = ops::cosine_embedding_loss;
 
 bool IsSupportedDtype(ge::DataType dt) { return dt == ge::DT_FLOAT || dt == ge::DT_FLOAT16 || dt == ge::DT_INT32; }
@@ -178,6 +185,52 @@ ge::graphStatus CheckSupportedDtype(gert::TilingContext* context, const char* na
                                                       "dtype should be int32, float16 or float32"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
+}
+
+bool ConfigureLongFeaturePath(CosineEmbeddingLossTilingData& tiling, ge::DataType dtype, int64_t availableCoreNum,
+                              uint64_t ubSize)
+{
+    const int64_t columns = tiling.x1ReduceStride;
+    const bool reduced = tiling.reduction == cel::kReductionMean && dtype == ge::DT_INT32;
+    const bool direct = tiling.reduction == cel::kReductionNone && (dtype == ge::DT_FLOAT || dtype == ge::DT_FLOAT16);
+    const int64_t pitch = reduced ? COSINE_EMBEDDING_LOSS_LONG_FEATURE_MEAN_PITCH : columns;
+    if ((!direct && !reduced) || tiling.x2ReduceStride != 0 || tiling.d < LONG_FEATURE_MIN_LENGTH ||
+        tiling.d > LONG_FEATURE_MAX_LENGTH || columns < LONG_FEATURE_MIN_COLUMNS ||
+        columns > LONG_FEATURE_MAX_COLUMNS || columns > pitch ||
+        tiling.n > (reduced ? LONG_FEATURE_MAX_MEAN_OUTPUTS : LONG_FEATURE_MAX_OUTPUTS)) {
+        return false;
+    }
+    const int64_t dataRows = tiling.x1Num / tiling.d;
+    if (dataRows < columns || dataRows % columns != 0 || tiling.n % dataRows != 0 ||
+        (reduced ? tiling.n <= dataRows : tiling.n != dataRows)) {
+        return false;
+    }
+    const int64_t groups = dataRows / columns;
+    const int64_t splits = availableCoreNum / groups;
+    const uint64_t x1Bytes = DtypeBytes(dtype);
+    const uint64_t x1RowBytes = pitch * x1Bytes;
+    const uint64_t statBytes = pitch * COSINE_EMBEDDING_LOSS_LONG_FEATURE_ACC_PLANES * sizeof(float);
+    if (splits < 2 || (!reduced && (x1RowBytes % (OUTPUT_BLOCK_ELEMENTS_FP32 * sizeof(float)) != 0 ||
+                                    columns % OUTPUT_BLOCK_ELEMENTS_FP32 != 0))) {
+        return false;
+    }
+
+    // Input tile, broadcast values, and statistics each have a VF read guard for their last column vector.
+    const uint64_t fixedBytes = UB_RESERVED_BYTES + 2 * pitch * sizeof(float) + (splits + 1) * statBytes +
+                                VECTOR_LENGTH_FP32 * (x1Bytes + 2 * sizeof(float));
+    if (ubSize <= fixedBytes) {
+        return false;
+    }
+    const int64_t tile = std::min<int64_t>(Ops::Base::CeilDiv(tiling.d, splits),
+                                           std::min(ubSize - fixedBytes, LONG_FEATURE_MAX_INPUT_BYTES) / x1RowBytes);
+    if (tile <= 0) {
+        return false;
+    }
+    tiling.fastPath = COSINE_EMBEDDING_LOSS_LONG_FEATURE_PATH;
+    tiling.featureTile = tile;
+    tiling.featureSplit = splits;
+    tiling.usedCoreNum = groups * splits;
+    return true;
 }
 
 bool IsFeatureBroadcastReductionCandidate(const CosineEmbeddingLossTilingData& tiling)
@@ -386,15 +439,22 @@ static ge::graphStatus TilingForCosineEmbeddingLoss(gert::TilingContext* context
         }
     }
 
-    if (tiling->fastPath == COSINE_EMBEDDING_LOSS_CONTIG_2D_PATH && reduction == cel::kReductionNone &&
-        usedCoreNum > 1) {
-        // Each non-tail core owns complete 32B output blocks, so 4B MTE writes from different cores never overlap.
+    if (reduction == cel::kReductionNone && usedCoreNum > 1) {
+        // Keep the output ranges of neighboring AIVs disjoint at 32B boundaries.
         rowsPerCore = Ops::Base::CeilAlign(rowsPerCore, OUTPUT_BLOCK_ELEMENTS_FP32);
         usedCoreNum = Ops::Base::CeilDiv(n, rowsPerCore);
         tailRows = n - rowsPerCore * (usedCoreNum - 1);
         tiling->rowsPerCore = rowsPerCore;
         tiling->usedCoreNum = usedCoreNum;
         tiling->tailRows = tailRows;
+    }
+    const bool targetAddsPrefix = outputDims.size() > xReducedDims.size() &&
+                                  std::equal(xReducedDims.rbegin(), xReducedDims.rend(), outputDims.rbegin());
+    const bool longFeatureOutput = reduction == cel::kReductionNone ? outputDims == xReducedDims : targetAddsPrefix;
+    const bool splitLongFeature = x1Dims == xBroadcastDims && longFeatureOutput &&
+                                  ConfigureLongFeaturePath(*tiling, x1Dt, availableCoreNum, ubSize);
+    if (splitLongFeature) {
+        usedCoreNum = tiling->usedCoreNum;
     }
     if (tiling->fastPath == COSINE_EMBEDDING_LOSS_GENERIC_PATH && reduction != cel::kReductionNone &&
         n >= COSINE_EMBEDDING_LOSS_CONST_REDUCTION_MIN_N) {
@@ -406,11 +466,21 @@ static ge::graphStatus TilingForCosineEmbeddingLoss(gert::TilingContext* context
 
     auto workspaces = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, workspaces);
-    workspaces[0] = SYS_WORKSPACE_BYTES +
-                    static_cast<size_t>(usedCoreNum) * COSINE_EMBEDDING_LOSS_WS_CORE_STRIDE * sizeof(float);
+    const bool reduceLongFeature = splitLongFeature && reduction != cel::kReductionNone;
+    const int64_t featurePitch = reduceLongFeature ? COSINE_EMBEDDING_LOSS_LONG_FEATURE_MEAN_PITCH :
+                                                     tiling->x1ReduceStride;
+    const int64_t reductionStride = reduceLongFeature ? COSINE_EMBEDDING_LOSS_WS_CORE_STRIDE : 0;
+    const int64_t workspaceStride = splitLongFeature ?
+                                        featurePitch * COSINE_EMBEDDING_LOSS_LONG_FEATURE_ACC_PLANES + reductionStride :
+                                        COSINE_EMBEDDING_LOSS_WS_CORE_STRIDE;
+    workspaces[0] = SYS_WORKSPACE_BYTES + static_cast<size_t>(usedCoreNum) * workspaceStride * sizeof(float);
     context->SetBlockDim(usedCoreNum);
-    if (reduction != cel::kReductionNone) {
-        // The cross-core reduction calls SyncAll, so every launched AIV must be co-resident.
+    const bool scanTargetForNone = tiling->fastPath == COSINE_EMBEDDING_LOSS_GENERIC_PATH &&
+                                   targetNum > COSINE_EMBEDDING_LOSS_MAX_SMALL_TARGET &&
+                                   n >= COSINE_EMBEDDING_LOSS_TARGET_SCAN_MIN_ROWS &&
+                                   targetNum <= n / COSINE_EMBEDDING_LOSS_TARGET_SCAN_MIN_REUSE;
+    if (reduction != cel::kReductionNone || scanTargetForNone || splitLongFeature) {
+        // Cross-core reductions and the parallel target scan need co-resident AIVs for SyncAll.
         context->SetScheduleMode(1);
     }
     context->SetTilingKey(0);

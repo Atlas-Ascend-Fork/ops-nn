@@ -85,7 +85,7 @@ void RunCosineKernel(const std::vector<float>& x1Host, const std::vector<float>&
                      const std::vector<int64_t>& targetOutStrides, int64_t x1ReduceStride, int64_t x2ReduceStride,
                      uint32_t reduction, float margin, std::vector<float>& yHost,
                      uint32_t fastPath = COSINE_EMBEDDING_LOSS_GENERIC_PATH, int64_t featureTile = 0,
-                     int64_t ubTileRows = 1)
+                     int64_t ubTileRows = 1, uint32_t blockDim = 1)
 {
     const size_t x1Bytes = x1Host.size() * sizeof(float);
     const size_t x2Bytes = x2Host.size() * sizeof(float);
@@ -103,7 +103,7 @@ void RunCosineKernel(const std::vector<float>& x1Host, const std::vector<float>&
     std::memcpy(x1, x1Host.data(), x1Bytes);
     std::memcpy(x2, x2Host.data(), x2Bytes);
     std::memcpy(target, targetHost.data(), targetBytes);
-    std::memset(y, 0, outputBytes);
+    std::memcpy(y, yHost.data(), outputBytes);
     std::memset(workspace, 0, WORKSPACE_SIZE);
 
     auto* tilingData = reinterpret_cast<CosineEmbeddingLossTilingData*>(tiling);
@@ -112,9 +112,13 @@ void RunCosineKernel(const std::vector<float>& x1Host, const std::vector<float>&
                      static_cast<int64_t>(x1Host.size()), static_cast<int64_t>(x2Host.size()),
                      static_cast<int64_t>(targetHost.size()));
 
+    tilingData->usedCoreNum = blockDim;
+    tilingData->rowsPerCore = (tilingData->n + blockDim - 1) / blockDim;
+    tilingData->tailRows = tilingData->n - tilingData->rowsPerCore * (blockDim - 1);
+
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
     ICPU_SET_TILING_KEY(0);
-    ICPU_RUN_KF(cosine_embedding_loss, 1, x1, x2, target, y, workspace, tiling);
+    ICPU_RUN_KF(cosine_embedding_loss, blockDim, x1, x2, target, y, workspace, tiling);
 
     std::memcpy(yHost.data(), y, outputBytes);
 
@@ -332,10 +336,13 @@ TEST_F(CosineEmbeddingLossArch35Kernel, feature_broadcast_reduction_falls_back_f
     EXPECT_NEAR(fallbackY[0], genericY[0], 1e-4f);
 }
 
-TEST_F(CosineEmbeddingLossArch35Kernel, feature_broadcast_reduction_samples_huge_x1_work)
+TEST_F(CosineEmbeddingLossArch35Kernel, feature_broadcast_reduction_includes_every_x1_value)
 {
-    constexpr int64_t hugeX1Count = COSINE_EMBEDDING_LOSS_EXACT_FEATURE_REDUCTION_MAX_X1_VISITS + 1;
-    std::vector<float> x1(hugeX1Count, 1.0f);
+    constexpr int64_t hugeX1Count = (int64_t{1} << 20) + 1;
+    std::vector<float> x1(hugeX1Count, 0.0f);
+    for (int64_t i = 1; i < hugeX1Count; i += 2) {
+        x1[i] = 1.0f;
+    }
     std::vector<float> x2 = {1.0f, 1.0f, -1.0f, -1.0f};
     std::vector<float> target = {-1.0f};
     std::vector<float> y(1, 0.0f);
@@ -343,13 +350,17 @@ TEST_F(CosineEmbeddingLossArch35Kernel, feature_broadcast_reduction_samples_huge
     RunCosineKernel(x1, x2, target, {2, hugeX1Count}, 2, {0, 1}, {2, 0}, {0, 0}, 0, 1, 1, 0.2f, y,
                     COSINE_EMBEDDING_LOSS_FEATURE_BROADCAST_REDUCTION_PATH);
 
-    EXPECT_NEAR(y[0], 0.8f * static_cast<float>(hugeX1Count), 64.0f);
+    EXPECT_NEAR(y[0], 0.8f * static_cast<float>(hugeX1Count / 2), 0.25f);
 }
 
-TEST_F(CosineEmbeddingLossArch35Kernel, feature_broadcast_reduction_samples_huge_shared_work)
+TEST_F(CosineEmbeddingLossArch35Kernel, feature_broadcast_reduction_includes_every_shared_group)
 {
-    constexpr int64_t sharedCount = COSINE_EMBEDDING_LOSS_EXACT_FEATURE_REDUCTION_MAX_X1_VISITS + 1;
-    std::vector<float> x1(sharedCount * 2, 1.0f);
+    constexpr int64_t sharedCount = (int64_t{1} << 20) + 1;
+    std::vector<float> x1(sharedCount * 2, 0.0f);
+    for (int64_t i = 1; i < sharedCount; i += 2) {
+        x1[2 * i] = 1.0f;
+        x1[2 * i + 1] = 1.0f;
+    }
     std::vector<float> x2(sharedCount * 4, 1.0f);
     std::vector<float> target = {-1.0f};
     std::vector<float> y(1, 0.0f);
@@ -357,7 +368,7 @@ TEST_F(CosineEmbeddingLossArch35Kernel, feature_broadcast_reduction_samples_huge
     RunCosineKernel(x1, x2, target, {sharedCount, 2, 2}, 2, {2, 1, 0}, {4, 0, 1}, {0, 0, 0}, 0, 2, 1, 0.2f, y,
                     COSINE_EMBEDDING_LOSS_FEATURE_BROADCAST_REDUCTION_PATH);
 
-    EXPECT_NEAR(y[0], 3.2f * static_cast<float>(sharedCount), 16.0f);
+    EXPECT_NEAR(y[0], 3.2f * static_cast<float>(sharedCount / 2), 1.0f);
 }
 
 TEST_F(CosineEmbeddingLossArch35Kernel, fast_none_fp32_multi_row_tiles)
@@ -433,4 +444,80 @@ TEST_F(CosineEmbeddingLossArch35Kernel, fast_mean_fp32_inf_produces_nan)
                     64);
 
     EXPECT_TRUE(std::isnan(y[0]));
+}
+
+TEST_F(CosineEmbeddingLossArch35Kernel, generic_none_batched_output_with_tail_and_mixed_labels)
+{
+    constexpr int64_t width = 2051;
+    std::vector<float> x1(2 * width, 0.0f);
+    const std::vector<float> x2 = {1.0f, 0.0f};
+    std::vector<float> target(width);
+    std::vector<float> y(width, -99.0f);
+    const float labels[] = {1.0f, -1.0f, 0.0f};
+    const float expected[] = {1.0f, 0.25f, 0.0f};
+    for (int64_t row = 0; row < width; ++row) {
+        x1[width + row] = 1.0f;
+        target[row] = labels[row % 3];
+    }
+
+    RunCosineKernel(x1, x2, target, {1, width}, 2, {0, 1}, {0, 0}, {0, 1}, width, 1,
+                    COSINE_EMBEDDING_LOSS_REDUCTION_NONE, -0.25f, y);
+    for (int64_t row = 0; row < width; ++row) {
+        EXPECT_FLOAT_EQ(y[row], expected[row % 3]) << row;
+    }
+}
+
+TEST_F(CosineEmbeddingLossArch35Kernel, generic_none_small_nonfinite_invalid_labels_write_all_zeros)
+{
+    constexpr int64_t width = 1025;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    const std::vector<float> x1 = {nan};
+    const std::vector<float> x2(width, 1.0f);
+    const std::vector<float> target = {0.0f, nan, inf, -inf};
+    std::vector<float> y(4 * width, -99.0f);
+
+    RunCosineKernel(x1, x2, target, {4, width}, 1, {0, 0}, {0, 1}, {1, 0}, 1, width,
+                    COSINE_EMBEDDING_LOSS_REDUCTION_NONE, 0.5f, y);
+    for (int64_t row = 0; row < 4 * width; ++row) {
+        EXPECT_FLOAT_EQ(y[row], 0.0f) << row;
+    }
+}
+
+TEST_F(CosineEmbeddingLossArch35Kernel, large_opposite_sign_reduction_short_circuits_to_zero)
+{
+    // Broadcast x1 (1, 2, 1024, 1) and x2 (1, 2, 1, 1024), then reduce feature axis 1.
+    constexpr int64_t width = 1024;
+    std::vector<float> x1(2 * width);
+    std::vector<float> x2(2 * width);
+    const std::vector<float> target = {-1.0f};
+    std::vector<float> y(1, -99.0f);
+    for (int64_t i = 0; i < 2 * width; ++i) {
+        x1[i] = static_cast<float>(i % 7 + 1);
+        x2[i] = -static_cast<float>(i % 5 + 1);
+    }
+
+    RunCosineKernel(x1, x2, target, {1, width, width}, 2, {0, 1, 0}, {0, 0, 1}, {0, 0, 0}, width, width,
+                    COSINE_EMBEDDING_LOSS_REDUCTION_SUM, 0.125f, y, COSINE_EMBEDDING_LOSS_CONST_REDUCTION_PATH, 0,
+                    width);
+    EXPECT_FLOAT_EQ(y[0], 0.0f);
+}
+
+TEST_F(CosineEmbeddingLossArch35Kernel, large_opposite_sign_reduction_two_aivs)
+{
+    // Broadcast x1 (1, 2, 1024, 1) and x2 (1, 2, 1, 1024), then reduce feature axis 1.
+    constexpr int64_t width = 1024;
+    std::vector<float> x1(2 * width);
+    std::vector<float> x2(2 * width);
+    const std::vector<float> target = {-1.0f};
+    std::vector<float> y(1, -99.0f);
+    for (int64_t i = 0; i < 2 * width; ++i) {
+        x1[i] = static_cast<float>(i % 7 + 1);
+        x2[i] = -static_cast<float>(i % 5 + 1);
+    }
+
+    RunCosineKernel(x1, x2, target, {1, width, width}, 2, {0, 1, 0}, {0, 0, 1}, {0, 0, 0}, width, width,
+                    COSINE_EMBEDDING_LOSS_REDUCTION_SUM, 0.125f, y, COSINE_EMBEDDING_LOSS_CONST_REDUCTION_PATH, 0,
+                    width, 2);
+    EXPECT_FLOAT_EQ(y[0], 0.0f);
 }

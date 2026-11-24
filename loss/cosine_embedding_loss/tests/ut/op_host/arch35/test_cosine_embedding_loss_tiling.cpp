@@ -150,8 +150,7 @@ void RunTilingCase(const std::vector<int64_t>& x1Dims, const std::vector<int64_t
     EXPECT_FLOAT_EQ(td->margin, margin);
     int64_t rowsPerCore = (expectN + ASCEND950_VECTOR_CORE_NUM - 1) / ASCEND950_VECTOR_CORE_NUM;
     int64_t expectedUsedCoreNum = (expectN + rowsPerCore - 1) / rowsPerCore;
-    if (expectFastPath == COSINE_EMBEDDING_LOSS_CONTIG_2D_PATH && expectReduction == REDUCTION_NONE &&
-        expectedUsedCoreNum > 1) {
+    if (expectReduction == REDUCTION_NONE && expectedUsedCoreNum > 1) {
         rowsPerCore = ((rowsPerCore + 7) / 8) * 8;
         expectedUsedCoreNum = (expectN + rowsPerCore - 1) / rowsPerCore;
     }
