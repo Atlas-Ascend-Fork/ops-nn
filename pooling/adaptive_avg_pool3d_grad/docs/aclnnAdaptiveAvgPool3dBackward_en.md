@@ -25,7 +25,7 @@
 
 ## Function
 
-Backward computation of [aclnnAdaptiveAvgPool3d](../../adaptive_avg_pool3d/docs/aclnnAdaptiveAvgPool3d.md).
+Backward computation of [aclnnAdaptiveAvgPool3d](../../adaptive_avg_pool3d/docs/aclnnAdaptiveAvgPool3d_en.md).
 
 ## Function Prototype
 
