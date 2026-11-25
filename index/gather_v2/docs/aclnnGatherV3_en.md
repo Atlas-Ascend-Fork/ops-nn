@@ -147,7 +147,7 @@ aclnnStatus aclnnGatherV3(
         <td>out</td>
         <td>Output</td>
         <td>Output aclTensor.</td>
-        <td>When batchDims = N and N == 0, the number of dimensions equals the sum of the dimensions of self and index minus one. Except for the dim dimension, which is expanded to the same shape as index, the lengths of the other dimensions are the same as the corresponding dimensions of self; <br> When N != 0, the dimensions of output are self[:dim]+index[N+1:]+self[dim+1:].</td>
+        <td>When batchDims = N and N == 0, the number of dimensions equals the sum of the dimensions of self and index minus one. Except for the dim dimension, which is expanded to the same shape as index, the lengths of the other dimensions are the same as the corresponding dimensions of self; <br> When N != 0, after converting dim to a non-negative axis index, the output shape is self.shape[:dim]+index.shape[N:]+self.shape[dim+1:].</td>
         <td>Same as self</td>
         <td>ND</td>
         <td>1-8</td>
