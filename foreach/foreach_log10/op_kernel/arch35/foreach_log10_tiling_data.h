@@ -22,7 +22,8 @@ struct ForeachLog10TilingData {
     int32_t needCoreNum = 0;
     int32_t tensorCount = 0;
     int64_t totalElements = 0;
-    int64_t tensorElements[256] = {0};
+    int64_t tensorOffsets[257] = {0};
+    int64_t maxTensorElements = 0;
 };
 
 #endif // FOREACH_LOG10_TILING_DATA_H

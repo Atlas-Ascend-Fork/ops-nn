@@ -82,15 +82,21 @@ static ge::graphStatus ForeachLog10TilingFunc(gert::TilingContext* context)
     tiling->tensorCount = static_cast<int32_t>(tensorNum);
     int64_t totalElements = 0;
 
+    tiling->tensorOffsets[0] = 0;
+    int64_t maxTensorElements = 0;
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto shapePtr = context->GetDynamicInputShape(INPUT_IDX_0, i);
         OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
         auto storageShape = shapePtr->GetStorageShape();
         int64_t numel = storageShape.GetShapeSize();
-        tiling->tensorElements[i] = numel;
         totalElements += numel;
+        tiling->tensorOffsets[i + 1] = totalElements;
+        if (numel > maxTensorElements) {
+            maxTensorElements = numel;
+        }
     }
     tiling->totalElements = totalElements;
+    tiling->maxTensorElements = maxTensorElements;
 
     if (totalElements == 0) {
         tiling->needCoreNum = 1;

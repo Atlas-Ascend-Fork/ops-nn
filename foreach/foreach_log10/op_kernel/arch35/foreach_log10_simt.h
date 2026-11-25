@@ -35,6 +35,11 @@ using namespace AscendC;
 
 constexpr uint32_t THREAD_NUM = 1024;
 
+constexpr uint32_t FLAT_THREAD_NUM = 256;
+constexpr int64_t FOREACH_LOG10_FLAT_LIMIT = 16384;
+constexpr int64_t FLAT_CHUNK_ELEMENTS = 16;
+constexpr int64_t FOREACH_LOG10_PER_TENSOR_CAP = 64;
+
 template <typename T>
 __simt_callee__ inline __gm__ T* SimtGetTensorAddr(GM_ADDR tensorListPtr, int64_t idx)
 {
@@ -80,10 +85,83 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(THREAD_NUM) inline void OpForeachLog10Simt(i
 }
 
 template <typename T>
+__simt_vf__ __aicore__ LAUNCH_BOUND(FLAT_THREAD_NUM) inline void OpForeachLog10SimtFlatPerTensor(
+    int32_t tensorCount, GM_ADDR xList, GM_ADDR yList, __gm__ const int64_t* tensorOffsets)
+{
+    uint64_t tid = static_cast<uint64_t>(blockIdx.x * blockDim.x + threadIdx.x);
+    uint64_t stride = static_cast<uint64_t>(blockDim.x * gridDim.x);
+    for (int64_t tensorId = static_cast<int64_t>(tid); tensorId < static_cast<int64_t>(tensorCount);
+         tensorId += static_cast<int64_t>(stride)) {
+        int64_t count = tensorOffsets[tensorId + 1] - tensorOffsets[tensorId];
+        if (count <= 0) {
+            continue;
+        }
+        __gm__ T* xData = SimtGetTensorAddr<T>(xList, tensorId);
+        __gm__ T* yData = SimtGetTensorAddr<T>(yList, tensorId);
+        for (int64_t i = 0; i < count; i++) {
+            yData[i] = Log10Func<T>(xData[i]);
+        }
+    }
+}
+
+template <typename T>
+__simt_vf__ __aicore__ LAUNCH_BOUND(FLAT_THREAD_NUM) inline void OpForeachLog10SimtFlatChunked(
+    int32_t tensorCount, int64_t totalElements, GM_ADDR xList, GM_ADDR yList, __gm__ const int64_t* tensorOffsets)
+{
+    uint64_t tid = static_cast<uint64_t>(blockIdx.x * blockDim.x + threadIdx.x);
+    uint64_t stride = static_cast<uint64_t>(blockDim.x * gridDim.x);
+    const int64_t chunkCount = (totalElements + FLAT_CHUNK_ELEMENTS - 1) / FLAT_CHUNK_ELEMENTS;
+    for (int64_t chunk = static_cast<int64_t>(tid); chunk < chunkCount; chunk += static_cast<int64_t>(stride)) {
+        int64_t flat = chunk * FLAT_CHUNK_ELEMENTS;
+        int64_t chunkEnd = flat + FLAT_CHUNK_ELEMENTS;
+        if (chunkEnd > totalElements) {
+            chunkEnd = totalElements;
+        }
+        while (flat < chunkEnd) {
+            int32_t low = 0;
+            int32_t high = tensorCount - 1;
+            while (low < high) {
+                int32_t mid = (low + high + 1) >> 1;
+                if (tensorOffsets[mid] <= flat) {
+                    low = mid;
+                } else {
+                    high = mid - 1;
+                }
+            }
+            const int32_t tensorId = low;
+            int64_t runEnd = tensorOffsets[tensorId + 1];
+            if (runEnd > chunkEnd) {
+                runEnd = chunkEnd;
+            }
+            __gm__ T* xData = SimtGetTensorAddr<T>(xList, tensorId);
+            __gm__ T* yData = SimtGetTensorAddr<T>(yList, tensorId);
+            int64_t offset = flat - tensorOffsets[tensorId];
+            const int64_t runLen = runEnd - flat;
+            for (int64_t i = 0; i < runLen; i++) {
+                yData[offset + i] = Log10Func<T>(xData[offset + i]);
+            }
+            flat = runEnd;
+        }
+    }
+}
+
+template <typename T>
+__aicore__ inline void ProcessFlat(GM_ADDR x, GM_ADDR y, const __gm__ ForeachLog10TilingData* tilingGm)
+{
+    if (tilingGm->maxTensorElements <= FOREACH_LOG10_PER_TENSOR_CAP) {
+        asc_vf_call<OpForeachLog10SimtFlatPerTensor<T>>(dim3(FLAT_THREAD_NUM), tilingGm->tensorCount, x, y,
+                                                        tilingGm->tensorOffsets);
+    } else {
+        asc_vf_call<OpForeachLog10SimtFlatChunked<T>>(dim3(FLAT_THREAD_NUM), tilingGm->tensorCount,
+                                                      tilingGm->totalElements, x, y, tilingGm->tensorOffsets);
+    }
+}
+
+template <typename T>
 __aicore__ inline void Process(GM_ADDR x, GM_ADDR y, const ForeachLog10TilingData* tilingGm)
 {
     for (int32_t tensorId = 0; tensorId < tilingGm->tensorCount; tensorId++) {
-        int64_t count = tilingGm->tensorElements[tensorId];
+        int64_t count = tilingGm->tensorOffsets[tensorId + 1] - tilingGm->tensorOffsets[tensorId];
         if (count <= 0) {
             continue;
         }

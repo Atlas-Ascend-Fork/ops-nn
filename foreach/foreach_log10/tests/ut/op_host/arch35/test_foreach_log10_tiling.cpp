@@ -122,7 +122,6 @@ static void RunCase(const TilingCase& test, ge::graphStatus expectedStatus, uint
     ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", ai);
     ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
-
     auto& errorManager = ErrorManager::GetInstance();
     errorManager.GenWorkStreamIdDefault();
     (void)errorManager.GetRawErrorMessages();
@@ -137,6 +136,20 @@ static void RunCase(const TilingCase& test, ge::graphStatus expectedStatus, uint
     if (expectedStatus == ge::GRAPH_SUCCESS) {
         EXPECT_TRUE(errors.empty());
         EXPECT_EQ(ctx->GetTilingKey(), expectKey);
+        // 前缀和不变式：tensorOffsets 单调、首尾闭合且 maxTensorElements 一致
+        const auto* tiling = ctx->GetTilingData<ForeachLog10TilingData>();
+        ASSERT_NE(tiling, nullptr);
+        EXPECT_EQ(tiling->tensorOffsets[0], 0);
+        EXPECT_EQ(tiling->tensorOffsets[tiling->tensorCount], tiling->totalElements);
+        int64_t expectedMaxTensorElements = 0;
+        for (int32_t i = 0; i < tiling->tensorCount; i++) {
+            EXPECT_LE(tiling->tensorOffsets[i], tiling->tensorOffsets[i + 1]);
+            int64_t count = tiling->tensorOffsets[i + 1] - tiling->tensorOffsets[i];
+            if (count > expectedMaxTensorElements) {
+                expectedMaxTensorElements = count;
+            }
+        }
+        EXPECT_EQ(tiling->maxTensorElements, expectedMaxTensorElements);
     }
 }
 

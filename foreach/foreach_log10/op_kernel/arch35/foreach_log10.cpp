@@ -27,15 +27,28 @@ template <uint32_t schMode>
 __global__ __aicore__ void foreach_log10(GM_ADDR x, GM_ADDR y, GM_ADDR workspace, GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(ForeachLog10TilingData);
+    const __gm__ ForeachLog10TilingData* tilingGm = reinterpret_cast<const __gm__ ForeachLog10TilingData*>(tiling);
+
+    if (tilingGm->totalElements > 0 && tilingGm->totalElements <= NsForeachLog10::FOREACH_LOG10_FLAT_LIMIT) {
+        if constexpr (schMode == static_cast<uint32_t>(ForeachLog10TilingKey::TILING_KEY_FLOAT)) {
+            NsForeachLog10::ProcessFlat<float>(x, y, tilingGm);
+        } else if constexpr (schMode == static_cast<uint32_t>(ForeachLog10TilingKey::TILING_KEY_FLOAT16)) {
+            NsForeachLog10::ProcessFlat<half>(x, y, tilingGm);
+        } else if constexpr (schMode == static_cast<uint32_t>(ForeachLog10TilingKey::TILING_KEY_BF16)) {
+            NsForeachLog10::ProcessFlat<bfloat16_t>(x, y, tilingGm);
+        }
+        return;
+    }
+
     GET_TILING_DATA_WITH_STRUCT(ForeachLog10TilingData, tilingData, tiling);
 
-    const ForeachLog10TilingData* tilingGm = &tilingData;
+    const ForeachLog10TilingData* tilingLocal = &tilingData;
 
     if constexpr (schMode == static_cast<uint32_t>(ForeachLog10TilingKey::TILING_KEY_FLOAT)) {
-        NsForeachLog10::Process<float>(x, y, tilingGm);
+        NsForeachLog10::Process<float>(x, y, tilingLocal);
     } else if constexpr (schMode == static_cast<uint32_t>(ForeachLog10TilingKey::TILING_KEY_FLOAT16)) {
-        NsForeachLog10::Process<half>(x, y, tilingGm);
+        NsForeachLog10::Process<half>(x, y, tilingLocal);
     } else if constexpr (schMode == static_cast<uint32_t>(ForeachLog10TilingKey::TILING_KEY_BF16)) {
-        NsForeachLog10::Process<bfloat16_t>(x, y, tilingGm);
+        NsForeachLog10::Process<bfloat16_t>(x, y, tilingLocal);
     }
 }
