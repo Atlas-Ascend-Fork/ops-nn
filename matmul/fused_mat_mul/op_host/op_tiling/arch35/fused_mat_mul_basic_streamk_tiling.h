@@ -43,8 +43,12 @@ public:
 
 protected:
     bool IsCapable() override;
+    ge::graphStatus DoOpTiling() override;
 
     uint64_t GetTilingKey() const override;
+
+private:
+    MatMulV3ApiLevel fusedApiLevel_{MatMulV3ApiLevel::BASIC_LEVEL};
 };
 } // namespace fused_matmul
 } // namespace optiling

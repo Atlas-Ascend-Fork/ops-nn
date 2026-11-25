@@ -13,7 +13,7 @@
  * \brief
  */
 #include "fused_mat_mul_asw_basic_tiling.h"
-#include "fused_mat_mul_builtin_tiling_strategy.h"
+#include "fused_mat_mul_tiling_strategy.h"
 #include "fused_mat_mul_common.h"
 #include "matmul/mat_mul_v3/op_host/op_tiling/arch35/matmul_tiling_registry.h"
 #include "matmul/common/op_host/math_util_nn.h"
@@ -117,9 +117,12 @@ bool FusedMatMulAswBasicApiTiling::CheckBatch() const
 
 bool FusedMatMulAswBasicApiTiling::IsCapable()
 {
-    auto attrs = context_->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
-    std::string opType = attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
+    const auto* attrs = context_->GetAttrs();
+    const char* opTypePtr = attrs != nullptr ? attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX) : nullptr;
+    if (opTypePtr == nullptr) {
+        return false;
+    }
+    const std::string opType(opTypePtr);
     if (opType == "scale_add" || !CheckBatch()) {
         return false;
     }

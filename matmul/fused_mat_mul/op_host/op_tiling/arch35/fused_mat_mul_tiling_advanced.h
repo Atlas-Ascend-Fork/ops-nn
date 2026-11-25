@@ -9,8 +9,8 @@
  */
 
 /* !
- * \file fused_mat_mul_builtin_tiling.h
- * \brief FusedMatMul built-in tiling, inherits BatchMatMulV3Tiling.
+ * \file fused_mat_mul_tiling_advanced.h
+ * \brief FusedMatMul tiling, inherits BatchMatMulV3Tiling.
  */
 #pragma once
 
@@ -24,11 +24,11 @@ namespace optiling {
 namespace fused_matmul {
 using namespace batch_matmul_v3_advanced;
 
-class FusedMatMulBuiltInTiling : public BatchMatMulV3Tiling {
+class FusedMatMulTiling : public BatchMatMulV3Tiling {
 public:
-    explicit FusedMatMulBuiltInTiling(gert::TilingContext* context) : BatchMatMulV3Tiling(context) {};
+    explicit FusedMatMulTiling(gert::TilingContext* context) : BatchMatMulV3Tiling(context) {};
 
-    ~FusedMatMulBuiltInTiling() override = default;
+    ~FusedMatMulTiling() override = default;
 
 protected:
     // ====== Phase 2: Input null-check (own attr layout: hf32/opType/innerPrecise) ======

@@ -324,7 +324,7 @@ namespace optiling {
 namespace matmul_v3_advanced {
 bool IsMatMulTiling(const MatMulV3Args& args, NpuArch npuArch)
 {
-    if (npuArch != Ops::Base::DAV_3510) {
+    if (!IsNpuArch3510Series(npuArch)) {
         return args.batchInfo == nullptr;
     }
     return args.batchInfo == nullptr ||

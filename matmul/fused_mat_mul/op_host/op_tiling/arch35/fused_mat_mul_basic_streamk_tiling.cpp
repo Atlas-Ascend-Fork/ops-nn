@@ -13,8 +13,8 @@
  * \brief
  */
 #include "fused_mat_mul_basic_streamk_tiling.h"
-#include "fused_mat_mul_builtin_tiling.h"
-#include "fused_mat_mul_builtin_tiling_strategy.h"
+#include "fused_mat_mul_tiling_advanced.h"
+#include "fused_mat_mul_tiling_strategy.h"
 #include "fused_mat_mul_common.h"
 #include "matmul/mat_mul_v3/op_host/op_tiling/arch35/matmul_tiling_registry.h"
 #include "matmul/common/op_host/math_util_nn.h"
@@ -32,9 +32,12 @@ bool FusedMatMulStreamKTiling::IsCapable()
     if (args_.batchInfo->batchC > 1) {
         return false;
     }
-    auto attrs = context_->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
-    std::string opType = attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
+    const auto* attrs = context_->GetAttrs();
+    const char* opTypePtr = attrs != nullptr ? attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX) : nullptr;
+    if (opTypePtr == nullptr) {
+        return false;
+    }
+    const std::string opType(opTypePtr);
     if ((compileInfo_.npuArch == Ops::Base::DAV_9201 || compileInfo_.npuArch == Ops::Base::DAV_9202) &&
         opType != "relu" && opType != "16cast32") {
         return false;
@@ -79,9 +82,12 @@ bool FusedMatMulBatchStreamKTiling::IsCapable()
     if (!IsFusedMatMulBmmShape(context_)) {
         return false;
     }
-    auto attrs = context_->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
-    std::string opType = attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
+    const auto* attrs = context_->GetAttrs();
+    const char* opTypePtr = attrs != nullptr ? attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX) : nullptr;
+    if (opTypePtr == nullptr) {
+        return false;
+    }
+    const std::string opType(opTypePtr);
     if (opType != "relu" && opType != "add" && opType != "mul") {
         return false;
     }
@@ -89,20 +95,27 @@ bool FusedMatMulBatchStreamKTiling::IsCapable()
     return BatchMatMulV3BasicStreamKTiling::IsCapable();
 }
 
+ge::graphStatus FusedMatMulBatchStreamKTiling::DoOpTiling()
+{
+    const auto* attrs = context_->GetAttrs();
+    OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    const char* opTypePtr = attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
+    OPS_CHECK_NULL_WITH_CONTEXT(context_, opTypePtr);
+    const std::string opType(opTypePtr);
+    fusedApiLevel_ = opType == "relu" ? MatMulV3ApiLevel::TENSOR_LEVEL : MatMulV3ApiLevel::BASIC_LEVEL;
+    return BatchMatMulV3BasicStreamKTiling::DoOpTiling();
+}
+
 uint64_t FusedMatMulBatchStreamKTiling::GetTilingKey() const
 {
     MatMulV3TilingKey tmp = MatMulV3TilingKey();
     MatMulV3TilingKey& tilingKey = tilingKeyObj == nullptr ? tmp : *tilingKeyObj;
-    auto attrs = context_->GetAttrs();
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
-    std::string opType = attrs->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
-    MatMulV3ApiLevel apiLevel = opType == "relu" ? MatMulV3ApiLevel::TENSOR_LEVEL : MatMulV3ApiLevel::BASIC_LEVEL;
     return tilingKey.SetTrans(args_.isATrans, args_.isBTrans)
         .SetBatchModel(MatMulV3BatchModel::FUSED_BATCH_MODEL)
         .SetModel(MatMulV3Model::STREAM_K)
         .SetFullLoad(MatMulV3FullLoad::NONE_FULL_LOAD)
         .SetL0C2Out(GetL0C2OutFlag())
-        .SetApiLevel(apiLevel)
+        .SetApiLevel(fusedApiLevel_)
         .GetTilingKey();
 }
 

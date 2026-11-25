@@ -9,14 +9,14 @@
  */
 
 /* !
- * \file fused_mat_mul_builtin_tiling.cpp
- * \brief FusedMatMul built-in tiling implementation.
+ * \file fused_mat_mul_tiling_advanced.cpp
+ * \brief FusedMatMul tiling implementation.
  */
 
-#include "fused_mat_mul_builtin_tiling.h"
+#include "fused_mat_mul_tiling_advanced.h"
 
 #include "fused_mat_mul_common.h"
-#include "fused_mat_mul_builtin_tiling_strategy.h"
+#include "fused_mat_mul_tiling_strategy.h"
 #include "fused_mat_mul_tiling_key.h"
 #include "matmul/batch_mat_mul_v3/op_host/op_tiling/arch35/batch_matmul_v3_tiling_strategy.h"
 #include "matmul/batch_mat_mul_v3/op_host/op_tiling/arch35/batch_matmul_v3_tiling_advanced.h"
@@ -124,7 +124,7 @@ namespace optiling {
 namespace fused_matmul {
 
 // ====== Phase 2: ValidateInputsNotNull (own attr layout, no base call) ======
-ge::graphStatus FusedMatMulBuiltInTiling::ValidateInputsNotNull()
+ge::graphStatus FusedMatMulTiling::ValidateInputsNotNull()
 {
     auto attrs = context_->GetAttrs();
     OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
@@ -146,7 +146,7 @@ ge::graphStatus FusedMatMulBuiltInTiling::ValidateInputsNotNull()
 }
 
 // ====== Phase 3: DetectOptionalInputs (bias + x3, with null-check) ======
-ge::graphStatus FusedMatMulBuiltInTiling::DetectOptionalInputs()
+ge::graphStatus FusedMatMulTiling::DetectOptionalInputs()
 {
     if (context_->GetOptionalInputDesc(INPUT_BIAS_IDX) != nullptr &&
         context_->GetOptionalInputShape(INPUT_BIAS_IDX)->GetOriginShape().GetDimNum() > 0) {
@@ -167,7 +167,7 @@ ge::graphStatus FusedMatMulBuiltInTiling::DetectOptionalInputs()
 }
 
 // ====== Phase 5: ExtractDtype (base + x3Type) ======
-void FusedMatMulBuiltInTiling::ExtractDtype()
+void FusedMatMulTiling::ExtractDtype()
 {
     MatMulV3Tiling::ExtractDtype();
     if (args_.hasX3Input) {
@@ -176,7 +176,7 @@ void FusedMatMulBuiltInTiling::ExtractDtype()
 }
 
 // ====== Phase 5: ExtractAttrFlags (hf32 from ATTR_ENABLE_HF32_IDX, innerPrecise) ======
-void FusedMatMulBuiltInTiling::ExtractAttrFlags()
+void FusedMatMulTiling::ExtractAttrFlags()
 {
     args_.isHf32 = *context_->GetAttrs()->GetAttrPointer<bool>(ATTR_ENABLE_HF32_IDX);
     if (args_.isHf32 && !IsDav3510Series(arch_)) {
@@ -189,12 +189,12 @@ void FusedMatMulBuiltInTiling::ExtractAttrFlags()
     innerPrecise_ = !supportsInnerPrecise && innerPrecise == INNER_PRECISE_HIGH_PRECISION ?
                         INNER_PRECISE_HIGH_PERFORMANCE :
                         innerPrecise;
-    OP_LOGI(args_.opName, "FusedMatMul built-in tiling inner_precise is %ld", innerPrecise_);
+    OP_LOGI(args_.opName, "FusedMatMul tiling inner_precise is %ld", innerPrecise_);
     OP_LOGD(args_.opName, "Hf32 flag is: %d", args_.isHf32);
 }
 
 // ====== Phase 7: ValidateOpSpecific (constraints not needing batchInfo) ======
-ge::graphStatus FusedMatMulBuiltInTiling::ValidateOpSpecific()
+ge::graphStatus FusedMatMulTiling::ValidateOpSpecific()
 {
     OP_TILING_CHECK(innerPrecise_ != INNER_PRECISE_HIGH_PRECISION && innerPrecise_ != INNER_PRECISE_HIGH_PERFORMANCE,
                     CUBE_INNER_ERR_REPORT(args_.opName, "inner_precise only supports 0 or 1"), return ge::GRAPH_FAILED);
@@ -376,7 +376,7 @@ ge::graphStatus FusedMatMulBuiltInTiling::ValidateOpSpecific()
 }
 
 // ====== Phase 7: ValidateBias (bias shape constraints: no batch bias) ======
-ge::graphStatus FusedMatMulBuiltInTiling::ValidateBias()
+ge::graphStatus FusedMatMulTiling::ValidateBias()
 {
     // scale_add op type does not support bias
     if (opType_ == "scale_add" && args_.hasBias) {
@@ -421,7 +421,7 @@ ge::graphStatus FusedMatMulBuiltInTiling::ValidateBias()
 }
 
 // ====== Phase 7: GetDtypeSupportList (opType group + npuArch) ======
-std::vector<std::vector<ge::DataType>> FusedMatMulBuiltInTiling::GetDtypeSupportList() const
+std::vector<std::vector<ge::DataType>> FusedMatMulTiling::GetDtypeSupportList() const
 {
     if (opType_ == "scale_add") {
         return DTYPE_LIST_SCALE_ADD_DAV_3510;
@@ -446,7 +446,7 @@ std::vector<std::vector<ge::DataType>> FusedMatMulBuiltInTiling::GetDtypeSupport
 }
 
 // ====== Phase 7: ValidateDtype (unified 5-element exact match) ======
-ge::graphStatus FusedMatMulBuiltInTiling::ValidateDtype()
+ge::graphStatus FusedMatMulTiling::ValidateDtype()
 {
     // build fixed 5-element dtypes
     std::vector<std::string> names = {"x1", "x2", "y", "bias", "x3"};
@@ -487,7 +487,7 @@ ge::graphStatus FusedMatMulBuiltInTiling::ValidateDtype()
 }
 
 // ====== Phase 8: ValidateMatrixBatchInfo (A5 Relu supports merging all x1 batch axes into M) ======
-ge::graphStatus FusedMatMulBuiltInTiling::ValidateMatrixBatchInfo()
+ge::graphStatus FusedMatMulTiling::ValidateMatrixBatchInfo()
 {
     // Check before batch axes can be merged into M; 3D inputs with batch=1 remain valid.
     if (opType_ == "16cast32" && (batchInfo_.batchA != 1UL || batchInfo_.batchB != 1UL || batchInfo_.batchC != 1UL)) {
@@ -514,7 +514,7 @@ ge::graphStatus FusedMatMulBuiltInTiling::ValidateMatrixBatchInfo()
 }
 
 // ====== Phase 8: ExtractOptionalBatchInfo (no batch bias, set batchBias=1) ======
-ge::graphStatus FusedMatMulBuiltInTiling::ExtractOptionalBatchInfo()
+ge::graphStatus FusedMatMulTiling::ExtractOptionalBatchInfo()
 {
     batchInfo_.batchBias = 1;
     args_.batchInfo = &batchInfo_;
@@ -522,7 +522,7 @@ ge::graphStatus FusedMatMulBuiltInTiling::ExtractOptionalBatchInfo()
 }
 
 // ====== Phase 9: ValidateOptionalBatchInfo (x3 batch-axis broadcast only) ======
-ge::graphStatus FusedMatMulBuiltInTiling::ValidateOptionalBatchInfo()
+ge::graphStatus FusedMatMulTiling::ValidateOptionalBatchInfo()
 {
     if (!args_.hasX3Input) {
         return ge::GRAPH_SUCCESS;
@@ -547,13 +547,13 @@ ge::graphStatus FusedMatMulBuiltInTiling::ValidateOptionalBatchInfo()
 }
 
 // ====== Phase 10: Registry priorities ======
-std::vector<int32_t> FusedMatMulBuiltInTiling::GetRegistryPriorities(NpuArch npuArch) const
+std::vector<int32_t> FusedMatMulTiling::GetRegistryPriorities(NpuArch npuArch) const
 {
     return strategy::GetFusedMatMulPriorities(npuArch);
 }
 
 // ====== Phase 10: Tiling key ======
-MatMulV3TilingKey* FusedMatMulBuiltInTiling::GetTilingKeyObj()
+MatMulV3TilingKey* FusedMatMulTiling::GetTilingKeyObj()
 {
     auto it = FUSED_OP_TYPE_MAP.find(opType_);
     if (it == FUSED_OP_TYPE_MAP.end()) {

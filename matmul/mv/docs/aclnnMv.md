@@ -34,11 +34,16 @@
 
 - 示例：
 
-  ```text
+  ```python
   a = tensor([[1, 2, 3],
               [4, 5, 6]],dtype=float)
   b = tensor([1, 1, 1], dtype=float)
   c = mv(a, b)
+  ```
+
+  预期输出如下。
+
+  ```text
   c: tensor([6, 15],dtype=float)
   ```
 

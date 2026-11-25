@@ -13,7 +13,7 @@
  * \brief
  */
 #pragma once
-#if defined(__CCE_AICORE__)
+#if defined(__NPU_ARCH__)
 #include "../../mat_mul_v3/arch35/mat_mul_v3_tiling_key_public.h"
 #else
 #include "matmul/mat_mul_v3/op_kernel/arch35/mat_mul_v3_tiling_key_public.h"
