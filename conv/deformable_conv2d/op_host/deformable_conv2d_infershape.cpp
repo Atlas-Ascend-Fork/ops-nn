@@ -152,8 +152,8 @@ static ge::graphStatus ReportInvalidFormat(const char* nodeName, const char* par
     return ge::GRAPH_FAILED;
 }
 
-static ge::graphStatus GetInputFmtShape(InferShapeContext* context, size_t idx, const char* param, const char* expected,
-                                        TensorFmtShape& tensor)
+static ge::graphStatus GetInputFmtShape(const InferShapeContext* context, size_t idx, const char* param,
+                                        const char* expected, TensorFmtShape& tensor)
 {
     const gert::CompileTimeTensorDesc* desc = context->GetInputDesc(idx);
     OPS_CHECK_NULL_WITH_CONTEXT(context, desc);
@@ -237,7 +237,7 @@ static ge::graphStatus GetDfmFilterShapeDim(InferShapeContext* context, DfmInput
 }
 
 // x dtype must equal filter dtype; offsets/bias dtypes are not checked.
-static ge::graphStatus CheckDfmDtype(InferShapeContext* context)
+static ge::graphStatus CheckDfmDtype(const InferShapeContext* context)
 {
     const gert::CompileTimeTensorDesc* xDesc = context->GetInputDesc(X_IDX_DFM);
     OPS_CHECK_NULL_WITH_CONTEXT(context, xDesc);
@@ -259,7 +259,7 @@ static ge::graphStatus CheckDfmDtype(InferShapeContext* context)
 }
 
 // optional bias must be 1D and its size must be equal to out_channels; a 0-dim bias is accepted.
-static ge::graphStatus CheckDfmBias(InferShapeContext* context, const DfmInputShapes& shapes)
+static ge::graphStatus CheckDfmBias(const InferShapeContext* context, const DfmInputShapes& shapes)
 {
     const gert::Shape* biasShape = context->GetInputShape(BIAS_IDX_DFM);
     if (biasShape == nullptr) {
@@ -377,7 +377,7 @@ static void InferStaticOutputIsZeroTensor(const DfmInputShapes& shapes, DfmOutpu
 }
 
 // reject zero tensor input with negative or all-non-zero output.
-static ge::graphStatus CheckOutputZeroTensor(InferShapeContext* context, const DfmInputShapes& shapes,
+static ge::graphStatus CheckOutputZeroTensor(const InferShapeContext* context, const DfmInputShapes& shapes,
                                              const DfmOutputShape& yShape)
 {
     const char* nodeName = NodeNameOrNil(context->GetNodeName());
@@ -402,8 +402,8 @@ static ge::graphStatus CheckOutputZeroTensor(InferShapeContext* context, const D
 }
 
 // non-zero input after padding must still cover the filter.
-static ge::graphStatus CheckDfmInputWithPad(InferShapeContext* context, const DfmInputShapes& shapes, int64_t ihPad,
-                                            int64_t iwPad)
+static ge::graphStatus CheckDfmInputWithPad(const InferShapeContext* context, const DfmInputShapes& shapes,
+                                            int64_t ihPad, int64_t iwPad)
 {
     if (shapes.ih > 0 && shapes.kh > 0 && shapes.iw > 0 && shapes.kw > 0 && (ihPad < 0 || iwPad < 0)) {
         const std::string pads = "ihPad:" + std::to_string(ihPad) + ", iwPad:" + std::to_string(iwPad);
@@ -415,7 +415,7 @@ static ge::graphStatus CheckDfmInputWithPad(InferShapeContext* context, const Df
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus CheckDfmGroups(InferShapeContext* context, const DfmInputShapes& shapes)
+static ge::graphStatus CheckDfmGroups(const InferShapeContext* context, const DfmInputShapes& shapes)
 {
     if (shapes.unknownRankX) {
         return ge::GRAPH_SUCCESS;
@@ -613,7 +613,7 @@ static ge::graphStatus InferShapeForDeformableConv2D(InferShapeContext* context)
     return ge::GRAPH_SUCCESS;
 }
 
-static ge::graphStatus GetDfmRangeFormats(gert::InferShapeRangeContext* context, ge::Format& filterFormat)
+static ge::graphStatus GetDfmRangeFormats(const gert::InferShapeRangeContext* context, ge::Format& filterFormat)
 {
     const char* nodeName = NodeNameOrNil(context->GetNodeName());
     const gert::CompileTimeTensorDesc* filterDesc = context->GetInputDesc(FILTER_IDX_DFM);
