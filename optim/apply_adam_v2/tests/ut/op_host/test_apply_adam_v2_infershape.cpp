@@ -81,6 +81,34 @@ TEST_F(ApplyAdamV2InferShape, optional_inputs_can_be_omitted)
     ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
 }
 
+TEST_F(ApplyAdamV2InferShape, adam_mode_does_not_affect_shape_inference)
+{
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamV2");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->infer_shape, nullptr);
+
+    gert::StorageShape tensorShape = {{8, 16}, {8, 16}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    for (const char* mode : {"fused_norm", "unrecognized_mode"}) {
+        SCOPED_TRACE(mode);
+        gert::StorageShape outputShapes[3];
+        auto holder = gert::InferShapeContextFaker()
+                          .NodeIoNum(12, 3)
+                          .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
+                          .InputShapes({&tensorShape, &tensorShape, &tensorShape, &scalarShape, &scalarShape,
+                                        &scalarShape, &scalarShape, &tensorShape, &scalarShape, &scalarShape,
+                                        &scalarShape, &scalarShape})
+                          .Attr("adam_mode", AscendString(mode))
+                          .OutputShapes({&outputShapes[0], &outputShapes[1], &outputShapes[2]})
+                          .Build();
+        auto* context = holder.GetContext<gert::InferShapeContext>();
+        ASSERT_EQ(impl->infer_shape(context), ge::GRAPH_SUCCESS);
+        for (size_t i = 0; i < 3; ++i) {
+            EXPECT_EQ(*context->GetOutputShape(i), tensorShape.GetOriginShape());
+        }
+    }
+}
+
 // 部分未知shape（-1）场景：输出透传var/m/v
 TEST_F(ApplyAdamV2InferShape, infershape_partial_unknown_dim)
 {
