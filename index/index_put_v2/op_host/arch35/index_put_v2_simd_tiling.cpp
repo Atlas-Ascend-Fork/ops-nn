@@ -265,21 +265,27 @@ void IndexPutV2SimdTiling::AutoTilingRowCol(int64_t& rowTileNum, int64_t& colTil
     colTileNum = static_cast<uint16_t>(allTiling[0][1]);
 }
 
+// 统计 indexedSizes_ 中为 1 的维度数（rank 压缩维）
+int32_t IndexPutV2SimdTiling::CalcRankDim() const
+{
+    int32_t rankDim = 0;
+    for (int64_t i = 0; i < indexedSizesNum_; i++) {
+        if (indexedSizes_[i] == 1) {
+            rankDim++;
+        }
+    }
+    return rankDim;
+}
+
 // 核间切UB
 void IndexPutV2SimdTiling::DoUBTiling()
 {
     uint64_t availableUbsize = ubSize_ - MAX_DIM * MAX_DIM * TWO;
     int64_t minRows = 8;
     int64_t doubleB = 2;
-    int32_t rankDim = 0;
     uint64_t oneRowBuffer = 0;
     uint64_t ubBlockSize = static_cast<uint64_t>(Ops::Base::GetUbBlockSize(context_));
-
-    for (int64_t i = 0; i < indexedSizesNum_; i++) {
-        if (indexedSizes_[i] == 1) {
-            rankDim++;
-        }
-    }
+    int32_t rankDim = CalcRankDim();
 
     minRows = std::min(minRows, normalCoreRowsNum_);
     uint64_t tmpBuf = minRows * Ops::Base::CeilAlign(normalCoreColsNum_ * valueTypeSize, ubBlockSize) * doubleB +

@@ -35,7 +35,6 @@ protected:
 
     // customized functions
     ge::graphStatus GetParamsShapeInfo();
-    uint32_t ParamsDtypeImprove(uint32_t lastDimSize, uint32_t dataTypeBytes);
     uint64_t UpdateTilingData();
 
 private:

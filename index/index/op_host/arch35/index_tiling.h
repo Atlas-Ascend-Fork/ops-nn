@@ -122,6 +122,13 @@ protected:
     }
 
 protected:
+    // 按末轴字节对齐尝试提升分块因子（优先 16B，其次 8/4/2B），返回提升倍数，0 表示无需提升
+    uint64_t ParamsDtypeImprove(uint64_t lastDimSize, uint64_t dataTypeBytes);
+
+    // 校验 x dtype 并按末轴对齐提升分块因子；返回 0 表示 dtype 非法，>1 为提升倍数，1 表示无需提升
+    uint64_t ImproveLastAxisDtype(uint64_t* inputShapes, uint32_t inputDimNum, uint64_t& inputLength,
+                                  uint64_t& outputLength);
+
     static constexpr uint64_t DTYPE_SIZE_B8 = 1;
     static constexpr uint64_t DTYPE_SIZE_B16 = 2;
     static constexpr uint64_t DTYPE_SIZE_B32 = 4;

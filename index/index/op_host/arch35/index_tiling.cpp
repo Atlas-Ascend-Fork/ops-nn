@@ -25,6 +25,58 @@ using Ops::NN::Optiling::TilingRegistry;
 
 namespace optiling {
 
+uint64_t IndexTilingCommon::ParamsDtypeImprove(uint64_t lastDimSize, uint64_t dataTypeBytes)
+{
+    uint64_t lastAxisByte = lastDimSize * dataTypeBytes;
+    if ((dataTypeBytes < DTYPE_SIZE_B128) && ((lastAxisByte % DTYPE_SIZE_B128) == 0)) {
+        OP_LOGD(context_->GetNodeName(), "ParamsDtypeImprove lastAxisByte %lu, improve to DTYPE_SIZE_B128",
+                lastAxisByte);
+        return DTYPE_SIZE_B128 / dataTypeBytes;
+    }
+
+    if ((dataTypeBytes < DTYPE_SIZE_B64) && ((lastAxisByte % DTYPE_SIZE_B64) == 0)) {
+        OP_LOGD(context_->GetNodeName(), "ParamsDtypeImprove lastAxisByte %lu, improve to DTYPE_SIZE_B64",
+                lastAxisByte);
+        return DTYPE_SIZE_B64 / dataTypeBytes;
+    }
+
+    if ((dataTypeBytes < DTYPE_SIZE_B32) && ((lastAxisByte % DTYPE_SIZE_B32) == 0)) {
+        OP_LOGD(context_->GetNodeName(), "ParamsDtypeImprove lastAxisByte %lu, improve to DTYPE_SIZE_B32",
+                lastAxisByte);
+        return DTYPE_SIZE_B32 / dataTypeBytes;
+    }
+
+    if ((dataTypeBytes < DTYPE_SIZE_B16) && ((lastAxisByte % DTYPE_SIZE_B16) == 0)) {
+        OP_LOGD(context_->GetNodeName(), "ParamsDtypeImprove lastAxisByte %lu, improve to DTYPE_SIZE_B16",
+                lastAxisByte);
+        return DTYPE_SIZE_B16 / dataTypeBytes;
+    }
+    return 0;
+}
+
+uint64_t IndexTilingCommon::ImproveLastAxisDtype(uint64_t* inputShapes, uint32_t inputDimNum, uint64_t& inputLength,
+                                                 uint64_t& outputLength)
+{
+    uint64_t dataTypeBytes = GenXDtype();
+    if (dataTypeBytes == 0UL) {
+        auto firstInput = context_->GetInputDesc(0);
+        if (firstInput != nullptr) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                context_->GetNodeName(), "x", Ops::Base::ToString(firstInput->GetDataType()).c_str(),
+                "x dtype not supported, must be in [DT_INT64, DT_INT32, DT_FLOAT, DT_FLOAT16, DT_BF16, DT_INT8, "
+                "DT_UINT8, DT_BOOL, DT_COMPLEX64]");
+        }
+        return 0;
+    }
+    uint64_t factor = ParamsDtypeImprove(inputShapes[inputDimNum - 1], dataTypeBytes);
+    if (factor) {
+        inputLength /= factor;
+        outputLength /= factor;
+        inputShapes[inputDimNum - 1] /= factor;
+    }
+    return factor ? factor : 1;
+}
+
 static ge::graphStatus Tiling4Index(gert::TilingContext* context)
 {
     OP_LOGD("Index", "Tiling4Index rt2.0 is running.");

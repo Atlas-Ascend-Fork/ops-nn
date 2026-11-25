@@ -40,6 +40,7 @@ protected:
     bool IsContinuous();
     void AutoTilingRowCol(int64_t& rowTileNum, int64_t& colTileNum, int64_t usedCoreNum, int64_t rowTotalNum,
                           int64_t colTotalNum);
+    int32_t CalcRankDim() const;
 
 protected:
     uint64_t valueTypeSize = 0;

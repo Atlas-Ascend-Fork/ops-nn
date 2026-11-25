@@ -61,15 +61,9 @@ void IndexPutV2SimdDmaTiling::DoUBTiling()
 
     int64_t minRows = 8;
     int64_t doubleB = 2;
-    int32_t rankDim = 0;
     uint64_t oneRowBuffer = 0;
     uint64_t ubBlockSize = static_cast<uint64_t>(Ops::Base::GetUbBlockSize(context_));
-
-    for (int64_t i = 0; i < indexedSizesNum_; i++) {
-        if (indexedSizes_[i] == 1) {
-            rankDim++;
-        }
-    }
+    int32_t rankDim = CalcRankDim();
 
     minRows = std::min(minRows, normalCoreRowsNum_);
     // Additional per-row cost: sizeof(int64_t) for scatter offset + sizeof(uint8_t) for compare mask
