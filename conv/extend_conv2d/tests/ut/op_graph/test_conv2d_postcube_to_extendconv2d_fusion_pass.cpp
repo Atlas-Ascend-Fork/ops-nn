@@ -111,6 +111,17 @@ protected:
     }
 };
 
+// 5162 用例专用夹具：SetSocDav5162 会切换全局 soc，用例结束后清除 5162 注册并恢复默认 3510 平台态，
+// 避免污染共享 PlatformInfoManager 的其他用例（ExtendConv2dOpSelectFormat 的 IsArch5162 全局判定等）。
+class Conv2DPostCubeToExtendConv2DFusionPass5162Test : public Conv2DPostCubeToExtendConv2DFusionPassTest {
+protected:
+    void TearDown() override
+    {
+        PlatformInfoManager::Instance().platform_info_map_.erase("Ascend5162");
+        SocConfig::Dav3510().Apply();
+    }
+};
+
 // Single-path fusion success: Conv2D + {Dequant, Relu, LeakyRelu, Requant, Quant} ... + {Relu}
 TEST_F(Conv2DPostCubeToExtendConv2DFusionPassTest, conv2d_postcube_to_extendconv2d_fusion_success)
 {
@@ -1336,4 +1347,282 @@ TEST_F(Conv2DPostCubeToExtendConv2DFusionPassTest, conv2d_postcube_groups_derive
     int64_t rearrangeGroups = 0;
     ASSERT_EQ(rearrange.GetAttr(AscendString("groups"), rearrangeGroups), GRAPH_SUCCESS);
     EXPECT_EQ(rearrangeGroups, int64_t{4});
+}
+
+// ==========================================================================================
+// 5162 PreImpl truncation: TruncatePostCubePass direct call with constructed match lists.
+// PRelu/Relu6 belong to SUPPORTED_EXTRA_NODE_TYPES and must survive truncation.
+// ==========================================================================================
+TEST_F(Conv2DPostCubeToExtendConv2DFusionPassTest, conv2d_postcube_5162_truncate_postcube_pass)
+{
+    Conv2DPostCubeToExtendConv2DFusionPass pass;
+    // 场景1：[Conv2D, PRelu, Relu] 全链支持（PRelu 走额外类型放行），整条保留
+    {
+        TestGraph builder("truncate_prelu_relu_chain");
+        auto graph = builder.SetSocDav3510()
+                         .AddConv2D(Conv2DConfig::Basic("Conv2D", DT_FLOAT16, DT_FLOAT16))
+                         .AddNode(PReluConfig::Basic("PRelu", DT_FLOAT16), {1})
+                         .AddRelu(ReluConfig::Basic("Relu", DT_FLOAT16))
+                         .Connect("Conv2D", 0, "PRelu", 0)
+                         .Connect("PRelu", 0, "Relu", 0)
+                         .SetOutput("Relu")
+                         .Build();
+        ops::PostCubePassInfo passInfo;
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("Conv2D")));
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("PRelu")));
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("Relu")));
+        std::vector<ops::PostCubePassInfo> matchLists = {passInfo};
+        pass.TruncatePostCubePass(matchLists);
+        ASSERT_EQ(matchLists.size(), 1U);
+        EXPECT_EQ(matchLists[0].m_opnodes.size(), 3U);
+    }
+
+    // 场景2：[Conv2D, PRelu, Add] 尾部不支持类型被截断，保留 [Conv2D, PRelu] 前缀
+    {
+        TestGraph builder("truncate_unsupported_tail");
+        NodeConfig addCfg("Add");
+        addCfg.opType = "Add";
+        addCfg.inputDefs = {{"x1", CompliantNodeBuilder::kEsIrInputRequired, ""}};
+        addCfg.outputDefs = {{"y", CompliantNodeBuilder::kEsIrOutputRequired, ""}};
+        addCfg.AddInput(DT_FLOAT16, FORMAT_NCHW, {1, 3, 244, 244}, "add_x");
+        addCfg.AddOutput(DT_FLOAT16, FORMAT_NCHW, {1, 3, 244, 244}, "add_y");
+        auto graph = builder.SetSocDav3510()
+                         .AddConv2D(Conv2DConfig::Basic("Conv2D", DT_FLOAT16, DT_FLOAT16))
+                         .AddNode(PReluConfig::Basic("PRelu", DT_FLOAT16), {1})
+                         .AddNode(addCfg)
+                         .Connect("Conv2D", 0, "PRelu", 0)
+                         .Connect("PRelu", 0, "Add", 0)
+                         .SetOutput("Add")
+                         .Build();
+        ops::PostCubePassInfo passInfo;
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("Conv2D")));
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("PRelu")));
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("Add")));
+        std::vector<ops::PostCubePassInfo> matchLists = {passInfo};
+        pass.TruncatePostCubePass(matchLists);
+        ASSERT_EQ(matchLists.size(), 1U);
+        EXPECT_EQ(matchLists[0].m_opnodes.size(), 2U);
+    }
+
+    // 场景3：[Conv2D, Relu, PRelu] 中间节点多输出 → 截断后仅剩 Conv2D（cutIndex==1），整条丢弃
+    {
+        TestGraph builder("truncate_multi_output_cut");
+        auto graph = builder.SetSocDav3510()
+                         .AddConv2D(Conv2DConfig::Basic("Conv2D", DT_FLOAT16, DT_FLOAT16))
+                         .AddRelu(ReluConfig::Basic("Relu", DT_FLOAT16))
+                         .AddNode(PReluConfig::Basic("PRelu", DT_FLOAT16), {1})
+                         .AddRelu(ReluConfig::Basic("Relu2", DT_FLOAT16))
+                         .Connect("Conv2D", 0, "Relu", 0)
+                         .Connect("Relu", 0, "PRelu", 0)
+                         .Connect("Relu", 0, "Relu2", 0)
+                         .SetOutput("PRelu")
+                         .SetOutput("Relu2")
+                         .Build();
+        ops::PostCubePassInfo passInfo;
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("Conv2D")));
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("Relu")));
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("PRelu")));
+        std::vector<ops::PostCubePassInfo> matchLists = {passInfo};
+        pass.TruncatePostCubePass(matchLists);
+        EXPECT_TRUE(matchLists.empty());
+    }
+
+    // 场景4：两条相同前缀的 pass 去重，仅保留一条
+    {
+        TestGraph builder("truncate_duplicate_prefix");
+        auto graph = builder.SetSocDav3510()
+                         .AddConv2D(Conv2DConfig::Basic("Conv2D", DT_FLOAT16, DT_FLOAT16))
+                         .AddRelu(ReluConfig::Basic("Relu", DT_FLOAT16))
+                         .Connect("Conv2D", 0, "Relu", 0)
+                         .SetOutput("Relu")
+                         .Build();
+        ops::PostCubePassInfo passInfo;
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("Conv2D")));
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("Relu")));
+        std::vector<ops::PostCubePassInfo> matchLists = {passInfo, passInfo};
+        pass.TruncatePostCubePass(matchLists);
+        ASSERT_EQ(matchLists.size(), 1U);
+        EXPECT_EQ(matchLists[0].m_opnodes.size(), 2U);
+    }
+
+    // 场景5：pass 中含空节点信息 → cutIndex==0，整条丢弃
+    {
+        TestGraph builder("truncate_null_node");
+        auto graph = builder.SetSocDav3510()
+                         .AddConv2D(Conv2DConfig::Basic("Conv2D", DT_FLOAT16, DT_FLOAT16))
+                         .AddRelu(ReluConfig::Basic("Relu", DT_FLOAT16))
+                         .Connect("Conv2D", 0, "Relu", 0)
+                         .SetOutput("Relu")
+                         .Build();
+        ops::PostCubePassInfo passInfo;
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(graph->FindNodeByName("Conv2D")));
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo());
+        std::vector<ops::PostCubePassInfo> matchLists = {passInfo};
+        pass.TruncatePostCubePass(matchLists);
+        EXPECT_TRUE(matchLists.empty());
+    }
+}
+
+// ReplaceImpl direct tests (bypass postcube matching): PRelu/Relu6 fusion op list handling on 5162
+TEST_F(Conv2DPostCubeToExtendConv2DFusionPass5162Test, conv2d_postcube_5162_prelu_cliprelu_replaceimpl)
+{
+    struct Point {
+        const char* pointName;
+        std::function<GraphPtr(TestGraph&)> build;
+        std::function<void(GNode&)> verify;
+    } const points[] = {
+        {"cliprelu_with_clip_value",
+         [](TestGraph& builder) {
+             PostCubeConfig postCubeConfig = PostCubeConfig::Basic("FixPipe", DT_FLOAT16);
+             postCubeConfig.WithClip0();
+             postCubeConfig.SetAttr("fusion_op_list", std::vector<std::string>{"Relu6"});
+             return builder.SetSocDav5162()
+                 .AddConv2D(Conv2DConfig::Basic("Conv2D", DT_FLOAT16, DT_FLOAT16))
+                 .AddPostCube(postCubeConfig)
+                 .Connect("Conv2D", 0, "FixPipe", 0)
+                 .SetOutput("FixPipe")
+                 .Build();
+         },
+         [](GNode& fused) {
+             // clip_value0 接入 ExtendConv2D input6，格式强制 ND
+             TensorDesc clipDesc;
+             ASSERT_EQ(fused.GetInputDesc(Conv2DPostCubeToExtendConv2DFusion::EXTENDCONV2D_CLIP_RELU_0_INDEX, clipDesc),
+                       GRAPH_SUCCESS);
+             EXPECT_EQ(clipDesc.GetFormat(), FORMAT_ND);
+             auto clipProducer = fused
+                                     .GetInDataNodesAndPortIndexs(
+                                         Conv2DPostCubeToExtendConv2DFusion::EXTENDCONV2D_CLIP_RELU_0_INDEX)
+                                     .first;
+             ASSERT_NE(clipProducer, nullptr);
+             bool enableRelu0 = false;
+             ASSERT_EQ(fused.GetAttr(AscendString("enable_relu0"), enableRelu0), GRAPH_SUCCESS);
+             EXPECT_TRUE(enableRelu0);
+             // 融合链无 LeakyRelu/PRelu 时 relu_weight0 不接入
+             auto reluProducer = fused
+                                     .GetInDataNodesAndPortIndexs(
+                                         Conv2DPostCubeToExtendConv2DFusion::EXTENDCONV2D_RELU_WEIGHT_0_INDEX)
+                                     .first;
+             EXPECT_EQ(reluProducer, nullptr);
+         }},
+        {"prelu_with_relu_weight",
+         [](TestGraph& builder) {
+             PostCubeConfig postCubeConfig = PostCubeConfig::Basic("FixPipe", DT_FLOAT16);
+             postCubeConfig.WithRelu0();
+             postCubeConfig.SetAttr("fusion_op_list", std::vector<std::string>{"PRelu"});
+             return builder.SetSocDav5162()
+                 .AddConv2D(Conv2DConfig::Basic("Conv2D", DT_FLOAT16, DT_FLOAT16))
+                 .AddPostCube(postCubeConfig)
+                 .Connect("Conv2D", 0, "FixPipe", 0)
+                 .SetOutput("FixPipe")
+                 .Build();
+         },
+         [](GNode& fused) {
+             auto reluProducer = fused
+                                     .GetInDataNodesAndPortIndexs(
+                                         Conv2DPostCubeToExtendConv2DFusion::EXTENDCONV2D_RELU_WEIGHT_0_INDEX)
+                                     .first;
+             ASSERT_NE(reluProducer, nullptr);
+             // 融合链无 Relu6 时 clip_value0 不接入
+             auto clipProducer = fused
+                                     .GetInDataNodesAndPortIndexs(
+                                         Conv2DPostCubeToExtendConv2DFusion::EXTENDCONV2D_CLIP_RELU_0_INDEX)
+                                     .first;
+             EXPECT_EQ(clipProducer, nullptr);
+             bool enableRelu0 = false;
+             ASSERT_EQ(fused.GetAttr(AscendString("enable_relu0"), enableRelu0), GRAPH_SUCCESS);
+             EXPECT_TRUE(enableRelu0);
+         }},
+    };
+
+    for (const auto& p : points) {
+        SCOPED_TRACE(p.pointName);
+        TestGraph builder(p.pointName);
+        auto graph = p.build(builder);
+        TestConvFusionReplaceImpl(builder, std::string("conv2d_postcube_5162_replaceimpl_") + p.pointName, graph);
+        GNode fused = GetFirstExtendConv2DNode(graph);
+        p.verify(fused);
+    }
+}
+
+// Extra node types must be rejected on non-5162 archs
+TEST_F(Conv2DPostCubeToExtendConv2DFusionPassTest, conv2d_postcube_prelu_cliprelu_rejected_on_other_arch)
+{
+    struct Point {
+        const char* pointName;
+        std::vector<std::string> fusionOpList;
+    } const points[] = {
+        {"prelu_on_dav3510", {"PRelu"}},
+        {"cliprelu_on_dav3510", {"Relu6"}},
+    };
+
+    for (const auto& p : points) {
+        SCOPED_TRACE(p.pointName);
+        TestGraph builder(p.pointName);
+        PostCubeConfig postCubeConfig = PostCubeConfig::Basic("FixPipe", DT_FLOAT16);
+        postCubeConfig.WithRelu0().WithClip0();
+        postCubeConfig.SetAttr("fusion_op_list", p.fusionOpList);
+        auto graph = builder.SetSocDav3510()
+                         .AddConv2D(Conv2DConfig::Basic("Conv2D", DT_FLOAT16, DT_FLOAT16))
+                         .AddPostCube(postCubeConfig)
+                         .Connect("Conv2D", 0, "FixPipe", 0)
+                         .SetOutput("FixPipe")
+                         .Build();
+        TestConvFusionReplaceImpl(builder, std::string("rejected_on_other_arch_") + p.pointName, graph, false);
+    }
+}
+
+// PReluNodePreProcess slope shape variants + GetPReluNode hit/miss
+TEST_F(Conv2DPostCubeToExtendConv2DFusionPass5162Test, prelu_node_preprocess_and_get_prelu_node)
+{
+    struct Point {
+        const char* pointName;
+        std::vector<int64_t> slopeShape;
+        std::vector<int64_t> expectedShape;
+    } const points[] = {
+        {"nchw_4d_squeezed", {1, 3, 1, 1}, {3}},
+        {"all_ones_squeezed", {1, 1, 1, 1}, {1}},
+        {"already_1d_skipped", {3}, {3}},
+        {"not_squeezable_skipped", {3, 3}, {3, 3}},
+        {"dynamic_dim_skipped", {1, -1, 1, 1}, {1, -1, 1, 1}},
+    };
+
+    Conv2DPostCubeToExtendConv2DFusionPass pass;
+    for (const auto& p : points) {
+        SCOPED_TRACE(p.pointName);
+        TestGraph builder(std::string("prelu_preprocess_") + p.pointName);
+        auto graph = builder.SetSocDav5162()
+                         .AddNode(PReluConfig::Basic("PRelu", DT_FLOAT16, FORMAT_NCHW, {1, 3, 244, 244}, p.slopeShape),
+                                  {0, 1})
+                         .SetOutput("PRelu")
+                         .Build();
+        GNodePtr preluPtr = graph->FindNodeByName("PRelu");
+        ASSERT_NE(preluPtr, nullptr);
+
+        // GetPReluNode 命中，null 节点信息被跳过
+        ops::PostCubePassInfo passInfo;
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(preluPtr));
+        passInfo.m_opnodes.push_back(ops::PostCubeNodeInfo());
+        std::vector<ops::PostCubePassInfo> matchLists = {passInfo};
+        GNodePtr found = pass.GetPReluNode(matchLists);
+        ASSERT_NE(found, nullptr);
+        EXPECT_TRUE(found == preluPtr);
+
+        pass.PReluNodePreProcess(found);
+        TensorDesc slopeDesc;
+        ASSERT_EQ(preluPtr->GetInputDesc(1, slopeDesc), GRAPH_SUCCESS);
+        EXPECT_EQ(slopeDesc.GetShape().GetDims(), p.expectedShape);
+    }
+
+    // GetPReluNode 未命中：matchLists 中无 PRelu
+    TestGraph missBuilder("prelu_miss_graph");
+    auto missGraph = missBuilder.SetSocDav5162()
+                         .AddNode(Relu6Config::Basic("Relu6", DT_FLOAT16), {0})
+                         .SetOutput("Relu6")
+                         .Build();
+    GNodePtr relu6Ptr = missGraph->FindNodeByName("Relu6");
+    ASSERT_NE(relu6Ptr, nullptr);
+    ops::PostCubePassInfo missInfo;
+    missInfo.m_opnodes.push_back(ops::PostCubeNodeInfo(relu6Ptr));
+    std::vector<ops::PostCubePassInfo> missLists = {missInfo};
+    EXPECT_TRUE(pass.GetPReluNode(missLists) == nullptr);
 }

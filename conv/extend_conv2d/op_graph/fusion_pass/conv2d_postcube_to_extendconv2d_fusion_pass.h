@@ -38,6 +38,11 @@ const ge::AscendString SCALE_0 = "scale0";
 const ge::AscendString SCALE_1 = "scale1";
 const ge::AscendString RELU_WEIGHT_0 = "relu_weight0";
 const ge::AscendString RELU_WEIGHT_1 = "relu_weight1";
+const ge::AscendString RELU_WEIGHT_TYPE = "relu_weight_type";
+const ge::AscendString CLIP_RELU_TYPE = "clip_relu_type";
+const ge::AscendString CLIP_RELU_0 = "clip_value0";
+const ge::AscendString PRELU = "PRelu";
+const ge::AscendString RELU6 = "Relu6";
 
 const std::set<NpuArch> SUPPORT_ARCH_LIST = {Ops::Base::DAV_3510, Ops::Base::DAV_9201, Ops::Base::DAV_9202,
                                              Ops::Base::DAV_5162};
@@ -51,8 +56,10 @@ constexpr int32_t EXTENDCONV2D_QUANT_SCALE_0_INDEX = 4;
 constexpr int32_t EXTENDCONV2D_QUANT_SCALE_1_INDEX = 7;
 constexpr int32_t EXTENDCONV2D_RELU_WEIGHT_0_INDEX = 5;
 constexpr int32_t EXTENDCONV2D_RELU_WEIGHT_1_INDEX = 8;
+constexpr int32_t EXTENDCONV2D_CLIP_RELU_0_INDEX = 6;
 constexpr int32_t POST_CUBE_INPUT_QUANT_SCALE_0_INDEX = 2;
 constexpr int32_t POST_CUBE_INPUT_RELU_WEIGHT_0_INDEX = 3;
+constexpr int32_t POST_CUBE_INPUT_CLIP_RELU_0_INDEX = 4;
 constexpr int32_t OUTPUT_1_INDEX = 1;
 constexpr size_t DUAL_OUTPUTNUM = 2;
 constexpr size_t DN2NZ_UNSUPPORT_PASS_NODE_NUM = 2;
@@ -60,6 +67,7 @@ constexpr size_t RELU_NODE_INDEX_IN_PASS = 1;
 
 const std::vector<ge::AscendString> SUPPORTED_NODE_TYPES = {"Conv2D",      "AscendDequant", "AscendRequant",
                                                             "AscendQuant", "Relu",          "LeakyRelu"};
+const std::vector<ge::AscendString> SUPPORTED_EXTRA_NODE_TYPES = {"PRelu", "Relu6"};
 
 const std::vector<ge::AscendString> POST_CUBE_NODE_TYPES = {"AscendDequant", "AscendRequant", "AscendQuant", "Relu",
                                                             "LeakyRelu"};
@@ -85,10 +93,15 @@ private:
     bool IsReluEnable(const std::vector<ge::AscendString>& postCubeFusionOp,
                       const ge::AscendString& opType = "default") const;
     bool IsScaleEnable(const std::vector<ge::AscendString>& postCubeFusionOp) const;
+    void TruncatePostCubePass(std::vector<ops::PostCubePassInfo>& matchLists) const;
     void SelectPostCubePassByWhiteList(std::vector<ops::PostCubePassInfo>& matchLists) const;
     bool UpdateExtendConv2DDesc(ge::GNode* extendConv2D) const;
     bool UpdateScaleReluDesc(ge::GNodePtr postCube, ge::GNode* extendConv2D, const int32_t getIndex,
                              const int32_t updateIndex, const ge::AscendString& name) const;
+    bool ContainsAnyReluType(const std::vector<ge::AscendString>& postCubeFusionOp,
+                             const std::vector<ge::AscendString>& allowedTypes) const;
+    ge::GNodePtr GetPReluNode(const std::vector<ops::PostCubePassInfo>& matchLists) const;
+    void PReluNodePreProcess(const ge::GNodePtr& preluNode) const;
 
     int64_t DeriveGroups(const int64_t defaultGroups) const;
     bool AdjustLayout(const ge::GraphPtr& graph, ge::GNode& fusedNode);
@@ -109,6 +122,7 @@ private:
     bool hasScale1 = false;
     bool hasRelu0 = false;
     bool hasRelu1 = false;
+    bool hasClipRelu0 = false;
     int64_t graphIndex = ConvFusionUtils::REQUIRED_INPUT_NUMS;
 };
 

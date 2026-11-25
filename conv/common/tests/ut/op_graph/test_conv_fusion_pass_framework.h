@@ -128,6 +128,10 @@ struct SocConfig {
     {
         return SocConfig("Ascend950", "Ascend950PR_9589", "fuse", static_cast<int32_t>(Ops::Base::DAV_3510));
     }
+    static SocConfig Dav5162()
+    {
+        return SocConfig("Ascend5162", "Ascend5162", "fuse", static_cast<int32_t>(Ops::Base::DAV_5162));
+    }
 
     void Apply() const
     {
@@ -517,6 +521,49 @@ struct LeakyReluConfig : public NodeConfig {
     }
 };
 
+struct PReluConfig : public NodeConfig {
+    PReluConfig()
+    {
+        name = "PRelu";
+        opType = "PRelu";
+        inputDefs = {{"x", CompliantNodeBuilder::kEsIrInputRequired, ""},
+                     {"weight", CompliantNodeBuilder::kEsIrInputRequired, ""}};
+        outputDefs = {{"y", CompliantNodeBuilder::kEsIrOutputRequired, ""}};
+    }
+
+    static PReluConfig Basic(std::string nodeName, DataType dataType = DT_FLOAT16, Format format = FORMAT_NCHW,
+                             const std::vector<int64_t>& shape = {1, 3, 244, 244},
+                             const std::vector<int64_t>& slopeShape = {3})
+    {
+        PReluConfig config;
+        config.SetName(nodeName)
+            .AddInput(dataType, format, shape, nodeName + "_x")
+            .AddInput(DT_FLOAT, FORMAT_ND, slopeShape, nodeName + "_weight")
+            .AddOutput(dataType, format, shape, nodeName + "_y");
+        return config;
+    }
+};
+
+struct Relu6Config : public NodeConfig {
+    Relu6Config()
+    {
+        name = "Relu6";
+        opType = "Relu6";
+        inputDefs = {{"x", CompliantNodeBuilder::kEsIrInputRequired, ""}};
+        outputDefs = {{"y", CompliantNodeBuilder::kEsIrOutputRequired, ""}};
+    }
+
+    static Relu6Config Basic(std::string nodeName, DataType dataType = DT_FLOAT16, Format format = FORMAT_NCHW,
+                             const std::vector<int64_t>& shape = {1, 3, 244, 244})
+    {
+        Relu6Config config;
+        config.SetName(nodeName)
+            .AddInput(dataType, format, shape, nodeName + "_x")
+            .AddOutput(dataType, format, shape, nodeName + "_y");
+        return config;
+    }
+};
+
 struct PostCubeConfig : public NodeConfig {
     PostCubeConfig()
     {
@@ -583,10 +630,30 @@ struct PostCubeConfig : public NodeConfig {
         return *this;
     }
 
+    PostCubeConfig& WithClip0(DataType dataType = DT_FLOAT16, const std::vector<int64_t>& shape = {1})
+    {
+        clipValue0Tensor = TensorInfo(dataType, FORMAT_ND, shape, this->name + "_clip_value_0");
+        clipValue0Tensor.enabled = true;
+        clipValue0Tensor.slot = 4; // clip_value_0 端口号
+        this->AddInput(clipValue0Tensor);
+        return *this;
+    }
+
+    PostCubeConfig& WithClip1(DataType dataType = DT_FLOAT16, const std::vector<int64_t>& shape = {1})
+    {
+        clipValue1Tensor = TensorInfo(dataType, FORMAT_ND, shape, this->name + "_clip_value_1");
+        clipValue1Tensor.enabled = true;
+        clipValue1Tensor.slot = 7; // clip_value_1 端口号
+        this->AddInput(clipValue1Tensor);
+        return *this;
+    }
+
     TensorInfo quantScale0Tensor;
     TensorInfo reluWeight0Tensor;
     TensorInfo quantScale1Tensor;
     TensorInfo reluWeight1Tensor;
+    TensorInfo clipValue0Tensor;
+    TensorInfo clipValue1Tensor;
 };
 
 inline TensorDesc BuildTensorDesc(DataType dtype, Format format, const std::vector<int64_t>& shape,
@@ -938,6 +1005,12 @@ public:
     TestGraph& SetSocFuse()
     {
         SetSoc(SocConfig::FuseSoc());
+        return *this;
+    }
+
+    TestGraph& SetSocDav5162()
+    {
+        SetSoc(SocConfig::Dav5162());
         return *this;
     }
 

@@ -12,6 +12,7 @@
 #include "conv2d_postcube_to_extendconv2d_fusion_pass.h"
 
 #include <algorithm>
+#include <set>
 #include <sstream>
 
 #include "conv/common/op_graph/fusion_pass/conv_fusion_utils_pass.h"
@@ -58,6 +59,7 @@ void Conv2DPostCubeToExtendConv2DFusionPass::InitMember()
     hasScale1 = false;
     hasRelu0 = false;
     hasRelu1 = false;
+    hasClipRelu0 = false;
     graphIndex = REQUIRED_INPUT_NUMS;
 }
 
@@ -176,17 +178,20 @@ Status Conv2DPostCubeToExtendConv2DFusionPass::ConvFusionPreImpl(GraphPtr& graph
                       OP_LOGD(convDescInfo.nodeNameStr, "GetPostCubeNodeList failed, no fusion."),
                       return CONV_NOT_CHANGED);
 
-    SelectPostCubePassByWhiteList(postCubeUtils.m_matchpasses_);
+    if (npuArch != Ops::Base::DAV_5162) {
+        SelectPostCubePassByWhiteList(postCubeUtils.m_matchpasses_);
+    }
 
     FUSION_PASS_CHECK(postCubeUtils.SelectPostCubeNodeList(true) != GRAPH_SUCCESS,
                       OP_LOGD(convDescInfo.nodeNameStr, "SelectPostCubeNodeList failed, no fusion."),
                       return CONV_NOT_CHANGED);
 
     if (npuArch == Ops::Base::DAV_5162) {
-        auto convOutputNodes = convNode.GetOutDataNodesAndPortIndexs(OUTPUT_INDEX);
-        FUSION_PASS_CHECK(convOutputNodes.size() != 1,
-                          OP_LOGD(convDescInfo.nodeNameStr, "DAV_5162 only support single output, skip fusion."),
-                          return CONV_NOT_CHANGED);
+        TruncatePostCubePass(postCubeUtils.m_matchpasses_);
+        GNodePtr preluNode = GetPReluNode(postCubeUtils.m_matchpasses_);
+        if (preluNode != nullptr) {
+            PReluNodePreProcess(preluNode);
+        }
     }
 
     float leakySlope = 0.0f;
@@ -290,6 +295,7 @@ GraphUniqPtr Conv2DPostCubeToExtendConv2DFusionPass::Replacement(const GNode& co
     auto bias = convDescInfo.hasBias ? graphBuilder.CreateInput(graphIndex++) : nullptr;
     auto scale0 = hasScale0 ? graphBuilder.CreateInput(graphIndex++) : nullptr;
     auto relu0 = hasRelu0 ? graphBuilder.CreateInput(graphIndex++) : nullptr;
+    auto clip0 = hasClipRelu0 ? graphBuilder.CreateInput(graphIndex++) : nullptr;
     auto scale1 = hasScale1 ? graphBuilder.CreateInput(graphIndex++) : nullptr;
     auto relu1 = hasRelu1 ? graphBuilder.CreateInput(graphIndex++) : nullptr;
 
@@ -301,7 +307,7 @@ GraphUniqPtr Conv2DPostCubeToExtendConv2DFusionPass::Replacement(const GNode& co
 
     // fmap, filter, bias, offset_w, scale0, relu_weight0, clip_value0, scale1, relu_weight1, clip_value1
     auto extendConv2D = es::ExtendConv2D(
-        fmap, filter, bias, nullptr, scale0, relu0, nullptr, scale1, relu1, nullptr, baseAttrs.strides, baseAttrs.pads,
+        fmap, filter, bias, nullptr, scale0, relu0, clip0, scale1, relu1, nullptr, baseAttrs.strides, baseAttrs.pads,
         baseAttrs.dilations, baseAttrs.groups, baseAttrs.dataFormat.GetString(), baseAttrs.offsetX, RINT.GetString(),
         baseAttrs.padMode.GetString(), baseAttrs.enableHf32, enableRelu0, enableRelu1, dualOutput);
 
@@ -340,13 +346,22 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::AddScaleReluToBoundAry(std::unique_
                 return false);
             hasScale0 = true;
         }
-        if (IsReluEnable(postCubeFusionOps.front(), Conv2DPostCubeToExtendConv2DFusion::LEAKY_RELU)) {
+        if (IsReluEnable(postCubeFusionOps.front(), Conv2DPostCubeToExtendConv2DFusion::RELU_WEIGHT_TYPE)) {
             GNodePtr postCubeNode = postCubeNodes.front();
             FUSION_PASS_CHECK_NOLOG(
                 !ConvFusionUtilsPass::AddSubgraphInput(boundary, *postCubeNode, POST_CUBE_INPUT_RELU_WEIGHT_0_INDEX,
                                                        EXTENDCONV2D_RELU_WEIGHT_0_INDEX),
                 return false);
             hasRelu0 = true;
+        }
+        if (npuArch == Ops::Base::DAV_5162 &&
+            IsReluEnable(postCubeFusionOps.front(), Conv2DPostCubeToExtendConv2DFusion::CLIP_RELU_TYPE)) {
+            GNodePtr postCubeNode = postCubeNodes.front();
+            FUSION_PASS_CHECK_NOLOG(
+                !ConvFusionUtilsPass::AddSubgraphInput(boundary, *postCubeNode, POST_CUBE_INPUT_CLIP_RELU_0_INDEX,
+                                                       EXTENDCONV2D_CLIP_RELU_0_INDEX),
+                return false);
+            hasClipRelu0 = true;
         }
     }
 
@@ -360,7 +375,7 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::AddScaleReluToBoundAry(std::unique_
                 return false);
             hasScale1 = true;
         }
-        if (IsReluEnable(postCubeFusionOps.back(), Conv2DPostCubeToExtendConv2DFusion::LEAKY_RELU)) {
+        if (IsReluEnable(postCubeFusionOps.back(), Conv2DPostCubeToExtendConv2DFusion::RELU_WEIGHT_TYPE)) {
             GNodePtr postCubeNode = postCubeNodes.back();
             FUSION_PASS_CHECK_NOLOG(
                 !ConvFusionUtilsPass::AddSubgraphInput(boundary, *postCubeNode, POST_CUBE_INPUT_RELU_WEIGHT_0_INDEX,
@@ -395,6 +410,11 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::CheckSupportPostCubeCase(const GNod
     AscendString supportedListStr = ConvFusionUtilsPass::ListToAscendString(SUPPORTED_NODE_TYPES);
     for (auto& node : postCubeFusionOp) {
         if (std::find(SUPPORTED_NODE_TYPES.begin(), SUPPORTED_NODE_TYPES.end(), node) == SUPPORTED_NODE_TYPES.end()) {
+            bool isExtraType = std::find(SUPPORTED_EXTRA_NODE_TYPES.begin(), SUPPORTED_EXTRA_NODE_TYPES.end(), node) !=
+                               SUPPORTED_EXTRA_NODE_TYPES.end();
+            if (npuArch == Ops::Base::DAV_5162 && isExtraType) {
+                continue;
+            }
             std::stringstream reason;
             reason << "In the fusion pass Conv2DPostCubeToExtendConv2DFusionPass, "
                    << "the output node connected to this node can only be of the following types: "
@@ -498,17 +518,34 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::IsReluEnable(const std::vector<Asce
         return false;
     }
 
-    bool ret = false;
+    std::vector<AscendString> baseTypes;
     if (opType == "default") {
-        ret = std::find(postCubeFusionOp.begin(), postCubeFusionOp.end(), Conv2DPostCubeToExtendConv2DFusion::RELU) !=
-                  postCubeFusionOp.end() ||
-              std::find(postCubeFusionOp.begin(), postCubeFusionOp.end(),
-                        Conv2DPostCubeToExtendConv2DFusion::LEAKY_RELU) != postCubeFusionOp.end();
+        baseTypes = {RELU, LEAKY_RELU};
+        if (npuArch == Ops::Base::DAV_5162) {
+            baseTypes.insert(baseTypes.end(), {PRELU, RELU6});
+        }
+    } else if (opType == RELU_WEIGHT_TYPE) {
+        baseTypes = {LEAKY_RELU};
+        if (npuArch == Ops::Base::DAV_5162) {
+            baseTypes.emplace_back(PRELU);
+        }
+    } else if (opType == CLIP_RELU_TYPE && npuArch == Ops::Base::DAV_5162) {
+        baseTypes.emplace_back(RELU6);
     } else {
-        ret = std::find(postCubeFusionOp.begin(), postCubeFusionOp.end(), opType) != postCubeFusionOp.end();
+        baseTypes = {opType};
     }
+    return ContainsAnyReluType(postCubeFusionOp, baseTypes);
+}
 
-    return ret;
+bool Conv2DPostCubeToExtendConv2DFusionPass::ContainsAnyReluType(
+    const std::vector<ge::AscendString>& postCubeFusionOp, const std::vector<ge::AscendString>& allowedTypes) const
+{
+    for (const auto& type : allowedTypes) {
+        if (std::find(postCubeFusionOp.begin(), postCubeFusionOp.end(), type) != postCubeFusionOp.end()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool Conv2DPostCubeToExtendConv2DFusionPass::IsScaleEnable(const std::vector<AscendString>& postCubeFusionOp) const
@@ -522,6 +559,56 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::IsScaleEnable(const std::vector<Asc
            std::find(postCubeFusionOp.begin(), postCubeFusionOp.end(), ConvFusionUtils::ASCEND_DEQUANT) !=
                postCubeFusionOp.end() ||
            std::find(postCubeFusionOp.begin(), postCubeFusionOp.end(), ASCEND_REQUANT) != postCubeFusionOp.end();
+}
+
+void Conv2DPostCubeToExtendConv2DFusionPass::TruncatePostCubePass(std::vector<ops::PostCubePassInfo>& matchLists) const
+{
+    std::vector<ops::PostCubePassInfo> trimmedLists;
+    std::set<std::vector<ge::GNodePtr>> keptPrefixes;
+    for (auto& postCubePass : matchLists) {
+        const uint32_t nodeNum = static_cast<uint32_t>(postCubePass.m_opnodes.size());
+        uint32_t cutIndex = nodeNum;
+        std::vector<AscendString> nodeTypeList;
+        for (uint32_t index = 0; index < nodeNum; ++index) {
+            auto curNode = postCubePass.m_opnodes[index].GetNode();
+            if (curNode == nullptr) {
+                cutIndex = 0;
+                break;
+            }
+            AscendString nodeType;
+            if (curNode->GetType(nodeType) != GRAPH_SUCCESS) {
+                cutIndex = 0;
+                break;
+            }
+
+            bool unsupported = (std::find(SUPPORTED_NODE_TYPES.begin(), SUPPORTED_NODE_TYPES.end(), nodeType) ==
+                                SUPPORTED_NODE_TYPES.end()) &&
+                               (std::find(SUPPORTED_EXTRA_NODE_TYPES.begin(), SUPPORTED_EXTRA_NODE_TYPES.end(),
+                                          nodeType) == SUPPORTED_EXTRA_NODE_TYPES.end());
+            bool multiOutput = (index + 1 < nodeNum) && curNode->GetOutDataNodesAndPortIndexs(OUTPUT_INDEX).size() > 1;
+            if (unsupported || multiOutput) {
+                cutIndex = index;
+                break;
+            }
+        }
+
+        if (cutIndex > 1) {
+            std::vector<ge::GNodePtr> keptPrefix;
+            keptPrefix.reserve(cutIndex);
+            for (uint32_t index = 0; index < cutIndex; ++index) {
+                keptPrefix.push_back(postCubePass.m_opnodes[index].GetNode());
+            }
+            if (!keptPrefixes.insert(keptPrefix).second) {
+                OP_LOGD(convDescInfo.nodeNameStr, "Duplicate trimmed post cube pass, skip it.");
+                continue;
+            }
+            ops::PostCubePassInfo trimmedPass = postCubePass;
+            trimmedPass.m_opnodes.resize(cutIndex);
+            trimmedLists.push_back(trimmedPass);
+            OP_LOGD(convDescInfo.nodeNameStr, "Trim post cube pass to %u nodes to keep single output.", cutIndex);
+        }
+    }
+    matchLists = std::move(trimmedLists);
 }
 
 void Conv2DPostCubeToExtendConv2DFusionPass::SelectPostCubePassByWhiteList(
@@ -590,6 +677,13 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::UpdateExtendConv2DDesc(GNode* exten
                 return false);
         }
 
+        if (hasClipRelu0) {
+            FUSION_PASS_CHECK_NOLOG(
+                !UpdateScaleReluDesc(postCubeNodes.front(), extendConv2D, POST_CUBE_INPUT_CLIP_RELU_0_INDEX,
+                                     EXTENDCONV2D_CLIP_RELU_0_INDEX, CLIP_RELU_0),
+                return false);
+        }
+
         if (outputCase == OutputCase::SINGLE) {
             FUSION_PASS_CHECK(extendConv2D->UpdateOutputDesc(OUTPUT_1_INDEX, output0Desc) != GRAPH_SUCCESS,
                               OP_LOGE(convDescInfo.nodeNameStr, "Update ExtendConv2D output1 tensor desc failed."),
@@ -645,6 +739,46 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::UpdateScaleReluDesc(GNodePtr postCu
                       return false);
 
     return true;
+}
+
+GNodePtr Conv2DPostCubeToExtendConv2DFusionPass::GetPReluNode(
+    const std::vector<ops::PostCubePassInfo>& matchLists) const
+{
+    for (const auto& matchPass : matchLists) {
+        for (const auto& nodeInfo : matchPass.m_opnodes) {
+            FUSION_PASS_CHECK_NOLOG(nodeInfo.GetNode() == nullptr, continue);
+            AscendString nodeType;
+            FUSION_PASS_CHECK_NOLOG(nodeInfo.GetNode()->GetType(nodeType) != GRAPH_SUCCESS, continue);
+            if (nodeType == Conv2DPostCubeToExtendConv2DFusion::PRELU) {
+                return nodeInfo.GetNode();
+            }
+        }
+    }
+    return nullptr;
+}
+
+void Conv2DPostCubeToExtendConv2DFusionPass::PReluNodePreProcess(const ge::GNodePtr& preluNode) const
+{
+    constexpr int32_t PRELU_SLOPE_INDEX = 1;
+    FUSION_PASS_CHECK_NOLOG(preluNode == nullptr, return);
+    TensorDesc slopeDesc;
+    FUSION_PASS_CHECK_NOLOG(preluNode->GetInputDesc(PRELU_SLOPE_INDEX, slopeDesc) != GRAPH_SUCCESS, return);
+
+    auto pReluDims = slopeDesc.GetShape().GetDims();
+    FUSION_PASS_CHECK_NOLOG(pReluDims.empty(), return);
+    const bool hasNonPositiveDim = std::any_of(pReluDims.begin(), pReluDims.end(),
+                                               [](const int64_t dim) { return dim <= 0; });
+    FUSION_PASS_CHECK_NOLOG(hasNonPositiveDim, return);
+
+    const int64_t shapeSize = slopeDesc.GetShape().GetShapeSize();
+    const int64_t maxValue = *std::max_element(pReluDims.begin(), pReluDims.end());
+    FUSION_PASS_CHECK_NOLOG(shapeSize != maxValue || pReluDims.size() <= 1, return);
+
+    Shape newPReluShape({maxValue});
+    slopeDesc.SetShape(newPReluShape);
+    slopeDesc.SetOriginShape(newPReluShape);
+    FUSION_PASS_CHECK_NOLOG(preluNode->UpdateInputDesc(PRELU_SLOPE_INDEX, slopeDesc) != GRAPH_SUCCESS, return);
+    OP_LOGD(convDescInfo.nodeNameStr, "Preprocess PRelu node slope shape successfully.");
 }
 
 int64_t Conv2DPostCubeToExtendConv2DFusionPass::DeriveGroups(const int64_t defaultGroups) const
