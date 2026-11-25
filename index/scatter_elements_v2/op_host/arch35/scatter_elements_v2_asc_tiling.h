@@ -42,7 +42,7 @@ TILING_DATA_FIELD_DEF(uint32_t, axisStride);
 TILING_DATA_FIELD_DEF_ARR(uint32_t, 8, targetStrides);
 TILING_DATA_FIELD_DEF_ARR(uint32_t, 7, indicesStrides);
 TILING_DATA_FIELD_DEF_ARR(uint32_t, 7, updatesStrides);
-TILING_DATA_FIELD_DEF_ARR(uint32_t, 2, reserved);
+TILING_DATA_FIELD_DEF(uint64_t, dataBytes); // Input size for callers that copy before scattering.
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(ScatterElementsV2_3000001, ScatterElementsV2SmallShapeTilingData)
@@ -109,6 +109,7 @@ REGISTER_TILING_DATA_CLASS(ScatterElementsV2, ScatterElementsV2AscTilingData)
 class ScatterElementsV2AscTiling : public TilingBaseClass {
 public:
     explicit ScatterElementsV2AscTiling(gert::TilingContext* context) : TilingBaseClass(context) {}
+    bool IsSingleCoreSort() const { return isSortDeterm_ && sortR_.isSingleCore == 1; }
 
 protected:
     bool IsCapable() override;

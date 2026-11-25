@@ -206,7 +206,7 @@ TEST_F(ScatterElementsV2Tiling, test_tiling_ascendc_int8_int64_dim1)
     gert::StorageShape shape1 = {{10}, {10}};
     gert::StorageShape shape2 = {{10}, {10}};
     gert::StorageShape shape3 = {{10}, {10}};
-    string expectTilingData = "10 1 0 64 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0";
+    string expectTilingData = "10 1 0 64 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 10 0";
     uint64_t tilingKeyValue = 3001001;
 
     ExecuteTestCase(ge::DT_INT8, ge::DT_INT64, ge::DT_INT8, shape1, shape2, shape3, 0, "none", tilingKeyValue,
@@ -232,7 +232,7 @@ TEST_F(ScatterElementsV2Tiling, test_tiling_ascendc_int32_int64_dim2)
     gert::StorageShape shape1 = {{3, 5}, {3, 5}};
     gert::StorageShape shape2 = {{2, 3}, {2, 3}};
     gert::StorageShape shape3 = {{2, 5}, {2, 5}};
-    string expectTilingData = "6 2 1 64 5 3 5 1 5 0 0 0 0 0 0 0 3 0 0 0 0 0 0 5 0 0 0 0 0 0 0 0";
+    string expectTilingData = "6 2 1 64 5 3 5 1 5 0 0 0 0 0 0 0 3 0 0 0 0 0 0 5 0 0 0 0 0 0 60 0";
     uint64_t tilingKeyValue = 3001004;
 
     ExecuteTestCase(ge::DT_INT32, ge::DT_INT64, ge::DT_INT32, shape1, shape2, shape3, 1, "none", tilingKeyValue,
@@ -244,7 +244,8 @@ TEST_F(ScatterElementsV2Tiling, test_tiling_ascendc_bfloat16_int32_dim2)
     gert::StorageShape shape1 = {{10, 38, 26}, {10, 38, 26}};
     gert::StorageShape shape2 = {{10, 18, 26}, {10, 18, 26}};
     gert::StorageShape shape3 = {{10, 28, 96}, {10, 28, 96}};
-    string expectTilingData = "4680 3 2 512 988 468 2688 1 988 26 0 0 0 0 0 0 468 26 0 0 0 0 0 2688 96 0 0 0 0 0 0 0";
+    string expectTilingData = "4680 3 2 512 988 468 2688 1 988 26 0 0 0 0 0 0 468 26 0 0 0 0 0 2688 "
+                              "96 0 0 0 0 0 19760 0";
     uint64_t tilingKeyValue = 3000002;
 
     ExecuteTestCase(ge::DT_BF16, ge::DT_INT32, ge::DT_BF16, shape1, shape2, shape3, 2, "none", tilingKeyValue,

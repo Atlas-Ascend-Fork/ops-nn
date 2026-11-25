@@ -881,6 +881,7 @@ ge::graphStatus ScatterElementsV2AscTiling::PostTiling()
         fastTiling.set_targetStrides(targetStrides);
         fastTiling.set_indicesStrides(indicesStrides);
         fastTiling.set_updatesStrides(updatesStrides);
+        fastTiling.set_dataBytes(static_cast<uint64_t>(dataAxis_) * typeSize_);
         if (context_->GetRawTilingData()->GetCapacity() < fastTiling.GetDataSize()) {
             return ge::GRAPH_FAILED;
         }

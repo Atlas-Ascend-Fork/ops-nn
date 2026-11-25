@@ -17,7 +17,7 @@
 #include "test_cube_util.h"
 #include "ut_op_common.h"
 #include "ut_op_util.h"
-#include "../../../../op_host/arch35/scatter_elements_tiling.h"
+#include "../../../../../scatter_elements_v2/op_host/arch35/scatter_elements_v2_base_tiling.h"
 
 namespace {
 constexpr size_t ASCENDC_TOOLS_WORKSPACE = 16777216;
@@ -27,12 +27,14 @@ struct WithSortedTilingResult {
     uint64_t tilingKey = 0;
     uint32_t blockDim = 0;
     size_t workspaceSize = 0;
+    uint32_t localMemorySize = 0;
     uint64_t indicesTotalNum = 0;
     uint64_t keySize = 0;
     uint64_t permSize = 0;
     int32_t countMode = -1;
     int32_t shapeMode = -1;
     uint64_t wsSrcPosOff = 0;
+    uint64_t copyDataElements = 0;
 };
 
 void RunWithSortedTilingCase(ge::DataType inputDtype, ge::DataType indicesDtype, gert::StorageShape& inputShape,
@@ -61,7 +63,7 @@ void RunWithSortedTilingCase(ge::DataType inputDtype, ge::DataType indicesDtype,
 
     fe::PlatFormInfos platformInfo;
     platformInfo.Init();
-    optiling::ScatterElementsCompileInfo compileInfo;
+    optiling::ScatterElementsV2CompileInfoArch35 compileInfo;
     auto kernelHolder = gert::KernelRunContextFaker()
                             .KernelIONum(2, 1)
                             .Inputs({const_cast<char*>("{}"), reinterpret_cast<void*>(&platformInfo)})
@@ -115,12 +117,25 @@ void RunWithSortedTilingCase(ge::DataType inputDtype, ge::DataType indicesDtype,
     result.tilingKey = tilingContext->GetTilingKey();
     result.blockDim = tilingContext->GetBlockDim();
     result.workspaceSize = *tilingContext->GetWorkspaceSizes(0);
+    result.localMemorySize = tilingContext->GetDynUBufSize();
 
     auto raw = tilingContext->GetRawTilingData();
     ASSERT_NE(raw, nullptr);
     ASSERT_NE(raw->GetData(), nullptr);
     const auto* p64 = reinterpret_cast<const int64_t*>(raw->GetData());
     const auto* p32 = reinterpret_cast<const uint32_t*>(raw->GetData());
+    if (result.tilingKey == 4000000) {
+        ASSERT_EQ(raw->GetDataSize(), sizeof(uint64_t));
+        result.copyDataElements = static_cast<uint64_t>(p64[0]) / ge::GetSizeByDataType(inputDtype);
+        return;
+    }
+    if (result.tilingKey / 1000000 == 3) {
+        ASSERT_EQ(raw->GetDataSize(), 128U);
+        result.copyDataElements = static_cast<uint64_t>(p64[15]) / ge::GetSizeByDataType(inputDtype);
+        return;
+    }
+    ASSERT_GE(raw->GetDataSize(), 47 * sizeof(int64_t));
+    result.copyDataElements = static_cast<uint64_t>(p64[23]);
     result.indicesTotalNum = static_cast<uint64_t>(p64[35]);
     result.keySize = static_cast<uint64_t>(p64[36]);
     result.permSize = static_cast<uint64_t>(p64[37]);
@@ -199,8 +214,10 @@ TEST(ScatterElementsWithSortedTiling, NonDominantScatterAxisKeepsOriginalRoute)
 
 TEST(ScatterElementsWithSortedTiling, WellParallelizedFloatRouteKeepsOriginalRoute)
 {
-    gert::StorageShape dataShape = {{128, 6400}, {128, 6400}};
-    gert::StorageShape indicesShape = {{128, 6400}, {128, 6400}};
+    // The shared tiler keeps at least eight INT32 indices along the outer axis per core.
+    // An outer axis of 256 can use half of the 64 available cores.
+    gert::StorageShape dataShape = {{256, 12800}, {256, 12800}};
+    gert::StorageShape indicesShape = {{256, 12800}, {256, 12800}};
     WithSortedTilingResult result;
     RunWithSortedTilingCase(ge::DT_FLOAT, ge::DT_INT32, dataShape, indicesShape, 1, "add", 1, result);
 
@@ -262,9 +279,9 @@ TEST(ScatterElementsWithSortedTiling, Float16AndBfloat16NoneUseSortedRoute)
     EXPECT_GT(bfloat16Result.workspaceSize, ASCENDC_TOOLS_WORKSPACE);
 }
 
-TEST(ScatterElementsWithSortedTiling, MoreIndexParallelismUsesSortedRoute)
+TEST(ScatterElementsWithSortedTiling, SingleCoreSortKeepsOneCaller)
 {
-    gert::StorageShape dataShape = {{2048}, {2048}};
+    gert::StorageShape dataShape = {{65536}, {65536}};
     gert::StorageShape indicesShape = {{2048}, {2048}};
     WithSortedTilingResult result;
     RunWithSortedTilingCase(ge::DT_FLOAT, ge::DT_INT32, dataShape, indicesShape, 0, "add", 1, result);
@@ -272,6 +289,7 @@ TEST(ScatterElementsWithSortedTiling, MoreIndexParallelismUsesSortedRoute)
     EXPECT_EQ(result.status, ge::GRAPH_SUCCESS);
     EXPECT_EQ(result.tilingKey, 2000100UL);
     EXPECT_GT(result.workspaceSize, ASCENDC_TOOLS_WORKSPACE);
+    EXPECT_EQ(result.blockDim, 1U);
 }
 
 TEST(ScatterElementsWithSortedTiling, EightDimensionalUint8UsesSortedRoute)
@@ -299,4 +317,47 @@ TEST(ScatterElementsWithSortedTiling, UnsupportedModesKeepOriginalRoute)
     RunWithSortedTilingCase(ge::DT_FLOAT, ge::DT_INT32, dataShape, indicesShape, 0, "mul", 1, mul);
     EXPECT_EQ(mul.status, ge::GRAPH_SUCCESS);
     EXPECT_EQ(mul.tilingKey, 1000200UL);
+}
+
+TEST(ScatterElementsWithSortedTiling, SmallUpdateCopiesFullData)
+{
+    gert::StorageShape dataShape = {{65536}, {65536}};
+    gert::StorageShape indicesShape = {{7}, {7}};
+    WithSortedTilingResult result;
+    RunWithSortedTilingCase(ge::DT_FLOAT, ge::DT_INT64, dataShape, indicesShape, 0, "none", 0, result);
+
+    ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(result.tilingKey, 3001004UL);
+    EXPECT_EQ(result.copyDataElements, 65536UL);
+    EXPECT_GT(result.blockDim, 1U);
+    EXPECT_GE(result.workspaceSize, ASCENDC_TOOLS_WORKSPACE);
+    EXPECT_GE(result.localMemorySize, 16U * 1024);
+}
+
+TEST(ScatterElementsWithSortedTiling, LargeDataWithSmallUpdateUsesWideOffset)
+{
+    constexpr int64_t dataElements = (1LL << 32) + 7;
+    gert::StorageShape dataShape = {{dataElements}, {dataElements}};
+    gert::StorageShape indicesShape = {{7}, {7}};
+    WithSortedTilingResult result;
+    RunWithSortedTilingCase(ge::DT_FLOAT, ge::DT_INT32, dataShape, indicesShape, 0, "none", 0, result);
+
+    ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(result.tilingKey, 1010004UL);
+    EXPECT_EQ(result.copyDataElements, dataElements);
+}
+
+TEST(ScatterElementsWithSortedTiling, EmptyDeterministicUpdateStillCopiesData)
+{
+    gert::StorageShape dataShape = {{32}, {32}};
+    gert::StorageShape indicesShape = {{0}, {0}};
+    WithSortedTilingResult result;
+    RunWithSortedTilingCase(ge::DT_FLOAT, ge::DT_INT32, dataShape, indicesShape, 0, "add", 1, result);
+
+    ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(result.tilingKey, 4000000UL);
+    EXPECT_EQ(result.copyDataElements, 32UL);
+    EXPECT_EQ(result.localMemorySize, 16U * 1024);
+    EXPECT_EQ(result.workspaceSize, 0U);
+    EXPECT_GT(result.blockDim, 0U);
 }

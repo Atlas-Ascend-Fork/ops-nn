@@ -57,7 +57,7 @@ struct ScatterElementsV2SmallShapeTiling {
     uint32_t targetStrides[8];
     uint32_t indicesStrides[7];
     uint32_t updatesStrides[7];
-    uint32_t reserved[2];
+    uint64_t dataBytes;
 };
 static_assert(sizeof(ScatterElementsV2SmallShapeTiling) == 128);
 
@@ -767,6 +767,7 @@ TEST_F(ScatterElementsV2WithSortedTiling, small_none_last_axis_preserves_source_
     EXPECT_EQ(result.smallShape.targetStrides[0], 1718U);
     EXPECT_EQ(result.smallShape.indicesStrides[0], 1713U);
     EXPECT_EQ(result.smallShape.updatesStrides[0], 1723U);
+    EXPECT_EQ(result.smallShape.dataBytes, 2946ULL * 1718 * sizeof(float));
     EXPECT_EQ(result.smallShape.threads, 320U);
 }
 

@@ -8,1078 +8,157 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
-/*!
- * \file scatter_elements.cpp
- * \brief scatter_elements
- */
-#include "arch35/scatter_elements_simt.h"
-#include "arch35/scatter_elements_deterministic.h"
-#include "arch35/scatter_elements_with_sorted.h"
+#include "arch35/scatter_elements_input_copy.h"
+#include "../scatter_elements_v2/arch35/scatter_elements_v2_multi.h"
+#include "../scatter_elements_v2/arch35/scatter_elements_v2_deterministic.h"
+#include "../scatter_elements_v2/arch35/scatter_elements_v2_small_shape.h"
+#include "../scatter_elements_v2/arch35/scatter_elements_with_sorted.h"
 
+namespace {
 using namespace ScatterElements;
 
-#define SCAC_ELE_UINT32_IDX32_REDU_NONE_B8 1000001
-#define SCAC_ELE_UINT32_IDX32_REDU_NONE_B16 1000002
-#define SCAC_ELE_UINT32_IDX32_REDU_NONE_B32 1000004
-#define SCAC_ELE_UINT32_IDX32_REDU_NONE_B64 1000008
+// Use the V2 key layout. The compiler needs literal keys during precompilation.
+#define SCATTER_KEY_IMPL(P, W, I, R, D) P##0##W##I##R##D
+#define SCATTER_KEY(P, W, I, R, D) SCATTER_KEY_IMPL(P, W, I, R, D)
+#if ORIG_DTYPE_INDICES == DT_INT64
+#define SCATTER_INDEX 1
+#else
+#define SCATTER_INDEX 0
+#endif
 
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_FP32 1000100
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_FP16 1000101
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_INT8 1000102
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_INT32 1000103
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_UINT8 1000104
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_INT16 1000106
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_BF16 1000127
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_INT64 1000109
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_BOOL 1000112
+#if ORIG_DTYPE_DATA == DT_INT8 || ORIG_DTYPE_DATA == DT_UINT8 || ORIG_DTYPE_DATA == DT_BOOL
+#define SCATTER_WIDTH 01
+#elif ORIG_DTYPE_DATA == DT_INT16 || ORIG_DTYPE_DATA == DT_FLOAT16 || ORIG_DTYPE_DATA == DT_BF16
+#define SCATTER_WIDTH 02
+#elif ORIG_DTYPE_DATA == DT_INT64 || ORIG_DTYPE_DATA == DT_DOUBLE
+#define SCATTER_WIDTH 08
+#else
+#define SCATTER_WIDTH 04
+#endif
 
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_FP32_WS 2000100
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_FP16_WS 2000101
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_INT8_WS 2000102
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_INT32_WS 2000103
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_INT16_WS 2000106
-#define SCAC_ELE_UINT32_IDX32_REDU_ADD_BF16_WS 2000127
-#define SCAC_ELE_UINT32_IDX32_REDU_NONE_INT8_WS 2000001
-#define SCAC_ELE_UINT32_IDX32_REDU_NONE_INT16_WS 2000002
-#define SCAC_ELE_UINT32_IDX32_REDU_NONE_INT32_WS 2000004
-#define SCAC_ELE_UINT32_IDX32_REDU_NONE_INT64_WS 2000008
+#if ORIG_DTYPE_DATA == DT_FLOAT
+#define SCATTER_DTYPE 00
+#elif ORIG_DTYPE_DATA == DT_FLOAT16
+#define SCATTER_DTYPE 01
+#elif ORIG_DTYPE_DATA == DT_INT8
+#define SCATTER_DTYPE 02
+#elif ORIG_DTYPE_DATA == DT_INT32
+#define SCATTER_DTYPE 03
+#elif ORIG_DTYPE_DATA == DT_UINT8
+#define SCATTER_DTYPE 04
+#elif ORIG_DTYPE_DATA == DT_INT16
+#define SCATTER_DTYPE 06
+#elif ORIG_DTYPE_DATA == DT_INT64
+#define SCATTER_DTYPE 09
+#elif ORIG_DTYPE_DATA == DT_BOOL
+#define SCATTER_DTYPE 12
+#elif ORIG_DTYPE_DATA == DT_BF16
+#define SCATTER_DTYPE 27
+#endif
 
-#define SCAC_ELE_UINT32_IDX32_REDU_MUL_FP32 1000200
-#define SCAC_ELE_UINT32_IDX32_REDU_MUL_FP16 1000201
-#define SCAC_ELE_UINT32_IDX32_REDU_MUL_INT8 1000202
-#define SCAC_ELE_UINT32_IDX32_REDU_MUL_INT32 1000203
-#define SCAC_ELE_UINT32_IDX32_REDU_MUL_UINT8 1000204
-#define SCAC_ELE_UINT32_IDX32_REDU_MUL_INT16 1000206
-#define SCAC_ELE_UINT32_IDX32_REDU_MUL_BF16 1000227
-#define SCAC_ELE_UINT32_IDX32_REDU_MUL_INT64 1000209
+#define SCATTER_COPY_ONLY 4000000
 
-#define SCAC_ELE_UINT32_IDX64_REDU_NONE_B8 1001001
-#define SCAC_ELE_UINT32_IDX64_REDU_NONE_B16 1001002
-#define SCAC_ELE_UINT32_IDX64_REDU_NONE_B32 1001004
-#define SCAC_ELE_UINT32_IDX64_REDU_NONE_B64 1001008
+#if ORIG_DTYPE_DATA == DT_BOOL
+using Data = uint8_t;
+using AddCast = half;
+#else
+using Data = DTYPE_DATA;
+using AddCast = std::conditional_t<IsSameType<Data, int8_t>::value || IsSameType<Data, int16_t>::value, int32_t,
+                                   uint32_t>;
+#endif
+using Index = DTYPE_INDICES;
+using Payload = std::conditional_t<
+    sizeof(Data) == 1, int8_t,
+    std::conditional_t<sizeof(Data) == 2, int16_t, std::conditional_t<sizeof(Data) == 4, int32_t, int64_t>>>;
 
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_FP32 1001100
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_FP16 1001101
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_INT8 1001102
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_INT32 1001103
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_UINT8 1001104
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_INT16 1001106
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_BF16 1001127
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_INT64 1001109
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_BOOL 1001112
-
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_FP32_WS 2001100
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_FP16_WS 2001101
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_INT8_WS 2001102
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_INT32_WS 2001103
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_INT16_WS 2001106
-#define SCAC_ELE_UINT32_IDX64_REDU_ADD_BF16_WS 2001127
-#define SCAC_ELE_UINT32_IDX64_REDU_NONE_INT8_WS 2001001
-#define SCAC_ELE_UINT32_IDX64_REDU_NONE_INT16_WS 2001002
-#define SCAC_ELE_UINT32_IDX64_REDU_NONE_INT32_WS 2001004
-#define SCAC_ELE_UINT32_IDX64_REDU_NONE_INT64_WS 2001008
-
-#define SCAC_ELE_UINT32_IDX64_REDU_MUL_FP32 1001200
-#define SCAC_ELE_UINT32_IDX64_REDU_MUL_FP16 1001201
-#define SCAC_ELE_UINT32_IDX64_REDU_MUL_INT8 1001202
-#define SCAC_ELE_UINT32_IDX64_REDU_MUL_INT32 1001203
-#define SCAC_ELE_UINT32_IDX64_REDU_MUL_UINT8 1001204
-#define SCAC_ELE_UINT32_IDX64_REDU_MUL_INT16 1001206
-#define SCAC_ELE_UINT32_IDX64_REDU_MUL_BF16 1001227
-#define SCAC_ELE_UINT32_IDX64_REDU_MUL_INT64 1001209
-
-#define SCAC_ELE_UINT64_IDX32_REDU_NONE_B8 1010001
-#define SCAC_ELE_UINT64_IDX32_REDU_NONE_B16 1010002
-#define SCAC_ELE_UINT64_IDX32_REDU_NONE_B32 1010004
-#define SCAC_ELE_UINT64_IDX32_REDU_NONE_B64 1010008
-
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_FP32 1010100
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_FP16 1010101
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_INT8 1010102
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_INT32 1010103
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_UINT8 1010104
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_INT16 1010106
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_BF16 1010127
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_INT64 1010109
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_BOOL 1010112
-
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_FP32_WS 2010100
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_FP16_WS 2010101
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_INT8_WS 2010102
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_INT32_WS 2010103
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_INT16_WS 2010106
-#define SCAC_ELE_UINT64_IDX32_REDU_ADD_BF16_WS 2010127
-#define SCAC_ELE_UINT64_IDX32_REDU_NONE_INT8_WS 2010001
-#define SCAC_ELE_UINT64_IDX32_REDU_NONE_INT16_WS 2010002
-#define SCAC_ELE_UINT64_IDX32_REDU_NONE_INT32_WS 2010004
-#define SCAC_ELE_UINT64_IDX32_REDU_NONE_INT64_WS 2010008
-
-#define SCAC_ELE_UINT64_IDX32_REDU_MUL_FP32 1010200
-#define SCAC_ELE_UINT64_IDX32_REDU_MUL_FP16 1010201
-#define SCAC_ELE_UINT64_IDX32_REDU_MUL_INT8 1010202
-#define SCAC_ELE_UINT64_IDX32_REDU_MUL_INT32 1010203
-#define SCAC_ELE_UINT64_IDX32_REDU_MUL_UINT8 1010204
-#define SCAC_ELE_UINT64_IDX32_REDU_MUL_INT16 1010206
-#define SCAC_ELE_UINT64_IDX32_REDU_MUL_BF16 1010227
-#define SCAC_ELE_UINT64_IDX32_REDU_MUL_INT64 1010209
-
-#define SCAC_ELE_UINT64_IDX64_REDU_NONE_B8 1011001
-#define SCAC_ELE_UINT64_IDX64_REDU_NONE_B16 1011002
-#define SCAC_ELE_UINT64_IDX64_REDU_NONE_B32 1011004
-#define SCAC_ELE_UINT64_IDX64_REDU_NONE_B64 1011008
-
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_FP32 1011100
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_FP16 1011101
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_INT8 1011102
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_INT32 1011103
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_UINT8 1011104
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_INT16 1011106
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_BF16 1011127
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_INT64 1011109
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_BOOL 1011112
-
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_FP32_WS 2011100
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_FP16_WS 2011101
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_INT8_WS 2011102
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_INT32_WS 2011103
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_INT16_WS 2011106
-#define SCAC_ELE_UINT64_IDX64_REDU_ADD_BF16_WS 2011127
-#define SCAC_ELE_UINT64_IDX64_REDU_NONE_INT8_WS 2011001
-#define SCAC_ELE_UINT64_IDX64_REDU_NONE_INT16_WS 2011002
-#define SCAC_ELE_UINT64_IDX64_REDU_NONE_INT32_WS 2011004
-#define SCAC_ELE_UINT64_IDX64_REDU_NONE_INT64_WS 2011008
-
-#define SCAC_ELE_UINT64_IDX64_REDU_MUL_FP32 1011200
-#define SCAC_ELE_UINT64_IDX64_REDU_MUL_FP16 1011201
-#define SCAC_ELE_UINT64_IDX64_REDU_MUL_INT8 1011202
-#define SCAC_ELE_UINT64_IDX64_REDU_MUL_INT32 1011203
-#define SCAC_ELE_UINT64_IDX64_REDU_MUL_UINT8 1011204
-#define SCAC_ELE_UINT64_IDX64_REDU_MUL_INT16 1011206
-#define SCAC_ELE_UINT64_IDX64_REDU_MUL_BF16 1011227
-#define SCAC_ELE_UINT64_IDX64_REDU_MUL_INT64 1011209
-
-template <typename T, typename IdxT, int ReduMode>
-__aicore__ inline void RunScatterElementsWithSorted(GM_ADDR data, GM_ADDR indices, GM_ADDR updates, GM_ADDR output,
-                                                    GM_ADDR workspace, const ScatterElementsTilingData* tilingData,
-                                                    TPipe* pipe)
+template <typename T, typename Offset, uint32_t REDU>
+__aicore__ inline void ScatterTensor(TPipe& pipe, const ScatterElementsV2AscTilingData& tilingData, GM_ADDR y,
+                                     GM_ADDR indices, GM_ADDR updates, GM_ADDR workspace)
 {
-    KernelScatterElementsWithSorted<T, IdxT, ReduMode> op(tilingData, pipe);
-    op.Init(data, indices, updates, output, workspace);
+    if constexpr (REDU == REDU_ADD && (IsSameType<T, float>::value || IsSameType<T, half>::value ||
+                                       IsSameType<T, bfloat16_t>::value || IsSameType<T, int64_t>::value)) {
+        if (tilingData.isDeterministic != 0) {
+            if (DeterministicAddTraits<T>::FIXED_FULL_WARP || tilingData.enableAdaptiveReduce != 0) {
+                KernelScatterElementsDeterm<T, Index, Offset, REDU, 1, true> op(&tilingData, &pipe);
+                op.Init(y, indices, updates, y);
+                op.Process();
+            } else {
+                KernelScatterElementsDeterm<T, Index, Offset, REDU, 1> op(&tilingData, &pipe);
+                op.Init(y, indices, updates, y);
+                op.Process();
+            }
+            return;
+        }
+    }
+    if constexpr (REDU == REDU_NONE) {
+        if (tilingData.isDeterministic != 0) {
+            KernelScatterElementsDeterm<T, Index, Offset, REDU, 1> op(&tilingData, &pipe);
+            op.Init(y, indices, updates, y);
+            op.Process();
+            return;
+        }
+    }
+    using Cast = std::conditional_t<REDU == REDU_ADD, AddCast, uint32_t>;
+    KernelScatterElements<T, Index, Offset, Cast, REDU, 1> op(pipe);
+    op.Init(y, indices, updates, y, workspace, &tilingData);
     op.Process();
 }
+} // namespace
 
-extern "C" __global__ __aicore__ void scatter_elements(GM_ADDR x, GM_ADDR indices, GM_ADDR updates, GM_ADDR y,
+extern "C" __global__ __aicore__ void scatter_elements(GM_ADDR data, GM_ADDR indices, GM_ADDR updates, GM_ADDR y,
                                                        GM_ADDR workspace, GM_ADDR tiling)
 {
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
+    TILING_KEY_IS(SCATTER_COPY_ONLY);
+    TILING_KEY_IS(SCATTER_KEY(3, 0, SCATTER_INDEX, 0, SCATTER_WIDTH));
+    TILING_KEY_IS(SCATTER_KEY(1, 0, SCATTER_INDEX, 0, SCATTER_WIDTH));
+    TILING_KEY_IS(SCATTER_KEY(1, 1, SCATTER_INDEX, 0, SCATTER_WIDTH));
+    TILING_KEY_IS(SCATTER_KEY(2, 0, SCATTER_INDEX, 0, SCATTER_WIDTH));
+    TILING_KEY_IS(SCATTER_KEY(2, 1, SCATTER_INDEX, 0, SCATTER_WIDTH));
+#ifdef SCATTER_DTYPE
+    TILING_KEY_IS(SCATTER_KEY(1, 0, SCATTER_INDEX, 1, SCATTER_DTYPE));
+    TILING_KEY_IS(SCATTER_KEY(1, 1, SCATTER_INDEX, 1, SCATTER_DTYPE));
+#if ORIG_DTYPE_DATA != DT_BOOL
+    TILING_KEY_IS(SCATTER_KEY(1, 0, SCATTER_INDEX, 2, SCATTER_DTYPE));
+    TILING_KEY_IS(SCATTER_KEY(1, 1, SCATTER_INDEX, 2, SCATTER_DTYPE));
+#endif
+#if ORIG_DTYPE_DATA != DT_UINT8 && ORIG_DTYPE_DATA != DT_INT64 && ORIG_DTYPE_DATA != DT_BOOL
+    TILING_KEY_IS(SCATTER_KEY(2, 0, SCATTER_INDEX, 1, SCATTER_DTYPE));
+    TILING_KEY_IS(SCATTER_KEY(2, 1, SCATTER_INDEX, 1, SCATTER_DTYPE));
+#endif
+#endif
+
+    TPipe pipe;
+#if TILING_KEY_VAR == SCATTER_COPY_ONLY
+    GET_TILING_DATA_WITH_STRUCT(ScatterElementsCopyTilingData, copyTiling, tiling);
+    CopyScatterInput(pipe, data, y, copyTiling.dataBytes, false);
+#else
     if (workspace == nullptr) {
         return;
     }
     SetSysWorkspace(workspace);
-    GM_ADDR userWS = GetUserWorkspace(workspace);
-    if (userWS == nullptr) {
+    GM_ADDR userWorkspace = GetUserWorkspace(workspace);
+    if (userWorkspace == nullptr) {
         return;
     }
-    GET_TILING_DATA(tilingData, tiling);
-    TPipe pipe;
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
-
-#if (ORIG_DTYPE_DATA == DT_INT32 || ORIG_DTYPE_DATA == DT_FLOAT) && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_NONE_INT32_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_NONE_INT32_WS);
-#if ORIG_DTYPE_DATA == DT_FLOAT
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_FP32_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_FP32_WS);
+#if TILING_KEY_VAR / 1000000 == 3
+    GET_TILING_DATA_WITH_STRUCT(ScatterElementsV2SmallShapeTilingData, smallTiling, tiling);
+    CopyScatterInput(pipe, data, y, smallTiling.dataBytes, true);
+    LaunchScatterSmallShapeNone<Payload, Index>(y, indices, updates, &smallTiling, tiling);
 #else
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_INT32_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_INT32_WS);
-#endif
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_NONE_INT32_WS || \
-    TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_NONE_INT32_WS
-    RunScatterElementsWithSorted<int32_t, int32_t, REDU_LAST>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#elif ORIG_DTYPE_DATA == DT_FLOAT && (TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_FP32_WS || \
-                                      TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_FP32_WS)
-    RunScatterElementsWithSorted<float, int32_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#elif ORIG_DTYPE_DATA == DT_INT32 && (TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_INT32_WS || \
-                                      TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_INT32_WS)
-    RunScatterElementsWithSorted<int32_t, int32_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT32 || ORIG_DTYPE_DATA == DT_FLOAT) && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_NONE_INT32_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_NONE_INT32_WS);
-#if ORIG_DTYPE_DATA == DT_FLOAT
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_FP32_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_FP32_WS);
-#else
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_INT32_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_INT32_WS);
-#endif
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_NONE_INT32_WS || \
-    TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_NONE_INT32_WS
-    RunScatterElementsWithSorted<int32_t, int64_t, REDU_LAST>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#elif ORIG_DTYPE_DATA == DT_FLOAT && (TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_FP32_WS || \
-                                      TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_FP32_WS)
-    RunScatterElementsWithSorted<float, int64_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#elif ORIG_DTYPE_DATA == DT_INT32 && (TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_INT32_WS || \
-                                      TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_INT32_WS)
-    RunScatterElementsWithSorted<int32_t, int64_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT64 || ORIG_DTYPE_DATA == DT_DOUBLE) && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_NONE_INT64_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_NONE_INT64_WS);
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_NONE_INT64_WS || \
-    TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_NONE_INT64_WS
-    RunScatterElementsWithSorted<int64_t, int32_t, REDU_LAST>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT64 || ORIG_DTYPE_DATA == DT_DOUBLE) && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_NONE_INT64_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_NONE_INT64_WS);
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_NONE_INT64_WS || \
-    TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_NONE_INT64_WS
-    RunScatterElementsWithSorted<int64_t, int64_t, REDU_LAST>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT8 || ORIG_DTYPE_DATA == DT_UINT8 || ORIG_DTYPE_DATA == DT_BOOL) && \
-    ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_NONE_INT8_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_NONE_INT8_WS);
-#if ORIG_DTYPE_DATA == DT_INT8
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_INT8_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_INT8_WS);
-#endif
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_NONE_INT8_WS || \
-    TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_NONE_INT8_WS
-    RunScatterElementsWithSorted<int8_t, int32_t, REDU_LAST>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#endif
-#if ORIG_DTYPE_DATA == DT_INT8
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_INT8_WS || TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_INT8_WS
-    RunScatterElementsWithSorted<int8_t, int32_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#endif
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT8 || ORIG_DTYPE_DATA == DT_UINT8 || ORIG_DTYPE_DATA == DT_BOOL) && \
-    ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_NONE_INT8_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_NONE_INT8_WS);
-#if ORIG_DTYPE_DATA == DT_INT8
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_INT8_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_INT8_WS);
-#endif
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_NONE_INT8_WS || \
-    TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_NONE_INT8_WS
-    RunScatterElementsWithSorted<int8_t, int64_t, REDU_LAST>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#endif
-#if ORIG_DTYPE_DATA == DT_INT8
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_INT8_WS || TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_INT8_WS
-    RunScatterElementsWithSorted<int8_t, int64_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#endif
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT16 || ORIG_DTYPE_DATA == DT_FLOAT16 || ORIG_DTYPE_DATA == DT_BF16) && \
-    ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_NONE_INT16_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_NONE_INT16_WS);
-#if ORIG_DTYPE_DATA == DT_FLOAT16
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_FP16_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_FP16_WS);
-#elif ORIG_DTYPE_DATA == DT_BF16
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_BF16_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_BF16_WS);
-#elif ORIG_DTYPE_DATA == DT_INT16
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_INT16_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_INT16_WS);
-#endif
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_NONE_INT16_WS || \
-    TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_NONE_INT16_WS
-    RunScatterElementsWithSorted<int16_t, int32_t, REDU_LAST>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#elif ORIG_DTYPE_DATA == DT_FLOAT16 && (TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_FP16_WS || \
-                                        TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_FP16_WS)
-    RunScatterElementsWithSorted<half, int32_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#elif ORIG_DTYPE_DATA == DT_BF16 && (TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_BF16_WS || \
-                                     TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_BF16_WS)
-    RunScatterElementsWithSorted<bfloat16_t, int32_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#elif ORIG_DTYPE_DATA == DT_INT16 && (TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_INT16_WS || \
-                                      TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_INT16_WS)
-    RunScatterElementsWithSorted<int16_t, int32_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT16 || ORIG_DTYPE_DATA == DT_FLOAT16 || ORIG_DTYPE_DATA == DT_BF16) && \
-    ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_NONE_INT16_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_NONE_INT16_WS);
-#if ORIG_DTYPE_DATA == DT_FLOAT16
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_FP16_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_FP16_WS);
-#elif ORIG_DTYPE_DATA == DT_BF16
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_BF16_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_BF16_WS);
-#elif ORIG_DTYPE_DATA == DT_INT16
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_INT16_WS);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_INT16_WS);
-#endif
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_NONE_INT16_WS || \
-    TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_NONE_INT16_WS
-    RunScatterElementsWithSorted<int16_t, int64_t, REDU_LAST>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#elif ORIG_DTYPE_DATA == DT_FLOAT16 && (TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_FP16_WS || \
-                                        TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_FP16_WS)
-    RunScatterElementsWithSorted<half, int64_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#elif ORIG_DTYPE_DATA == DT_BF16 && (TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_BF16_WS || \
-                                     TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_BF16_WS)
-    RunScatterElementsWithSorted<bfloat16_t, int64_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#elif ORIG_DTYPE_DATA == DT_INT16 && (TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_INT16_WS || \
-                                      TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_INT16_WS)
-    RunScatterElementsWithSorted<int16_t, int64_t, REDU_ADD>(x, indices, updates, y, workspace, &tilingData, &pipe);
-    return;
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT8 || ORIG_DTYPE_DATA == DT_UINT8 || ORIG_DTYPE_DATA == DT_BOOL) && \
-    ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_NONE_B8);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_NONE_B8);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_NONE_B8
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int8_t, int32_t, uint32_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
+    GET_TILING_DATA_WITH_STRUCT(ScatterElementsV2AscTilingData, computeTiling, tiling);
+    CopyScatterInput(pipe, data, y, static_cast<uint64_t>(computeTiling.dataAxis) * sizeof(Data), true);
+    constexpr uint32_t reduction = (TILING_KEY_VAR / 100) % 10;
+    using Offset = std::conditional_t<(TILING_KEY_VAR / 10000) % 10 == 0, uint32_t, uint64_t>;
+    using T = std::conditional_t<reduction == REDU_NONE, Payload, Data>;
+    if constexpr (TILING_KEY_VAR / 1000000 == 2) {
+        constexpr uint32_t mode = reduction == REDU_NONE ? REDU_LAST : REDU_ADD;
+        KernelScatterElementsWithSorted<T, Index, mode> op(&computeTiling, &pipe);
+        op.Init(y, indices, updates, y, userWorkspace);
         op.Process();
     } else {
-        KernelScatterElements<int8_t, int32_t, uint32_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
+        ScatterTensor<T, Offset, reduction>(pipe, computeTiling, y, indices, updates, userWorkspace);
     }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_NONE_B8
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int8_t, int32_t, uint64_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int8_t, int32_t, uint64_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT8 || ORIG_DTYPE_DATA == DT_UINT8 || ORIG_DTYPE_DATA == DT_BOOL) && \
-    ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_NONE_B8);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_NONE_B8);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_NONE_B8
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int8_t, int64_t, uint32_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int8_t, int64_t, uint32_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_NONE_B8
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int8_t, int64_t, uint64_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int8_t, int64_t, uint64_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT16 || ORIG_DTYPE_DATA == DT_FLOAT16 || ORIG_DTYPE_DATA == DT_BF16) && \
-    ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_NONE_B16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_NONE_B16);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_NONE_B16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int16_t, int32_t, uint32_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int16_t, int32_t, uint32_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_NONE_B16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int16_t, int32_t, uint64_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int16_t, int32_t, uint64_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT16 || ORIG_DTYPE_DATA == DT_FLOAT16 || ORIG_DTYPE_DATA == DT_BF16) && \
-    ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_NONE_B16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_NONE_B16);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_NONE_B16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int16_t, int64_t, uint32_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int16_t, int64_t, uint32_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_NONE_B16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int16_t, int64_t, uint64_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int16_t, int64_t, uint64_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT32 || ORIG_DTYPE_DATA == DT_FLOAT) && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_NONE_B32);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_NONE_B32);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_NONE_B32
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int32_t, int32_t, uint32_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int32_t, int32_t, uint32_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_NONE_B32
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int32_t, int32_t, uint64_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int32_t, int32_t, uint64_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT32 || ORIG_DTYPE_DATA == DT_FLOAT) && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_NONE_B32);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_NONE_B32);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_NONE_B32
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int32_t, int64_t, uint32_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int32_t, int64_t, uint32_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_NONE_B32
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int32_t, int64_t, uint64_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int32_t, int64_t, uint64_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT64 || ORIG_DTYPE_DATA == DT_DOUBLE) && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_NONE_B64);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_NONE_B64);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_NONE_B64
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int64_t, int32_t, uint32_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int64_t, int32_t, uint32_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_NONE_B64
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int64_t, int32_t, uint64_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int64_t, int32_t, uint64_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#endif
-#endif
-
-#if (ORIG_DTYPE_DATA == DT_INT64 || ORIG_DTYPE_DATA == DT_DOUBLE) && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_NONE_B64);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_NONE_B64);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_NONE_B64
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int64_t, int64_t, uint32_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int64_t, int64_t, uint32_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_NONE_B64
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<int64_t, int64_t, uint64_t, REDU_NONE> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<int64_t, int64_t, uint64_t, uint32_t, REDU_NONE> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_FLOAT && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_FP32);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_MUL_FP32);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_FP32);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_MUL_FP32);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_FP32
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<float, int32_t, uint32_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<float, int32_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_MUL_FP32
-    KernelScatterElements<float, int32_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_FP32
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<float, int32_t, uint64_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<float, int32_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_MUL_FP32
-    KernelScatterElements<float, int32_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_FLOAT && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_FP32);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_MUL_FP32);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_FP32);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_MUL_FP32);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_FP32
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<float, int64_t, uint32_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<float, int64_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_MUL_FP32
-    KernelScatterElements<float, int64_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_FP32
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<float, int64_t, uint64_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<float, int64_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_MUL_FP32
-    KernelScatterElements<float, int64_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_FLOAT16 && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_FP16);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_MUL_FP16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_FP16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_MUL_FP16);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_FP16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<half, int32_t, uint32_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<half, int32_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_MUL_FP16
-    KernelScatterElements<half, int32_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_FP16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<half, int32_t, uint64_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<half, int32_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_MUL_FP16
-    KernelScatterElements<half, int32_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_FLOAT16 && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_FP16);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_MUL_FP16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_FP16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_MUL_FP16);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_FP16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<half, int64_t, uint32_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<half, int64_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_MUL_FP16
-    KernelScatterElements<half, int64_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_FP16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<half, int64_t, uint64_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<half, int64_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_MUL_FP16
-    KernelScatterElements<half, int64_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_BF16 && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_BF16);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_MUL_BF16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_BF16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_MUL_BF16);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_BF16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<bfloat16_t, int32_t, uint32_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<bfloat16_t, int32_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_MUL_BF16
-    KernelScatterElements<bfloat16_t, int32_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_BF16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<bfloat16_t, int32_t, uint64_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<bfloat16_t, int32_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_MUL_BF16
-    KernelScatterElements<bfloat16_t, int32_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_BF16 && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_BF16);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_MUL_BF16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_BF16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_MUL_BF16);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_BF16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<bfloat16_t, int64_t, uint32_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<bfloat16_t, int64_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_MUL_BF16
-    KernelScatterElements<bfloat16_t, int64_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_BF16
-    if (tilingData.isDeterministic) {
-        KernelScatterElementsDeterm<bfloat16_t, int64_t, uint64_t, REDU_ADD> op(&tilingData, &pipe);
-        op.Init(x, indices, updates, y);
-        op.Process();
-    } else {
-        KernelScatterElements<bfloat16_t, int64_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-        op.Init(x, indices, updates, y, userWS, &tilingData);
-        op.Process();
-    }
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_MUL_BF16
-    KernelScatterElements<bfloat16_t, int64_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_INT8 && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_INT8);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_MUL_INT8);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_INT8);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_MUL_INT8);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_INT8
-    KernelScatterElements<int8_t, int32_t, uint32_t, int32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_MUL_INT8
-    KernelScatterElements<int8_t, int32_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_INT8
-    KernelScatterElements<int8_t, int32_t, uint64_t, int32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_MUL_INT8
-    KernelScatterElements<int8_t, int32_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_INT8 && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_INT8);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_MUL_INT8);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_INT8);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_MUL_INT8);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_INT8
-    KernelScatterElements<int8_t, int64_t, uint32_t, int32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_MUL_INT8
-    KernelScatterElements<int8_t, int64_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_INT8
-    KernelScatterElements<int8_t, int64_t, uint64_t, int32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_MUL_INT8
-    KernelScatterElements<int8_t, int64_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_UINT8 && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_UINT8);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_MUL_UINT8);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_UINT8);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_MUL_UINT8);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_UINT8
-    KernelScatterElements<uint8_t, int32_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_MUL_UINT8
-    KernelScatterElements<uint8_t, int32_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_UINT8
-    KernelScatterElements<uint8_t, int32_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_MUL_UINT8
-    KernelScatterElements<uint8_t, int32_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_UINT8 && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_UINT8);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_MUL_UINT8);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_UINT8);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_MUL_UINT8);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_UINT8
-    KernelScatterElements<uint8_t, int64_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_MUL_UINT8
-    KernelScatterElements<uint8_t, int64_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_UINT8
-    KernelScatterElements<uint8_t, int64_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_MUL_UINT8
-    KernelScatterElements<uint8_t, int64_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_INT32 && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_INT32);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_MUL_INT32);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_INT32);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_MUL_INT32);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_INT32
-    KernelScatterElements<int32_t, int32_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_MUL_INT32
-    KernelScatterElements<int32_t, int32_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_INT32
-    KernelScatterElements<int32_t, int32_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_MUL_INT32
-    KernelScatterElements<int32_t, int32_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_INT32 && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_INT32);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_MUL_INT32);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_INT32);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_MUL_INT32);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_INT32
-    KernelScatterElements<int32_t, int64_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_MUL_INT32
-    KernelScatterElements<int32_t, int64_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_INT32
-    KernelScatterElements<int32_t, int64_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_MUL_INT32
-    KernelScatterElements<int32_t, int64_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_INT16 && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_INT16);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_MUL_INT16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_INT16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_MUL_INT16);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_INT16
-    KernelScatterElements<int16_t, int32_t, uint32_t, int32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_MUL_INT16
-    KernelScatterElements<int16_t, int32_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_INT16
-    KernelScatterElements<int16_t, int32_t, uint64_t, int32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_MUL_INT16
-    KernelScatterElements<int16_t, int32_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_INT16 && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_INT16);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_MUL_INT16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_INT16);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_MUL_INT16);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_INT16
-    KernelScatterElements<int16_t, int64_t, uint32_t, int32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_MUL_INT16
-    KernelScatterElements<int16_t, int64_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_INT16
-    KernelScatterElements<int16_t, int64_t, uint64_t, int32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_MUL_INT16
-    KernelScatterElements<int16_t, int64_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_INT64 && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_INT64);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_MUL_INT64);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_INT64);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_MUL_INT64);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_INT64
-    KernelScatterElements<int64_t, int32_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_MUL_INT64
-    KernelScatterElements<int64_t, int32_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_INT64
-    KernelScatterElements<int64_t, int32_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_MUL_INT64
-    KernelScatterElements<int64_t, int32_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_INT64 && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_INT64);
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_MUL_INT64);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_INT64);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_MUL_INT64);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_INT64
-    KernelScatterElements<int64_t, int64_t, uint32_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_MUL_INT64
-    KernelScatterElements<int64_t, int64_t, uint32_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_INT64
-    KernelScatterElements<int64_t, int64_t, uint64_t, uint32_t, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_MUL_INT64
-    KernelScatterElements<int64_t, int64_t, uint64_t, uint32_t, REDU_MUL> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_BOOL && ORIG_DTYPE_INDICES == DT_INT32
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX32_REDU_ADD_BOOL);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX32_REDU_ADD_BOOL);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX32_REDU_ADD_BOOL
-    KernelScatterElements<uint8_t, int32_t, uint32_t, half, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX32_REDU_ADD_BOOL
-    KernelScatterElements<uint8_t, int32_t, uint64_t, half, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#endif
-#endif
-
-#if ORIG_DTYPE_DATA == DT_BOOL && ORIG_DTYPE_INDICES == DT_INT64
-    TILING_KEY_IS(SCAC_ELE_UINT32_IDX64_REDU_ADD_BOOL);
-    TILING_KEY_IS(SCAC_ELE_UINT64_IDX64_REDU_ADD_BOOL);
-
-#if TILING_KEY_VAR == SCAC_ELE_UINT32_IDX64_REDU_ADD_BOOL
-    KernelScatterElements<uint8_t, int64_t, uint32_t, half, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
-#elif TILING_KEY_VAR == SCAC_ELE_UINT64_IDX64_REDU_ADD_BOOL
-    KernelScatterElements<uint8_t, int64_t, uint64_t, half, REDU_ADD> op(pipe);
-    op.Init(x, indices, updates, y, userWS, &tilingData);
-    op.Process();
 #endif
 #endif
 }
