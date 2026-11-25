@@ -711,6 +711,15 @@ static ge::graphStatus Tiling4QuantizeAddLayerNorm(gert::TilingContext* context)
     return ge::GRAPH_SUCCESS;
 }
 
-IMPL_OP_OPTILING(QuantizeAddLayerNorm).Tiling(Tiling4QuantizeAddLayerNorm);
+static ge::graphStatus TilingParse4QuantizeAddLayerNorm([[maybe_unused]] gert::TilingParseContext* context)
+{
+    return ge::GRAPH_SUCCESS;
+}
+
+struct QuantizeAddLayerNormCompileInfo {}; // 必须定义，入图场景依赖
+
+IMPL_OP_OPTILING(QuantizeAddLayerNorm)
+    .Tiling(Tiling4QuantizeAddLayerNorm)
+    .TilingParse<QuantizeAddLayerNormCompileInfo>(TilingParse4QuantizeAddLayerNorm);
 
 } // namespace optiling

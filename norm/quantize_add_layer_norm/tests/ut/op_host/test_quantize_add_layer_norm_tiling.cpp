@@ -346,6 +346,47 @@ static void RunRegbaseTilingCase(gert::StorageShape& input_shape, gert::StorageS
     EXPECT_EQ(actualTiling->outputX, additionalOutput ? 1U : 0U);
 }
 
+// arch35 注册必须携带 tiling_parse（入图场景依赖）；空实现不消费 compile info，仅验证注册与调用通路。
+TEST_F(QuantizeAddLayerNormRegbaseTiling, quantize_add_layer_norm_tiling_parse_001)
+{
+    string compile_info_string = R"({
+       "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                         "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true, "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
+                         "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                         "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                         "CORE_NUM": 40}
+                         })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+
+    std::string op_type("QuantizeAddLayerNorm");
+    auto op_impl = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str());
+    ASSERT_NE(op_impl, nullptr);
+    ASSERT_NE(op_impl->tiling_parse, nullptr);
+    auto tiling_parse_func = op_impl->tiling_parse;
+
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
+                                      reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({const_cast<uint8_t*>(&DUMMY_COMPILE_INFO)})
+                             .Build();
+
+    ASSERT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+
+    EXPECT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+}
+
 // full_load + per_channel(div, axis=-1) + brc bias, fp16 -> key 6
 TEST_F(QuantizeAddLayerNormRegbaseTiling, quantize_add_layer_norm_tiling_regbase_fullload_perchannel_001)
 {
