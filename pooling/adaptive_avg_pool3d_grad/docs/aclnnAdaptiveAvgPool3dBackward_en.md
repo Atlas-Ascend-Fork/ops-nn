@@ -78,7 +78,7 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
       <td>Input</td>
       <td>Gradient of the current node.</td>
       <td>Data type is the same as self, and NC dimensions are consistent with self.</td>
-      <td>FLOAT32, FLOAT16, BFLOAT16</td>
+      <td>FLOAT32, FLOAT16, BFLOAT16, DOUBLE</td>
       <td>NCDHW, ND</td>
       <td>4-5</td>
       <td>√</td>
@@ -88,7 +88,7 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
       <td>Input</td>
       <td>Leaf node.</td>
       <td>-</td>
-      <td>FLOAT32, FLOAT16, BFLOAT16</td>
+      <td>FLOAT32, FLOAT16, BFLOAT16, DOUBLE</td>
       <td>NCDHW, ND</td>
       <td>4-5</td>
       <td>√</td>
@@ -98,7 +98,7 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
       <td>Output</td>
       <td>Corresponds to the gradient of the input leaf nodes.</td>
       <td>-</td>
-      <td>FLOAT32, FLOAT16, BFLOAT16</td>
+      <td>FLOAT32, FLOAT16, BFLOAT16, DOUBLE</td>
       <td>NCDHW, ND</td>
       <td>4-5</td>
       <td>√</td>
@@ -124,6 +124,13 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
       <td>-</td>
     </tr>
   </tbody></table>
+
+  - <term>Ascend 950PR&950DT products</term>, <term>Atlas A3 products</term>, <term>Atlas A2 products</term>: when D, H, and W of `gradOutput` are all 1, `gradOutput`, `self`, and `out` support `DOUBLE`; when D, H, and W are not all 1, `DOUBLE` is not supported.
+
+  - <term>Atlas inference products</term>: `FLOAT32` and `FLOAT16` are supported, and `BFLOAT16` is not supported; `DOUBLE` is supported only when D, H, and W of `gradOutput` are all 1.
+
+  - <term>Atlas training products</term>: only inputs whose D, H, and W of `gradOutput` are all 1 are supported; in this case, `FLOAT32`, `FLOAT16`, and `DOUBLE` are supported, and `BFLOAT16` is not supported.
+
 - **Return value**
 
   aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../docs/en/context/aclnn_return_code.md).
@@ -149,7 +156,7 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
       <tr>
         <td rowspan="7">ACLNN_ERR_PARAM_INVALID</td>
         <td rowspan="7">161002</td>
-        <td>The data type and data format of gradOutput and self are not supported.</td>
+        <td>The data type and data format of gradOutput and self are not supported (the supported data types depend on the D, H, and W dims of gradOutput; see Parameters for details).</td>
       </tr>
       <tr>
         <td>The data types of gradOutput, self, and out are inconsistent.</td>
@@ -224,6 +231,11 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
   <!-- npu="950" id12 -->
   - <term>Ascend 950PR&950DT products</term>: aclnnAdaptiveAvgPool3dBackward defaults to a deterministic implementation.
   <!-- end id12 -->
+
+- The supported data types depend on the D, H, and W dims of `gradOutput`:
+  - <term>Ascend 950PR&950DT products</term>, <term>Atlas A3 products</term>, <term>Atlas A2 products</term>: when D, H, and W of `gradOutput` are all 1, `FLOAT32`, `FLOAT16`, `BFLOAT16`, and `DOUBLE` are supported; when D, H, and W are not all 1, `FLOAT32`, `FLOAT16`, and `BFLOAT16` are supported.
+  - <term>Atlas inference products</term>: `FLOAT32` and `FLOAT16` are supported, and `BFLOAT16` is not supported; `DOUBLE` is supported only when D, H, and W of `gradOutput` are all 1.
+  - <term>Atlas training products</term>: only inputs whose D, H, and W of `gradOutput` are all 1 are supported; in this case, `FLOAT32`, `FLOAT16`, and `DOUBLE` are supported, and `BFLOAT16` is not supported.
 
 ## Example
 

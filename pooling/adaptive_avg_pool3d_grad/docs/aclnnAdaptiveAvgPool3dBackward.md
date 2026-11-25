@@ -76,7 +76,7 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
       <td>输入</td>
       <td>当前节点的梯度。</td>
       <td>数据类型与self一致，NC维度和self保持一致。</td>
-      <td>FLOAT32、FLOAT16、BFLOAT16</td>
+      <td>FLOAT32、FLOAT16、BFLOAT16、DOUBLE</td>
       <td>NCDHW、ND</td>
       <td>4-5</td>
       <td>√</td>
@@ -86,7 +86,7 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
       <td>输入</td>
       <td>叶子节点。</td>
       <td>-</td>
-      <td>FLOAT32、FLOAT16、BFLOAT16</td>
+      <td>FLOAT32、FLOAT16、BFLOAT16、DOUBLE</td>
       <td>NCDHW、ND</td>
       <td>4-5</td>
       <td>√</td>
@@ -96,7 +96,7 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
       <td>输出</td>
       <td>对应了输入叶子节点的梯度。</td>
       <td>-</td>
-      <td>FLOAT32、FLOAT16、BFLOAT16</td>
+      <td>FLOAT32、FLOAT16、BFLOAT16、DOUBLE</td>
       <td>NCDHW、ND</td>
       <td>4-5</td>
       <td>√</td>
@@ -122,6 +122,13 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
       <td>-</td>
     </tr>
   </tbody></table>
+
+  - <term>Ascend 950PR&950DT系列产品</term>、<term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：`gradOutput`的D、H、W均为1时，`gradOutput`、`self`、`out`支持`DOUBLE`；D、H、W不均为1时，不支持`DOUBLE`。
+
+  - <term>Atlas推理系列产品</term>：支持`FLOAT32`、`FLOAT16`，不支持`BFLOAT16`；`DOUBLE`仅在`gradOutput`的D、H、W均为1时支持。
+
+  - <term>Atlas训练系列产品</term>：仅支持`gradOutput`的D、H、W均为1的输入，此时支持`FLOAT32`、`FLOAT16`、`DOUBLE`，不支持`BFLOAT16`。
+
 - **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
@@ -147,7 +154,7 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
       <tr>
         <td rowspan="7">ACLNN_ERR_PARAM_INVALID</td>
         <td rowspan="7">161002</td>
-        <td>gradOutput和self的数据类型和数据格式不在支持的范围之内。</td>
+        <td>gradOutput和self的数据类型和数据格式不在支持的范围之内（数据类型支持的取值与gradOutput的D、H、W维度相关，详见参数说明）。</td>
       </tr>
       <tr>
         <td>gradOutput、self和out数据类型不一致。</td>
@@ -222,6 +229,11 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
   <!-- npu="950" id12 -->
   - <term>Ascend 950PR&950DT系列产品</term>：aclnnAdaptiveAvgPool3dBackward默认确定性实现。
   <!-- end id12 -->
+
+- 数据类型支持范围与`gradOutput`的D、H、W维度相关：
+  - <term>Ascend 950PR&950DT系列产品</term>、<term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：`gradOutput`的D、H、W均为1时支持`FLOAT32`、`FLOAT16`、`BFLOAT16`、`DOUBLE`；D、H、W不均为1时支持`FLOAT32`、`FLOAT16`、`BFLOAT16`。
+  - <term>Atlas推理系列产品</term>：支持`FLOAT32`、`FLOAT16`，不支持`BFLOAT16`；`DOUBLE`仅在`gradOutput`的D、H、W均为1时支持。
+  - <term>Atlas训练系列产品</term>：仅支持`gradOutput`的D、H、W均为1的输入，此时支持`FLOAT32`、`FLOAT16`、`DOUBLE`，不支持`BFLOAT16`。
 
 ## 调用示例
 
