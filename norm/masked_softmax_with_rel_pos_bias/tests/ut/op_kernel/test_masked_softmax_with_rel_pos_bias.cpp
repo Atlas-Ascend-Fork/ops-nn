@@ -58,11 +58,11 @@ void run_masked_softmax_with_rel_pos_bias_case(uint32_t BS, uint32_t W, uint32_t
     system("ls -lh ./masked_softmax_with_rel_pos_bias_data/");
 
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
-    size_t xSize = BS * W * N * S1 * S2 * dtypeSize;
-    size_t attenMaskSize = W * S1 * S2 * dtypeSize;
-    size_t biasSize = N * S1 * S2 * dtypeSize;
-    size_t ySize = BS * W * N * S1 * S2 * dtypeSize;
-    size_t expect_ySize = BS * W * N * S1 * S2 * dtypeSize;
+    size_t xSize = static_cast<size_t>(BS) * W * N * S1 * S2 * dtypeSize;
+    size_t attenMaskSize = static_cast<size_t>(W) * S1 * S2 * dtypeSize;
+    size_t biasSize = static_cast<size_t>(N) * S1 * S2 * dtypeSize;
+    size_t ySize = static_cast<size_t>(BS) * W * N * S1 * S2 * dtypeSize;
+    size_t expect_ySize = static_cast<size_t>(BS) * W * N * S1 * S2 * dtypeSize;
 
     uint8_t* x = (uint8_t*)AscendC::GmAlloc(xSize);
     uint8_t* atten_mask = (uint8_t*)AscendC::GmAlloc(attenMaskSize);
