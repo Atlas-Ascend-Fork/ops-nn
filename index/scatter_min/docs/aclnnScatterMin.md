@@ -223,6 +223,7 @@ aclnnStatus aclnnScatterMin(
 
 - varRef与updates的数据类型需一致。
 - 需满足shape约束：updates.shape = indices.shape + varRef.shape[1:]。
+  `updates`的维数为`rank(indices) + rank(varRef) - 1`，且必须在1～8维范围内。
 - 确定性计算：
   - aclnnScatterMin默认确定性实现。
 

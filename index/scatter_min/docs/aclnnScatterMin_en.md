@@ -225,6 +225,7 @@ aclnnStatus aclnnScatterMin(
 
 - The data types of varRef and updates must be consistent.
 - The shape constraint must be met: updates.shape = indices.shape + varRef.shape[1:].
+  The rank of `updates` is `rank(indices) + rank(varRef) - 1` and must be between 1 and 8, inclusive.
 - The size of the first dimension of varRef must not exceed INT32_MAX.
 - Deterministic computation:
   - aclnnScatterMin defaults to a deterministic implementation.
