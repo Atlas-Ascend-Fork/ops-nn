@@ -52,7 +52,8 @@ ASCENDC_TPL_ARGS_DECL(QuantBatchMatmulInplaceAdd,
                                             TPL_MX_L0C_PINGPONG, TPL_MX_L0C_PINGPONG_A_FULL_LOAD));
 
 ASCENDC_TPL_SEL(
-#if !defined(__CCE_AICORE__) || (defined(__NPU_ARCH__) && __NPU_ARCH__ == 3510 && SUPPORT_MX_WITHOUT_BATCH_TILING_KEY)
+#if !defined(__CCE_AICORE__) || \
+    (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201) && SUPPORT_MX_WITHOUT_BATCH_TILING_KEY)
     ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_AIC_ONLY),
                          ASCENDC_TPL_UINT_SEL(ATRANS, ASCENDC_TPL_UI_LIST, 0, 1),
                          ASCENDC_TPL_UINT_SEL(BTRANS, ASCENDC_TPL_UI_LIST, 0, 1),

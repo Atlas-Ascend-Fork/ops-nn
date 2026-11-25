@@ -64,13 +64,15 @@ namespace optiling {
 
 L1TilingDataCalculator::L1TilingDataCalculator(const QuantBatchMatmulInfo& inputParams,
                                                const QuantBatchMatmulV3CompileInfo& compileInfo, uint64_t baseM,
-                                               uint64_t baseN, uint64_t baseK, uint64_t singleCoreK)
+                                               uint64_t baseN, uint64_t baseK, uint64_t singleCoreK,
+                                               bool capStepKForPingpong)
     : inputParams_(inputParams),
       compileInfo_(compileInfo),
       baseM_(baseM),
       baseN_(baseN),
       baseK_(baseK),
-      singleCoreK_(singleCoreK)
+      singleCoreK_(singleCoreK),
+      capStepKForPingpong_(capStepKForPingpong)
 {}
 
 bool L1TilingDataCalculator::Compute(L1TilingMode mode)
@@ -390,8 +392,15 @@ bool L1TilingDataCalculator::CalStepKs()
     }
     if (HasPerGroupScale(inputParams_)) {
         // Limit max stepK to 4 to avoid issue queue stalls. MX unifies kAL1 and kBL1 later.
-        l1TilingData_.stepKa_ = std::min(l1TilingData_.stepKa_, 4UL);
-        l1TilingData_.stepKb_ = std::min(l1TilingData_.stepKb_, 4UL);
+        // 9201 splitN 场景（走 MX L0C ping-pong）下 kL1=4*baseK 会阻塞 mte2 指令发射，
+        // 仅选 ping-pong 模板的调用方（capStepKForPingpong）将 stepK 上限收敛到 2。
+        const MxL0CPingpongEligibility eligibility = GetMxL0CPingpongEligibility(inputParams_, compileInfo_,
+                                                                                 IsTensorapiCapable());
+        const bool needSplitN = capStepKForPingpong_ && compileInfo_.npuArch == NpuArch::DAV_9201 &&
+                                (eligibility.explicitPlan || eligibility.legacyTail);
+        const uint64_t maxStepK = needSplitN ? 2UL : 4UL;
+        l1TilingData_.stepKa_ = std::min(l1TilingData_.stepKa_, maxStepK);
+        l1TilingData_.stepKb_ = std::min(l1TilingData_.stepKb_, maxStepK);
     }
     if (inputParams_.isPerBlock && inputParams_.hasBias) {
         // The current pertile/perblock tiling constraints keep the smaller stepK within L1 capacity.

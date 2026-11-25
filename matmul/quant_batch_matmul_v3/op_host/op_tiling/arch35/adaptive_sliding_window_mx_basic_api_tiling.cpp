@@ -226,8 +226,9 @@ bool AdaptiveSlidingWindowMXBasicAPITiling::CalL1Tiling()
                              1U;
 
     L1TilingMode mode = isAFullLoad_ ? L1TilingMode::A_L1_FULL_LOAD : L1TilingMode::DEFAULT;
+    // MX tiling 链路可能选入 L0C ping-pong 模板，9201 splitN 场景按需收敛 stepK。
     L1TilingDataCalculator l1Calculator(inputParams_, compileInfo_, basicTiling_.baseM, basicTiling_.baseN,
-                                        basicTiling_.baseK);
+                                        basicTiling_.baseK, 0UL, true);
     if (!l1Calculator.Compute(mode)) {
         return false;
     }
@@ -401,6 +402,10 @@ uint64_t AdaptiveSlidingWindowMXBasicAPITiling::DeriveScaleKL1(uint32_t& scaleFa
 {
     uint64_t scaleKL1 = std::min(static_cast<uint64_t>(scaleFactorA) * stepKa * baseK,
                                  static_cast<uint64_t>(scaleFactorB) * stepKb * baseK);
+    // 9201 不做 3510 模板配套的 scale 窗口收敛，直接返回 L1 切分得到的 scaleKL1。
+    if (compileInfo_.npuArch == NpuArch::DAV_9201) {
+        return scaleKL1;
+    }
     const uint64_t outputSize = GetSizeWithDataType(inputParams_.mSize * inputParams_.nSize, inputParams_.cDtype);
     if (mxL0CPingpongEligibility_.legacyTail && outputSize <= MX_L0C_PINGPONG_OUTPUT_SIZE_LIMIT &&
         scaleKL1 > MX_L0C_PINGPONG_SCALE_KL1_TARGET) {
@@ -547,7 +552,7 @@ bool AdaptiveSlidingWindowMXBasicAPITiling::CanSelectMultiBufferByL1Plan(bool is
 {
     // Faithful dry-run of the final L1 tiling + N-buffer selection for this candidate, mirroring the cube path.
     const L1TilingMode mode = isAFullLoad ? L1TilingMode::A_L1_FULL_LOAD : L1TilingMode::DEFAULT;
-    L1TilingDataCalculator calculator(inputParams_, compileInfo_, baseM, baseN, adaptiveWin_.baseK);
+    L1TilingDataCalculator calculator(inputParams_, compileInfo_, baseM, baseN, adaptiveWin_.baseK, 0UL, true);
     if (!calculator.Compute(mode)) {
         return false;
     }
@@ -630,7 +635,9 @@ void AdaptiveSlidingWindowMXBasicAPITiling::UpdateAFullLoadStatus()
 void AdaptiveSlidingWindowMXBasicAPITiling::AnalyseFullLoadInfo()
 {
     // The full-load dry run and final L1 calculation use the same legacy scale-window gate.
-    mxL0CPingpongEligibility_ = GetMxL0CPingpongEligibility(inputParams_, compileInfo_.npuArch, IsTensorApiEnabled());
+    // totalWinCnt 已在 CalcBlockWindowInfo 定型，轮数收敛随 Eligibility 覆盖全部消费点。
+    mxL0CPingpongEligibility_ = GetMxL0CPingpongEligibility(inputParams_, compileInfo_, IsTensorApiEnabled(),
+                                                            adaptiveWin_.totalWinCnt);
     isABFullLoad_ = false;
     isBFullLoad_ = false;
     UpdateAFullLoadStatus();

@@ -45,8 +45,11 @@ enum class L1TilingMode {
 
 class L1TilingDataCalculator {
 public:
+    // capStepKForPingpong：仅调用方真正选入 MX L0C ping-pong 模板（qbmm-v3 MX tiling）时置 true，
+    // 9201 splitN 场景下将 stepK 上限收敛到 2；其余复用算子保持常规上限 4。
     L1TilingDataCalculator(const QuantBatchMatmulInfo& inputParams, const QuantBatchMatmulV3CompileInfo& compileInfo,
-                           uint64_t baseM, uint64_t baseN, uint64_t baseK, uint64_t singleCoreK = 0UL);
+                           uint64_t baseM, uint64_t baseN, uint64_t baseK, uint64_t singleCoreK = 0UL,
+                           bool capStepKForPingpong = false);
     virtual ~L1TilingDataCalculator() = default;
 
     bool Compute(L1TilingMode mode);
@@ -93,6 +96,7 @@ private:
     uint64_t baseN_ = 0UL;
     uint64_t baseK_ = 0UL;
     uint64_t singleCoreK_ = 0UL;
+    bool capStepKForPingpong_ = false;
     uint64_t leftL1Size_ = 0UL;
     bool isAFullLoad_ = false;
     bool isBFullLoad_ = false;

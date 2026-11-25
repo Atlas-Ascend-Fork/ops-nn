@@ -876,6 +876,230 @@ TEST(QuantBatchMatmulV3Checker960, Hif4BatchUsesBlazeBatchTilingKeyOn9201)
     }
 }
 
+// 9201 的 MX L0C ping-pong 走入公共夹具：mxfp8 cube bound 用例的平台规格与 shape。
+class Dav9201PingpongProbe : public testing::Test {
+protected:
+    void FillSocFromConfig(QuantBatchMatmulV3CompileInfo& info)
+    {
+        const std::string coreCnt = "40";
+        std::map<std::string, std::string> soc{{"ai_core_cnt", coreCnt}};
+        std::map<std::string, std::string> rates{{"ddr_rate", "40"}, {"l2_rate", "104"}};
+        std::map<std::string, std::string> spec{{"cube_freq", "1650"}};
+        fe::PlatFormInfos platform;
+        platform.Init();
+        platform.SetPlatformRes("SoCInfo", soc);
+        platform.SetPlatformRes("AICoreMemoryRates", rates);
+        platform.SetPlatformRes("AICoreSpec", spec);
+        FillSocSpecifyParamsFromPlatform(&platform, info.socSpec);
+        info.aicNum = static_cast<uint32_t>(std::stoul(coreCnt));
+    }
+
+    void SetUpDav9201Pingpong(TestableMxBasicApiTiling& tiling)
+    {
+        auto& input = tiling.inputParams_;
+        input.Reset();
+        input.opName = "Dav9201PingpongProbe";
+        input.mSize = input.nSize = 4096;
+        input.kSize = 8192;
+        input.aDtype = input.bDtype = ge::DT_FLOAT8_E4M3FN;
+        input.cDtype = ge::DT_BF16;
+        input.scaleDtype = input.perTokenScaleDtype = ge::DT_FLOAT8_E8M0;
+        input.isMxPerGroup = true;
+        tiling.compileInfo_.npuArch = NpuArch::DAV_9201;
+        FillSocFromConfig(tiling.compileInfo_);
+    }
+};
+
+TEST_F(Dav9201PingpongProbe, UsesExplicitL0TilePlanForMultiRoundCases)
+{
+    // 9201 的 mxfp8 cube bound 且每核多轮的用例走入 L0C ping-pong：显式 L0 tile 规划
+    // （explicitPlan）与 legacy 尾路径同时开放，单轮用例由轮数判定统一收敛。
+    TestableMxBasicApiTiling tiling;
+    SetUpDav9201Pingpong(tiling);
+    const auto eligibility = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true);
+    ASSERT_TRUE(eligibility.legacyTail);
+    EXPECT_TRUE(eligibility.explicitPlan);
+
+    // 每核仅单轮：Eligibility 收敛 explicitPlan/legacyTail，回退常规 blaze 模板。
+    tiling.adaptiveWin_.totalWinCnt = 1U;
+    const auto singleRound = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true,
+                                                                   tiling.adaptiveWin_.totalWinCnt);
+    EXPECT_FALSE(singleRound.explicitPlan);
+    EXPECT_FALSE(singleRound.legacyTail);
+    tiling.mxL0CPingpongEligibility_ = singleRound;
+    ASSERT_TRUE(tiling.ApplyMxL0CPingpongPlan());
+    EXPECT_EQ(tiling.GetKernelType(), static_cast<uint64_t>(optiling::QMMKernelType::NO_VEC_EPILOGUE_WITH_MMAPI));
+
+    // 每核多轮且基块可规划：显式 L0 tile 规划生效（mL0 != 0 并开启 L0C 双缓冲）。
+    tiling.adaptiveWin_.totalWinCnt = 2U;
+    const auto multiRound = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true,
+                                                                  tiling.adaptiveWin_.totalWinCnt);
+    EXPECT_TRUE(multiRound.explicitPlan);
+    EXPECT_TRUE(multiRound.legacyTail);
+    tiling.mxL0CPingpongEligibility_ = multiRound;
+    auto& cube = tiling.tilingData_.matmulTiling;
+    cube.baseM = cube.baseN = 128U;
+    cube.kBL1 = 256U;
+    tiling.compileInfo_.l0aSize = tiling.compileInfo_.l0bSize = 64UL * 1024UL;
+    tiling.compileInfo_.l0cSize = 256UL * 1024UL;
+    ASSERT_TRUE(tiling.ApplyMxL0CPingpongPlan());
+    EXPECT_NE(tiling.tilingData_.adaptiveSlidingWin.mL0, 0U);
+    EXPECT_EQ(cube.dbL0C, optiling::qmmv3_tiling_const::DOUBLE_BUFFER_NUM);
+    EXPECT_EQ(tiling.GetKernelType(),
+              static_cast<uint64_t>(optiling::QMMKernelType::NO_VEC_EPILOGUE_WITH_MMAPI_MX_L0C_PINGPONG));
+
+    // 基块不可规划（baseM 为 0）时规划失败退回 legacy 尾路径，模板选择不变。
+    tiling.mxL0CPingpongEligibility_ = multiRound;
+    cube.baseM = cube.baseN = 0U;
+    ASSERT_TRUE(tiling.ApplyMxL0CPingpongPlan());
+    EXPECT_EQ(tiling.tilingData_.adaptiveSlidingWin.mL0, 0U);
+    EXPECT_EQ(tiling.GetKernelType(),
+              static_cast<uint64_t>(optiling::QMMKernelType::NO_VEC_EPILOGUE_WITH_MMAPI_MX_L0C_PINGPONG));
+}
+TEST_F(Dav9201PingpongProbe, RequiresCubeBoundCases)
+{
+    // socSpec 未填充或 memory bound 用例保守回退常规 blaze 模板（显式规划与 legacy 尾一并关闭）。
+    TestableMxBasicApiTiling tiling;
+    SetUpDav9201Pingpong(tiling);
+
+    // socSpec 未填充时保守不进。
+    tiling.compileInfo_.socSpec = {};
+    const auto emptyEligibility = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true);
+    EXPECT_FALSE(emptyEligibility.explicitPlan);
+    EXPECT_FALSE(emptyEligibility.legacyTail);
+
+    // 平台配置解析填充后 4096x4096x8192 为 cube bound，显式 L0 tile 规划与 legacy 尾路径同时开放。
+    FillSocFromConfig(tiling.compileInfo_);
+    const auto cubeBoundEligibility = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_,
+                                                                            true);
+    EXPECT_TRUE(cubeBoundEligibility.explicitPlan);
+    EXPECT_TRUE(cubeBoundEligibility.legacyTail);
+
+    // 碎小 shape 计算量远小于搬运量，为 memory bound，回退常规模板。
+    tiling.inputParams_.mSize = tiling.inputParams_.nSize = 64;
+    tiling.inputParams_.kSize = 4096;
+    tiling.inputParams_.transB = true; // 内轴对齐前提
+    const auto memoryBoundEligibility = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_,
+                                                                              true);
+    EXPECT_FALSE(memoryBoundEligibility.explicitPlan);
+    EXPECT_FALSE(memoryBoundEligibility.legacyTail);
+}
+
+TEST_F(Dav9201PingpongProbe, SkipsMxfp4AndHif4InputCases)
+{
+    // 9201 上 mxfp4/hif4（A/B 均 4bit dtype）输入在 ping-pong 模板下性能未达预期或未适配，
+    // 前置排除回退常规 blaze 模板；恢复 mxfp8（E4M3FN）后回到 shape 级判定。
+    TestableMxBasicApiTiling tiling;
+    SetUpDav9201Pingpong(tiling);
+    tiling.inputParams_.aDtype = tiling.inputParams_.bDtype = ge::DT_FLOAT4_E2M1;
+    const auto mxfp4Eligibility = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true);
+    EXPECT_FALSE(mxfp4Eligibility.explicitPlan);
+    EXPECT_FALSE(mxfp4Eligibility.legacyTail);
+
+    tiling.inputParams_.aDtype = tiling.inputParams_.bDtype = Ops::NN::DT_HIFLOAT4;
+    const auto hif4Eligibility = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true);
+    EXPECT_FALSE(hif4Eligibility.explicitPlan);
+    EXPECT_FALSE(hif4Eligibility.legacyTail);
+
+    tiling.inputParams_.aDtype = tiling.inputParams_.bDtype = ge::DT_FLOAT8_E4M3FN;
+    EXPECT_TRUE(optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true).legacyTail);
+}
+
+TEST_F(Dav9201PingpongProbe, DerivesScaleKL1WithoutLegacyConvergence)
+{
+    // 9201 走入 ping-pong 模板，但 DeriveScaleKL1 直接返回 L1 切分得到的 scaleKL1，
+    // 不做 3510 模板配套的 scale 窗口收敛（factor 不回写）。
+    TestableMxBasicApiTiling tiling;
+    SetUpDav9201Pingpong(tiling);
+    tiling.mxL0CPingpongEligibility_ = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_,
+                                                                             true);
+    ASSERT_TRUE(tiling.mxL0CPingpongEligibility_.legacyTail);
+    uint32_t factorA = 64;
+    uint32_t factorB = 32;
+    EXPECT_EQ(tiling.DeriveScaleKL1(factorA, 1, factorB, 2, 128), 8192U);
+    EXPECT_EQ(factorA, 64U);
+    EXPECT_EQ(factorB, 32U);
+}
+
+TEST_F(Dav9201PingpongProbe, SkipsMisalignedInnerAxisCases)
+{
+    // 9201 走入 l0cDB 的条件为 mxfp8 + cube bound + 每核多轮的完整条件集：K 方向搬运
+    // burst 非 128B 对齐、或 scale 非 E8M0/输出非 FP16-BF16 的用例整体关闭；
+    // 3510 保持 master 行为（门槛仅关闭 legacy 尾，explicitPlan 可走）。
+    TestableMxBasicApiTiling tiling;
+    SetUpDav9201Pingpong(tiling);
+    tiling.inputParams_.kSize = 8196; // 8196 % 128 != 0，K 内轴不对齐
+    const auto misaligned = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true);
+    EXPECT_FALSE(misaligned.explicitPlan);
+    EXPECT_FALSE(misaligned.legacyTail);
+
+    // FP32 输出（如 quant_batch_matmul_inplace_add）过不了 cDtype 门槛，9201 保守回退常规。
+    tiling.inputParams_.kSize = 8192;
+    tiling.inputParams_.cDtype = ge::DT_FLOAT;
+    const auto fp32Out = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true);
+    EXPECT_FALSE(fp32Out.explicitPlan);
+    EXPECT_FALSE(fp32Out.legacyTail);
+
+    // 3510 同场景不受影响：explicitPlan 保持开放。
+    tiling.inputParams_.kSize = 8196;
+    tiling.inputParams_.cDtype = ge::DT_BF16;
+    tiling.compileInfo_.npuArch = Ops::Base::DAV_3510;
+    const auto arch3510 = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true);
+    EXPECT_TRUE(arch3510.explicitPlan);
+    EXPECT_FALSE(arch3510.legacyTail);
+}
+
+TEST_F(Dav9201PingpongProbe, CapsStepKWhenEnteringPingpong)
+{
+    // 走入 ping-pong（splitN）的调用方（qbmm-v3 MX tiling 构造时传 capStepKForPingpong=true）在 9201 上
+    // stepK 收敛到 2；仅复用计算器、不选 ping-pong 模板的算子（如 transpose_quant_batch_mat_mul）
+    // 保持 master 行为（上限 4）；3510 无论开关均不做收敛。
+    QuantBatchMatmulInfo input;
+    input.Reset();
+    input.opName = "Dav9201PingpongStepKCap";
+    input.mSize = input.nSize = 4096;
+    input.kSize = 8192;
+    input.aDtype = input.bDtype = ge::DT_FLOAT8_E4M3FN;
+    input.cDtype = ge::DT_BF16;
+    input.scaleDtype = input.perTokenScaleDtype = ge::DT_FLOAT8_E8M0;
+    input.isMxPerGroup = true;
+    QuantBatchMatmulV3CompileInfo info{};
+    info.npuArch = NpuArch::DAV_9201;
+    info.l1Size = 512UL * 1024UL;
+    FillSocFromConfig(info);
+
+    // 9201 的 mxfp8 cube bound 用例 shape 级可走 ping-pong。
+    ASSERT_TRUE(optiling::GetMxL0CPingpongEligibility(input, info, true).legacyTail);
+
+    // 未显式声明走 ping-pong 模板（默认 false）时保持 master 上限 4：复用算子不被收敛波及。
+    L1TilingDataCalculator calcNoCap(input, info, 64UL, 64UL, 256UL);
+    ASSERT_TRUE(calcNoCap.Compute(L1TilingMode::DEFAULT));
+    EXPECT_EQ(calcNoCap.GetOutput().stepKa_, 4UL);
+    EXPECT_EQ(calcNoCap.GetOutput().stepKb_, 4UL);
+
+    // 显式声明走 ping-pong 模板时：深度搜索到 8（stepK=4），9201 的 ping-pong 收敛将其压到 2。
+    L1TilingDataCalculator calc(input, info, 64UL, 64UL, 256UL, 0UL, true);
+    ASSERT_TRUE(calc.Compute(L1TilingMode::DEFAULT));
+    const auto& l1 = calc.GetOutput();
+    ASSERT_GT(l1.stepKa_, 0UL);
+    ASSERT_GT(l1.stepKb_, 0UL);
+    if (optiling::IsTensorapiCapable()) {
+        EXPECT_LE(l1.stepKa_, 2UL);
+        EXPECT_LE(l1.stepKb_, 2UL);
+    } else {
+        // UT 环境查不到 tensor api runtime 时 Eligibility 关闭，回退常规上限 4。
+        EXPECT_LE(l1.stepKa_, 4UL);
+        EXPECT_LE(l1.stepKb_, 4UL);
+    }
+
+    // 3510 同 shape 即使声明走 ping-pong 也不做 stepK 收敛：上限保持 4。
+    info.npuArch = Ops::Base::DAV_3510;
+    L1TilingDataCalculator calc3510(input, info, 64UL, 64UL, 256UL, 0UL, true);
+    ASSERT_TRUE(calc3510.Compute(L1TilingMode::DEFAULT));
+    EXPECT_EQ(calc3510.GetOutput().stepKa_, 4UL);
+    EXPECT_EQ(calc3510.GetOutput().stepKb_, 4UL);
+}
+
 class QuantBatchMatmulV3StreamK960 : public testing::Test {
 protected:
     void SetUp() override

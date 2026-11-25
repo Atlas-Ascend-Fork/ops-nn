@@ -35,6 +35,8 @@ constexpr double MXFP8_CUBE_THROUGHPUT = 864.0;
 constexpr double MMAD_OPS_PER_DOT = 2.0;
 constexpr uint64_t MMAD_BLOCK_SIZE = 256UL;
 constexpr uint64_t MX_SCALE_GROUP_SIZE = 32UL;
+// 带宽换算系数：TB/s × 1e6 = B/us。
+constexpr double SECONDS_TO_US = 1e6;
 constexpr uint64_t L2_CACHE_SIZE = 128UL * 1024UL * 1024UL;
 constexpr uint64_t L2_CACHE_THRESHOLD_PERCENT = 80UL;
 constexpr uint64_t PERCENT_BASE = 100UL;
@@ -94,6 +96,50 @@ bool IsMxCubeBound(const QuantBatchMatmulInfo& inputParams)
                                 static_cast<double>(copyOutBytes) / copyOutBandwidth;
     const double computeCost = MMAD_OPS_PER_DOT * static_cast<double>(m) * static_cast<double>(n) *
                                static_cast<double>(k) / cubeThroughput;
+    return computeCost > transferCost;
+}
+
+// 9201 用 compileInfo.socSpec 的真实平台规格动态判定 cube bound（静态常量按 950 校准，在 9201 上会失真），
+// 与 EstimateMte2Time/EstimateMmadTime 同口径。
+bool IsMxCubeBound(const QuantBatchMatmulInfo& inputParams, const SocSpecifyParams& socParams, uint32_t aicNum)
+{
+    const uint64_t m = inputParams.mSize;
+    const uint64_t n = inputParams.nSize;
+    const uint64_t k = inputParams.kSize;
+    if (!HasPerGroupScale(inputParams) || aicNum == 0U) {
+        return false;
+    }
+    // MX 每 32 K 元素一组 scale，hif4 每 64 K 元素一组 scale。
+    const uint64_t scaleGroupSize = GetScaleGroupSize(inputParams.scaleDtype);
+    const uint64_t aInputCost = m * k;
+    const uint64_t bInputCost = n * k;
+    const uint64_t aScaleCost = ops::CeilDiv(aInputCost, scaleGroupSize);
+    const uint64_t bScaleCost = ops::CeilDiv(bInputCost, scaleGroupSize);
+    const uint64_t copyOutBytes = GetSizeWithDataType(m * n, inputParams.cDtype);
+    const uint64_t hbmBytes = GetSizeWithDataType(aInputCost, inputParams.aDtype) +
+                              GetSizeWithDataType(aScaleCost, inputParams.perTokenScaleDtype) +
+                              GetSizeWithDataType(bInputCost, inputParams.bDtype) +
+                              GetSizeWithDataType(bScaleCost, inputParams.scaleDtype);
+    const uint64_t aL2Cost = m * k * (ops::CeilDiv(n, MMAD_BLOCK_SIZE) - 1UL);
+    const uint64_t bL2Cost = n * k * (ops::CeilDiv(m, MMAD_BLOCK_SIZE) - 1UL);
+    const uint64_t l2Bytes = GetSizeWithDataType(aL2Cost, inputParams.aDtype) +
+                             GetSizeWithDataType(ops::CeilDiv(aL2Cost, scaleGroupSize),
+                                                 inputParams.perTokenScaleDtype) +
+                             GetSizeWithDataType(bL2Cost, inputParams.bDtype) +
+                             GetSizeWithDataType(ops::CeilDiv(bL2Cost, scaleGroupSize), inputParams.scaleDtype);
+    const uint64_t l2Footprint = hbmBytes + copyOutBytes;
+    const double copyOutBandwidth = l2Footprint < L2_CACHE_THRESHOLD_SIZE ? socParams.l2Bw : socParams.hbmBw;
+    // MTE2 访存耗时（us）：带宽 TB/s × SECONDS_TO_US → B/us。
+    const double transferCost = static_cast<double>(hbmBytes) / (socParams.hbmBw * SECONDS_TO_US) +
+                                static_cast<double>(l2Bytes) / (socParams.l2Bw * SECONDS_TO_US) +
+                                static_cast<double>(copyOutBytes) / (copyOutBandwidth * SECONDS_TO_US);
+
+    // MMAD 计算耗时（us）：整片分片次数 / 整片频率（freqMHz × aicNum）。
+    const uint64_t mFracM = ops::CeilDiv(m, socParams.mmadFracM);
+    const uint64_t nFracN = ops::CeilDiv(n, socParams.mmadFracN);
+    const uint64_t kFracK = ops::CeilDiv(GetSizeWithDataType(k, inputParams.aDtype), socParams.mmadFracK);
+    const double freqMhz = static_cast<double>(socParams.freq) * static_cast<double>(GHZ_TO_MHZ);
+    const double computeCost = static_cast<double>(mFracM * nFracN * kFracK) / (freqMhz * static_cast<double>(aicNum));
     return computeCost > transferCost;
 }
 
@@ -157,27 +203,79 @@ void FillSocSpecifyParamsFromPlatform(fe::PlatFormInfos* platformInfo, SocSpecif
     outInfo.l2Bw = outInfo.freq * static_cast<double>(coreCnt) * static_cast<double>(l2Rate) / LB_KB_SIZE;
 }
 
-MxL0CPingpongEligibility GetMxL0CPingpongEligibility(const QuantBatchMatmulInfo& inputParams, NpuArch npuArch,
-                                                     bool tensorApiEnabled)
+bool GetSocSpecAdjustBalanceInfo(const QuantBatchMatmulInfo& inputParams,
+                                 const QuantBatchMatmulV3CompileInfo& compileInfo, SocSpecifyParams& outInfo)
 {
-    if (npuArch != Ops::Base::DAV_3510 || !tensorApiEnabled || !IsMxBasicApiCapable(inputParams)) {
+    // socSpec 未被 TilingParse/InitCompileInfo 填充时保守返回 false，等价旧版拿不到 platformInfo 的行为。
+    if (compileInfo.socSpec.freq <= 0.0 || compileInfo.socSpec.hbmBw <= 0.0 || compileInfo.socSpec.l2Bw <= 0.0) {
+        return false;
+    }
+    outInfo = compileInfo.socSpec;
+    // 9202 对 hif4 逐组量化与 mxfp4 输入的 mmad N 方向碎片翻倍修正。
+    if (compileInfo.npuArch == NpuArch::DAV_9202 &&
+        (inputParams.isHif4PerGroup || (inputParams.isMxPerGroup && inputParams.aDtype == ge::DT_FLOAT4_E2M1))) {
+        outInfo.mmadFracN *= 2UL;
+    }
+    outInfo.CalSingleCoreComputePower(inputParams.aDtype);
+    return true;
+}
+
+MxL0CPingpongEligibility GetMxL0CPingpongEligibility(const QuantBatchMatmulInfo& inputParams,
+                                                     const QuantBatchMatmulV3CompileInfo& compileInfo,
+                                                     bool tensorApiEnabled, uint64_t totalWinCnt)
+{
+    const NpuArch npuArch = compileInfo.npuArch;
+    // MX L0C ping-pong 模板在 DAV_3510/DAV_9201 生效。
+    if ((npuArch != Ops::Base::DAV_3510 && npuArch != Ops::Base::DAV_9201) || !tensorApiEnabled ||
+        !IsMxBasicApiCapable(inputParams)) {
         return {};
     }
+
+    // 9201 上 mxfp4（A/B 均 4bit）在 ping-pong 模板下性能未达预期，暂回退常规 blaze 模板；
+    // 3510 上该组合保持 shape 级判定不受影响。
+    if (npuArch == Ops::Base::DAV_9201 &&
+        ((inputParams.aDtype == ge::DT_FLOAT4_E2M1 && inputParams.bDtype == ge::DT_FLOAT4_E2M1) ||
+         (inputParams.aDtype == ge::DT_HIFLOAT4 && inputParams.bDtype == ge::DT_HIFLOAT4))) {
+        return {};
+    }
+
+    // 9201 仅 mxfp8 + cube bound + 每核多轮的完整条件集才走入 l0cDB，各门槛对 explicitPlan
+    // 与 legacyTail 同步生效；3510 保持 master 行为（门槛仅关闭 legacy 尾）。
+    const bool isDav9201 = npuArch == Ops::Base::DAV_9201;
 
     // The legacy tail path has additional gates and also controls the original scale window adjustment.
     if (inputParams.scaleDtype != ge::DT_FLOAT8_E8M0 ||
         (inputParams.cDtype != ge::DT_FLOAT16 && inputParams.cDtype != ge::DT_BF16)) {
-        return {true, false};
+        return {!isDav9201, false};
     }
     const uint64_t aInnerAxis = inputParams.transA ? inputParams.mSize : inputParams.kSize;
     const uint64_t bInnerAxis = inputParams.transB ? inputParams.kSize : inputParams.nSize;
     const uint64_t innerAxisAlignSize = inputParams.aDtype == ge::DT_FLOAT4_E2M1 ?
                                             MXFP4_L0C_PINGPONG_INNER_AXIS_ALIGN_SIZE :
                                             MXFP8_L0C_PINGPONG_INNER_AXIS_ALIGN_SIZE;
-    const bool legacyTail = GetSizeWithDataType(aInnerAxis, inputParams.aDtype) % innerAxisAlignSize == 0UL &&
-                            GetSizeWithDataType(bInnerAxis, inputParams.bDtype) % innerAxisAlignSize == 0UL &&
-                            IsMxCubeBound(inputParams);
-    return {true, legacyTail};
+    const bool isInnerAxisAligned = GetSizeWithDataType(aInnerAxis, inputParams.aDtype) % innerAxisAlignSize == 0UL &&
+                                    GetSizeWithDataType(bInnerAxis, inputParams.bDtype) % innerAxisAlignSize == 0UL;
+    if (!isInnerAxisAligned) {
+        // 9201 内轴不对齐不走入；3510 的 SelectMxL0TilePlan 内部另有对齐判定。
+        return {!isDav9201, false};
+    }
+    // 3510 沿用静态估算；9201 用 compileInfo.socSpec 的真实平台规格动态判定 cube bound，
+    // socSpec 未填充时保守不进。
+    if (isDav9201) {
+        // 9201 仅每核多轮（totalWinCnt > 1）的用例走入 L0C ping-pong：单轮时 L0C 双缓冲
+        // 无下一轮计算可流水掩盖，只剩半幅 L0C 与 stepK 收敛的代价，回退常规 blaze 模板；
+        // totalWinCnt == 0 表示调用方无窗口信息，跳过轮数判定。
+        if (totalWinCnt == 1UL) {
+            return {false, false};
+        }
+        SocSpecifyParams socParams;
+        if (!GetSocSpecAdjustBalanceInfo(inputParams, compileInfo, socParams)) {
+            return {false, false};
+        }
+        const bool isCubeBound = IsMxCubeBound(inputParams, socParams, compileInfo.aicNum);
+        return {isCubeBound, isCubeBound};
+    }
+    return {true, IsMxCubeBound(inputParams)};
 }
 
 void QuantBatchMatMulV3TilingUtil::SetBasicTilingData(const QuantBatchMatmulInfo& inputParams,

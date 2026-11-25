@@ -279,8 +279,16 @@ struct MxL0CPingpongEligibility {
     bool legacyTail = false;
 };
 
-MxL0CPingpongEligibility GetMxL0CPingpongEligibility(const QuantBatchMatmulInfo& inputParams, NpuArch npuArch,
-                                                     bool tensorApiEnabled);
+// 判定 MX L0C ping-pong 模板走入。totalWinCnt 为调用方已定型的每核窗口轮数：
+// 9201 仅多轮（totalWinCnt > 1）用例走入；传 0 表示调用方无窗口信息，跳过轮数判定。
+MxL0CPingpongEligibility GetMxL0CPingpongEligibility(const QuantBatchMatmulInfo& inputParams,
+                                                     const QuantBatchMatmulV3CompileInfo& compileInfo,
+                                                     bool tensorApiEnabled, uint64_t totalWinCnt = 0UL);
+
+// 从 compileInfo.socSpec 读取平台规格并施加节点信息相关修正（9202 hif4/mxfp4 mmadFracN 翻倍）；
+// socSpec 未被 TilingParse/InitCompileInfo 填充时保守返回 false，等价旧版拿不到 platformInfo 的行为。
+bool GetSocSpecAdjustBalanceInfo(const QuantBatchMatmulInfo& inputParams,
+                                 const QuantBatchMatmulV3CompileInfo& compileInfo, SocSpecifyParams& outInfo);
 
 // 从平台信息解析 SoC 规格（带宽/频率/核数）并写入 outInfo；platformInfo 为空或字段缺失时
 // 由 outInfo 保持零值，调用方按需校验。TilingParse 与 InitCompileInfo 用它填充 compileInfo.socSpec，

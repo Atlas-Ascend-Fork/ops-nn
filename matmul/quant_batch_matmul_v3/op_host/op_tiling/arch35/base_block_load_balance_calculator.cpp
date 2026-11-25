@@ -34,8 +34,6 @@ constexpr uint64_t LB_AFULLLOAD_SINGLE_CORE_A_SCALER = 2UL;
 constexpr uint64_t BASEK_LIMIT = 4095UL;
 // Fallback baseK candidates ordered from large to small.
 const std::vector<uint64_t> LB_BASE_K_CANDIDATE = {256UL, 128UL, 64UL, 32UL};
-// 9202(960PR) doubles the mmad N-direction fragmentation for hif4/mxfp4 inputs
-constexpr uint64_t LB_COMPUTE_POWER_DOUBLE = 2UL;
 constexpr uint64_t FP32_OUTPUT_TIMES = 4;
 constexpr uint64_t FP16_OUTPUT_TIMES = 2;
 constexpr uint64_t PING_PONG_TIMES = 2;
@@ -228,18 +226,8 @@ void BaseBlockCalculator::GetBaseK(BaseBlockRes& baseBlockTemp)
 
 bool BaseBlockCalculator::GetSocSpecAdjustBalanceInfo(SocSpecifyParams& outInfo) const
 {
-    // socSpec 未被 TilingParse/InitCompileInfo 填充时保守返回 false，等价旧版拿不到 platformInfo 的行为。
-    if (compileInfo_.socSpec.freq <= 0.0 || compileInfo_.socSpec.hbmBw <= 0.0 || compileInfo_.socSpec.l2Bw <= 0.0) {
-        return false;
-    }
-    outInfo = compileInfo_.socSpec;
-    // ops-nn 无 isHif4PerGroup 标志，hif4 逐组量化以 scaleDtype == DT_HIFLOAT4_SCALE 等价识别。
-    if (compileInfo_.npuArch == NpuArch::DAV_9202 &&
-        (inputParams_.isHif4PerGroup || (inputParams_.isMxPerGroup && inputParams_.aDtype == ge::DT_FLOAT4_E2M1))) {
-        outInfo.mmadFracN *= LB_COMPUTE_POWER_DOUBLE;
-    }
-    outInfo.CalSingleCoreComputePower(inputParams_.aDtype);
-    return true;
+    // 统一委托 tiling_util 自由函数版，socSpec 校验与 9202 mmadFracN 修正保持单一实现。
+    return ::optiling::GetSocSpecAdjustBalanceInfo(inputParams_, compileInfo_, outInfo);
 }
 
 bool BaseBlockCalculator::IsBasicBlockUbOverflow(uint64_t baseM, uint64_t baseN)

@@ -362,21 +362,12 @@ TEST(QuantBatchMatmulMxState, PingpongWritesAdjustedFactorsBackOnlyOnArch35)
     tiling.inputParams_.kSize = 8192;
     uint32_t factorA = 64;
     uint32_t factorB = 32;
-    tiling.mxL0CPingpongEligibility_ = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_,
-                                                                             tiling.compileInfo_.npuArch, true);
+    tiling.mxL0CPingpongEligibility_ = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_,
+                                                                             true);
     ASSERT_TRUE(tiling.mxL0CPingpongEligibility_.legacyTail);
     EXPECT_EQ(tiling.DeriveScaleKL1(factorA, 1, factorB, 2, 128), 2048U);
     EXPECT_EQ(factorA, 16U);
     EXPECT_EQ(factorB, 8U);
-    tiling.compileInfo_.npuArch = NpuArch::DAV_9201;
-    tiling.mxL0CPingpongEligibility_ = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_,
-                                                                             tiling.compileInfo_.npuArch, true);
-    EXPECT_FALSE(tiling.mxL0CPingpongEligibility_.explicitPlan);
-    factorA = 64;
-    factorB = 32;
-    EXPECT_EQ(tiling.DeriveScaleKL1(factorA, 1, factorB, 2, 128), 8192U);
-    EXPECT_EQ(factorA, 64U);
-    EXPECT_EQ(factorB, 32U);
 }
 
 TEST(QuantBatchMatmulMxState, UsesLegacyPingpongOnlyWhenExplicitPlanCannotFit)
@@ -392,8 +383,8 @@ TEST(QuantBatchMatmulMxState, UsesLegacyPingpongOnlyWhenExplicitPlanCannotFit)
     tiling.inputParams_.mSize = tiling.inputParams_.nSize = 4096;
     tiling.inputParams_.kSize = 8192;
     tiling.inputParams_.cDtype = ge::DT_FLOAT;
-    tiling.mxL0CPingpongEligibility_ = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_,
-                                                                             tiling.compileInfo_.npuArch, true);
+    tiling.mxL0CPingpongEligibility_ = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_,
+                                                                             true);
     ASSERT_TRUE(tiling.mxL0CPingpongEligibility_.explicitPlan);
     ASSERT_FALSE(tiling.mxL0CPingpongEligibility_.legacyTail);
     const auto pingpong = static_cast<uint64_t>(optiling::QMMKernelType::NO_VEC_EPILOGUE_WITH_MMAPI_MX_L0C_PINGPONG);
@@ -408,17 +399,27 @@ TEST(QuantBatchMatmulMxState, UsesLegacyPingpongOnlyWhenExplicitPlanCannotFit)
     EXPECT_EQ(tiling.GetKernelType(), basic);
     EXPECT_EQ(tiling.tilingData_.adaptiveSlidingWin.mL0, 0U);
     tiling.inputParams_.cDtype = ge::DT_BF16;
-    tiling.mxL0CPingpongEligibility_ = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_,
-                                                                             tiling.compileInfo_.npuArch, true);
+    tiling.mxL0CPingpongEligibility_ = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_,
+                                                                             true);
     ASSERT_TRUE(tiling.mxL0CPingpongEligibility_.legacyTail);
     tiling.ApplyMxL0CPingpongPlan();
     EXPECT_EQ(tiling.GetKernelType(), pingpong);
     EXPECT_EQ(tiling.tilingData_.adaptiveSlidingWin.mL0, 0U);
 
-    tiling.mxL0CPingpongEligibility_ = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_,
-                                                                             tiling.compileInfo_.npuArch, false);
+    tiling.mxL0CPingpongEligibility_ = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_,
+                                                                             false);
     tiling.ApplyMxL0CPingpongPlan();
     EXPECT_EQ(tiling.GetKernelType(), basic);
+}
+
+TEST(QuantBatchMatmulMxState, PingpongMxfp4KeepsShapeLevelGateOnDav3510)
+{
+    MxStateProbe tiling;
+    tiling.inputParams_.mSize = tiling.inputParams_.nSize = 4096;
+    tiling.inputParams_.kSize = 8192;
+    tiling.inputParams_.aDtype = tiling.inputParams_.bDtype = ge::DT_FLOAT4_E2M1;
+    const auto eligibility = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true);
+    EXPECT_TRUE(eligibility.legacyTail);
 }
 
 TEST(QuantBatchMatmulMxState, RepeatLoadRatioAccountsForBothOperandWindows)
