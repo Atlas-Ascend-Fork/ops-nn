@@ -1089,6 +1089,28 @@ ge::graphStatus Conv3DDWV2BasicBlockTilingArch35::DoLibApiTiling()
     return ge::GRAPH_SUCCESS;
 }
 
+bool Conv3DDWV2BasicBlockTilingArch35::NeedWWindow() const
+{
+    // isSplitKernelHW 走独立实现（ComputeSplitKernelHW），kernel 侧不消费该标志
+    if (blockTiling_.isSplitKernelHW) {
+        return false;
+    }
+    const conv_bp_v2_kernel::TConv3DDwTiling& dwt = tilingData_.dwTiling;
+    // isSplitWo_ 时走切分路径，不属于 needWWindow_
+    if (dwt.splitWo != dwt.wo) {
+        return false;
+    }
+    // 与 kernel 原 InitParams 中 b1NaturalW 的计算保持一致：
+    // (wi + padL + padR - ((wk - 1) * dilationW + 1)) / strideW + 1
+    const int64_t strideW = static_cast<int64_t>(dwt.strideW);
+    const int64_t b1NaturalW = (static_cast<int64_t>(dwt.wi) + static_cast<int64_t>(dwt.padLeft) +
+                                static_cast<int64_t>(dwt.padRight) -
+                                (static_cast<int64_t>(dwt.wk) - 1) * static_cast<int64_t>(dwt.dilationW) - 1) /
+                                   strideW +
+                               1;
+    return b1NaturalW != static_cast<int64_t>(dwt.wo);
+}
+
 uint64_t Conv3DDWV2BasicBlockTilingArch35::GetTilingKey() const
 {
     // STREAM_K/MN_STREAM_K 模板已合并，key 统一编码为 TPL_STREAM_K；
@@ -1102,8 +1124,11 @@ uint64_t Conv3DDWV2BasicBlockTilingArch35::GetTilingKey() const
 
 ge::graphStatus Conv3DDWV2BasicBlockTilingArch35::PostTiling()
 {
+    // 非切分 W 窗口修正标志随 tilingData 下发，kernel 侧直接消费
+    tilingData_.dwTiling.needWWindow = NeedWWindow() ? 1U : 0U;
     size_t tilingData_size = sizeof(conv_bp_v2_kernel::Conv3DBackpropFilterV2TilingData);
-    OP_LOGD(opName_, "final tiling data size: %zu", tilingData_size);
+    OP_LOGD(opName_, "needWWindow: %lu, final tiling data size: %zu", tilingData_.dwTiling.needWWindow,
+            tilingData_size);
 
     OP_TILING_CHECK(tilingData_size % sizeof(uint64_t) != 0,
                     CUBE_INNER_ERR_REPORT(opName_, "tiling data size[%zu] not aligned to 8", tilingData_size),

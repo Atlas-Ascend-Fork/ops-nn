@@ -77,6 +77,8 @@ struct TConv3DDwTiling {
     uint64_t singleCoreBatch = 1;
     uint64_t singleCoreCin = 1;
     uint64_t singleCoreBatchDout = 1;
+    // host 计算的非切分 W 窗口修正标志（!isSplitWo_ && b1NaturalW != wo），kernel 直接消费
+    uint64_t needWWindow = 0;
 };
 
 struct Conv3DBackpropFilterV2TilingData {

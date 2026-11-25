@@ -264,6 +264,8 @@ __aicore__ inline void InitParams(Intf* self)
     self->ctx.hiStartIdx_ = 0;
     self->ctx.dkStartIdx_ = 0;
     self->ctx.isSplitWo_ = !(self->ctx.tiling_->splitWo == self->ctx.tiling_->wo);
+    // needWWindow_ 由 host 计算并随 tilingData 下发
+    self->ctx.b1WWindow_ = false;
     InitParamsPart2<Intf>(self);
     InitLoadToB2Params<Intf>(self);
     InitLoadToA2Params<Intf>(self);

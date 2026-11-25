@@ -130,6 +130,9 @@ protected:
     // 7、保存Tiling数据
     ge::graphStatus PostTiling() override;
 
+    // 非切分路径是否需要修正 B1 的 W 窗口（!isSplitWo_ && b1NaturalW != wo），供 tilingData 下发
+    bool NeedWWindow() const;
+
     // Conv3DBackpropFilterV2Tiling orginial methods
     void Reset();
 

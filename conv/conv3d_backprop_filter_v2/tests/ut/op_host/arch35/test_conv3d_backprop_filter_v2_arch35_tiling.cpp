@@ -68,6 +68,8 @@ struct Conv3DBpFilterV2TilingTestParam {
     uint32_t block_dim;
     uint64_t tiling_key;
     std::string tiling_data;
+    // 转置卷积 output_padding（origin format 顺序，NCDHW 下 index 4 为 W）；默认全 0
+    std::vector<int64_t> output_padding = {0, 0, 0, 0, 0};
 };
 
 class Conv3DBackpropFilterV2TilingRunTime3 : public testing::TestWithParam<Conv3DBpFilterV2TilingTestParam> {};
@@ -157,8 +159,8 @@ static void TestOneParamCase(const Conv3DBpFilterV2TilingTestParam& param)
                                   {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(param.groups)},
                                   {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>(param.data_format)},
                                   {"enable_hf32", Ops::NN::AnyValue::CreateFrom<bool>(false)},
-                                  {"output_padding", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(
-                                                         std::vector<int64_t>{0, 0, 0, 0, 0})},
+                                  {"output_padding",
+                                   Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(param.output_padding)},
                                   {"padding", Ops::NN::AnyValue::CreateFrom<std::string>(param.padding)}})
                       .NodeInputTd(0, param.dtype, param.fmap_ori_format, param.fmap_format)
                       .NodeInputTd(1, ge::DT_INT32, param.filter_ori_format, param.filter_format)
@@ -254,7 +256,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      0,
      "33 4 1152 4 1152 1 16 16 1 32 32 1 2 2 1 1 1 2 2 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 144 112 64 16 16 16 3 3 1 21504 "
-     "48384 0 1 1 144 16 16 1 32 144 64 256 1 0 16 0 9 0 "},
+     "48384 0 1 1 144 16 16 1 32 144 64 256 1 0 16 0 9 0 0 0 "},
 
     {"conv_stdit_01_fp16_cv_ratio_bad",
      "3510",
@@ -345,7 +347,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      512,
      "1 512 512 16 16 1 16 16 1 32 32 1 2 2 512 32 1 2 2 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 16 256 64 16 16 16 1 1 0 16384 "
-     "4096 0 1 1 16 16 16 0 32 16 64 256 1 0 16 0 1 0 "},
+     "4096 0 1 1 16 16 16 0 32 16 64 256 1 0 16 0 1 0 0 0 "},
 
     {"conv_stdit_01_group",
      "3510",
@@ -376,7 +378,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      0,
      "1 4 1152 1 288 1 16 16 1 32 32 1 2 2 4 4 1 2 2 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 144 64 64 16 16 16 1 1 1 4096 9216 "
-     "0 1 1 144 4 16 2 32 144 64 64 1 0 16 0 1 0 "},
+     "0 1 1 144 4 16 2 32 144 64 64 1 0 16 0 1 0 0 0 "},
 
     {"magvit_07_b16_deterministic",
      "3510",
@@ -407,7 +409,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      0,
      "16 256 256 256 256 20 32 32 22 34 34 3 3 3 1 1 1 1 1 0 0 0 0 0 0 1 1 1 16 2 2 1 2 2 256 64 144 16 16 16 7 7 0 "
-     "8704 114688 0 1 1 256 32 32 1 32 256 144 1024 1 0 16 0 160 0 "},
+     "8704 114688 0 1 1 256 32 32 1 32 256 144 1024 1 0 16 0 160 0 0 0 "},
 
     {"conv_NCDHW_vqvae_net_ID_1_modified_deterministic",
      "3510",
@@ -438,7 +440,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      0,
      "1 128 128 128 128 17 64 64 17 129 129 1 3 3 1 1 1 2 2 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 128 64 144 16 16 16 8 8 0 "
-     "35088 65536 0 1 1 128 64 64 1 32 128 144 4096 1 0 16 0 5 0 "},
+     "35088 65536 0 1 1 128 64 64 1 32 128 144 4096 1 0 16 0 5 0 0 0 "},
 
     {"aclnnConvolutionBackward_bf16_NCDHW_convPlan1_000001_deterministic",
      "3510",
@@ -469,7 +471,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      0,
      "1 256 256 256 256 6 66 66 8 128 128 4 4 4 1 1 2 2 2 3 3 3 3 3 3 1 1 1 16 2 2 1 2 2 256 64 256 16 16 16 6 6 0 "
-     "32768 98304 0 1 1 256 66 66 0 32 256 256 4356 1 0 16 0 6 0 "},
+     "32768 98304 0 1 1 256 66 66 0 32 256 256 4356 1 0 16 0 6 0 0 0 "},
 
     {"aclnnConvolutionBackward_bf16_NCDHW_convPlan1_000002_deterministic",
      "3510",
@@ -500,7 +502,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      0,
      "1 128 256 128 256 4 64 64 4 64 64 1 1 1 1 1 1 1 1 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 256 64 128 16 16 16 2 2 1 16384 "
-     "32768 0 1 1 256 2 64 2 32 256 128 128 1 0 128 0 4 0 "},
+     "32768 0 1 1 256 2 64 2 32 256 128 128 1 0 128 0 4 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_conv_bfloat16_NCDHW_net_ID4403_0002_deterministic",
      "3510",
@@ -531,7 +533,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      0,
      "2 4 1152 4 1152 16 17 23 16 34 46 1 2 2 1 1 1 2 2 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 144 112 64 16 16 16 4 4 1 30912 "
-     "64512 0 1 1 144 17 23 1 32 144 64 391 1 0 16 0 8 0 "},
+     "64512 0 1 1 144 17 23 1 32 144 64 391 1 0 16 0 8 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_SplitW_001",
      "3510",
@@ -562,7 +564,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      24,
      0,
      "1 4 2 4 2 5 4 539 15 4 539 12 3 3 1 1 3 1 1 4 5 6 6 6 6 1 6 6 16 2 2 2 2 2 16 112 144 16 16 16 8 8 0 42560 15360 "
-     "0 1 1 16 4 128 1 32 16 144 2156 1 0 16 0 3 0 "},
+     "0 1 1 16 4 128 1 32 16 144 2156 1 0 16 0 3 0 0 0 "},
 
     // NDHWC key=1
     {"3DDW_bfloat16_NDHWC_1_deterministic",
@@ -594,7 +596,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      28,
      0,
      "2 224 128 224 128 1 28 28 1 28 28 1 1 1 1 1 1 1 1 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 128 32 224 16 16 16 1 1 0 18816 "
-     "4096 0 1 1 128 1 28 2 32 128 224 28 1 0 224 0 2 0 "},
+     "4096 0 1 1 128 1 28 2 32 128 224 28 1 0 224 0 2 0 0 0 "},
 
     // NDHWC KEY=3
     {"3DDW_bfloat16_NDHWC_2_deterministic",
@@ -626,7 +628,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      0,
      "1 256 512 256 512 1 16 16 1 16 16 1 3 3 1 1 1 1 1 0 0 1 1 1 1 1 1 1 16 2 2 1 2 2 256 64 144 16 16 16 4 4 0 4608 "
-     "65536 0 1 1 256 16 16 0 32 256 144 256 1 0 16 0 1 0 "},
+     "65536 0 1 1 256 16 16 0 32 256 144 256 1 0 16 0 1 0 0 0 "},
 
     // NDHWC FP32
     {"3DDW_float32_NDHWC_1_deterministic",
@@ -658,7 +660,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      28,
      0,
      "2 224 128 224 128 1 28 28 1 28 28 1 1 1 1 1 1 1 1 0 0 0 0 0 0 1 1 1 8 2 2 2 2 2 128 32 224 16 8 16 1 1 0 18816 "
-     "4096 0 1 1 128 1 28 2 32 128 224 28 1 0 224 0 2 0 "},
+     "4096 0 1 1 128 1 28 2 32 128 224 28 1 0 224 0 2 0 0 0 "},
 
     // NDHWC group
     {"3DDW_bfloat16_NDHWC_1_deterministic_group",
@@ -690,7 +692,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      24,
      0,
      "1 720 720 120 120 1 16 16 1 16 16 1 1 1 6 6 1 1 1 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 128 64 128 16 16 16 1 1 0 8192 "
-     "8192 0 1 1 128 4 16 2 32 128 128 64 1 0 128 0 1 0 "},
+     "8192 0 1 1 128 4 16 2 32 128 128 64 1 0 128 0 1 0 0 0 "},
 
     // groupEnlarge does not allow to adjust baseBlock
     {"3DDW_group_enlarge_baseM80",
@@ -722,7 +724,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      17,
      512,
      "17 14 78 14 78 1 1 240 1 1 240 1 1 1 2 1 1 1 1 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 80 192 16 16 16 16 2 2 1 11520 "
-     "30720 0 1 1 80 1 240 1 32 80 16 240 1 0 16 0 1 0 "},
+     "30720 0 1 1 80 1 240 1 32 80 16 240 1 0 16 0 1 0 0 0 "},
 
     // when batchdout=1 or howo=1, streamkType will set 0; after streamK template merge,
     // host uniformly emits TPL_STREAM_K (template id 0), no standalone MN_STREAM_K key
@@ -755,7 +757,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      1,
      0,
      "1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 16 16 16 16 16 16 1 1 0 256 256 0 1 1 16 1 "
-     "1 0 32 16 16 1 1 0 16 0 1 0 "},
+     "1 0 32 16 16 1 1 0 16 0 1 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_DilationMin",
      "3510",
@@ -786,7 +788,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      11,
      0,
      "1 1 1 1 1 1 11 11 1 12 12 1 2 2 1 1 1 1 1 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 16 16 64 16 16 16 1 1 0 768 256 0 1 1 "
-     "16 1 11 2 32 16 64 11 1 0 16 0 1 0 "},
+     "16 1 11 2 32 16 64 11 1 0 16 0 1 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_DilationMax",
      "3510",
@@ -817,7 +819,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      11,
      0,
      "1 1 1 1 1 1 11 11 1 12 12 1 2 2 1 1 1 1 1 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 16 16 64 16 16 16 1 1 0 768 256 0 1 1 "
-     "16 1 11 2 32 16 64 11 1 0 16 0 1 0 "},
+     "16 1 11 2 32 16 64 11 1 0 16 0 1 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_DilationOver",
      "3510",
@@ -878,7 +880,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      2,
      0,
      "1 1 1 1 1 1 2 300 1 3 301 1 2 2 1 1 1 1 1 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 16 256 64 16 16 16 2 2 0 19264 8192 0 1 "
-     "1 16 1 300 2 32 16 64 300 1 0 16 0 1 0 "},
+     "1 16 1 300 2 32 16 64 300 1 0 16 0 1 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_StrideHMax",
      "3510",
@@ -909,7 +911,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      1,
      256,
      "1 1 1 1 1 1 1 1 1 2147483646 1 1 1 1 1 1 1 2147483646 1 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 16 16 16 16 16 16 1 1 0 "
-     "256 256 0 1 1 16 1 1 0 32 16 16 1 1 0 16 0 1 0 "},
+     "256 256 0 1 1 16 1 1 0 32 16 16 1 1 0 16 0 1 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_StrideWMax",
      "3510",
@@ -940,7 +942,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      1,
      256,
      "1 1 1 1 1 1 1 1 1 1 2147483646 1 1 1 1 1 1 1 2147483646 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 16 16 16 16 16 16 1 1 0 "
-     "256 256 0 1 1 16 1 1 0 32 16 16 1 1 0 16 0 1 0 "},
+     "256 256 0 1 1 16 1 1 0 32 16 16 1 1 0 16 0 1 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_StrideWMax_NDHWC",
      "3510",
@@ -971,7 +973,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      1,
      256,
      "1 1 1 1 1 1 1 1 1 1 2147483646 1 1 1 1 1 1 1 2147483646 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 16 16 16 16 16 16 1 1 0 "
-     "256 256 0 1 1 16 1 1 0 32 16 16 1 1 0 16 0 1 0 "},
+     "256 256 0 1 1 16 1 1 0 32 16 16 1 1 0 16 0 1 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_SplitW0",
      "3510",
@@ -1002,7 +1004,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      16,
      256,
      "16 1 1 1 1 1 16 513 1 962 32770 1 2 2 1 1 1 64 64 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 16 256 64 16 16 16 8 8 0 32768 "
-     "32768 0 1 1 16 16 128 1 32 16 64 8208 1 0 16 0 1 0 "},
+     "32768 0 1 1 16 16 128 1 32 16 64 8208 1 0 16 0 1 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_ShrinkBaseBlock",
      "3510",
@@ -1033,7 +1035,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      1,
      256,
      "1 3 3 3 3 1 1 3 1 54 142 1 1 40 1 1 1 61 57 0 0 0 0 25 26 1 1 2 16 2 2 2 2 2 16 16 224 16 16 16 1 1 0 336 512 0 "
-     "1 1 16 1 16 0 32 16 640 3 1 0 16 0 1 0 "},
+     "1 1 16 1 16 0 32 16 640 3 1 0 16 0 1 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_CheckHoShapeErr",
      "3510",
@@ -1154,7 +1156,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      256,
      "16 16 16 16 16 2 5 10 5 9 38 4 5 10 1 1 1 1 60 0 0 0 0 256 256 1 1 1 16 2 2 2 2 2 16 64 208 16 16 16 1 1 0 1280 "
-     "1024 0 1 1 16 5 10 1 32 16 800 50 1 0 16 0 4 0 "},
+     "1024 0 1 1 16 5 10 1 32 16 800 50 1 0 16 0 4 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_padH256",
      "3510",
@@ -1185,7 +1187,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      256,
      "16 16 16 16 16 2 20 10 5 443 518 4 5 10 1 1 1 50 60 0 0 256 256 16 16 1 1 1 16 2 2 2 2 2 16 64 208 16 16 16 4 4 "
-     "0 4320 4096 0 1 1 16 20 10 1 32 16 800 200 1 0 16 0 4 0 "},
+     "0 4320 4096 0 1 1 16 20 10 1 32 16 800 200 1 0 16 0 4 0 0 0 "},
 
     {"aclnnConvolutionBackward_3DDW_AdjustSmallBlock",
      "3510",
@@ -1216,7 +1218,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      0,
      "32 1024 1024 1024 1024 1 14 14 1 14 14 1 1 1 1 1 1 1 1 0 0 0 0 0 0 1 1 1 8 2 2 1 2 2 256 32 256 16 8 16 3 3 0 "
-     "28672 24576 0 1 1 256 14 14 1 36 256 256 196 1 0 256 0 16 0 "},
+     "28672 24576 0 1 1 256 14 14 1 36 256 256 196 1 0 256 0 16 0 0 0 "},
 
     {"aclnnConvolutionBackward_2DDW_SplitKernelOnKStartPtExceedLimit",
      "3510",
@@ -1247,7 +1249,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      256,
      "1 1 1 1 1 1 192 43 1 625 1 1 172 142 1 1 1 3 3 0 0 60 60 134 134 1 1 1 8 2 2 2 2 2 16 32 256 16 8 16 8 8 0 4816 "
-     "4096 0 1 1 16 6 43 2 32 16 390784 258 1 0 16 0 1 0 "},
+     "4096 0 1 1 16 6 43 2 32 16 390784 258 1 0 16 0 1 0 0 0 "},
 
     {"aclnnConvolutionBackward_2DDW_AdjustSmallCaseBaseBlockForSingleCoreN",
      "3510",
@@ -1278,7 +1280,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      26,
      0,
      "21 18 18 18 18 1 38 277 1 570 4155 1 15 15 1 1 1 15 15 0 0 0 0 0 0 1 1 1 8 2 2 2 1 1 32 16 256 16 8 16 1 1 0 "
-     "90000 1024 0 1 1 32 3 16 2 32 32 3600 831 1 0 16 0 21 0 "},
+     "90000 1024 0 1 1 32 3 16 2 32 32 3600 831 1 0 16 0 21 0 0 0 "},
     {"conv3d_bp_filter_wino_fp32_3x3",
      "3510",
      "3510",
@@ -1308,7 +1310,7 @@ Conv3DBpFilterV2TilingTestParam cases_params_950[] = {
      32,
      1024,
      "1 256 256 256 256 1 16 16 1 16 16 1 3 3 1 1 1 1 1 0 0 1 1 1 1 1 1 1 8 2 2 1 1 1 128 128 128 16 8 16 1 1 0 48 "
-     "65536 0 1 1 128 8 512 1 32 128 128 128 1 0 16 0 1 0 "},
+     "65536 0 1 1 128 8 512 1 32 128 128 128 1 0 16 0 1 0 0 0 "},
 
     // 门禁1：out_backprop的N维(1)与x的batch(2)不一致，tiling侧SetGradOutputDesc拦截
     {"aclnnConvolutionBackward_3DDW_CheckBatchMismatch",
@@ -1429,8 +1431,49 @@ TEST_F(Conv3DBackpropFilterV2TilingRunTime3, tf_padding_same_recal_when_pads_neg
         32,
         1024,
         "1 256 256 256 256 1 16 16 1 16 16 1 3 3 1 1 1 1 1 0 0 1 1 1 1 1 1 1 8 2 2 1 1 1 128 128 128 16 8 16 1 1 0 "
-        "48 65536 0 1 1 128 8 512 1 32 128 128 128 1 0 16 0 1 0 "};
+        "48 65536 0 1 1 128 8 512 1 32 128 128 128 1 0 16 0 1 0 0 0 "};
     TestOneParamCase(tfSameParam);
+}
+
+TEST_F(Conv3DBackpropFilterV2TilingRunTime3, needWWindow_true)
+{
+    // 转置卷积 dw：output_padding_w=1 且 dilation_w=2 > stride_w=1。
+    // host 形状校验按 (wi - op_w) 反推 wo=2；kernel 侧自然反推 b1NaturalW=3 != wo，
+    // 非切分路径应置 needWWindow=1 并走 B1 W 窗口修正。
+    Conv3DBpFilterV2TilingTestParam needWWindowParam = {
+        "needWWindow_true",
+        "3510",
+        "3510",
+        COMPILE_INFO_STR_950,
+        {1, 16, 1, 1, 7},
+        {1, 16, 1, 1, 7},
+        {16, 16, 1, 1, 3},
+        {16, 16, 1, 1, 3},
+        {1, 16, 1, 1, 2},
+        {1, 16, 1, 1, 2},
+        ge::FORMAT_NCDHW,
+        ge::FORMAT_NCDHW,
+        ge::FORMAT_NCDHW,
+        ge::FORMAT_NCDHW,
+        ge::FORMAT_NCDHW,
+        ge::FORMAT_NCDHW,
+        ge::DT_FLOAT16,
+        {1, 1, 1, 1, 1},
+        {0, 0, 0, 0, 0, 0},
+        {1, 1, 1, 1, 2},
+        1,
+        "NCDHW",
+        "VALID",
+        1,
+        true,
+        true,
+        1,
+        0,
+        // 末尾两个 int32 为 needWWindow(uint64) 的低/高 32 位：1 0
+        "1 16 16 16 16 1 1 2 1 1 7 1 1 3 1 1 1 1 1 0 0 0 0 0 0 1 1 2 16 2 2 2 2 2 16 16 48 16 16 16 1 1 0 896 256 "
+        "0 1 1 16 1 2 0 32 16 48 2 1 0 16 0 1 0 1 0 ",
+        {0, 0, 0, 0, 1}};
+    TestOneParamCase(needWWindowParam);
 }
 
 TEST(Conv3DBackpropFilterV2StreamKUnitTest, adjustStepKForL1FallbackWhenL1AlwaysInvalid)

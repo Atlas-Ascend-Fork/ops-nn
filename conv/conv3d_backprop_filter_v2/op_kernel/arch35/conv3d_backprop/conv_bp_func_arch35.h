@@ -61,7 +61,6 @@ __aicore__ inline void ComputeNormal(Intf* self, Out2L1ScalarParams& out2L1Param
     if ASCEND_IS_AIV {
         return;
     }
-
     LocalTensor<typename Intf::SrcT> l0a;
     LocalTensor<typename Intf::SrcT> l0b;
     LocalTensor<typename Intf::L0cT> l0c;
@@ -85,7 +84,7 @@ __aicore__ inline void ComputeNormal(Intf* self, Out2L1ScalarParams& out2L1Param
         calculateWoIterTimes(self, woIterateTimes, splitWo);
         for (int32_t splitWoIdx = 0; splitWoIdx < woIterateTimes; splitWoIdx++) {
             updateSingleShapeWoI(self, out2L1Params, woIterateTimes, splitWoIdx, splitWo);
-            if (unlikely(self->ctx.isSplitWo_)) {
+            if (unlikely(self->ctx.b1WWindow_)) {
                 updateParasForSplitW(self, out2L1Params, splitWoIdx * splitWo, out2A1SrcAddrStart, out2B1SrcAddrStart);
             }
             if (!self->ctx.load3d_.l1W) {
@@ -194,6 +193,9 @@ struct SetSingleShape {
         InitStepMParams<Intf>(self);
         self->SetSingleShapeK(singleShapeK);
         InitStepNParams<Intf>(self);
+        // 只依赖 kernel 级常量与本次 single shape 的 curSingleCoreDk_，在此算一次，避免每次 Compute 重复判断
+        self->ctx.b1WWindow_ = self->ctx.isSplitWo_ ||
+                               (self->ctx.tiling_->needWWindow != 0 && self->ctx.curSingleCoreDk_ == 1);
         // 每次iterall之前都需将如下变量初始化赋值一次，否则会出现尾块精度问题
         self->ctx.head_ = 0;
         self->ctx.tail_ = 0;

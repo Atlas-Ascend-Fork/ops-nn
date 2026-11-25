@@ -114,6 +114,7 @@ public:
         DEFINE_STUCT_FIELD(uint8_t, isFirstIter_);
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
         DEFINE_STUCT_FIELD(bool, isSplitWo_);
+        DEFINE_STUCT_FIELD(bool, b1WWindow_);
 #endif
         using LocalTnesor = LocalTensor<typename Intf::SrcT>;
         DEFINE_STUCT_FIELD(LocalTnesor, cacheA1BufPing_);

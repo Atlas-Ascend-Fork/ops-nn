@@ -82,7 +82,7 @@ static __aicore__ inline void LoadToB1Dn2Nz(Intf* self, const uint32_t hiCopyLen
                                             const Out2L1ScalarParams& params,
                                             LocalTensor<typename Intf::SrcT>& useB1Buf)
 {
-    if (likely(!self->ctx.isSplitWo_)) {
+    if (likely(!self->ctx.b1WWindow_)) {
         Dn2NzParams dn2NzParams;
         dn2NzParams.dnNum = self->ctx.curSingleCoreDk_;
 
@@ -119,7 +119,7 @@ static __aicore__ inline void LoadToB1Nd2Nz(Intf* self, const uint32_t hiCopyLen
                                             const Out2L1ScalarParams& params,
                                             LocalTensor<typename Intf::SrcT>& useB1Buf)
 {
-    if (likely(!self->ctx.isSplitWo_)) {
+    if (likely(!self->ctx.b1WWindow_)) {
         Nd2NzParams nd2NzParams;
         nd2NzParams.ndNum = self->ctx.curSingleCoreDk_;
         nd2NzParams.srcNdMatrixStride = self->ctx.hwI_ * self->ctx.tiling_->cin;
