@@ -24,8 +24,8 @@
 #include "../../op_kernel/transpose_quant_batch_mat_mul_w8a8_tiling_key.h"
 
 #include <algorithm>
-#include <cstring>
 
+#include "securec.h"
 #include "error_util.h"
 #include "log/log.h"
 #include "platform/platform_infos_def.h"
@@ -84,11 +84,11 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
     const auto& sx2 = shape_x2_desc->GetOriginShape(); // [B, K, N]
     const auto& sts = shape_ts_desc->GetOriginShape(); // [M, B]
     const auto& scs = shape_cs_desc->GetOriginShape(); // [B, N]
-    W8A8_CHECK(sx1.GetDimNum() != 3 || sx2.GetDimNum() != 3,
+    W8A8_CHECK(sx1.GetDimNum() != W8A8_X_RANK || sx2.GetDimNum() != W8A8_X_RANK,
                CUBE_INNER_ERR_REPORT(name_op, "W8A8 x1/x2 origin rank must be 3 (got %zu, %zu)", sx1.GetDimNum(),
                                      sx2.GetDimNum()),
                return ge::GRAPH_FAILED);
-    W8A8_CHECK(sts.GetDimNum() != 2 || scs.GetDimNum() != 2,
+    W8A8_CHECK(sts.GetDimNum() != W8A8_SCALE_RANK || scs.GetDimNum() != W8A8_SCALE_RANK,
                CUBE_INNER_ERR_REPORT(name_op, "W8A8 scale rank must be 2 (got ts=%zu, cs=%zu)", sts.GetDimNum(),
                                      scs.GetDimNum()),
                return ge::GRAPH_FAILED);
@@ -97,14 +97,14 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
     auto mulOverflow = [](int64_t a, int64_t b) -> bool {
         return a > 0 && b > 0 && a > (std::numeric_limits<int64_t>::max() / b);
     };
-    for (size_t i = 0; i < 3; ++i) {
+    for (size_t i = 0; i < W8A8_X_RANK; ++i) {
         W8A8_CHECK(sx1.GetDim(i) <= 0 || sx2.GetDim(i) <= 0,
                    CUBE_INNER_ERR_REPORT(name_op, "W8A8 unknown/zero dim in x1/x2 not supported"),
                    return ge::GRAPH_FAILED);
         W8A8_CHECK(sx1.GetDim(i) > INT32_SAFE_MAX || sx2.GetDim(i) > INT32_SAFE_MAX,
                    CUBE_INNER_ERR_REPORT(name_op, "W8A8 x1/x2 dim exceeds int32 limit"), return ge::GRAPH_FAILED);
     }
-    for (size_t i = 0; i < 2; ++i) {
+    for (size_t i = 0; i < W8A8_SCALE_RANK; ++i) {
         W8A8_CHECK(sts.GetDim(i) <= 0 || scs.GetDim(i) <= 0,
                    CUBE_INNER_ERR_REPORT(name_op, "W8A8 unknown/zero dim in scales not supported"),
                    return ge::GRAPH_FAILED);
@@ -126,9 +126,9 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
                CUBE_INNER_ERR_REPORT(name_op, "W8A8 perm size must be 3 (got x1=%zu, x2=%zu, y=%zu)",
                                      perm_x1->GetSize(), perm_x2->GetSize(), perm_y->GetSize()),
                return ge::GRAPH_FAILED);
-    const auto* px1 = reinterpret_cast<const int64_t*>(perm_x1->GetData());
-    const auto* px2 = reinterpret_cast<const int64_t*>(perm_x2->GetData());
-    const auto* py = reinterpret_cast<const int64_t*>(perm_y->GetData());
+    const auto* px1 = static_cast<const int64_t*>(perm_x1->GetData());
+    const auto* px2 = static_cast<const int64_t*>(perm_x2->GetData());
+    const auto* py = static_cast<const int64_t*>(perm_y->GetData());
     // K-C only allows perm_x2 [0, 1, 2]: x2 is stored as [B, K, N].
     const bool bTrans = false;
     // int64 域校验 shape 一致性，再缩窄
@@ -203,10 +203,11 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
     auto raw_tiling = context->GetRawTilingData();
     OP_TILING_CHECK(raw_tiling == nullptr, CUBE_INNER_ERR_REPORT(name_op, "W8A8 raw tiling null"),
                     return ge::GRAPH_FAILED);
-    TQBMMW8A8TilingData* tiling = reinterpret_cast<TQBMMW8A8TilingData*>(raw_tiling->GetData());
+    TQBMMW8A8TilingData* tiling = static_cast<TQBMMW8A8TilingData*>(raw_tiling->GetData());
     OP_TILING_CHECK(tiling == nullptr, CUBE_INNER_ERR_REPORT(name_op, "W8A8 tiling data cast null"),
                     return ge::GRAPH_FAILED);
-    memset(tiling, 0, sizeof(TQBMMW8A8TilingData));
+    W8A8_CHECK(memset_s(tiling, raw_tiling->GetCapacity(), 0, sizeof(TQBMMW8A8TilingData)) != EOK,
+               CUBE_INNER_ERR_REPORT(name_op, "W8A8 memset tiling data failed"), return ge::GRAPH_FAILED);
     tiling->batchSplitFactor = 1;
     tiling->matmulTiling.matmulRunInfo.transB = bTrans;
 
@@ -223,8 +224,8 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
         mt.Ka = K;
         mt.Kb = K;
         mt.baseK = PpW8A8::L0_K;
-        mt.dbL0A = 2;
-        mt.dbL0B = 2;
+        mt.dbL0A = W8A8_BUFFER_NUM;
+        mt.dbL0B = W8A8_BUFFER_NUM;
         PpW8A8::Capacity cap{aicNum, 0, 0, 0, 0, 0};
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L1, cap.l1);
         ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_A, cap.l0a);
@@ -262,8 +263,8 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
             mt.stepKb = step;
             mt.depthA1 = step * 2U;
             mt.depthB1 = step * 2U;
-            mt.dbL0A = 2;
-            mt.dbL0B = 2;
+            mt.dbL0A = W8A8_BUFFER_NUM;
+            mt.dbL0B = W8A8_BUFFER_NUM;
         }
     }
     mt.singleCoreM = std::min<uint32_t>(M, mt.baseM);
@@ -304,9 +305,9 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
     pp.isPertoken = 1;
     pp.isDoubleScale = 0;
     pp.biasThreeDim = 0;
-    pp.ubCalcM = std::min<uint32_t>(singleCoreM, 16);
+    pp.ubCalcM = std::min<uint32_t>(singleCoreM, W8A8_M_ALIGN);
     pp.ubCalcN = singleCoreN;
-    pp.needUbBuffer = 32 * 1024;
+    pp.needUbBuffer = W8A8_UB_RESERVED_BYTES;
     pp.realSingleCoreM = singleCoreM;
     pp.realSingleCoreN = singleCoreN;
     pp.biasDtype = static_cast<uint32_t>(ge::DT_INT32);
@@ -316,7 +317,7 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
     if (usePp) {
         pp.ubCalcM = PpW8A8::VectorRows(singleCoreM, singleCoreN, ubSize);
     }
-    if (!usePp && bTrans && singleCoreN <= 96) {
+    if (!usePp && bTrans && singleCoreN <= W8A8_SMALL_N_LIMIT) {
         const uint32_t candidateM = std::min<uint32_t>(singleCoreM, 64);
         const uint64_t alignedM = (candidateM + 7U) / 8U * 8U;
         const uint64_t requiredUb = 20ULL * candidateM * singleCoreN + pp.needUbBuffer + 8ULL * singleCoreN +

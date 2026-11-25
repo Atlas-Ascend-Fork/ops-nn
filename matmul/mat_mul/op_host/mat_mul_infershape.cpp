@@ -18,6 +18,7 @@
 namespace ops {
 namespace {
 constexpr size_t MATMUL_BIAS_IDX = 2;
+constexpr size_t MATMUL_MAX_RANK = 2;
 static ge::graphStatus InferShapeForMatMul(gert::InferShapeContext* context)
 {
     // MatMul支持1D/2D输入(1D由公共库升维处理);拒绝3D+(那是bmm的场景)
@@ -26,12 +27,12 @@ static ge::graphStatus InferShapeForMatMul(gert::InferShapeContext* context)
     if (shape_x1 == nullptr || shape_x2 == nullptr) {
         return ge::GRAPH_FAILED;
     }
-    if (shape_x1->GetDimNum() > 2) {
+    if (shape_x1->GetDimNum() > MATMUL_MAX_RANK) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x1", Ops::Base::ToString(*shape_x1).c_str(),
                                               "The rank of x1 must be equal to 1 or 2");
         return ge::GRAPH_FAILED;
     }
-    if (shape_x2->GetDimNum() > 2) {
+    if (shape_x2->GetDimNum() > MATMUL_MAX_RANK) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x2", Ops::Base::ToString(*shape_x2).c_str(),
                                               "The rank of x2 must be equal to 1 or 2");
         return ge::GRAPH_FAILED;

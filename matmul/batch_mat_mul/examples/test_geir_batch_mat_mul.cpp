@@ -16,7 +16,6 @@
 #include <cstdio>
 #include <ctime>
 #include <cstdint>
-#include <cstring>
 #include <cmath>
 #include <iostream>
 #include <map>
@@ -24,6 +23,7 @@
 #include <vector>
 
 #include "array_ops.h"
+#include "securec.h"
 #include "ge_api.h"
 #include "ge_api_types.h"
 #include "ge_error_codes.h"
@@ -36,6 +36,11 @@
 
 #define FAILED -1
 #define SUCCESS 0
+
+constexpr int32_t FP16_EXP_BIAS = 15;
+constexpr int32_t FP16_EXP_MAX = 31;
+constexpr uint32_t FP16_MANTISSA_BITS = 10;
+constexpr uint32_t FP16_TO_FP32_MANTISSA_SHIFT = 13;
 
 using namespace ge;
 using std::map;
@@ -66,34 +71,38 @@ uint32_t GetDataTypeSize(DataType dt)
 uint16_t FloatToHalfBits(float value)
 {
     uint32_t bits;
-    memcpy(&bits, &value, sizeof(bits));
+    if (memcpy_s(&bits, sizeof(bits), &value, sizeof(value)) != EOK) {
+        return 0;
+    }
     uint32_t sign = (bits >> 16) & 0x8000;
-    int32_t exp = static_cast<int32_t>((bits >> 23) & 0xFF) - 127 + 15;
-    uint32_t mant = (bits >> 13) & 0x3FF;
+    int32_t exp = static_cast<int32_t>((bits >> 23) & 0xFF) - 127 + FP16_EXP_BIAS;
+    uint32_t mant = (bits >> FP16_TO_FP32_MANTISSA_SHIFT) & 0x3FF;
     if (exp <= 0) {
         return static_cast<uint16_t>(sign);
     }
-    if (exp >= 31) {
+    if (exp >= FP16_EXP_MAX) {
         return static_cast<uint16_t>(sign | 0x7C00);
     }
-    return static_cast<uint16_t>(sign | (static_cast<uint32_t>(exp) << 10) | mant);
+    return static_cast<uint16_t>(sign | (static_cast<uint32_t>(exp) << FP16_MANTISSA_BITS) | mant);
 }
 
 float HalfBitsToFloat(uint16_t bits)
 {
     uint32_t sign = static_cast<uint32_t>((bits >> 15) & 0x1) << 31;
-    int32_t exp = (bits >> 10) & 0x1F;
+    int32_t exp = (bits >> FP16_MANTISSA_BITS) & 0x1F;
     uint32_t mant = bits & 0x3FF;
     uint32_t fBits;
     if (exp == 0) {
         fBits = sign;
-    } else if (exp == 31) {
-        fBits = sign | 0x7F800000 | (mant << 13);
+    } else if (exp == FP16_EXP_MAX) {
+        fBits = sign | 0x7F800000 | (mant << FP16_TO_FP32_MANTISSA_SHIFT);
     } else {
-        fBits = sign | (static_cast<uint32_t>(exp - 15 + 127) << 23) | (mant << 13);
+        fBits = sign | (static_cast<uint32_t>(exp - FP16_EXP_BIAS + 127) << 23) | (mant << FP16_TO_FP32_MANTISSA_SHIFT);
     }
     float value;
-    memcpy(&value, &fBits, sizeof(value));
+    if (memcpy_s(&value, sizeof(value), &fBits, sizeof(fBits)) != EOK) {
+        return 0.0f;
+    }
     return value;
 }
 
@@ -123,7 +132,10 @@ int32_t GenOnesData(vector<int64_t> shapes, Tensor& input_tensor, TensorDesc& in
             pHalf[i] = bits;
         }
     } else {
-        memset(pData, 0, data_len);
+        if (memset_s(pData, data_len, 0, data_len) != EOK) {
+            delete[] pData;
+            return FAILED;
+        }
     }
     input_tensor = Tensor(input_tensor_desc, pData, data_len);
     delete[] pData;

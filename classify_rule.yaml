@@ -1164,6 +1164,10 @@ matmul-c@ops-nn:
       test_code:
         - ops/ops-nn/matmul/addmv/tests/
         - ops/ops-nn/matmul/addmv/examples/
+        - ops/ops-nn/matmul/batch_mat_mul/tests/
+        - ops/ops-nn/matmul/batch_mat_mul/examples/
+        - ops/ops-nn/matmul/batch_mat_mul_v2/tests/
+        - ops/ops-nn/matmul/batch_mat_mul_v2/examples/
         - ops/ops-nn/matmul/batch_mat_mul_v3/tests/
         - ops/ops-nn/matmul/batch_mat_mul_v3/examples/
         - ops/ops-nn/matmul/batch_matmul_quant/tests/
@@ -1182,6 +1186,8 @@ matmul-c@ops-nn:
         - ops/ops-nn/matmul/gemm_syrk/examples/
         - ops/ops-nn/matmul/gemm_v2/tests/
         - ops/ops-nn/matmul/gemm_v2/examples/
+        - ops/ops-nn/matmul/mat_mul/tests/
+        - ops/ops-nn/matmul/mat_mul/examples/
         - ops/ops-nn/matmul/mat_mul_v2/tests/
         - ops/ops-nn/matmul/mat_mul_v2/examples/
         - ops/ops-nn/matmul/mat_mul_v3/tests/
@@ -1194,8 +1200,6 @@ matmul-c@ops-nn:
         - ops/ops-nn/matmul/quant_batch_matmul_v4/examples/
         - ops/ops-nn/matmul/quant_matmul/tests/
         - ops/ops-nn/matmul/quant_matmul/examples/
-        - ops/ops-nn/matmul/quant_matmul_activation_quant/tests/
-        - ops/ops-nn/matmul/quant_matmul_activation_quant/examples/
         - ops/ops-nn/matmul/quant_matmul_dequant/tests/
         - ops/ops-nn/matmul/quant_matmul_dequant/examples/
         - ops/ops-nn/matmul/sparse_tensor_dense_mat_mul/tests/
@@ -1226,9 +1230,11 @@ matmul-c@ops-nn:
         - ops/ops-nn/matmul/gemm_v3/tests
         - ops/ops-nn/matmul/sparse4to2quant_matmul/examples/
         - ops/ops-nn/matmul/quant_matmul_reduce_sum/examples/
-        - ops/ops-nn/matmul/quant_batch_matmul_inplace_add/examples/
       non_delivery:
         - ops/ops-nn/matmul/common/cmct
+        - ops/ops-nn/matmul/fused_weight_quant_mat_mul
+        - ops/ops-nn/matmul/quant_batch_matmul_inplace_add
+        - ops/ops-nn/matmul/quant_matmul_activation_quant
       open_source: null
 
 matmul@ops-nn:

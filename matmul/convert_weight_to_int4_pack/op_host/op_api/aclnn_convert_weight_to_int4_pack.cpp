@@ -268,7 +268,7 @@ static bool CheckShapeValid(const aclTensor* weight, const aclTensor* weightInt4
                 weightInt4PackRank);
         return false;
     }
-    for (size_t i = 0; i + 2 < weightRank; ++i) {
+    for (size_t i = 0; i + INPUT_DIM_MIN_VALUE < weightRank; ++i) {
         const int64_t weightDim = weight->GetViewShape().GetDim(i);
         const int64_t weightInt4PackDim = weightInt4Pack->GetViewShape().GetDim(i);
         if (weightDim != weightInt4PackDim) {

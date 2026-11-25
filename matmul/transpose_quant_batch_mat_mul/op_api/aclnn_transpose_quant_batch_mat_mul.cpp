@@ -399,7 +399,7 @@ inline static bool CheckScaleValid(const aclTensor* x1Scale, const aclTensor* x2
 }
 
 static bool CheckPermValid(const aclIntArray* permX1, const aclIntArray* permX2, const aclIntArray* permY, bool isMxFp,
-                           bool isHIFP8, bool isHIFP4 = false, bool isW8A8 = false)
+                           bool isHIFP8, bool isHIFP4 = false, bool /*isW8A8*/ = false)
 {
     if (permX1->Size() != EXPECTED_DIM) {
         OP_LOGE_FOR_INVALID_LISTSIZE(OP_NAME, "permX1", std::to_string(permX1->Size()).c_str(),
@@ -508,7 +508,8 @@ static bool CheckShapeValid(const aclTensor* x1, const aclTensor* x2, const aclT
                     .c_str());
             return false;
         }
-        if (x1Scale->GetViewShape().GetDimNum() != 2 || x2Scale->GetViewShape().GetDimNum() != 2 ||
+        if (x1Scale->GetViewShape().GetDimNum() != static_cast<size_t>(NUM_TWO) ||
+            x2Scale->GetViewShape().GetDimNum() != static_cast<size_t>(NUM_TWO) ||
             x1Scale->GetViewShape().GetDim(0) != m || x1Scale->GetViewShape().GetDim(1) != x1BatchDim ||
             x2Scale->GetViewShape().GetDim(0) != x1BatchDim || x2Scale->GetViewShape().GetDim(1) != n) {
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(

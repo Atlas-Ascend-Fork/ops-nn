@@ -23,6 +23,8 @@ constexpr size_t QUANT_BATCH_MATMUL_V4_MIN_SHAPE_SIZE = 2;
 constexpr int64_t B_FRAC_K = 64;
 constexpr int64_t B_FRAC_N = 16;
 constexpr size_t FRACTAL_Z_DIM_NUM = 4U;
+constexpr size_t DIM_INDEX_2 = 2;
+constexpr size_t RANK_3D = 3U;
 
 static std::set<std::string> Arch31SupportSoc = {"KirinX90", "Kirin9030"};
 
@@ -49,10 +51,10 @@ static ge::graphStatus InferShapeFracZ(gert::InferShapeContext* context, const g
     int64_t m = 0;
     int64_t kFromX1 = 0;
     const size_t x1DimNum = x1Dims.GetDimNum();
-    if (x1DimNum == 3U && x1Dims.GetDim(0) == 1) {
+    if (x1DimNum == RANK_3D && x1Dims.GetDim(0) == 1) {
         m = x1Dims.GetDim(1);
-        kFromX1 = x1Dims.GetDim(2);
-    } else if (x1DimNum == 2U) {
+        kFromX1 = x1Dims.GetDim(DIM_INDEX_2);
+    } else if (x1DimNum == QUANT_BATCH_MATMUL_V4_MIN_SHAPE_SIZE) {
         m = x1Dims.GetDim(0);
         kFromX1 = x1Dims.GetDim(1);
     } else {
@@ -63,16 +65,16 @@ static ge::graphStatus InferShapeFracZ(gert::InferShapeContext* context, const g
     const size_t x2DimNum = x2Dims.GetDimNum();
     int64_t kFromX2 = 0;
     int64_t n = 0;
-    if (x2DimNum == 2) {
+    if (x2DimNum == QUANT_BATCH_MATMUL_V4_MIN_SHAPE_SIZE) {
         kFromX2 = x2Dims.GetDim(1);
         n = x2Dims.GetDim(0);
     } else if (x2DimNum == FRACTAL_Z_DIM_NUM) {
         kFromX2 = x2Dims.GetDim(0) * B_FRAC_K;
         n = x2Dims.GetDim(1) * B_FRAC_N;
         OP_CHECK_IF(
-            x2Dims.GetDim(2) != B_FRAC_N || x2Dims.GetDim(3) != B_FRAC_K,
+            x2Dims.GetDim(DIM_INDEX_2) != B_FRAC_N || x2Dims.GetDim(3) != B_FRAC_K,
             OP_LOGE(opName, "FRACTAL_Z infershape requires x2 shape [K/64, N/16, 16, 64], got dim2=%ld dim3=%ld",
-                    x2Dims.GetDim(2), x2Dims.GetDim(3)),
+                    x2Dims.GetDim(DIM_INDEX_2), x2Dims.GetDim(3)),
             return ge::GRAPH_FAILED);
     } else {
         OP_LOGE(opName, "unknown shape");
@@ -87,13 +89,13 @@ static ge::graphStatus InferShapeFracZ(gert::InferShapeContext* context, const g
     auto* shape_out = context->GetOutputShape(0);
     OP_CHECK_IF(shape_out == nullptr, OP_LOGE(opName, "FRACTAL_Z infershape output shape is null"),
                 return ge::GRAPH_FAILED);
-    if (x1DimNum == 3U) {
-        shape_out->SetDimNum(3U);
+    if (x1DimNum == RANK_3D) {
+        shape_out->SetDimNum(RANK_3D);
         shape_out->SetDim(0, 1);
         shape_out->SetDim(1, m);
-        shape_out->SetDim(2, n);
+        shape_out->SetDim(DIM_INDEX_2, n);
     } else {
-        shape_out->SetDimNum(2U);
+        shape_out->SetDimNum(QUANT_BATCH_MATMUL_V4_MIN_SHAPE_SIZE);
         shape_out->SetDim(0, m);
         shape_out->SetDim(1, n);
     }

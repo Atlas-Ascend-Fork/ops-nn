@@ -92,7 +92,9 @@ at::Tensor transpose_quant_batch_mat_mul(
                     "x1 and x2 must both be hifloat4 for HIFP4 input");
         TORCH_CHECK(x1_scale_real.defined() && x2_scale_real.defined(),
                     "x1_scale/x2_scale are required for HIFP4 input");
-        TORCH_CHECK(x1_scale_real.element_size() == 4 && x2_scale_real.element_size() == 4,
+        constexpr int64_t kHifp4ScaleElemBytes = 4;
+        TORCH_CHECK(x1_scale_real.element_size() == kHifp4ScaleElemBytes &&
+                        x2_scale_real.element_size() == kHifp4ScaleElemBytes,
                     "x1_scale/x2_scale must use 4-byte storage (e.g. float32) for HIFP4 input, got ",
                     x1_scale_real.element_size(), " and ", x2_scale_real.element_size(), " bytes");
         TORCH_CHECK(x1_scale_acl == ACL_HIFLOAT4_SCALE_NUM && x2_scale_acl == ACL_HIFLOAT4_SCALE_NUM,

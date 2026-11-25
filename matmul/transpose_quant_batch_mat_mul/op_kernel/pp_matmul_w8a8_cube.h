@@ -24,6 +24,15 @@ constexpr unsigned L1_SLOTS_MIN = 2;
 constexpr unsigned L1_SLOTS_MAX = 8;
 constexpr unsigned L0_K = 128;
 constexpr unsigned L0C_SLOT_BYTES = 65536;
+constexpr unsigned L0AB_BYTES = 32768;
+constexpr unsigned CUBE_BLOCK = 16;
+constexpr unsigned L0C_DB = 2;
+constexpr unsigned MTE1_EVENT_OFFSET = 4;
+constexpr unsigned EXT_K_SHIFT = 32;
+constexpr unsigned EXT_M_SHIFT = 16;
+constexpr int MMAD_UNIT_CHECK = 2;
+constexpr int MMAD_UNIT_SET = 3;
+constexpr int FIXPIPE_UNIT_FLAG = 3;
 } // namespace PpW8A8
 #endif
 
@@ -132,13 +141,13 @@ public:
                 const uint32_t l0Slot = l0Sequence++ % 2;
                 auto a2 = l0a_[l0Slot * 32768U];
                 auto b2 = l0b_[l0Slot * 32768U];
-                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0Slot + 4);
+                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0Slot + PpW8A8::MTE1_EVENT_OFFSET);
                 // Same non-transposed INT8 A Load3DV2 shape as the SDK path:
                 // feature matrix width=M, channels=actual L1 K, K offset in bits 32+.
                 AscendC::LoadData3DParamsV2Pro params;
                 params.channelSize = panelK;
-                params.extConfig = (static_cast<unsigned long long>(ki) << 32) |
-                                   (static_cast<unsigned long long>(mRound_) << 16) | partK;
+                params.extConfig = (static_cast<unsigned long long>(ki) << PpW8A8::EXT_K_SHIFT) |
+                                   (static_cast<unsigned long long>(mRound_) << PpW8A8::EXT_M_SHIFT) | partK;
                 AscendC::LoadData<int8_t>(a2, a1, params);
                 // [K, N] NZ in L1 is (N/32, K/16, 16, 32). Transpose into L0B.
                 const uint32_t l1KRound = (panelK + 15U) / 16U * 16U;
@@ -153,9 +162,11 @@ public:
                 // accumulations, SET=3 only for the final K contribution.
                 const bool lastK = kt + 1 == kTiles && ki + partK == panelK;
                 AscendC::Mmad(c_, a2, b2,
-                              AscendC::MmadParams(mRound_, nRound_, partK, lastK ? 3 : 2, false, kt == 0 && ki == 0));
+                              AscendC::MmadParams(mRound_, nRound_, partK,
+                                                  lastK ? PpW8A8::MMAD_UNIT_SET : PpW8A8::MMAD_UNIT_CHECK, false,
+                                                  kt == 0 && ki == 0));
                 AfterMmad();
-                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0Slot + 4);
+                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0Slot + PpW8A8::MTE1_EVENT_OFFSET);
             }
         }
         // Fixpipe waits for MMAD per unit; a whole-block M_FIX wait here
@@ -204,11 +215,11 @@ public:
                     const uint32_t l0Slot = l0Sequence++ % 2;
                     auto a2 = l0a_[l0Slot * 32768U];
                     auto b2 = l0b_[l0Slot * 32768U];
-                    AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0Slot + 4);
+                    AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0Slot + PpW8A8::MTE1_EVENT_OFFSET);
                     AscendC::LoadData3DParamsV2Pro params;
                     params.channelSize = panelK;
-                    params.extConfig = (static_cast<unsigned long long>(ki) << 32) |
-                                       (static_cast<unsigned long long>(mRound_) << 16) | partK;
+                    params.extConfig = (static_cast<unsigned long long>(ki) << PpW8A8::EXT_K_SHIFT) |
+                                       (static_cast<unsigned long long>(mRound_) << PpW8A8::EXT_M_SHIFT) | partK;
                     AscendC::LoadData<int8_t>(a2, a1, params);
                     const uint32_t bOff = pass == 0 ? ki * 32U : nPadA * l1KRound + ki * 32U;
                     l1_to_l0_b<ArchType::ASCEND_V220, int8_t, false, DataFormat::ZN, DataFormat::NZ>(
@@ -219,11 +230,12 @@ public:
                     AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0Slot);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0Slot);
                     const bool lastK = kt + 1 == kTiles && ki + partK == panelK;
-                    AscendC::Mmad(
-                        c, a2, b2,
-                        AscendC::MmadParams(mRound_, nRound, partK, lastK ? 3 : 2, false, kt == 0 && ki == 0));
+                    AscendC::Mmad(c, a2, b2,
+                                  AscendC::MmadParams(mRound_, nRound, partK,
+                                                      lastK ? PpW8A8::MMAD_UNIT_SET : PpW8A8::MMAD_UNIT_CHECK, false,
+                                                      kt == 0 && ki == 0));
                     AfterMmad(true);
-                    AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0Slot + 4);
+                    AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0Slot + PpW8A8::MTE1_EVENT_OFFSET);
                 }
             }
         }
@@ -284,11 +296,11 @@ public:
                     const uint32_t l0Slot = l0Sequence++ % 2;
                     auto a2 = l0a_[l0Slot * 32768U];
                     auto b2 = l0b_[l0Slot * 32768U];
-                    AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0Slot + 4);
+                    AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0Slot + PpW8A8::MTE1_EVENT_OFFSET);
                     AscendC::LoadData3DParamsV2Pro params;
                     params.channelSize = panelK;
-                    params.extConfig = (static_cast<unsigned long long>(ki) << 32) |
-                                       (static_cast<unsigned long long>(mRound_) << 16) | partK;
+                    params.extConfig = (static_cast<unsigned long long>(ki) << PpW8A8::EXT_K_SHIFT) |
+                                       (static_cast<unsigned long long>(mRound_) << PpW8A8::EXT_M_SHIFT) | partK;
                     AscendC::LoadData<int8_t>(a2, a1, params);
                     l1_to_l0_b<ArchType::ASCEND_V220, int8_t, false, DataFormat::ZN, DataFormat::NZ>(
                         b2, b1[nOff[i] * l1KRound + ki * 32U], nRound[i], partK, l1KRound / 16U, 1, 1, nRound[i] / 16U);
@@ -298,11 +310,12 @@ public:
                     AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0Slot);
                     AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0Slot);
                     const bool lastK = kt + 1 == kTiles && ki + partK == panelK;
-                    AscendC::Mmad(
-                        c, a2, b2,
-                        AscendC::MmadParams(mRound_, nRound[i], partK, lastK ? 3 : 2, false, kt == 0 && ki == 0));
+                    AscendC::Mmad(c, a2, b2,
+                                  AscendC::MmadParams(mRound_, nRound[i], partK,
+                                                      lastK ? PpW8A8::MMAD_UNIT_SET : PpW8A8::MMAD_UNIT_CHECK, false,
+                                                      kt == 0 && ki == 0));
                     AfterMmad(true);
-                    AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0Slot + 4);
+                    AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0Slot + PpW8A8::MTE1_EVENT_OFFSET);
                 }
             }
         }
@@ -321,8 +334,8 @@ public:
                                  uint32_t resultSlot)
     {
         const uint32_t mRound = (curM + 15U) / 16U * 16U;
-        l0c_to_gm<ArchType::ASCEND_V220, DataFormat::ND, int32_t, int32_t>(dst, l0c_[resultSlot * l0cSlotElems_], curM,
-                                                                           curN, mRound, curN, 3);
+        l0c_to_gm<ArchType::ASCEND_V220, DataFormat::ND, int32_t, int32_t>(
+            dst, l0c_[resultSlot * l0cSlotElems_], curM, curN, mRound, curN, PpW8A8::FIXPIPE_UNIT_FLAG);
     }
 
     __aicore__ inline void End()

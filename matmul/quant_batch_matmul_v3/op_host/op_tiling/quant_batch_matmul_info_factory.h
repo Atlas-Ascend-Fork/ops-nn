@@ -15,6 +15,8 @@
 #ifndef QUANT_BATCH_MATMUL_INFO_FACTORY_H
 #define QUANT_BATCH_MATMUL_INFO_FACTORY_H
 
+#include <map>
+#include <mutex>
 #include <pthread.h>
 #include <shared_mutex>
 

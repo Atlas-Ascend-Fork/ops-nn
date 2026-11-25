@@ -15,6 +15,7 @@
 #include <set>
 #include <type_traits>
 #include <utility>
+#include "securec.h"
 #include "acl/acl_rt.h"
 #include "ge/compliant_node_builder.h"
 #include "ge/es_graph_builder.h"
@@ -46,6 +47,9 @@ constexpr char PASS_NAME[] = "MatmulQuantToFixpipeFusionPass";
 constexpr int32_t TARGET_VERSION = 90200000;
 constexpr int64_t BIAS_INPUT = 2;
 constexpr int64_t SCALE_INPUT = 1;
+constexpr int64_t FUSED_SCALE_PORT = 2;
+constexpr size_t MATMUL_MAX_INPUTS = 3;
+constexpr size_t CAPTURE_TAIL_INDEX = 2;
 constexpr uint32_t SCALE_MASK = 0xffffe000U;
 constexpr uint64_t OFFSET_MASK = 0x00001fe000000000ULL;
 constexpr uint64_t OFFSET_SIGN = 0x0000200000000000ULL;
@@ -254,12 +258,18 @@ bool EncodeScale(const GraphPtr& graph, FusionMatch& match)
     match.encodedScale.resize(count);
     for (size_t i = 0; i < count; ++i) {
         uint64_t original = 0;
-        std::memcpy(&original, weights.GetData() + i * sizeof(uint64_t), sizeof(original));
+        if (memcpy_s(&original, sizeof(original), weights.GetData() + i * sizeof(uint64_t), sizeof(original)) != EOK) {
+            return false;
+        }
         uint32_t bits = static_cast<uint32_t>(original) & SCALE_MASK;
         float decoded = 0;
-        std::memcpy(&decoded, &bits, sizeof(decoded));
+        if (memcpy_s(&decoded, sizeof(decoded), &bits, sizeof(bits)) != EOK) {
+            return false;
+        }
         const float product = decoded * factor;
-        std::memcpy(&bits, &product, sizeof(bits));
+        if (memcpy_s(&bits, sizeof(bits), &product, sizeof(product)) != EOK) {
+            return false;
+        }
         match.encodedScale[i] = static_cast<uint64_t>(bits & SCALE_MASK) | offsetBits | (offset < 0 ? OFFSET_SIGN : 0) |
                                 SIGN_FLAG;
     }
@@ -271,7 +281,8 @@ bool EncodeScale(const GraphPtr& graph, FusionMatch& match)
 
 bool ReadMatmulDescriptors(FusionMatch& match)
 {
-    if (match.matmul.GetInputsSize() > 3 || match.matmul.GetInputDesc(0, match.x1Desc) != GRAPH_SUCCESS ||
+    if (match.matmul.GetInputsSize() > MATMUL_MAX_INPUTS ||
+        match.matmul.GetInputDesc(0, match.x1Desc) != GRAPH_SUCCESS ||
         match.matmul.GetInputDesc(1, match.x2Desc) != GRAPH_SUCCESS ||
         match.matmul.GetOutputDesc(0, match.outputDesc) != GRAPH_SUCCESS) {
         return false;
@@ -590,7 +601,7 @@ std::vector<ge::fusion::PatternUniqPtr> MatmulQuantToFixpipeFusionPass::Patterns
                     graph->AddDataEdge(*a.GetProducer(), 0, matmul, 0);
                     graph->AddDataEdge(*b.GetProducer(), 0, matmul, 1);
                     if (bias) {
-                        graph->AddDataEdge(*optionalBias.GetProducer(), 0, matmul, 2);
+                        graph->AddDataEdge(*optionalBias.GetProducer(), 0, matmul, BIAS_INPUT);
                     }
                     auto dequant = Builder(graph)
                                        .Name("dequant")
@@ -640,7 +651,7 @@ std::unique_ptr<FusionMatch> ReadPatternMatch(const std::unique_ptr<ge::fusion::
     result->GetPatternGraph().GetName(name);
     const bool three = name == "matmul_dequant_quant";
     tail = dequant;
-    if (three && result->GetCapturedTensor(2, tail) != GRAPH_SUCCESS) {
+    if (three && result->GetCapturedTensor(CAPTURE_TAIL_INDEX, tail) != GRAPH_SUCCESS) {
         return nullptr;
     }
     return std::make_unique<FusionMatch>(matmul.node, dequant.node, tail.node, three);
@@ -695,7 +706,9 @@ ge::fusion::GraphUniqPtr MatmulQuantToFixpipeFusionPass::Replacement(
             continue;
         }
         // Preserve the bias role across the two target IRs, whose bias indices differ.
-        const int64_t targetPort = scaleInput ? 2 : (hasBias && index == 2 ? biasPort : index);
+        const int64_t targetPort = scaleInput ?
+                                       FUSED_SCALE_PORT :
+                                       (hasBias && index == static_cast<size_t>(BIAS_INPUT) ? biasPort : index);
         const TensorDesc& desc = scaleInput ? match->scaleDesc :
                                  index == 0 ? match->x1Desc :
                                  index == 1 ? match->x2Desc :
@@ -707,7 +720,7 @@ ge::fusion::GraphUniqPtr MatmulQuantToFixpipeFusionPass::Replacement(
     if (match->isThreeNodePattern) {
         GNode scale;
         if (CreateEncodedScale(graph, *match, scale) != GRAPH_SUCCESS ||
-            ConnectInput(graph, scale, 0, target, 2, match->scaleDesc) != GRAPH_SUCCESS) {
+            ConnectInput(graph, scale, 0, target, FUSED_SCALE_PORT, match->scaleDesc) != GRAPH_SUCCESS) {
             return nullptr;
         }
         bool multi = true;

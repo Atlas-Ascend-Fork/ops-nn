@@ -34,10 +34,26 @@ constexpr unsigned L1_SLOTS_MIN = 2;
 constexpr unsigned L1_SLOTS_MAX = 8;
 constexpr unsigned L0_K = 128;
 constexpr unsigned L0C_SLOT_BYTES = 65536;
+constexpr unsigned L0AB_BYTES = 32768;
+constexpr unsigned CUBE_BLOCK = 16;
+constexpr unsigned L0C_DB = 2;
+constexpr unsigned MTE1_EVENT_OFFSET = 4;
+constexpr unsigned EXT_K_SHIFT = 32;
+constexpr unsigned EXT_M_SHIFT = 16;
+constexpr int MMAD_UNIT_CHECK = 2;
+constexpr int MMAD_UNIT_SET = 3;
+constexpr int FIXPIPE_UNIT_FLAG = 3;
 } // namespace PpW8A8
 #endif
 
 namespace PpW8A8 {
+constexpr double OUTPUT_ELEM_COST = 10.0;
+constexpr unsigned L0C_SB = 1;
+constexpr unsigned L0C_ELEM_BYTES = 4;
+constexpr unsigned MAX_TILE_N = 256;
+constexpr double COST_CHANNEL = 4.0;
+constexpr double COST_K_ISSUE = 256.0;
+constexpr double COST_BASE = 4096.0;
 
 inline constexpr unsigned L1Slots(unsigned tileM, unsigned tileN, unsigned l1)
 {
@@ -61,7 +77,7 @@ struct Tile {
 inline uint64_t DivUp(uint64_t a, uint64_t b) { return (a - 1) / b + 1; }
 inline uint64_t Gcd(uint64_t a, uint64_t b)
 {
-    while (b) {
+    while (b != 0) {
         const uint64_t t = a % b;
         a = b;
         b = t;
@@ -71,9 +87,9 @@ inline uint64_t Gcd(uint64_t a, uint64_t b)
 inline uint32_t VectorRows(uint32_t m, uint32_t n, uint64_t ub)
 {
     uint32_t rows = std::min(m, 64U);
-    while (rows) {
+    while (rows != 0) {
         const uint64_t alignedRows = (rows + 7U) / 8U * 8U;
-        const uint64_t bytes = 20ULL * rows * n + 32768 + 8ULL * n + 8ULL * alignedRows + 2048;
+        const uint64_t bytes = 20ULL * rows * n + L0AB_BYTES + 8ULL * n + 8ULL * alignedRows + 2048;
         if (bytes <= ub) {
             return rows;
         }
@@ -81,31 +97,36 @@ inline uint32_t VectorRows(uint32_t m, uint32_t n, uint64_t ub)
     }
     return 0;
 }
-inline bool Fits(uint32_t m, uint32_t n, const Capacity& cap, uint32_t buffers = 1)
+inline bool Fits(uint32_t m, uint32_t n, const Capacity& cap, uint32_t buffers = L0C_SB)
 {
-    const uint64_t limit = buffers == 2 ? L0C_SLOT_BYTES : std::min<uint64_t>(cap.l0c, 2ULL * L0C_SLOT_BYTES);
-    return (buffers == 1 || buffers == 2) && cap.cores && (buffers == 1 || cap.l0c >= 2ULL * L0C_SLOT_BYTES) &&
-           4ULL * m * n <= limit && 1ULL * m * L0_K <= 32768 && 32768ULL + m * L0_K <= cap.l0a &&
-           1ULL * n * L0_K <= 32768 && 32768ULL + n * L0_K <= cap.l0b &&
+    const uint64_t limit = buffers == L0C_DB ?
+                               L0C_SLOT_BYTES :
+                               std::min<uint64_t>(cap.l0c, static_cast<uint64_t>(L0C_DB) * L0C_SLOT_BYTES);
+    return (buffers == L0C_SB || buffers == L0C_DB) && cap.cores != 0 &&
+           (buffers == L0C_SB || cap.l0c >= static_cast<uint64_t>(L0C_DB) * L0C_SLOT_BYTES) &&
+           static_cast<uint64_t>(L0C_ELEM_BYTES) * m * n <= limit && 1ULL * m * L0_K <= L0AB_BYTES &&
+           static_cast<uint64_t>(L0AB_BYTES) + m * L0_K <= cap.l0a && 1ULL * n * L0_K <= L0AB_BYTES &&
+           static_cast<uint64_t>(L0AB_BYTES) + n * L0_K <= cap.l0b &&
            L1Slots(m, n, static_cast<unsigned>(cap.l1)) >= L1_SLOTS_MIN;
 }
 inline double TaskCost(uint32_t m, uint32_t n, uint32_t k, uint32_t ubM, double aWeight = 2.0)
 {
-    const uint64_t mr = (m + 15U) / 16U * 16U;
+    const uint64_t mr = (m + CUBE_BLOCK - 1U) / CUBE_BLOCK * CUBE_BLOCK;
     constexpr double UNALIGNED_OUTPUT_COST = 24.0;
-    const double outputIssueCost = n % 32 ? UNALIGNED_OUTPUT_COST * m * n : 0.0;
-    return double(k) * (aWeight * m + n) + 10.0 * m * n + outputIssueCost + 4.0 * n * DivUp(m, ubM) + 4.0 * m +
-           double(mr) * n * k / 128.0 + 256.0 * DivUp(k, L0_K) + 4096.0;
+    const double outputIssueCost = (n % 32 != 0) ? UNALIGNED_OUTPUT_COST * m * n : 0.0;
+    return double(k) * (aWeight * m + n) + OUTPUT_ELEM_COST * m * n + outputIssueCost +
+           COST_CHANNEL * n * DivUp(m, ubM) + COST_CHANNEL * m + double(mr) * n * k / static_cast<double>(L0_K) +
+           COST_K_ISSUE * DivUp(k, L0_K) + COST_BASE;
 }
 inline Tile Evaluate(uint32_t m, uint32_t b, uint32_t k, uint32_t n, uint32_t tm, uint32_t tn, const Capacity& cap,
-                     uint32_t buffers = 1)
+                     uint32_t buffers = L0C_SB)
 {
     Tile tile;
     if (!Fits(tm, tn, cap, buffers)) {
         return tile;
     }
     tile.ubM = VectorRows(std::min(m, tm), std::min(n, tn), cap.ub);
-    if (!tile.ubM) {
+    if (tile.ubM == 0) {
         return tile;
     }
     const uint64_t mc = DivUp(m, tm);
@@ -119,7 +140,7 @@ inline Tile Evaluate(uint32_t m, uint32_t b, uint32_t k, uint32_t n, uint32_t tm
     const double aWeight = b > 1 ? 2.0 : 1.0;
     const uint64_t period = tile.cores / Gcd(mc * nc, tile.cores);
     for (uint64_t bi = 0; bi < std::min<uint64_t>(b, period); ++bi) {
-        const uint64_t copies = b / period + (bi < b % period);
+        const uint64_t copies = b / period + (bi < b % period ? 1ULL : 0ULL);
         for (uint64_t mi = 0; mi < mc; ++mi) {
             const uint32_t cm = std::min<uint64_t>(tm, m - mi * tm);
             const double full = TaskCost(cm, tn, k, tile.ubM, aWeight) * copies;
@@ -143,10 +164,11 @@ inline Tile Evaluate(uint32_t m, uint32_t b, uint32_t k, uint32_t n, uint32_t tm
 inline Tile Select(uint32_t m, uint32_t b, uint32_t k, uint32_t n, const Capacity& cap)
 {
     Tile best;
-    const uint32_t maxTileM = std::min<uint64_t>((uint64_t(m) + 15U) / 16U * 16U, 32768U / L0_K);
-    for (uint32_t tm = 16; tm <= maxTileM; tm += 16) {
-        for (uint32_t tn = 16; tn <= std::min(n, 256U); tn += 16) {
-            Tile candidate = Evaluate(m, b, k, n, tm, tn, cap, 1);
+    const uint32_t maxTileM = std::min<uint64_t>((uint64_t(m) + CUBE_BLOCK - 1U) / CUBE_BLOCK * CUBE_BLOCK,
+                                                 L0AB_BYTES / L0_K);
+    for (uint32_t tm = CUBE_BLOCK; tm <= maxTileM; tm += CUBE_BLOCK) {
+        for (uint32_t tn = CUBE_BLOCK; tn <= std::min(n, static_cast<uint32_t>(MAX_TILE_N)); tn += CUBE_BLOCK) {
+            Tile candidate = Evaluate(m, b, k, n, tm, tn, cap, L0C_SB);
             if (candidate.cost < best.cost) {
                 best = candidate;
             }
@@ -159,23 +181,23 @@ inline Tile SelectNd(uint32_t m, uint32_t b, uint32_t k, uint32_t n, const Capac
 {
     (void)k;
     Tile best;
-    const uint32_t aic = cap.cores ? cap.cores : 1U;
-    const uint64_t l0c = cap.l0c ? cap.l0c : 131072ULL;
-    const uint64_t ub = cap.ub ? cap.ub : 196608ULL;
+    const uint32_t aic = cap.cores != 0 ? cap.cores : 1U;
+    const uint64_t l0c = cap.l0c != 0 ? cap.l0c : 131072ULL;
+    const uint64_t ub = cap.ub != 0 ? cap.ub : 196608ULL;
 
     auto pack = [&](uint32_t tm, uint32_t tn, uint32_t buffers) -> Tile {
         Tile tile;
         if (tm == 0 || tn == 0 || buffers == 0) {
             return tile;
         }
-        if (4ULL * tm * tn * buffers > l0c) {
+        if (static_cast<uint64_t>(L0C_ELEM_BYTES) * tm * tn * buffers > l0c) {
             return tile;
         }
-        if (tm * L0_K > 32768U || tn * L0_K > 32768U) {
+        if (tm * L0_K > L0AB_BYTES || tn * L0_K > L0AB_BYTES) {
             return tile;
         }
         tile.ubM = VectorRows(std::min(m, tm), std::min(n, tn), ub);
-        if (!tile.ubM) {
+        if (tile.ubM == 0) {
             return tile;
         }
         const uint64_t mc = DivUp(m, tm);
@@ -188,10 +210,11 @@ inline Tile SelectNd(uint32_t m, uint32_t b, uint32_t k, uint32_t n, const Capac
         tile.cores = static_cast<uint32_t>(std::min<uint64_t>(aic, total));
         const uint64_t q = total / tile.cores;
         const uint64_t r = total % tile.cores;
-        const uint64_t maxTasks = r ? q + 1 : q;
+        const uint64_t maxTasks = r != 0 ? q + 1 : q;
         const uint32_t copyN = static_cast<uint32_t>(std::min<uint64_t>(n, static_cast<uint64_t>(buffers) * tn));
         tile.cost = static_cast<double>(maxTasks) * 1e18 + static_cast<double>(mc) * 1e15 +
-                    (256.0 - static_cast<double>(copyN)) * 1e12 + static_cast<double>(r) * 1e6;
+                    (static_cast<double>(MAX_TILE_N) - static_cast<double>(copyN)) * 1e12 +
+                    static_cast<double>(r) * 1e6;
         return tile;
     };
 
@@ -201,21 +224,21 @@ inline Tile SelectNd(uint32_t m, uint32_t b, uint32_t k, uint32_t n, const Capac
         }
     };
 
-    const uint32_t tmFull = std::max(16U, (m + 15U) / 16U * 16U);
-    const uint32_t nBuf[] = {2U, 1U};
+    const uint32_t tmFull = std::max(CUBE_BLOCK, (m + CUBE_BLOCK - 1U) / CUBE_BLOCK * CUBE_BLOCK);
+    const uint32_t nBuf[] = {L0C_DB, L0C_SB};
     for (uint32_t buffers : nBuf) {
-        take(pack(tmFull, 256U, buffers));
+        take(pack(tmFull, MAX_TILE_N, buffers));
     }
     const uint32_t mPair[] = {64U, 48U, 80U, 96U};
     for (uint32_t tm : mPair) {
-        take(pack(tm, 256U, 2U));
+        take(pack(tm, MAX_TILE_N, L0C_DB));
     }
     const uint32_t mOnce[] = {128U};
     for (uint32_t tm : mOnce) {
-        take(pack(tm, 256U, 1U));
+        take(pack(tm, MAX_TILE_N, L0C_SB));
     }
     if (best.m == 0) {
-        take(pack(tmFull, std::min(n, 256U), 1U));
+        take(pack(tmFull, std::min(n, static_cast<uint32_t>(MAX_TILE_N)), L0C_SB));
     }
     return best;
 }
@@ -230,6 +253,10 @@ constexpr uint32_t W8A8_INT8_K_ALIGN = 32;
 constexpr uint32_t W8A8_INT8_N_ALIGN = 16;
 constexpr uint32_t W8A8_M_ALIGN = 16;
 constexpr uint32_t W8A8_A2_BATCH_K_LIMIT = 65536;
+constexpr uint32_t W8A8_X_RANK = 3;
+constexpr uint32_t W8A8_SCALE_RANK = 2;
+constexpr uint32_t W8A8_SMALL_N_LIMIT = 96;
+constexpr uint32_t W8A8_UB_RESERVED_BYTES = 32 * 1024;
 
 bool IsW8A8Mode(gert::TilingContext* context);
 ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context);
