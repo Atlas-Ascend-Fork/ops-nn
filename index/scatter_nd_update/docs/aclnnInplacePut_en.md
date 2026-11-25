@@ -155,6 +155,11 @@ aclnnStatus aclnnInplacePut(
 
     <!-- end id7 -->
 
+    <!-- npu="910b,A3,950" id8 -->
+    - <term>Atlas A2 products</term>, <term>Atlas A3 products</term>, and <term>Ascend 950PR&950DT products</term>: BFLOAT16 is not supported when accumulate is true.
+
+    <!-- end id8 -->
+
 - **Return Value**
 
   aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../docs/en/context/aclnn_return_code.md).

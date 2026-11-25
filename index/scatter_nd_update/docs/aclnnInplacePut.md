@@ -153,6 +153,11 @@ aclnnStatus aclnnInplacePut(
 
     <!-- end id7 -->
 
+    <!-- npu="910b,A3,950" id8 -->
+    - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>、<term>Ascend 950PR&950DT系列产品</term>：当accumulate为true时，数据类型不支持BFLOAT16。
+
+    <!-- end id8 -->
+
 - **返回值**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
