@@ -1,0 +1,4394 @@
+[
+  {
+    "id": 1520000,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          129,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1025,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1024
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520001,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          257,
+          255
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1027,
+          255
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          257
+        ],
+        "range_values": [
+          0,
+          1026
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          257
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          257
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520002,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          511,
+          257
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1057,
+          257
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          0,
+          1056
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520003,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          128,
+          143
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1087,
+          143
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          128
+        ],
+        "range_values": [
+          0,
+          1086
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          128
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          128
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520004,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          383,
+          2049
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1089,
+          2049
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          383
+        ],
+        "range_values": [
+          0,
+          1088
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          383
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          383
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520005,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          129,
+          8191
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1151,
+          8191
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1150
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520006,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          511,
+          2047
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1153,
+          2047
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          0,
+          1152
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520007,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          512,
+          2049
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1025,
+          2049
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          512
+        ],
+        "range_values": [
+          0,
+          1024
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          512
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          512
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520008,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          129,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1025,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1024
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {
+        "input_values": {
+          "hidden": 1.0,
+          "weight": -1.0
+        }
+      }
+    }
+  },
+  {
+    "id": 1520009,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          129,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1057,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1056
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {
+        "labels": "all_ignore"
+      }
+    }
+  },
+  {
+    "id": 1520010,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          129,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1027,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1026
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {
+        "labels": "mixed_ignore"
+      }
+    }
+  },
+  {
+    "id": 1520011,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          129,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp16",
+        "shape": [
+          1025,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1024
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {
+        "input_view": "gap",
+        "output_view": "gap"
+      }
+    }
+  },
+  {
+    "id": 1520012,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          129,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1025,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1024
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520013,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          257,
+          255
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1027,
+          255
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          257
+        ],
+        "range_values": [
+          0,
+          1026
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          257
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          257
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520014,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          511,
+          257
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1057,
+          257
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          0,
+          1056
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520015,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          128,
+          143
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1087,
+          143
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          128
+        ],
+        "range_values": [
+          0,
+          1086
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          128
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          128
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520016,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          383,
+          2049
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1089,
+          2049
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          383
+        ],
+        "range_values": [
+          0,
+          1088
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          383
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          383
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520017,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          129,
+          8191
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1151,
+          8191
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1150
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520018,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          511,
+          2047
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1153,
+          2047
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          0,
+          1152
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          511
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520019,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          512,
+          2049
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1025,
+          2049
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          512
+        ],
+        "range_values": [
+          0,
+          1024
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          512
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          512
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {}
+    }
+  },
+  {
+    "id": 1520020,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          129,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1025,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1024
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {
+        "input_values": {
+          "hidden": 1.0,
+          "weight": -1.0
+        }
+      }
+    }
+  },
+  {
+    "id": 1520021,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          129,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1057,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1056
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {
+        "labels": "all_ignore"
+      }
+    }
+  },
+  {
+    "id": 1520022,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          129,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1027,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1026
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {
+        "labels": "mixed_ignore"
+      }
+    }
+  },
+  {
+    "id": 1520023,
+    "default_seed": 20261120,
+    "name": "chunk_loss_grad",
+    "aclnn_name": "ChunkLossBackward",
+    "triton_name": null,
+    "kernel_name": null,
+    "version": "v1",
+    "expected_error_msg": null,
+    "api": "pytorch",
+    "api_type": "ascend_function_aclnn_chunk_loss_backward",
+    "aclnn_api_type": "function_aclnn_chunk_loss_backward_pyaclnn",
+    "triton_api_type": "triton_function",
+    "fusion_api_type": "fusion_function",
+    "fusion_mode": null,
+    "dist_api_type": "dist_function",
+    "kernel_api_type": "kernel_function",
+    "backward": false,
+    "standard": {
+      "acc": {
+        "cv_fused_double_benchmark": {
+          "max_re_ratio": 2,
+          "avg_re_ratio": 1.2,
+          "root_mean_squared_ratio": 1.2
+        }
+      },
+      "perf": "not_key",
+      "mem": 1.1
+    },
+    "outputs": null,
+    "inputs": [
+      {
+        "name": "gradOutput",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          1
+        ],
+        "range_values": [
+          0.75,
+          0.75
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "hidden",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          129,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "weight",
+        "type": "tensor",
+        "required": true,
+        "dtype": "bf16",
+        "shape": [
+          1025,
+          129
+        ],
+        "range_values": {
+          "name": "nd",
+          "mean": [
+            0.0,
+            0.0
+          ],
+          "std": [
+            0.125,
+            0.125
+          ],
+          "range": null
+        },
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "labels",
+        "type": "tensor",
+        "required": true,
+        "dtype": "int64",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          1024
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxMax",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          0,
+          0
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "softmaxSum",
+        "type": "tensor",
+        "required": true,
+        "dtype": "fp32",
+        "shape": [
+          129
+        ],
+        "range_values": [
+          1,
+          1
+        ],
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "alpha",
+        "type": "attr",
+        "required": true,
+        "dtype": "float",
+        "shape": null,
+        "range_values": 0.7,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      },
+      {
+        "name": "ignoreIndex",
+        "type": "attr",
+        "required": true,
+        "dtype": "int",
+        "shape": null,
+        "range_values": -100,
+        "backward": false,
+        "align_32B": null,
+        "outlier_values": null
+      }
+    ],
+    "acl_json": "",
+    "method_inputs": null,
+    "tensor_input": null,
+    "compute_times": null,
+    "save_name": null,
+    "uuid": null,
+    "downloaded": false,
+    "is_boundary": false,
+    "xrun_cs_name": null,
+    "xrun_data": null,
+    "strategy": {
+      "chunk_loss_grad": {
+        "input_view": "gap",
+        "output_view": "gap"
+      }
+    }
+  }
+]

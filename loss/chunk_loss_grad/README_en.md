@@ -133,7 +133,6 @@
 - N, H, and V are positive integers no greater than 2147483647. N×H and V×H must not exceed ⌊(2^63−1)/4⌋.
 - Labels that are not ignored must satisfy 0 ≤ labels[i] < V.
 - `alpha` is the reciprocal of the forward loss normalization denominator. It must be finite, positive, and no greater than the maximum finite FLOAT32 value. It must remain positive after conversion to FLOAT32. Use the same global `alpha` across chunks and accumulate their outputs in the caller.
-- `softmaxMax` must be finite, and `softmaxSum` must be finite and positive.
 - `gradOutput` has shape [1] and supports positive, negative, and zero values.
 
 ## Calling Description

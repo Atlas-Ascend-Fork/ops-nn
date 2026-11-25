@@ -56,6 +56,8 @@ def prepare_inputs(input_data, options, dtype_name):
     """Build paired forward caches from the exact quantized input values."""
     if options.get("reject"):
         return
+    if "cache_shift" in options or "cache_sum" in options:
+        raise ValueError("Softmax caches must be derived from hidden and weight")
     parameters = input_data.kwargs
     layout = options.get("input_view")
     # ATK may prepare a dataset more than once for different backends.
@@ -74,6 +76,11 @@ def prepare_inputs(input_data, options, dtype_name):
         parameters["weight"].copy_(-parameters["weight"].abs())
     elif pattern == "mixed_subnormal":
         parameters["hidden"][:, ::2] = torch.finfo(input_dtype).tiny / 2
+    elif pattern == "peaked_logits":
+        parameters["hidden"].zero_()
+        parameters["hidden"][:, 0] = 1
+        parameters["weight"].zero_()
+        parameters["weight"][0, 0] = 80
     labels = parameters["labels"]
     pattern = options.get("labels", "endpoints")
     if pattern == "endpoints":
@@ -91,10 +98,6 @@ def prepare_inputs(input_data, options, dtype_name):
     logits = hidden @ weight.T
     maximum = logits.amax(1)
     denominator = (logits - maximum[:, None]).exp().sum(1)
-    if "cache_shift" in options:
-        maximum = maximum + options["cache_shift"]
-    if "cache_sum" in options:
-        denominator.fill_(options["cache_sum"])
     # copy_ preserves ATK's non-contiguous input descriptors (-si).
     parameters["softmaxMax"].copy_(maximum.to(parameters["softmaxMax"].device))
     parameters["softmaxSum"].copy_(denominator.to(parameters["softmaxSum"].device))
@@ -123,9 +126,16 @@ def weight_gradient(input_data, high_precision, input_dtype, options):
     if options.get("reject"):
         return torch.zeros_like(parameters["weight"])
     compute_dtype = torch.float64 if high_precision else torch.float32
-    hidden = parameters["hidden"].to(compute_dtype)
-    weight = parameters["weight"].to(compute_dtype)
-    logits = hidden @ weight.T
+    matmul_dtype = compute_dtype if high_precision else input_dtype
+    hidden = parameters["hidden"].to(matmul_dtype)
+    weight = parameters["weight"].to(matmul_dtype)
+    # NPU Cube inputs follow the operator dtype; retain FP32 GEMM outputs.
+    # CPU golden independently evaluates the arithmetic in FP64.
+    logits = (
+        hidden @ weight.T
+        if high_precision
+        else torch.mm(hidden, weight.T, out_dtype=torch.float32)
+    )
     logits_gradient = (
         logits - parameters["softmaxMax"].to(compute_dtype)[:, None]
     ).exp()
@@ -137,9 +147,13 @@ def weight_gradient(input_data, high_precision, input_dtype, options):
     logits_gradient[~valid] = 0
     alpha = float(torch.tensor(parameters["alpha"], dtype=torch.float32))
     logits_gradient *= alpha
-    if not high_precision and not options.get("fp32_gradient_reference"):
-        logits_gradient = logits_gradient.to(input_dtype).float()
-    result = (logits_gradient.T @ hidden) * parameters["gradOutput"].to(compute_dtype)
+    if high_precision:
+        result = logits_gradient.T @ hidden
+    else:
+        result = torch.mm(
+            logits_gradient.to(input_dtype).T, hidden, out_dtype=torch.float32
+        )
+    result *= parameters["gradOutput"].to(compute_dtype)
     return result.to(parameters["hidden"].dtype)
 
 

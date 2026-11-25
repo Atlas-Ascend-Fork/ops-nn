@@ -40,7 +40,8 @@ inline float GetChunkLossGradAlpha(gert::TilingContext* context)
 }
 // Each MIX group owns complete [Vt,H] output rows and reduces N locally.
 template <class TilingData, uint32_t TOKEN_TILE, uint32_t VOCAB_TILE>
-ge::graphStatus BuildChunkLossGradTiling(gert::TilingContext* context)
+ge::graphStatus BuildChunkLossGradTiling(gert::TilingContext* context, uint64_t paddedTokens = 0,
+                                         uint64_t physicalHiddenDim = 0)
 {
     if (!context || !context->GetPlatformInfo() || !context->GetInputShape(0) || !context->GetInputShape(1) ||
         !context->GetInputDesc(0) || !context->GetInputDesc(1) || !context->GetRawTilingData()) {
@@ -92,8 +93,18 @@ ge::graphStatus BuildChunkLossGradTiling(gert::TilingContext* context)
     auto align512 = [](uint64_t value) { return (value + 511) / 512 * 512; };
     const uint64_t logitsBytes = align512(uint64_t(TOKEN_TILE) * VOCAB_TILE * 4);
     const uint64_t logitsGradBytes = align512(uint64_t(TOKEN_TILE) * VOCAB_TILE * 2);
-    const uint64_t partialBytes = align512(uint64_t(VOCAB_TILE) * hiddenDim * 4);
-    const uint64_t perCore = logitsBytes + logitsGradBytes + 2 * partialBytes;
+    // Only the arch22 one-window path supplies a physical pitch. Other paths
+    // retain their original logical shapes and workspace layout.
+    const uint64_t cubeHiddenDim = physicalHiddenDim == 0 ? uint64_t(hiddenDim) : physicalHiddenDim;
+    const uint64_t partialBytes = align512(uint64_t(VOCAB_TILE) * cubeHiddenDim * 4);
+    // One-window A2 tails reuse the accumulator region for a padded hidden copy.
+    // Compute the final stride here, before serializing the tiling data.
+    const uint64_t hiddenBytes = align512(paddedTokens * cubeHiddenDim * 2);
+    const bool paddedWeight = physicalHiddenDim != 0 &&
+                              (cubeHiddenDim != uint64_t(hiddenDim) || vocabSize % VOCAB_TILE != 0);
+    const uint64_t weightBytes = paddedWeight ? align512(uint64_t(VOCAB_TILE) * cubeHiddenDim * 2) : 0;
+    const uint64_t perCore = logitsBytes + logitsGradBytes + partialBytes + std::max(partialBytes, hiddenBytes) +
+                             weightBytes;
     const uint64_t systemWorkspaceBytes = platform.GetLibApiWorkSpaceSize();
     if (perCore > (std::numeric_limits<uint64_t>::max() - systemWorkspaceBytes) / numCoreGroups) {
         return ge::GRAPH_FAILED;
@@ -123,8 +134,8 @@ ge::graphStatus BuildChunkLossGradTiling(gert::TilingContext* context)
         matmulTiling.SetSingleShape(rows, columns, reductionSize);
         return matmulTiling.GetTiling(cubeTiling) >= 0;
     };
-    if (!makeMatmul(tilingData.logitsTiling, false, true, TOKEN_TILE, VOCAB_TILE, hiddenDim) ||
-        !makeMatmul(tilingData.weightTiling, true, false, VOCAB_TILE, hiddenDim, TOKEN_TILE)) {
+    if (!makeMatmul(tilingData.logitsTiling, false, true, TOKEN_TILE, VOCAB_TILE, cubeHiddenDim) ||
+        !makeMatmul(tilingData.weightTiling, true, false, VOCAB_TILE, cubeHiddenDim, TOKEN_TILE)) {
         return ge::GRAPH_FAILED;
     }
     if (context->GetRawTilingData()->GetCapacity() < tilingData.GetDataSize()) {
