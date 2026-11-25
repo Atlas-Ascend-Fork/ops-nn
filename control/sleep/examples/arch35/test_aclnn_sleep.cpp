@@ -14,7 +14,6 @@
  */
 
 #include <iostream>
-#include <vector>
 #include "acl/acl.h"
 #include "aclnnop/aclnn_sleep.h"
 
@@ -41,26 +40,6 @@ int Init(int32_t deviceId, aclrtStream* stream)
     return 0;
 }
 
-template <typename T>
-int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
-                    aclDataType dataType, aclTensor** tensor)
-{
-    auto size = static_cast<int64_t>(hostData.size()) * sizeof(T);
-    auto ret = aclrtMalloc(deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMalloc failed. ERROR: %d\n", ret); return ret);
-    ret = aclrtMemcpy(*deviceAddr, size, hostData.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
-
-    std::vector<int64_t> strides(shape.size(), 1);
-    for (int64_t i = static_cast<int64_t>(shape.size()) - 2; i >= 0; i--) {
-        strides[i] = shape[i + 1] * strides[i + 1];
-    }
-
-    *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
-                              shape.data(), shape.size(), *deviceAddr);
-    return 0;
-}
-
 int main()
 {
     int32_t deviceId = 0;
@@ -71,10 +50,8 @@ int main()
     int64_t cyclesValue = 1000000;
     LOG_PRINT("Testing aclnnSleep with cycles = %ld\n", cyclesValue);
 
-    void* cyclesDeviceAddr = nullptr;
-    aclTensor* cycles = nullptr;
-    ret = CreateAclTensor<int64_t>({cyclesValue}, {1}, &cyclesDeviceAddr, ACL_INT64, &cycles);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor failed. ERROR: %d\n", ret); return ret);
+    aclIntArray* cycles = aclCreateIntArray(&cyclesValue, 1);
+    CHECK_RET(cycles != nullptr, LOG_PRINT("aclCreateIntArray failed.\n"); return ACL_ERROR_BAD_ALLOC);
 
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
@@ -96,8 +73,7 @@ int main()
 
     LOG_PRINT("aclnnSleep test passed.\n");
 
-    aclDestroyTensor(cycles);
-    aclrtFree(cyclesDeviceAddr);
+    aclDestroyIntArray(cycles);
     if (workspaceSize > static_cast<uint64_t>(0)) {
         aclrtFree(workspaceAddr);
     }
