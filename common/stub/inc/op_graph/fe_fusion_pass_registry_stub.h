@@ -90,7 +90,7 @@ constexpr char kStubLogModule[] = "fe_fusion_pass_stub";
 // 查询失败/弱符号未解析时返回的哨兵值（合法版本号恒 >= 0，不会与哨兵冲突）
 constexpr int32_t kStubVersionInvalid = -1;
 
-// 仅查询一次并缓存 ge-compiler 版本号（静态缓存），避免 47 条 STUB_REG_PASS 重复查询与重复打日志
+// 仅查询一次并缓存 ge-compiler 版本号（静态缓存），避免 68 条 STUB_REG_PASS 重复查询与重复打日志
 inline int32_t StubGetGeCompilerVersion()
 {
     static const int32_t version = []() {
