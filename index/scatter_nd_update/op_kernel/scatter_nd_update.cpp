@@ -106,7 +106,17 @@ extern "C" __global__ __aicore__ void scatter_nd_update(GM_ADDR var, GM_ADDR ind
     if (TILING_KEY_IS(40)) {
         ScatterNdUpdateArch22TilingData localTiling;
         AscendC::TPipe localPipe;
+#ifdef CONST_TILING
+        // GE静态编译将tiling固化为常量，不能通过GM地址搬运。
+        GET_TILING_DATA(constTiling, tiling);
+        localTiling = constTiling;
+        if (localTiling.localIndexMode != 0) {
+            // 沿用动态路径的更新缓冲预算，保持分批参数一致。
+            localTiling.scatterTiling.ubLengthForUpdates -= 512 / sizeof(DTYPE_VAR);
+        }
+#else
         LoadLocalTiling<DTYPE_VAR>(tiling, localTiling, localPipe);
+#endif
         if (localTiling.localIndexMode != 0) {
             if (localTiling.viewTiling.isViewStride0 != 0) {
                 ScatterNdUpdateBalancedKernel<DTYPE_VAR, true>::ProcessLocal(indices, updates, varRef, localTiling,
