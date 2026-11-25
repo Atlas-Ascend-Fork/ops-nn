@@ -28,6 +28,13 @@ Docs目录结构说明如下：
   ├── op_api_list.md                     # aclnn接口列表
   ├── op_list.md                         # 全量算子列表
   └── torch_api_list.md                  # torch_extension接口列表
+├── en                                     # 英文文档，结构与zh对应
+  ├── context                            # 公共文档，如术语、基础概念等
+  ├── figures                            # 图片目录
+  ├── menu_aclnn_api.md                  # 全量aclnn接口索引文件
+  ├── op_api_list.md                     # aclnn接口列表
+  ├── op_list.md                         # 全量算子列表
+  └── torch_api_list.md                  # torch_extension接口列表
 ├── CONTRIBUTING_DOCS.md                 # 文档贡献说明
 ├── QUICKSTART.md                        # 快速入门
 └── README.md
