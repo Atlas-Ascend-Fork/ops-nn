@@ -394,12 +394,14 @@ static ge::graphStatus CheckOutputShape(gert::TilingContext* context)
                     return ge::GRAPH_FAILED);
     }
 
-    // zlossOut为预留输出、不参与计算：reduction不为none时元素个数必须为1；
-    // reduction为none时允许为1（图模式推导口径）或N（与lossOut一致）
+    // zlossOut为预留输出、不参与计算：
+    // - numel==0 表示调用方不需要此输出（如op-plugin return_zloss=False），跳过校验；
+    // - reduction不为none时元素个数必须为1；
+    // - reduction为none时不做校验
     auto zlossOut = context->GetOutputShape(OUTPUT_ZLOSS_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, zlossOut);
     int64_t zlossNum = 0;
-    if (!isReductionNone && GetOutputShapeNum(zlossOut->GetStorageShape(), zlossNum)) {
+    if (GetOutputShapeNum(zlossOut->GetStorageShape(), zlossNum) && zlossNum != 0 && !isReductionNone) {
         OP_CHECK_IF(zlossNum != static_cast<int64_t>(NUM_1),
                     OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
                         context->GetNodeName(), "zlossOut",
