@@ -16,7 +16,14 @@ add_modules_sources(HOSTNAME ${OPHOST_NAME} MODE PRIVATE DIR ${CMAKE_CURRENT_SOU
 
 add_kernel_sources(
     KERNEL_SRC scatter_elements_apt.cpp
+    COMPUTE_UNITS dav_3510
+    AUTO_SYNC false
+    OPTIONS "--cce-simd-vf-fusion=false"
+)
+
+add_kernel_sources(
+    KERNEL_SRC scatter_elements_apt.cpp
     COMPUTE_UNITS dav_9201 dav_9202
     AUTO_SYNC false
-    OPTIONS "--cce-no-dcache-flush"
+    OPTIONS "--cce-no-dcache-flush" "--cce-simd-vf-fusion=false"
 )
