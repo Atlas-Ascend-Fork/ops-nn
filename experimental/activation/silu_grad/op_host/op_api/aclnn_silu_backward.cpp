@@ -37,9 +37,6 @@ extern "C" {
 static const std::initializer_list<DataType> DTYPE_SUPPORT_LIST = {DataType::DT_FLOAT16, DataType::DT_FLOAT,
                                                                    op::DataType::DT_BF16};
 
-static inline bool IsSupportBroadcast() { return Ops::NN::AclnnUtil::IsRegbase(); }
-
-static inline bool IsSupportMixPrecision() { return Ops::NN::AclnnUtil::IsRegbase(); }
 static inline bool CheckSocVersionIsSupportBf16(void)
 {
     auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
@@ -65,14 +62,9 @@ static bool CheckDtypeValid(const aclTensor* gradOutput, const aclTensor* self, 
     // 检查gradInput的数据类型是否在SiluGrad算子的支持列表内
     OP_CHECK_DTYPE_NOT_SUPPORT(gradInput, DTYPE_SUPPORT_LIST, return false);
 
-    if (IsSupportMixPrecision() && (gradOutput->GetDataType() != self->GetDataType())) {
-        // 检查混合精度的输出是否为float
-        OP_CHECK_DTYPE_NOT_MATCH(gradInput, op::DataType::DT_FLOAT, return false);
-    } else {
-        // 检查gradOutput, self和gradInput的dtype是否一致
-        OP_CHECK_DTYPE_NOT_SAME(gradOutput, gradInput, return false);
-        OP_CHECK_DTYPE_NOT_SAME(self, gradInput, return false);
-    }
+    // 检查gradOutput, self和gradInput的dtype是否一致（本算子不支持混合精度）
+    OP_CHECK_DTYPE_NOT_SAME(gradOutput, gradInput, return false);
+    OP_CHECK_DTYPE_NOT_SAME(self, gradInput, return false);
 
     bool bf16flag = CheckSocVersionIsSupportBf16();
     auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
@@ -90,18 +82,11 @@ static bool CheckShapeValid(const aclTensor* gradOutput, const aclTensor* self, 
 {
     OP_CHECK_MAX_DIM(gradOutput, MAX_SUPPORT_DIMS_NUMS, return false);
     OP_CHECK_MAX_DIM(self, MAX_SUPPORT_DIMS_NUMS, return false);
+    OP_CHECK_MAX_DIM(gradInput, MAX_SUPPORT_DIMS_NUMS, return false);
 
-    if (!IsSupportBroadcast()) {
-        // 检查gradOutput, self和gradInput的shape是否一致
-        OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(gradOutput, gradInput->GetViewShape(), return false);
-        OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(self, gradInput->GetViewShape(), return false);
-        return true;
-    }
-
-    // 检查gradOutput和self broadcast之后与gradInput是否shape一致
-    Shape dstShape;
-    OP_CHECK_BROADCAST_AND_INFER_SHAPE(gradOutput, self, dstShape, return false);
-    OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(gradInput, dstShape, return false);
+    // 检查gradOutput, self和gradInput的shape是否一致（本算子不支持广播）
+    OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(gradOutput, gradInput->GetViewShape(), return false);
+    OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(self, gradInput->GetViewShape(), return false);
 
     return true;
 }

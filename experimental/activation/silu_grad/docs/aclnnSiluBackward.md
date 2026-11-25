@@ -5,6 +5,7 @@
 |产品             |  是否支持  |
 |:-------------------------|:----------:|
 |  <term>Atlas A2系列产品</term>     |     √    |
+|  <term>Atlas A3系列产品</term>     |     √    |
 
 ## 功能说明
 
@@ -153,18 +154,21 @@ aclnnStatus aclnnSiluBackward(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的gradOutput、self或gradInput是空指针。</td>
+      <td>传入的gradOutput、self或gradInput是空指针；或workspaceSize、executor是空指针。</td>
     </tr>
     <tr>
-      <td rowspan="3">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="3">161002</td>
+      <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="4">161002</td>
       <td>gradOutput、self或gradInput的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
       <td>gradOutput、self和gradInput的数据类型不同。</td>
     </tr>
     <tr>
-      <td>gradOutput、self和gradInput的shape不同。</td>
+      <td>gradOutput、self和gradInput的shape不同（本接口不支持广播）。</td>
+    </tr>
+    <tr>
+      <td>gradOutput、self或gradInput的维度数超过8维（rank &gt; 8）。</td>
     </tr>
   </tbody></table>
 
@@ -212,7 +216,11 @@ aclnnStatus aclnnSiluBackward(
 
 ## 约束说明
 
-无。
+- **输入约束**：
+  - gradOutput、self与gradInput的数据类型必须一致，且均在BFLOAT16、FLOAT16、FLOAT范围内；本接口不支持混合精度。
+  - gradOutput、self与gradInput的shape必须完全一致，本接口不支持广播；三张量的维度数均为0-8，超过8维返回161002。
+  - 支持空Tensor。任一输入为空Tensor时，接口直接返回成功，workspaceSize为0。
+- **确定性计算**：本接口默认确定性实现。
 
 ## 调用示例
 

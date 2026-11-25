@@ -5,6 +5,7 @@
 | 产品 | 是否支持 |
 | ---- | :----:|
 | Atlas A2系列产品 | √ |
+| Atlas A3系列产品 | √ |
 
 ## 功能说明
 
@@ -77,8 +78,8 @@ $$
 
 ## 约束说明
 
-- 输入dy与x的shape需一致，且与输出dx的shape一致（不支持broadcast的场景下）；支持broadcast的场景下，dy与x需满足broadcast关系，dx的shape需与broadcast后的shape一致。
-- 输入dy、x与输出dx的数据类型需一致。
+- 输入dy与x的shape需一致，且与输出dx的shape一致；本算子不支持broadcast。
+- 输入dy、x与输出dx的数据类型需一致；不支持混合精度。
 - 输入维度不超过8维。
 - BF16数据类型仅在部分产品型号上支持。
 
