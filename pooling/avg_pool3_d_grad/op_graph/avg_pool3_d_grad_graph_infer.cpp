@@ -47,7 +47,8 @@ ge::graphStatus InferDataTypeAvgPool3DGrad(gert::InferDataTypeContext* context)
     const ge::DataType gradsDtype = context->GetInputDataType(GRADS_INDEX);
 
     if (!IsSupportedDataType(gradsDtype)) {
-        OP_LOGE(context->GetNodeName(), "grads must use a dtype supported by AvgPool3DGrad.");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "grads", Ops::Base::ToString(gradsDtype),
+                                              "grads only supports DT_FLOAT16, DT_FLOAT and DT_BF16");
         return ge::GRAPH_FAILED;
     }
 

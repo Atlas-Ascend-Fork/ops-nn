@@ -179,10 +179,18 @@ static ge::graphStatus GetShapeAndDtype(gert::TilingContext* context, Ctx& ctx)
 
     // 三输入 shape 必须完全相同（broadcast.kind: none）
     OP_CHECK_IF(yS.GetDimNum() != mS.GetDimNum() || yS.GetDimNum() != xS.GetDimNum(),
-                OP_LOGE(context, "ActULQClampMinGrad: three inputs must have same rank"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), "y_grad, clamp_min_mask, x_clamped_loss",
+                    std::to_string(yS.GetDimNum()) + ", " + std::to_string(mS.GetDimNum()) + ", " +
+                        std::to_string(xS.GetDimNum()),
+                    "the three inputs must have the same rank"),
+                return ge::GRAPH_FAILED);
     for (size_t i = 0; i < yS.GetDimNum(); ++i) {
         OP_CHECK_IF(yS.GetDim(i) != mS.GetDim(i) || yS.GetDim(i) != xS.GetDim(i),
-                    OP_LOGE(context, "ActULQClampMinGrad: three inputs shape mismatch at dim %zu", i),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), "y_grad, clamp_min_mask, x_clamped_loss",
+                        Ops::Base::ToString(yS) + ", " + Ops::Base::ToString(mS) + ", " + Ops::Base::ToString(xS),
+                        "the three inputs must have identical shape (no broadcast)"),
                     return ge::GRAPH_FAILED);
     }
 
@@ -192,10 +200,11 @@ static ge::graphStatus GetShapeAndDtype(gert::TilingContext* context, Ctx& ctx)
         ctx.inShape.push_back(1); // scalar → 1-element
     } else {
         for (size_t i = 0; i < rank; ++i) {
-            OP_CHECK_IF(
-                yS.GetDim(i) < 0,
-                OP_LOGE(context, "y_grad dim[%zu]=%ld negative (dynamic shape not allowed at tiling)", i, yS.GetDim(i)),
-                return ge::GRAPH_FAILED);
+            OP_CHECK_IF(yS.GetDim(i) < 0,
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context->GetNodeName(), "y_grad", Ops::Base::ToString(yS),
+                            "each dim must be non-negative at tiling; dynamic shapes are not allowed here"),
+                        return ge::GRAPH_FAILED);
             ctx.inShape.push_back(yS.GetDim(i));
         }
     }
@@ -234,29 +243,36 @@ static ge::graphStatus GetShapeAndDtype(gert::TilingContext* context, Ctx& ctx)
     // 4 组合法 dtype 组合校验（来源：def.cpp:39-65 按列对位）
     //   (fp16, fp16, fp16) / (fp32, fp32, fp32) / (fp16, bool, fp16) / (fp32, bool, fp32)
     //   规则：x_clamped_loss dtype 必须等于 y_grad dtype；mask 为 bool 或等于 y_grad dtype
-    OP_CHECK_IF(xDtype != ctx.dtype,
-                OP_LOGE(context, "ActULQClampMinGrad: x_clamped_loss dtype(%d) must equal y_grad dtype(%d)",
-                        static_cast<int>(xDtype), static_cast<int>(ctx.dtype)),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(maskDtype != ge::DT_BOOL && maskDtype != ctx.dtype,
-                OP_LOGE(context, "ActULQClampMinGrad: clamp_min_mask dtype(%d) must be BOOL or equal y_grad dtype(%d)",
-                        static_cast<int>(maskDtype), static_cast<int>(ctx.dtype)),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        xDtype != ctx.dtype,
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "x_clamped_loss, y_grad",
+                                               Ops::Base::ToString(xDtype) + ", " + Ops::Base::ToString(ctx.dtype),
+                                               "x_clamped_loss dtype must equal y_grad dtype"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        maskDtype != ge::DT_BOOL && maskDtype != ctx.dtype,
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "clamp_min_mask, y_grad",
+                                               Ops::Base::ToString(maskDtype) + ", " + Ops::Base::ToString(ctx.dtype),
+                                               "clamp_min_mask dtype must be DT_BOOL or equal y_grad dtype"),
+        return ge::GRAPH_FAILED);
 
     // 格式校验（来源：def.cpp:42,49,56,63 FORMAT_ND）
     auto yFormat = yDesc->GetFormat().GetStorageFormat();
     OP_CHECK_IF(yFormat != ge::FORMAT_ND,
-                OP_LOGE(context->GetNodeName(), "y_grad format must be ND, got %d", static_cast<int32_t>(yFormat)),
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "y_grad", Ops::Base::ToString(yFormat),
+                                                       "the format of y_grad must be ND"),
                 return ge::GRAPH_FAILED);
     auto maskFormat = maskDesc->GetFormat().GetStorageFormat();
-    OP_CHECK_IF(
-        maskFormat != ge::FORMAT_ND,
-        OP_LOGE(context->GetNodeName(), "clamp_min_mask format must be ND, got %d", static_cast<int32_t>(maskFormat)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(maskFormat != ge::FORMAT_ND,
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "clamp_min_mask",
+                                                       Ops::Base::ToString(maskFormat),
+                                                       "the format of clamp_min_mask must be ND"),
+                return ge::GRAPH_FAILED);
     auto xFormat = xDesc->GetFormat().GetStorageFormat();
     OP_CHECK_IF(
         xFormat != ge::FORMAT_ND,
-        OP_LOGE(context->GetNodeName(), "x_clamped_loss format must be ND, got %d", static_cast<int32_t>(xFormat)),
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "x_clamped_loss", Ops::Base::ToString(xFormat),
+                                               "the format of x_clamped_loss must be ND"),
         return ge::GRAPH_FAILED);
 
     ctx.dtypeSize = static_cast<int64_t>(ge::GetSizeByDataType(ctx.dtype));

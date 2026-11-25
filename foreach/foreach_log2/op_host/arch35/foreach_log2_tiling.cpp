@@ -171,7 +171,12 @@ static ge::graphStatus ForeachLog2TilingFunc(gert::TilingContext* context)
     ge::DataType dataType = ge::DT_FLOAT;
     if (tensorNum > 0) {
         auto inputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, 0);
-        OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
+        OP_CHECK_IF(inputDesc == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "input1",
+                        "the desc of dynamic input 0 is missing in the tiling context; check that the graph node "
+                        "provides all inputs"),
+                    return ge::GRAPH_FAILED);
         dataType = inputDesc->GetDataType();
     }
 
@@ -186,7 +191,12 @@ static ge::graphStatus ForeachLog2TilingFunc(gert::TilingContext* context)
 
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto shapePtr = context->GetDynamicInputShape(INPUT_IDX_0, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
+        OP_CHECK_IF(shapePtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "input1",
+                        "the shape of dynamic input " + std::to_string(i) +
+                            " is missing in the tiling context; check that the graph node provides all inputs"),
+                    return ge::GRAPH_FAILED);
         auto storageShape = shapePtr->GetStorageShape();
         int64_t numel = storageShape.GetShapeSize();
         OP_CHECK_IF(totalElements > std::numeric_limits<int64_t>::max() - numel,
@@ -223,7 +233,8 @@ static ge::graphStatus ForeachLog2TilingFunc(gert::TilingContext* context)
     } else if (dataType == ge::DT_BF16) {
         tilingKey = GET_TPL_TILING_KEY(FOREACH_LOG2_TPL_SCH_MODE_BF16);
     } else {
-        OP_LOGE(context, "unsupported dtype for foreach_log2");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "input1", Ops::Base::ToString(dataType),
+                                              "only DT_FLOAT, DT_FLOAT16 and DT_BF16 are supported");
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(tilingKey);

@@ -208,10 +208,14 @@ ge::graphStatus AdaptiveAvgPool3dGradTilingBaseV35::GetShapeAttrsInfo()
 
     OP_LOGD(context_->GetNodeName(), "Enter AdaptiveAvgPool3dGradTilingBaseV35 GetShapeAttrsInfo.");
 
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputDtype(), OP_LOGE(context_->GetNodeName(), "The input dtype is invalid."),
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputDtype(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                       "The input dtype is invalid; propagate the lower-layer first error"),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(!CheckInputShape(), OP_LOGE(context_->GetNodeName(), "The input relationship is invalid."),
+    OP_CHECK_IF(!CheckInputShape(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                       "The input relationship is invalid; propagate the lower-layer first error"),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(ge::GRAPH_SUCCESS != SetInputParams(), OP_LOGE(context_->GetNodeName(), "Set input shape failed."),

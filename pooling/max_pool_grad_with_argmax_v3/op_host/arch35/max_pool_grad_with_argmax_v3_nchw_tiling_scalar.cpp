@@ -213,13 +213,13 @@ ge::graphStatus MaxPoolGradWithArgmaxV3NCHWScalarTiling::CalcGradArgmax()
     scalarTilingData_.argmaxBufferSize = argmaxCountInUB * ge::GetSizeByDataType(inputData.indexDtype);
     ge::graphStatus result = CalcGradArgmaxInner(argmaxCountInUB);
     if (result != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "calc normal internal loop failure.");
+        OP_LOGE(context_->GetNodeName(), "calc normal internal loop failure");
         return result;
     }
     SetNormalInner();
     result = CalcGradArgmaxInnerTail(argmaxCountInUB);
     if (result != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "calc normal tail loop failure.");
+        OP_LOGE(context_->GetNodeName(), "calc normal tail loop failure");
         return result;
     }
     SetTailInner();

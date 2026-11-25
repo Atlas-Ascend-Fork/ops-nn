@@ -57,13 +57,20 @@ ge::graphStatus InferDataTypeMaxPoolV3Grad(gert::InferDataTypeContext* context)
 
     if (!IsSupportedDataType(origInputDtype) || !IsSupportedDataType(origOutputDtype) ||
         !IsSupportedDataType(gradDtype)) {
-        OP_LOGE(context->GetNodeName(), "orig_input, orig_output and grad must use a dtype supported "
-                                        "by MaxPoolV3Grad.");
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context->GetNodeName(), "orig_input, orig_output, grad",
+            Ops::Base::ToString(origInputDtype) + ", " + Ops::Base::ToString(origOutputDtype) + ", " +
+                Ops::Base::ToString(gradDtype),
+            "orig_input, orig_output and grad only support DT_FLOAT16, DT_FLOAT and DT_BF16");
         return ge::GRAPH_FAILED;
     }
 
     if (origInputDtype != origOutputDtype || origInputDtype != gradDtype) {
-        OP_LOGE(context->GetNodeName(), "orig_input, orig_output and grad must have the same dtype.");
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "orig_input, orig_output, grad",
+                                               Ops::Base::ToString(origInputDtype) + ", " +
+                                                   Ops::Base::ToString(origOutputDtype) + ", " +
+                                                   Ops::Base::ToString(gradDtype),
+                                               "orig_input, orig_output and grad must have the same dtype");
         return ge::GRAPH_FAILED;
     }
 

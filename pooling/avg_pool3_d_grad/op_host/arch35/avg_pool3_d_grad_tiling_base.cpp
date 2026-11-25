@@ -532,20 +532,30 @@ ge::graphStatus AvgPool3DGradTilingBase::GetPlatformInfo()
 
 ge::graphStatus AvgPool3DGradTilingBase::GetShapeAttrsInfo()
 {
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputDtype(), OP_LOGE(context_->GetNodeName(), "The input dtype is invalid."),
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckInputDtype(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                       "The input dtype is invalid; propagate the lower-layer first error"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputShape(), OP_LOGE(context_->GetNodeName(), "The input relationship is invalid."),
+    OP_CHECK_IF(!CheckInputShape(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                       "The input relationship is invalid; propagate the lower-layer first error"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckAttrShape(), OP_LOGE(context_->GetNodeName(), "The attr shape is invalid."),
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckAttrShape(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                       "The attr shape is invalid; propagate the lower-layer first error"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckAttrVal(), OP_LOGE(context_->GetNodeName(), "The attr value is invalid."),
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckAttrVal(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                       "The attr value is invalid; propagate the lower-layer first error"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(ge::GRAPH_SUCCESS != SetAttrParams(), OP_LOGE(context_->GetNodeName(), "Set attr params failed."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(ge::GRAPH_SUCCESS != SetInputParams(), OP_LOGE(context_->GetNodeName(), "Set input params failed."),
                 return ge::GRAPH_FAILED);
     ResolveUnsetPads();
-    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckGradValid(), OP_LOGE(context_->GetNodeName(), "The grad shape is invalid."),
+    OP_CHECK_IF(ge::GRAPH_SUCCESS != CheckGradValid(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                       "The grad shape is invalid; propagate the lower-layer first error"),
                 return ge::GRAPH_FAILED);
     SetOtherInputParams();
     return ge::GRAPH_SUCCESS;

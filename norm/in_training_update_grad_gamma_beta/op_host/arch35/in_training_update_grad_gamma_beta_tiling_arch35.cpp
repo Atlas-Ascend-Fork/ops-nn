@@ -124,7 +124,10 @@ ge::graphStatus ValidateContract(gert::TilingContext* context, const gert::Shape
     storageFormat = gammaDesc->GetStorageFormat();
     OP_CHECK_IF(betaDesc->GetStorageFormat() != storageFormat || pdGammaDesc->GetStorageFormat() != storageFormat ||
                     pdBetaDesc->GetStorageFormat() != storageFormat,
-                OP_LOGE(context, "all inputs and outputs must use the same storage format"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+                    context->GetNodeName(), "res_gamma, res_beta, pd_gamma, pd_beta",
+                    Ops::Base::ToString(storageFormat), "all inputs and outputs must use the same storage format"),
+                return ge::GRAPH_FAILED);
 
     const auto* gammaStorageShape = context->GetInputShape(INPUT_RES_GAMMA_INDEX);
     const auto* betaStorageShape = context->GetInputShape(INPUT_RES_BETA_INDEX);
@@ -145,27 +148,43 @@ ge::graphStatus ValidateContract(gert::TilingContext* context, const gert::Shape
                                                          std::to_string(rank).c_str(), "rank must be 4 or 5"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(betaShape.GetDimNum() != rank || pdGammaShape.GetDimNum() != rank || pdBetaShape.GetDimNum() != rank,
-                OP_LOGE(context, "all input and output ranks must match"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), "res_gamma, res_beta, pd_gamma, pd_beta",
+                    std::to_string(rank) + ", " + std::to_string(betaShape.GetDimNum()) + ", " +
+                        std::to_string(pdGammaShape.GetDimNum()) + ", " + std::to_string(pdBetaShape.GetDimNum()),
+                    "all input and output ranks must match"),
+                return ge::GRAPH_FAILED);
 
     const ge::Format gammaOriginFormat = gammaDesc->GetOriginFormat();
     const ge::Format betaOriginFormat = betaDesc->GetOriginFormat();
     OP_CHECK_IF(!IsSupportedFormat(gammaOriginFormat) || !IsSupportedFormat(betaOriginFormat) ||
                     gammaOriginFormat != betaOriginFormat,
-                OP_LOGE(context, "input origin formats must be identical and supported"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+                    context->GetNodeName(), "res_gamma, res_beta",
+                    Ops::Base::ToString(gammaOriginFormat) + ", " + Ops::Base::ToString(betaOriginFormat),
+                    "input origin formats must be identical and supported"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(!FormatMatchesRank(gammaOriginFormat, rank),
                 OP_LOGE(context, "input origin format does not match rank %zu", rank), return ge::GRAPH_FAILED);
 
     for (size_t index = 0U; index < rank; ++index) {
         const int64_t gammaDim = gammaShape.GetDim(index);
-        OP_CHECK_IF(gammaDim < 0, OP_LOGE(context, "res_gamma dim[%zu]=%ld must be nonnegative", index, gammaDim),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            gammaDim < 0,
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "res_gamma, res_beta",
+                                                   Ops::Base::ToString(gammaShape), "each dim must be nonnegative"),
+            return ge::GRAPH_FAILED);
         OP_CHECK_IF(betaShape.GetDim(index) != gammaDim,
                     OP_LOGE(context, "res_beta dim[%zu]=%ld differs from res_gamma dim[%zu]=%ld", index,
                             betaShape.GetDim(index), index, gammaDim),
                     return ge::GRAPH_FAILED);
         const int64_t expectedOutputDim = index == REDUCE_AXIS ? 1 : gammaDim;
         OP_CHECK_IF(pdGammaShape.GetDim(index) != expectedOutputDim || pdBetaShape.GetDim(index) != expectedOutputDim,
-                    OP_LOGE(context, "output dim[%zu] must be %ld", index, expectedOutputDim), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), "pd_gamma, pd_beta",
+                        Ops::Base::ToString(pdGammaShape) + ", " + Ops::Base::ToString(pdBetaShape),
+                        "the reduce-axis output dim must be 1 and other dims must match the input"),
+                    return ge::GRAPH_FAILED);
     }
     inputShape = &gammaShape;
     return ge::GRAPH_SUCCESS;
@@ -209,12 +228,16 @@ ge::graphStatus INTrainingUpdateGradGammaBetaTilingFunc(gert::TilingContext* con
     uint64_t inputElements = 0U;
     uint64_t inputBytes = 0U;
     uint64_t outputBytes = 0U;
-    OP_CHECK_IF(!SafeMultiply(reduceCount, outputElements, inputElements) ||
-                    !SafeMultiply(inputElements, FP32_BYTES, inputBytes) ||
-                    !SafeMultiply(outputElements, FP32_BYTES, outputBytes) ||
-                    inputBytes > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
-                    outputBytes > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
-                OP_LOGE(context, "input or output size exceeds the signed 64-bit GM range"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !SafeMultiply(reduceCount, outputElements, inputElements) ||
+            !SafeMultiply(inputElements, FP32_BYTES, inputBytes) ||
+            !SafeMultiply(outputElements, FP32_BYTES, outputBytes) ||
+            inputBytes > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
+            outputBytes > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "res_gamma, pd_gamma, pd_beta",
+                                                  std::to_string(inputElements) + ", " + std::to_string(outputElements),
+                                                  "the input or output size exceeds the signed 64-bit GM range"),
+        return ge::GRAPH_FAILED);
 
     auto* platformInfo = context->GetPlatformInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);

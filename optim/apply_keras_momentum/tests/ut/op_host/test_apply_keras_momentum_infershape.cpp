@@ -14,6 +14,14 @@
 #include <iostream>
 #include "infershape_test_util.h" // NOLINT
 #include "ut_op_common.h"
+#include <map>
+#include <string>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
+#include "kernel_run_context_facker.h"                // NOLINT
+#include "platform/platform_infos_def.h"              // NOLINT
+#include "test_cube_util.h"                           // NOLINT
+#include "../../../../../tests/ut/common/any_value.h" // NOLINT
+#include "../../../op_kernel/arch35/apply_keras_momentum_tiling_data.h"
 #include "../../../op_graph/apply_keras_momentum_proto.h"
 
 class ApplyKerasMomentum : public testing::Test {
@@ -22,6 +30,69 @@ protected:
 
     static void TearDownTestCase() { std::cout << "ApplyKerasMomentum TearDown" << std::endl; }
 };
+
+namespace {
+namespace errmsg_test {
+inline void ClearErrorMessages() { (void)ErrorManager::GetInstance().GetRawErrorMessages(); }
+
+inline void ExpectFirstError(const std::string& expectedCode, const std::map<std::string, std::string>& expectedArgs)
+{
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors.front().error_id, expectedCode);
+    for (const auto& expected : expectedArgs) {
+        const auto actual = errors.front().args_map.find(expected.first);
+        ASSERT_NE(actual, errors.front().args_map.end());
+        EXPECT_EQ(actual->second, expected.second);
+    }
+}
+} // namespace errmsg_test
+
+} // namespace
+
+// lr 非标量 → EZ0015
+TEST_F(ApplyKerasMomentum, errmsg_infershape_lr_not_scalar_ez0015)
+{
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyKerasMomentum")->infer_shape, nullptr);
+    gert::StorageShape varShape = {{4, 3}, {4, 3}};
+    gert::StorageShape accumShape = {{4, 3}, {4, 3}};
+    gert::StorageShape lrShape = {{2}, {2}};
+    gert::StorageShape gradShape = {{4, 3}, {4, 3}};
+    gert::StorageShape momentumShape = {{1}, {1}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(5, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1})
+                      .InputShapes({&varShape, &accumShape, &lrShape, &gradShape, &momentumShape})
+                      .Build();
+    errmsg_test::ClearErrorMessages();
+    ASSERT_EQ(gert::OpImplRegistry::GetInstance()
+                  .GetOpImpl("ApplyKerasMomentum")
+                  ->infer_shape(holder.GetContext<gert::InferShapeContext>()),
+              ge::GRAPH_FAILED);
+    errmsg_test::ExpectFirstError("EZ0015", {{"param_name", "lr"}});
+}
+
+// momentum 非标量 → EZ0015
+TEST_F(ApplyKerasMomentum, errmsg_infershape_momentum_not_scalar_ez0015)
+{
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyKerasMomentum")->infer_shape, nullptr);
+    gert::StorageShape varShape = {{4, 3}, {4, 3}};
+    gert::StorageShape accumShape = {{4, 3}, {4, 3}};
+    gert::StorageShape lrShape = {{1}, {1}};
+    gert::StorageShape gradShape = {{4, 3}, {4, 3}};
+    gert::StorageShape momentumShape = {{2}, {2}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(5, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1})
+                      .InputShapes({&varShape, &accumShape, &lrShape, &gradShape, &momentumShape})
+                      .Build();
+    errmsg_test::ClearErrorMessages();
+    ASSERT_EQ(gert::OpImplRegistry::GetInstance()
+                  .GetOpImpl("ApplyKerasMomentum")
+                  ->infer_shape(holder.GetContext<gert::InferShapeContext>()),
+              ge::GRAPH_FAILED);
+    errmsg_test::ExpectFirstError("EZ0015", {{"param_name", "momentum"}});
+}
 
 TEST_F(ApplyKerasMomentum, ApplyKerasMomentum_infershape_3d_fp32)
 {

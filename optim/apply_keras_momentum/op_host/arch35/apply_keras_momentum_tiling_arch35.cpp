@@ -106,18 +106,28 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     auto varShape = EnsureNotScalar(inputVar->GetStorageShape());
 
     const size_t varRank = inputVar->GetOriginShape().GetDimNum();
-    OP_CHECK_IF(varRank > kMaxRank, OP_LOGE(opName, "var rank must be in [0, 8], got %zu", varRank),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        varRank > kMaxRank,
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(opName, "var", std::to_string(varRank), "rank must not exceed 8"),
+        return ge::GRAPH_FAILED);
 
     auto inputAccum = context->GetInputShape(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputAccum);
     OP_CHECK_IF(!ShapeEqual(varShape, EnsureNotScalar(inputAccum->GetStorageShape())),
-                OP_LOGE(opName, "shape(var) != shape(accum)"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    opName, "var, accum",
+                    Ops::Base::ToString(varShape) + ", " + Ops::Base::ToString(inputAccum->GetStorageShape()),
+                    "shape of accum must match var"),
+                return ge::GRAPH_FAILED);
 
     auto inputGrad = context->GetInputShape(3);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputGrad);
     OP_CHECK_IF(!ShapeEqual(varShape, EnsureNotScalar(inputGrad->GetStorageShape())),
-                OP_LOGE(opName, "shape(var) != shape(grad)"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    opName, "var, grad",
+                    Ops::Base::ToString(varShape) + ", " + Ops::Base::ToString(inputGrad->GetStorageShape()),
+                    "shape of grad must match var"),
+                return ge::GRAPH_FAILED);
 
     *totalElements = varShape.GetShapeSize();
 
@@ -126,27 +136,41 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     *dataType = inputDesc->GetDataType();
 
     const std::set<ge::DataType> supportedDtypes = {ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16};
-    OP_CHECK_IF(supportedDtypes.count(*dataType) == 0, OP_LOGE(context, "Unsupported dtype"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(supportedDtypes.count(*dataType) == 0,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(opName, "var", Ops::Base::ToString(*dataType),
+                                                      "var only supports DT_FLOAT, DT_FLOAT16 and DT_BF16"),
+                return ge::GRAPH_FAILED);
 
     auto lrDesc = context->GetInputDesc(2);
     OP_CHECK_NULL_WITH_CONTEXT(context, lrDesc);
-    OP_CHECK_IF(lrDesc->GetDataType() != ge::DT_FLOAT, OP_LOGE(context, "lr only supports float32"),
+    OP_CHECK_IF(lrDesc->GetDataType() != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(opName, "lr", Ops::Base::ToString(lrDesc->GetDataType()),
+                                                      "lr only supports DT_FLOAT"),
                 return ge::GRAPH_FAILED);
 
     auto momentumDesc = context->GetInputDesc(4);
     OP_CHECK_NULL_WITH_CONTEXT(context, momentumDesc);
-    OP_CHECK_IF(momentumDesc->GetDataType() != ge::DT_FLOAT, OP_LOGE(context, "momentum only supports float32"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        momentumDesc->GetDataType() != ge::DT_FLOAT,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(opName, "momentum", Ops::Base::ToString(momentumDesc->GetDataType()),
+                                              "momentum only supports DT_FLOAT"),
+        return ge::GRAPH_FAILED);
 
     auto lrShape = context->GetInputShape(2);
     OP_CHECK_NULL_WITH_CONTEXT(context, lrShape);
     OP_CHECK_IF(!IsScalarShape(lrShape->GetStorageShape()),
-                OP_LOGE(opName, "lr must be scalar tensor (shape [] or [1])"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(opName, "lr",
+                                                          std::to_string(lrShape->GetStorageShape().GetShapeSize()),
+                                                          "lr must be a scalar tensor (shape [] or [1])"),
+                return ge::GRAPH_FAILED);
 
     auto momentumShape = context->GetInputShape(4);
     OP_CHECK_NULL_WITH_CONTEXT(context, momentumShape);
     OP_CHECK_IF(!IsScalarShape(momentumShape->GetStorageShape()),
-                OP_LOGE(opName, "momentum must be scalar tensor (shape [] or [1])"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    opName, "momentum", std::to_string(momentumShape->GetStorageShape().GetShapeSize()),
+                    "momentum must be a scalar tensor (shape [] or [1])"),
+                return ge::GRAPH_FAILED);
 
     const bool* useNesterovAttr = context->GetAttrs()->GetAttrPointer<bool>(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, useNesterovAttr);

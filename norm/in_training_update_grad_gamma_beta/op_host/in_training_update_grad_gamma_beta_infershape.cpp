@@ -117,7 +117,10 @@ static ge::graphStatus InferShapeForINTrainingUpdateGradGammaBeta(gert::InferSha
     const ge::Format gammaFormat = gammaDesc->GetOriginFormat();
     const ge::Format betaFormat = betaDesc->GetOriginFormat();
     if (!IsSupportedFormat(gammaFormat) || !IsSupportedFormat(betaFormat) || gammaFormat != betaFormat) {
-        OP_LOGE(context, "input origin formats must be identical and supported");
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+            context->GetNodeName(), "res_gamma, res_beta",
+            Ops::Base::ToString(gammaFormat) + ", " + Ops::Base::ToString(betaFormat),
+            "input origin formats must be identical and supported");
         return ge::GRAPH_FAILED;
     }
     if (!FormatMatchesRank(gammaFormat, gammaShape) || !FormatMatchesRank(betaFormat, betaShape)) {
@@ -125,18 +128,25 @@ static ge::graphStatus InferShapeForINTrainingUpdateGradGammaBeta(gert::InferSha
         return ge::GRAPH_FAILED;
     }
     if (!ShapesCompatible(gammaShape, betaShape)) {
-        OP_LOGE(context, "input shapes must match");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "res_gamma, res_beta",
+            Ops::Base::ToString(*gammaShape) + ", " + Ops::Base::ToString(*betaShape), "input shapes must match");
         return ge::GRAPH_FAILED;
     }
     if (!OutputFormatMatches(pdGammaDesc, gammaFormat) || !OutputFormatMatches(pdBetaDesc, gammaFormat)) {
-        OP_LOGE(context, "output origin formats must mirror the input format");
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(context->GetNodeName(), "pd_gamma, pd_beta",
+                                                Ops::Base::ToString(pdGammaDesc->GetOriginFormat()) + ", " +
+                                                    Ops::Base::ToString(pdBetaDesc->GetOriginFormat()),
+                                                "output origin formats must mirror the input format");
         return ge::GRAPH_FAILED;
     }
 
     gert::Shape expectedShape = *gammaShape;
     if (!IsUnknownRank(gammaShape)) {
         if (gammaShape->GetDimNum() == 0U) {
-            OP_LOGE(context, "input rank must be 4 or 5");
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "res_gamma",
+                                                     std::to_string(gammaShape->GetDimNum()),
+                                                     "input rank must be 4 or 5");
             return ge::GRAPH_FAILED;
         }
         expectedShape.SetDim(0U, 1);

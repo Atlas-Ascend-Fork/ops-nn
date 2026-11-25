@@ -71,10 +71,11 @@ static ge::graphStatus InferShapeForSwigluGroupGrad(gert::InferShapeContext* con
     const bool has_group_index = (group_index_shape != nullptr);
 
     if (has_weight != has_y_origin) {
-        OP_LOGE(context->GetNodeName(),
-                "Invalid optional inputs: weight and y_origin must both be present or both be absent. "
-                "has_weight=%d, has_y_origin=%d.",
-                static_cast<int>(has_weight), static_cast<int>(has_y_origin));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "weight, y_origin",
+            "weight and y_origin must both be present or both be absent. has_weight=" +
+                std::to_string(static_cast<int>(has_weight)) +
+                ", has_y_origin=" + std::to_string(static_cast<int>(has_y_origin)));
         return ge::GRAPH_FAILED;
     }
 
@@ -90,13 +91,15 @@ static ge::graphStatus InferShapeForSwigluGroupGrad(gert::InferShapeContext* con
     if (has_group_index && !Ops::Base::IsUnknownRank(*group_index_shape)) {
         const size_t group_index_rank = group_index_shape->GetDimNum();
         if (group_index_rank != 1U) {
-            OP_LOGE(context->GetNodeName(), "Invalid group_index rank: expected rank 1, but got rank %zu.",
-                    group_index_rank);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "group_index",
+                                                     std::to_string(group_index_rank), "rank must be 1");
             return ge::GRAPH_FAILED;
         }
         const int64_t group_index_size = group_index_shape->GetDim(0);
         if (!IsUnknownDim(group_index_size) && group_index_size < 1) {
-            OP_LOGE(context->GetNodeName(), "Invalid group_index shape: expected a non-empty tensor.");
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "group_index",
+                                                      std::to_string(group_index_size),
+                                                      "group_index must be a non-empty tensor");
             return ge::GRAPH_FAILED;
         }
     }
@@ -123,11 +126,13 @@ static ge::graphStatus InferShapeForSwigluGroupGrad(gert::InferShapeContext* con
     const size_t x_rank = x_shape->GetDimNum();
 
     if (grad_y_rank < 1U) {
-        OP_LOGE(context->GetNodeName(), "Invalid grad_y rank: expected rank >= 1, but got rank %zu.", grad_y_rank);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "grad_y", std::to_string(grad_y_rank),
+                                                 "rank must be at least 1");
         return ge::GRAPH_FAILED;
     }
     if (x_rank < 1U) {
-        OP_LOGE(context->GetNodeName(), "Invalid x rank: expected rank >= 1, but got rank %zu.", x_rank);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(x_rank),
+                                                 "rank must be at least 1");
         return ge::GRAPH_FAILED;
     }
 
@@ -136,16 +141,15 @@ static ge::graphStatus InferShapeForSwigluGroupGrad(gert::InferShapeContext* con
     const int64_t x_last_dim = x_shape->GetDim(x_shape->GetDimNum() - 1U);
 
     if (!IsUnknownDim(grad_y_last_dim) && grad_y_last_dim <= 0) {
-        OP_LOGE(context->GetNodeName(), "Invalid last dimension: grad_y.shape[-1](%lld) must be greater than 0.",
-                static_cast<long long>(grad_y_last_dim));
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "grad_y", std::to_string(grad_y_last_dim),
+                                                  "grad_y.shape[-1] must be greater than 0");
         return ge::GRAPH_FAILED;
     }
 
     if (!IsCompatibleMultipleDim(x_last_dim, grad_y_last_dim, 2)) {
-        OP_LOGE(context->GetNodeName(),
-                "Invalid last dimension: x.shape[-1](%lld) must be equal to "
-                "2 * grad_y.shape[-1](%lld).",
-                static_cast<long long>(x_last_dim), static_cast<long long>(grad_y_last_dim));
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "x, grad_y",
+                                                  std::to_string(x_last_dim) + ", " + std::to_string(grad_y_last_dim),
+                                                  "x.shape[-1] must be equal to 2 * grad_y.shape[-1]");
         return ge::GRAPH_FAILED;
     }
 
@@ -171,8 +175,10 @@ static ge::graphStatus InferShapeForSwigluGroupGrad(gert::InferShapeContext* con
             x_total_rows *= dim;
         }
         if (grad_y_rows_known && x_rows_known && grad_y_total_rows != x_total_rows) {
-            OP_LOGE(context->GetNodeName(), "x outer numel(%lld) must equal grad_y outer numel(%lld).",
-                    static_cast<long long>(x_total_rows), static_cast<long long>(grad_y_total_rows));
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                context->GetNodeName(), "x, grad_y",
+                std::to_string(x_total_rows) + ", " + std::to_string(grad_y_total_rows),
+                "x outer numel must equal grad_y outer numel");
             return ge::GRAPH_FAILED;
         }
     }
@@ -212,15 +218,18 @@ static ge::graphStatus InferShapeForSwigluGroupGrad(gert::InferShapeContext* con
 
         if (!y_origin_unknown_rank) {
             if (y_origin_shape->GetDimNum() < 1U) {
-                OP_LOGE(context->GetNodeName(), "Invalid y_origin rank: expected rank >= 1.");
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "y_origin",
+                                                         std::to_string(y_origin_shape->GetDimNum()),
+                                                         "rank must be at least 1");
                 return ge::GRAPH_FAILED;
             }
             const int64_t y_origin_last_dim = y_origin_shape->GetDim(y_origin_shape->GetDimNum() - 1U);
             if (!IsUnknownDim(y_origin_last_dim) && !IsUnknownDim(grad_y_last_dim) &&
                 y_origin_last_dim != grad_y_last_dim) {
-                OP_LOGE(context->GetNodeName(),
-                        "Invalid y_origin last dim: y_origin.shape[-1](%lld) must equal grad_y.shape[-1](%lld).",
-                        static_cast<long long>(y_origin_last_dim), static_cast<long long>(grad_y_last_dim));
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context->GetNodeName(), "y_origin, grad_y",
+                    std::to_string(y_origin_last_dim) + ", " + std::to_string(grad_y_last_dim),
+                    "y_origin.shape[-1] must equal grad_y.shape[-1]");
                 return ge::GRAPH_FAILED;
             }
             int64_t y_origin_total_rows = 1;
@@ -234,8 +243,10 @@ static ge::graphStatus InferShapeForSwigluGroupGrad(gert::InferShapeContext* con
                 y_origin_total_rows *= dim;
             }
             if (y_origin_rows_known && grad_y_rows_known && y_origin_total_rows != grad_y_total_rows) {
-                OP_LOGE(context->GetNodeName(), "y_origin outer numel(%lld) must equal grad_y outer numel(%lld).",
-                        static_cast<long long>(y_origin_total_rows), static_cast<long long>(grad_y_total_rows));
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context->GetNodeName(), "y_origin, grad_y",
+                    std::to_string(y_origin_total_rows) + ", " + std::to_string(grad_y_total_rows),
+                    "y_origin outer numel must equal grad_y outer numel");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -264,14 +275,15 @@ static ge::graphStatus InferDataTypeForSwigluGroupGrad(gert::InferDataTypeContex
     const ge::DataType x_dtype = context->GetInputDataType(X_INDEX);
 
     if (grad_y_dtype != ge::DT_FLOAT16 && grad_y_dtype != ge::DT_FLOAT && grad_y_dtype != ge::DT_BF16) {
-        OP_LOGE(context->GetNodeName(), "Invalid grad_y dtype(%d): expected FP16, FP32 or BF16.",
-                static_cast<int>(grad_y_dtype));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "grad_y", Ops::Base::ToString(grad_y_dtype),
+                                              "grad_y only supports DT_FLOAT16, DT_FLOAT and DT_BF16");
         return ge::GRAPH_FAILED;
     }
 
     if (x_dtype != grad_y_dtype) {
-        OP_LOGE(context->GetNodeName(), "Dtype mismatch: x dtype(%d) must be equal to grad_y dtype(%d).",
-                static_cast<int>(x_dtype), static_cast<int>(grad_y_dtype));
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "x, grad_y",
+                                               Ops::Base::ToString(x_dtype) + ", " + Ops::Base::ToString(grad_y_dtype),
+                                               "x dtype must be equal to grad_y dtype");
         return ge::GRAPH_FAILED;
     }
 
@@ -284,32 +296,34 @@ static ge::graphStatus InferDataTypeForSwigluGroupGrad(gert::InferDataTypeContex
     const bool has_group_index = (group_index_dtype != ge::DT_UNDEFINED);
 
     if (has_weight != has_y_origin) {
-        OP_LOGE(context->GetNodeName(),
-                "Invalid optional inputs: weight and y_origin must both be present "
-                "or both be absent. has_weight=%d, has_y_origin=%d.",
-                static_cast<int>(has_weight), static_cast<int>(has_y_origin));
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "weight, y_origin",
+            "weight and y_origin must both be present or both be absent. has_weight=" +
+                std::to_string(static_cast<int>(has_weight)) +
+                ", has_y_origin=" + std::to_string(static_cast<int>(has_y_origin)));
         return ge::GRAPH_FAILED;
     }
 
     if (has_weight) {
         if (weight_dtype != ge::DT_FLOAT) {
-            OP_LOGE(context->GetNodeName(), "Invalid weight dtype(%d): weight must be FP32.",
-                    static_cast<int>(weight_dtype));
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "weight", Ops::Base::ToString(weight_dtype),
+                                                  "weight only supports DT_FLOAT");
             return ge::GRAPH_FAILED;
         }
 
         if (y_origin_dtype != grad_y_dtype) {
-            OP_LOGE(context->GetNodeName(),
-                    "Dtype mismatch: y_origin dtype(%d) must be equal to "
-                    "grad_y dtype(%d).",
-                    static_cast<int>(y_origin_dtype), static_cast<int>(grad_y_dtype));
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context->GetNodeName(), "y_origin, grad_y",
+                Ops::Base::ToString(y_origin_dtype) + ", " + Ops::Base::ToString(grad_y_dtype),
+                "y_origin dtype must be equal to grad_y dtype");
             return ge::GRAPH_FAILED;
         }
     }
 
     if (has_group_index && group_index_dtype != ge::DT_INT64) {
-        OP_LOGE(context->GetNodeName(), "Invalid group_index dtype(%d): group_index must be INT64.",
-                static_cast<int>(group_index_dtype));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "group_index",
+                                              Ops::Base::ToString(group_index_dtype),
+                                              "group_index only supports DT_INT64");
         return ge::GRAPH_FAILED;
     }
 

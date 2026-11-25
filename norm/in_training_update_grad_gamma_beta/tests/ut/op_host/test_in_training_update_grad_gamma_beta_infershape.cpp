@@ -24,6 +24,9 @@
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "log/log.h"
+#include <map>
+#include <string>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "ut_op_common.h"
 #include "platform/platform_info.h"
 #include "../../../../../tests/ut/common/any_value.h"
@@ -221,4 +224,45 @@ TEST_F(INTrainingUpdateGradGammaBetaTest, in_training_update_grad_gamma_beta_rej
     ASSERT_NE(op_impl, nullptr);
     ASSERT_NE(op_impl->infer_shape, nullptr);
     EXPECT_EQ(op_impl->infer_shape(nullptr), ge::GRAPH_FAILED);
+}
+
+// ============================================================================
+// 错误码负向用例: infershape整改后上报的结构化错误码
+// ============================================================================
+namespace {
+namespace errmsg_test {
+inline void ClearErrorMessages() { (void)ErrorManager::GetInstance().GetRawErrorMessages(); }
+} // namespace errmsg_test
+} // namespace
+
+// 两输入shape不一致 → EZ0010
+TEST_F(INTrainingUpdateGradGammaBetaTest, errmsg_shapes_mismatch_ez0010)
+{
+    gert::Tensor gamma;
+    gert::Tensor beta;
+    gamma.MutableOriginShape() = gamma.MutableStorageShape() = MakeInferShape({4, 64, 3, 5});
+    beta.MutableOriginShape() = beta.MutableStorageShape() = MakeInferShape({4, 64, 3, 6});
+    for (auto* tensor : {&gamma, &beta}) {
+        tensor->SetDataType(ge::DT_FLOAT);
+        tensor->SetOriginFormat(ge::FORMAT_NCHW);
+        tensor->SetStorageFormat(ge::FORMAT_NCHW);
+    }
+    gert::OpInferShapeContextBuilder builder;
+    auto holder = builder.OpType("INTrainingUpdateGradGammaBeta")
+                      .OpName("errmsg_shapes_mismatch")
+                      .IONum(2, 2)
+                      .InputTensors({&gamma, &beta})
+                      .OutputTensorDesc(0, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .OutputTensorDesc(1, ge::DT_FLOAT, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .Build();
+    auto* context = holder.GetContext();
+    ASSERT_NE(context, nullptr);
+    *context->GetOutputShape(0) = MakeInferShape({1, 64, 3, 5});
+    *context->GetOutputShape(1) = MakeInferShape({1, 64, 3, 5});
+    auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("INTrainingUpdateGradGammaBeta");
+    errmsg_test::ClearErrorMessages();
+    ASSERT_EQ(impl->infer_shape(context), ge::GRAPH_FAILED);
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors.front().error_id, std::string("EZ0010"));
 }

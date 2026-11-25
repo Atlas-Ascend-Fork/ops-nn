@@ -493,7 +493,7 @@ ge::graphStatus MaxPoolV3BaseTiling::GetShapeAttrsInfo()
         return ge::GRAPH_FAILED;
     }
     if (CheckOutPutShape() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_, "CheckOutPutShape fail.");
+        OP_LOGE(context_->GetNodeName(), "CheckOutPutShape fail");
         return ge::GRAPH_FAILED;
     }
     RefineShape();

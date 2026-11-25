@@ -15,6 +15,28 @@
 
 #include <gtest/gtest.h>
 
+#include <map>
+#include <string>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
+
+namespace {
+namespace errmsg_test {
+inline void ClearErrorMessages() { (void)ErrorManager::GetInstance().GetRawErrorMessages(); }
+
+inline void ExpectFirstError(const std::string& expectedCode, const std::map<std::string, std::string>& expectedArgs)
+{
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors.front().error_id, expectedCode);
+    for (const auto& expected : expectedArgs) {
+        const auto actual = errors.front().args_map.find(expected.first);
+        ASSERT_NE(actual, errors.front().args_map.end());
+        EXPECT_EQ(actual->second, expected.second);
+    }
+}
+} // namespace errmsg_test
+} // namespace
+
 #include "log/log.h"
 #include "register/op_impl_registry.h"
 #include "platform/platform_infos_def.h"
@@ -232,4 +254,13 @@ TEST_F(FusedBiasLeakyReluGradTilingTest, rank_exceed_max_rejected)
     FusedBiasLeakyReluGradTilingTestCase({2, 2, 2, 2, 2, 2, 2, 2, 2}, {2, 2, 2, 2, 2, 2, 2, 2, 2},
                                          {2, 2, 2, 2, 2, 2, 2, 2, 2}, ge::DT_FLOAT, ge::DT_FLOAT, 0.2f, 1.414213562373f,
                                          ge::GRAPH_FAILED);
+}
+
+// dtype unsupported -> EZ0020
+TEST_F(FusedBiasLeakyReluGradTilingTest, errmsg_dtype_unsupported_ez0020)
+{
+    errmsg_test::ClearErrorMessages();
+    FusedBiasLeakyReluGradTilingTestCase({1024}, {1024}, {1024}, ge::DT_INT32, ge::DT_FLOAT, 0.2f, 1.414213562373f,
+                                         ge::GRAPH_FAILED);
+    errmsg_test::ExpectFirstError("EZ0020", {{"op_name", "FusedBiasLeakyReluGrad"}});
 }
