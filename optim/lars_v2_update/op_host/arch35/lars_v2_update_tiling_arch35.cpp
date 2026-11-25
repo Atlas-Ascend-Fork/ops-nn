@@ -176,10 +176,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
                     return ge::GRAPH_FAILED);
         for (size_t d = 0; d < in_shapes[i].size(); d++) {
             OP_CHECK_IF(in_shapes[i][d] < 0,
-                        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-                            context->GetNodeName(), ("input" + std::to_string(i)).c_str(),
-                            std::to_string(in_shapes[i][d]).c_str(),
-                            ("Dim " + std::to_string(d) + " is negative; dimensions must be non-negative.").c_str()),
+                        OP_LOGE(context, "LarsV2Update: input%d dim%zu is negative (%lld).", static_cast<int32_t>(i), d,
+                                static_cast<long long>(in_shapes[i][d])),
                         return ge::GRAPH_FAILED);
         }
     }

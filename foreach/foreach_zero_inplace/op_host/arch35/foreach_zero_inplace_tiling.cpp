@@ -218,20 +218,12 @@ static ge::graphStatus Tiling4ForeachZeroInplace(gert::TilingContext* context)
             return ge::GRAPH_FAILED);
         bool hasZeroDim = false;
         for (size_t dim = 0; dim < storageShape.GetDimNum(); ++dim) {
-            OP_CHECK_IF(storageShape.GetDim(dim) < 0,
-                        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
-                            context->GetNodeName(), ("x[" + std::to_string(i) + "]").c_str(),
-                            std::to_string(storageShape.GetDim(dim)).c_str(),
-                            ("Dim " + std::to_string(dim) + " is negative; dimensions must be non-negative.").c_str()),
+            OP_CHECK_IF(storageShape.GetDim(dim) < 0, OP_LOGE(context, "x[%d] has a negative dimension", i),
                         return ge::GRAPH_FAILED);
             hasZeroDim = hasZeroDim || storageShape.GetDim(dim) == 0;
         }
         const int64_t elements = hasZeroDim ? 0 : storageShape.GetShapeSize();
-        OP_CHECK_IF(elements < 0,
-                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
-                        context->GetNodeName(), ("x[" + std::to_string(i) + "]").c_str(),
-                        std::to_string(elements).c_str(), "The element count of x[i] must be non-negative."),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(elements < 0, OP_LOGE(context, "x[%d] has an invalid element count", i), return ge::GRAPH_FAILED);
         OP_CHECK_IF(totalTensorElements > std::numeric_limits<int64_t>::max() - elements,
                     OP_LOGE(context, "x tensor element count overflows int64"), return ge::GRAPH_FAILED);
         tiling->tensorElements[i] = elements;
