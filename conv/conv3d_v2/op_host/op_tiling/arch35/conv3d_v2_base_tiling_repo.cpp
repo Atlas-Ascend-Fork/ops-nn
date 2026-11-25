@@ -308,6 +308,7 @@ bool Conv3dBaseTilingV2::TranslateApiTilingAux(shared_ptr<tuningtiling::Conv3DV2
                                   0;
     tilingData_.singleCoreGroups = singleGroups;
     tilingData_.singleCoreGroupOpt = singleGroupOpt;
+    tilingData_.outputOrder = static_cast<uint8_t>(flagInfo_.mSplitModeFlag);
     SetUnionDataXt(convRepoTiling);
 
     return true;

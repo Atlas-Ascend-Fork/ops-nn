@@ -500,6 +500,7 @@ TEST_F(Conv3DTilingRepoTranslate, translate_hw_mode_tiling)
     EXPECT_EQ(sut_->tilingData_.nL1DivBlockSize, 1u);
     EXPECT_GT(sut_->tilingData_.aL1SpaceSize, 0u);
     EXPECT_FALSE(sut_->flagInfo_.mSplitModeFlag);
+    EXPECT_EQ(sut_->tilingData_.outputOrder, 0u);
     EXPECT_FALSE(sut_->flagInfo_.isKernelSplit);
 }
 
@@ -508,6 +509,7 @@ TEST_F(Conv3DTilingRepoTranslate, translate_m_mode_tiling)
     tunner_->mMode = 1;
     ASSERT_TRUE(sut_->TranslateRepoTiling(tiling_));
     EXPECT_TRUE(sut_->flagInfo_.mSplitModeFlag);
+    EXPECT_EQ(sut_->tilingData_.outputOrder, 1u);
     EXPECT_EQ(sut_->tilingData_.mStep, 16u);
     EXPECT_GT(sut_->tilingData_.aL1SpaceSize, 0u);
 }
@@ -587,6 +589,19 @@ TEST_F(Conv3DTilingRepoTranslate, cache_tiling_support_and_translate)
     sut_->TranslateCachedTilingData();
     EXPECT_EQ(sut_->tilingData_.orgCi, 16u);
     EXPECT_EQ(sut_->tilingData_.kernelH, 3u);
+}
+
+TEST_F(Conv3DTilingRepoTranslate, cache_round_trip_preserves_m_mode)
+{
+    tunner_->mMode = 1;
+    ASSERT_TRUE(sut_->TranslateRepoTiling(tiling_));
+    ASSERT_TRUE(sut_->flagInfo_.mSplitModeFlag);
+    sut_->GetCacheTilingInputArgs();
+    sut_->GetCachedTilingData();
+    sut_->tilingData_ = {};
+    sut_->flagInfo_.mSplitModeFlag = false;
+    sut_->TranslateCachedTilingData();
+    EXPECT_TRUE(sut_->flagInfo_.mSplitModeFlag);
 }
 
 // ----------------------------------------------------------------------------
