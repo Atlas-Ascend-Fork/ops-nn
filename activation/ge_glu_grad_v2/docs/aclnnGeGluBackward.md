@@ -27,18 +27,19 @@
 - 计算公式：
 
   $$
-  \text{gradOutput} = \begin{bmatrix} b_1 \\ b_2 \\ \vdots \\ b_N \end{bmatrix}, \quad \text{self} = \begin{bmatrix} a_{11} & a_{12} & \cdots & a_{1N} \\ a_{21} & a_{22} & \cdots & a_{2N} \\ \vdots & \vdots & \ddots & \vdots \\ a_{M1} & a_{M2} & \cdots & a_{MN} \end{bmatrix}, \quad gelu = \begin{bmatrix} a_{11} & a_{12} & \cdots & a_{1N/2} \\ a_{21} & a_{22} & \cdots & a_{2N/2} \end{bmatrix}
+  \text{gradOutput} = \begin{bmatrix} b_1 \\ b_2 \\ \vdots \\ b_{N/2} \end{bmatrix}, \quad \text{self} = \begin{bmatrix} a_{11} & a_{12} & \cdots & a_{1N} \\ a_{21} & a_{22} & \cdots & a_{2N} \\ \vdots & \vdots & \ddots & \vdots \\ a_{M1} & a_{M2} & \cdots & a_{MN} \end{bmatrix}, \quad gelu = \begin{bmatrix} g_1 & g_2 & \cdots & g_{N/2} \end{bmatrix}
   $$
 
   $$
   \text{dim} = \text{the dimension along which chunk is performed}, \quad \text{approximate = 'approximate'}
   $$
 
+  其中，$A$表示$self$沿dim维对半切分的前一半（前$N/2$个切片），$B$表示后半一半，$A_j$、$B_j$（$j=1,\cdots,N/2$）为其中第$j$个元素；$gelu$为独立入参，其值等于$gelu(B)$。
+
   输出：
 
   $$
-  \text{gradInput} = \begin{bmatrix} b_1 \cdot y\_gelu_1 & b_2 \cdot y\_gelu_2 & \cdots & b_N \cdot y\_gelu_N \end{bmatrix}
-
+  \text{gradInput} = \begin{bmatrix} b_1 \cdot g_1 & \cdots & b_{N/2} \cdot g_{N/2} & b_1 \cdot A_1 \cdot gelu'(B_1) & \cdots & b_{N/2} \cdot A_{N/2} \cdot gelu'(B_{N/2}) \end{bmatrix}
   $$
 
 ## 函数原型
@@ -125,7 +126,7 @@ aclnnStatus aclnnGeGluBackward(
       <td>dim（int64_t）</td>
       <td>输入</td>
       <td>-</td>
-      <td>当前取值支持[-len(输入shape), len(输入shape)]。</td>
+      <td>当前取值支持[-len(输入shape), len(输入shape)-1]。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
