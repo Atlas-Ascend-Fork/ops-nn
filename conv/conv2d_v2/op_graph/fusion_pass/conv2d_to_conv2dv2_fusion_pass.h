@@ -14,7 +14,6 @@
 #include <map>
 #include <memory>
 #include <set>
-#include <vector>
 
 #include "../../conv/common/op_graph/fusion_pass/conv_fusion_base_pass.h"
 #include "ge/fusion/subgraph_boundary.h"
