@@ -41,7 +41,6 @@ public:
                 mte1madFlag_[i] = EventFlag::template Alloc<HardEvent::MTE1_M, HardEvent::M_MTE1>(pipe);
                 SetFlag<HardEvent::M_MTE1>(mte1madFlag_[i].dst2src);
             }
-            SetFlag<HardEvent::FIX_M>(mad2fixpipeFlag_.dst2src);
             SetFlag<HardEvent::MTE1_MTE2>(mte2mte1Flag_[0].dst2src);
             SetFlag<HardEvent::MTE1_MTE2>(mte2mte1Flag_[1].dst2src);
             SetHF32Mode(hf32Flag_);
@@ -54,7 +53,6 @@ public:
         if ASCEND_IS_AIC {
             WaitFlag<HardEvent::MTE1_MTE2>(mte2mte1Flag_[0].dst2src);
             WaitFlag<HardEvent::MTE1_MTE2>(mte2mte1Flag_[1].dst2src);
-            WaitFlag<HardEvent::FIX_M>(mad2fixpipeFlag_.dst2src);
             for (uint8_t i = 0; i < L0_BUF_CNT; i++) {
                 WaitFlag<HardEvent::M_MTE1>(mte1madFlag_[i].dst2src);
             }
@@ -88,10 +86,6 @@ public:
     __aicore__ inline void Compute(const HWBox& tiles, uint32_t cout, uint32_t coutC1, uint32_t cin, uint32_t cinC1,
                                    bool firstK, bool l1PingPongFlag)
     {
-        if (firstK) {
-            WaitFlag<HardEvent::FIX_M>(mad2fixpipeFlag_.dst2src);
-        }
-
         MmadParams mad;
         mad.m = cout;
         mad.n = cin;
@@ -186,6 +180,7 @@ public:
             index++;
         }
         SetFlag<HardEvent::FIX_M>(mad2fixpipeFlag_.dst2src);
+        WaitFlag<HardEvent::FIX_M>(mad2fixpipeFlag_.dst2src);
     }
 
     static __aicore__ inline Std::tuple<LocalTensor<T>, LocalTensor<T> > GetL1Buf(bool flagPingPong)
