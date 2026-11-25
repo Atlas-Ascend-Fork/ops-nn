@@ -117,6 +117,23 @@ bool CheckNodeOutputDesc(GraphPtr& graph, const std::string& type, const std::ve
     return false;
 }
 
+bool CheckNodeInputDesc(GraphPtr& graph, const std::string& type, const std::vector<int64_t>& shape, DataType dtype)
+{
+    for (auto node : graph->GetAllNodes()) {
+        AscendString nodeType;
+        node.GetType(nodeType);
+        if (nodeType.GetString() != type) {
+            continue;
+        }
+        TensorDesc desc;
+        if (node.GetInputDesc(0, desc) != GRAPH_SUCCESS) {
+            return false;
+        }
+        return desc.GetDataType() == dtype && desc.GetShape().GetDims() == shape;
+    }
+    return false;
+}
+
 bool CheckNodeOutputPadding(GraphPtr& graph, const std::string& type, const std::vector<int64_t>& expect)
 {
     for (auto node : graph->GetAllNodes()) {
@@ -160,6 +177,9 @@ TEST_F(Conv3dBpFilterToV2FusionPassTest, patternTest)
     EXPECT_TRUE(CheckNodeExists(graph, "Conv3DBackpropFilterV2"));
     EXPECT_TRUE(CheckNodeExists(graph, "Cast"));
     EXPECT_TRUE(CheckNodeOutputDesc(graph, "Cast", {2, 1, 4, 4, 32}, DT_FLOAT16));
+    EXPECT_TRUE(CheckNodeOutputDesc(graph, "Conv3DBackpropFilterV2", {2, 32, 1, 4, 4}, DT_FLOAT));
+    EXPECT_TRUE(CheckNodeOutputDesc(graph, "Transpose", {2, 1, 4, 4, 32}, DT_FLOAT));
+    EXPECT_TRUE(CheckNodeInputDesc(graph, "Cast", {2, 1, 4, 4, 32}, DT_FLOAT));
 }
 
 // Test 1.5: outputPaddingTransferTest - 非零output_padding经融合传递到V2节点(3D 5元直传)
@@ -296,6 +316,7 @@ TEST_F(Conv3dBpFilterToV2FusionPassTest, noTransposeCase)
     ops::Conv3DBackpropFilterToV2FusionPass pass({AscendString("Conv3DBackpropFilter")});
     EXPECT_EQ(pass.Run(graph, ctx), SUCCESS);
     EXPECT_TRUE(CheckNodeExists(graph, "Conv3DBackpropFilterV2"));
+    EXPECT_TRUE(CheckNodeInputDesc(graph, "Cast", {2, 32, 1, 4, 4}, DT_FLOAT));
 }
 
 // Test 9: dhwcFormatCase - DHWCN 格式输出，需要 Transpose

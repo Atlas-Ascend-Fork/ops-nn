@@ -126,6 +126,23 @@ bool CheckNodeOutputDesc(GraphPtr& graph, const std::string& type, const std::ve
     return false;
 }
 
+bool CheckNodeInputDesc(GraphPtr& graph, const std::string& type, const std::vector<int64_t>& shape, DataType dtype)
+{
+    for (auto node : graph->GetAllNodes()) {
+        AscendString nodeType;
+        node.GetType(nodeType);
+        if (nodeType.GetString() != type) {
+            continue;
+        }
+        TensorDesc desc;
+        if (node.GetInputDesc(0, desc) != GRAPH_SUCCESS) {
+            return false;
+        }
+        return desc.GetDataType() == dtype && desc.GetShape().GetDims() == shape;
+    }
+    return false;
+}
+
 bool GetNodeBoolAttr(GraphPtr& graph, const std::string& type, const std::string& attrName, bool& attrValue)
 {
     for (auto node : graph->GetAllNodes()) {
@@ -177,6 +194,7 @@ TEST_F(Conv2dBpFilterToV3FusionPassTest, patternTest)
     EXPECT_TRUE(CheckNodeExists(graph, "Squeeze"));
     EXPECT_TRUE(CheckNodeExists(graph, "Cast"));
     EXPECT_TRUE(CheckNodeOutputDesc(graph, "Cast", {64, 32, 1, 3, 3}, DT_FLOAT16));
+    EXPECT_TRUE(CheckNodeInputDesc(graph, "Cast", {64, 32, 1, 3, 3}, DT_FLOAT));
 }
 
 // 非零output_padding经融合传递到中间节点并完成D维扩维(4元NCHW→5元NCDHW)

@@ -214,7 +214,12 @@ GraphUniqPtr Conv3DBackpropFilterToV2FusionPass::Replacement(const GNode& convBp
         auto castOutput = es::Cast(finalY, static_cast<int64_t>(origDtype));
         OP_CHECK_IF(castOutput.GetProducer() == nullptr, OP_LOGE(GetNodeType().GetString(), "Create Cast node failed"),
                     return nullptr);
-        // EsCast只建节点接输入边、不设输出desc，子图最终输出必须显式补上声明desc，否则编译期推导读到空shape(rank 0)
+
+        TensorDesc castInDesc;
+        OP_CHECK_IF(finalY.GetProducer()->GetOutputDesc(finalY.GetProducerOutIndex(), castInDesc) != ge::GRAPH_SUCCESS,
+                    OP_LOGE(GetNodeType().GetString(), "Get cast input desc failed"), return nullptr);
+        OP_CHECK_IF(castOutput.GetProducer()->UpdateInputDesc(0, castInDesc) != ge::GRAPH_SUCCESS,
+                    OP_LOGE(GetNodeType().GetString(), "Update cast input desc failed"), return nullptr);
         OP_CHECK_IF(castOutput.GetProducer()->UpdateOutputDesc(OUTPUT_INDEX, declaredOutDesc) != ge::GRAPH_SUCCESS,
                     OP_LOGE(GetNodeType().GetString(), "Update cast output desc failed"), return nullptr);
         finalY = castOutput;
