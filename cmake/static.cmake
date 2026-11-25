@@ -65,7 +65,10 @@ if (TARGET ${OPHOST_NAME}_static OR TARGET ${OPAPI_NAME}_static)
     add_custom_target(${OPSTATIC_NAME})
     foreach(compute_unit ${ASCEND_COMPUTE_UNIT})
         set(RESOURCE_PATH ${CMAKE_BINARY_DIR}/autogen/${compute_unit}/aclnnop_resource)
-        file(GLOB RESOURCE_CPP ${RESOURCE_PATH}/*.cpp)
+        # 资源cpp由build_opp_kernel_static.py(GenStaticOpResourceIni)在构建阶段生成(configure后才产出),
+        # CONFIGURE_DEPENDS让make在构建cann_nn_static前重新检查该目录并re-glob,否则configure期GLOB为空,
+        # 库内l0op注册符号(kernel/inferShape/tiling/tuning)全部缺失导致静态库不可链接
+        file(GLOB RESOURCE_CPP CONFIGURE_DEPENDS ${RESOURCE_PATH}/*.cpp)
         set_source_files_properties(${RESOURCE_CPP} PROPERTIES GENERATED TRUE)
         add_library(resource_${compute_unit}_static STATIC
                     $<$<TARGET_EXISTS:${OPHOST_NAME}_infer_obj>:$<TARGET_OBJECTS:${OPHOST_NAME}_infer_obj>>
