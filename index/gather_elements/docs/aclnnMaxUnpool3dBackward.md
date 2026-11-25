@@ -222,7 +222,7 @@ aclnnStatus aclnnMaxUnpool3dBackward(
     <tr>
       <td rowspan="14">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="14">161002</td>
-      <td>out为不连续的Tensor。</td>
+      <td>out为非连续的Tensor。</td>
     </tr>
     <tr>
       <td>gradOutput、self、indices或out的数据类型不在支持的范围之内。</td>

@@ -239,7 +239,7 @@ aclnnStatus aclnnForeachRoundOffNumber(
 
 - 确定性计算：
   - aclnnForeachRoundOffNumber默认确定性实现。
-- x和out的Tensor列表长度不能超过256。
+- x和out的张量列表长度不能超过256。
 
 ## 调用示例
 

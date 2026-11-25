@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-将index张量中元素值作为索引，针对指定轴dim，把source中元素复制到selfRef或out的对应位置上。
+将index张量中元素值作为索引，针对指定轴dim，把source中元素复制到selfRef或outRef的对应位置上。
 
 ## 函数原型
 

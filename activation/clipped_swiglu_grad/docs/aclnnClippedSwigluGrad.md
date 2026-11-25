@@ -179,7 +179,7 @@ aclnnStatus aclnnClippedSwigluGrad(
 
 ## aclnnClippedSwigluGradGetWorkspaceSize
 
-- **参数说明**
+- **参数说明：**
 
   <table style="undefined;table-layout: fixed; width: 1567px"><colgroup>
   <col style="width: 270px">
@@ -246,7 +246,7 @@ aclnnStatus aclnnClippedSwigluGrad(
     <tr>
       <td>alpha（double）</td>
       <td>输入</td>
-      <td>公式中的输入alpha，表示变体SwiGlu使用的参数。</td>
+      <td>公式中的输入alpha，表示变体SwiGLU使用的参数。</td>
       <td>建议为1.702。</td>
       <td>-</td>
       <td>-</td>
@@ -256,7 +256,7 @@ aclnnStatus aclnnClippedSwigluGrad(
     <tr>
       <td>limit（double）</td>
       <td>输入</td>
-      <td>公式中的输入limit，表示变体SwiGlu使用的门限值。</td>
+      <td>公式中的输入limit，表示变体SwiGLU使用的门限值。</td>
       <td>必须大于0，建议为7.0。</td>
       <td>-</td>
       <td>-</td>
@@ -266,7 +266,7 @@ aclnnStatus aclnnClippedSwigluGrad(
     <tr>
       <td>bias（double）</td>
       <td>输入</td>
-      <td>公式中的输入bias，表示变体SwiGlu使用的偏差参数。</td>
+      <td>公式中的输入bias，表示变体SwiGLU使用的偏差参数。</td>
       <td>建议为1.0。</td>
       <td>-</td>
       <td>-</td>

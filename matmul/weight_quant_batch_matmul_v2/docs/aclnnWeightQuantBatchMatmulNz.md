@@ -88,7 +88,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulNz(
       <col style="width: 190px">
       <col style="width: 145px">
     </colgroup>
-    <thread>
+    <thead>
       <tr>
         <th>参数名</th>
         <th style="white-space: nowrap">输入/输出</th>
@@ -99,7 +99,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulNz(
         <th style="white-space: nowrap">维度(shape)</th>
         <th>非连续的Tensor</th>
       </tr>
-    </thread>
+    </thead>
     <tbody>
       <tr>
         <td>x</td>
@@ -324,18 +324,18 @@ aclnnStatus aclnnWeightQuantBatchMatmulNz(
 
       - x的shape均为(m, k)，y的shape均为(m, n)，biasOptional的shape为null/(1, n)/(n,)。
       - weight的数据类型为INT32或FLOAT时，表示紧密排布的INT4或FLOAT4_E2M1，需要满足以下约束：
-        - 原始ND矩阵的最后一维8对齐；
-        - 在调用本接口前，必须配合`aclnnConvertWeightToINT4Pack`接口完成从稀疏排布的INT32/FLOAT到紧密排布的INT4/FLOAT4_E2M1及ND到FRACTAL_NZ的转换，[详情可参考样例](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)；
+        - 原始ND矩阵的最后一维8对齐。
+        - 在调用本接口前，必须配合`aclnnConvertWeightToINT4Pack`接口完成从稀疏排布的INT32/FLOAT到紧密排布的INT4/FLOAT4_E2M1及ND到FRACTAL_NZ的转换，[详情可参考样例](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)。
         - 传入本接口的FRACTAL_NZ矩阵的shape为(ceil(n/16), ceil(k/16), 16, 2)。
         - weight仅支持非转置，原始ND矩阵的shape均为(k, n)。
       - weight的数据类型为INT4或FLOAT4_E2M1时，需要满足以下约束：
-        - 原始ND矩阵的最后一维2对齐；
-        - 在调用本接口前，必须配合`aclnnConvertWeightToINT4Pack`接口完成从ND到FRACTAL_NZ的转换，[详情可参考样例](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)；
+        - 原始ND矩阵的最后一维2对齐。
+        - 在调用本接口前，必须配合`aclnnConvertWeightToINT4Pack`接口完成从ND到FRACTAL_NZ的转换，[详情可参考样例](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)。
         - 传入本接口的FRACTAL_NZ矩阵的shape为(ceil(n/16), ceil(k/16), 16, 16)。
         - weight仅支持非转置，原始ND矩阵的shape均为(k, n)。
       - weight的数据类型为INT8时，需要满足以下约束：
         - 传入本接口的FRACTAL_NZ矩阵的shape为(ceil(n/32), ceil(k/16), 16, 32)。
-        - k大小在[1, 65535]范围内，n大小在[2, 65535]范围内；
+        - k大小在[1, 65535]范围内，n大小在[2, 65535]范围内。
         - weight支持转置和非转置，原始ND矩阵的shape为(n, k)或(k, n)。
       - m大小在[1, 2^31-1]范围内。
 

@@ -147,7 +147,7 @@ aclnnStatus aclnnAddRmsNormDynamicMxQuant(
     <tr>
       <td>x1（const aclTensor*）</td>
       <td>输入</td>
-      <td>表示标准化过程中的源数据张量。对应公式中的x1。</td>
+      <td>表示归一化过程中的源数据张量。对应公式中的x1。</td>
       <td><ul><li>支持空Tensor。</li><li>具体约束详见约束说明。</li></ul></td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -345,7 +345,7 @@ aclnnStatus aclnnAddRmsNormDynamicMxQuant(
       <td>dstType为FP8时，roundMode不是"rint"。</td>
     </tr>
     <tr>
-      <td>dstType为fp4时，scaleAlg不是0，或者输入x1的尾轴不能被2整除。</td>
+      <td>dstType为FP4时，scaleAlg不是0，或者输入x1的尾轴不能被2整除。</td>
     </tr>
     <tr>
       <td>mxscaleOut的维度数不等于输入x1的维度数+1，或轴长不符合约束说明。</td>

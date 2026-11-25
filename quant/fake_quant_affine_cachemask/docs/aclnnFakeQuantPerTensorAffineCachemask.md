@@ -161,7 +161,7 @@ aclnnStatus aclnnFakeQuantPerTensorAffineCachemask(
        <td>out</td>
        <td>输出</td>
        <td>公式中的out。</td>
-       <td>shape需要和`self`一致。</td>
+       <td>shape需要和self一致。</td>
        <td>FLOAT16、FLOAT32</td>
        <td>ND</td>
        <td>0-8</td>
@@ -171,7 +171,7 @@ aclnnStatus aclnnFakeQuantPerTensorAffineCachemask(
        <td>mask</td>
        <td>输出</td>
        <td>公式中的mask。</td>
-       <td>shape需要和`self`一致。</td>
+       <td>shape需要和self一致。</td>
        <td>BOOL</td>
        <td>ND</td>
        <td>0-8</td>
@@ -234,7 +234,7 @@ aclnnStatus aclnnFakeQuantPerTensorAffineCachemask(
       <td>out和mask的shape与self不一致</td>
     </tr>
     <tr>
-      <td>quantMin大于quantMax，或quant_min/quant_max绝对值不小于2^24（超出fp32可精确表示的整数域）。</td>
+      <td>quantMin大于quantMax，或quantMin/quantMax绝对值不小于2^24（超出fp32可精确表示的整数域）。</td>
     </tr>
   </tbody>
   </table>

@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-将输入`self`执行`logits`计算，将得到的值与标签值`target`一起进行`BCELoss`的反向传播计算。
+将输入`self`执行logits计算，将得到的值与标签值`target`一起进行`BCELoss`的反向传播计算。
 
 ## 函数原型
 
@@ -109,7 +109,7 @@ aclnnStatus aclnnBinaryCrossEntropyWithLogitsBackward(
       <tr>
         <td>weightOptional（aclTensor*）</td>
         <td>输入</td>
-        <td>二分交叉熵权重。</td>
+        <td>二元交叉熵权重。</td>
         <td><ul><li>shape可以<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>到self的shape。</li><li>当weightOptional为空时，会以self的shape创建一个全1的Tensor。</li></ul></td>
         <td>与self保持一致</td>
         <td>ND</td>

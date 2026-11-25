@@ -106,7 +106,7 @@ aclnnStatus aclnnForeachMaximumScalar(
     <tr>
       <td>out（aclTensorList*）</td>
       <td>输出</td>
-      <td>表示取最大值运算的输出张量，对应公式中的<code>y</code>。</td>
+      <td>表示取最大值运算的输出张量列表，对应公式中的<code>y</code>。</td>
       <td><ul><li>支持空Tensor。</li><li>成员数量与<code>x</code>一致。</li><li>对应成员的数据类型、数据格式和view shape与<code>x</code>一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、INT32、BFLOAT16</td>
       <td>ND</td>

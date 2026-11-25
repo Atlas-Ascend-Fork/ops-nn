@@ -135,7 +135,7 @@ aclnnStatus aclnnFusedQuantMatmul(
         <td>公式中的输入x2。</td>
         <td>
           <ul>
-            <li>ND格式下支持最后两根轴转置情况下的非连续tensor，其他场景的<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续的Tensor</a>不支持。</li>
+            <li>ND格式下支持最后两根轴转置情况下的非连续Tensor，其他场景的<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续的Tensor</a>不支持。</li>
             <li>最后一维大小不能超过65535。</li>
           </ul>
         </td>
@@ -397,7 +397,7 @@ aclnnStatus aclnnFusedQuantMatmul(
     - shape支持1维，形状为（n,）或者（1,），其中n与x2的n一致，数据类型支持FLOAT32、BFLOAT16。
   - biasOptional的约束如下：
     - shape支持1、3维，INT4量化场景下只支持biasOptional为1维，shape为(n)，3维时biasOptional shape为(batch, 1, n)。
-    - 数据类型支持int32、float32、bfloat16或float16。
+    - 数据类型支持INT32、FLOAT32、BFLOAT16或FLOAT16。
   - out的约束如下：
     - shape支持2~6维，（batch，m，n）。数据类型支持FLOAT16、BFLOAT16。
 

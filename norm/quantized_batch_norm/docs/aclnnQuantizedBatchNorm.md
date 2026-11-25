@@ -117,7 +117,7 @@ aclnnStatus aclnnQuantizedBatchNorm(
       <td>mean（aclTensor*）</td>
       <td>输入</td>
       <td>表示模型输入数据的均值，对应公式中的`mean`。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape长度与入参`input`中channel轴的长度相等。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape长度与输入`input`中channel轴的长度相等。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
       <td>1</td>
@@ -127,7 +127,7 @@ aclnnStatus aclnnQuantizedBatchNorm(
       <td>var（aclTensor*）</td>
       <td>输入</td>
       <td>表示模型输入数据的方差，对应公式中的`var`。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape长度与入参`input`中channel轴的长度相等。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape长度与输入`input`中channel轴的长度相等。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
       <td>1</td>
@@ -177,7 +177,7 @@ aclnnStatus aclnnQuantizedBatchNorm(
       <td>weight（aclTensor*）</td>
       <td>输入</td>
       <td>可选参数，表示归一化权重，对应公式中的`weight`。</td>
-      <td><ul><li>不支持空Tensor。</li><li>默认值为：1。</li><li>shape长度与入参`input`中channel轴的长度相等。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>默认值为：1。</li><li>shape长度与输入`input`中channel轴的长度相等。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
       <td>1</td>
@@ -187,7 +187,7 @@ aclnnStatus aclnnQuantizedBatchNorm(
       <td>bias（aclTensor*）</td>
       <td>输入</td>
       <td>可选参数，表示归一化偏置，对应公式中的`bias`。</td>
-      <td><ul><li>不支持空Tensor。</li><li>默认值为：0。</li><li>shape长度与入参`input`中channel轴的长度相等。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>默认值为：0。</li><li>shape长度与输入`input`中channel轴的长度相等。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
       <td>1</td>
@@ -208,7 +208,7 @@ aclnnStatus aclnnQuantizedBatchNorm(
       <td>输出</td>
       <td>表示模型输出的量化后的数据，对应公式中的`output`。</td>
       <td><ul><li>不支持空Tensor。</li><li>shape、数据格式、数据类型与输入`input`保持一致。</li></ul></td>
-      <td>INT8，UINT8，INT32</td>
+      <td>INT8、UINT8、INT32</td>
       <td>NCHW</td>
       <td>4</td>
       <td>√</td>

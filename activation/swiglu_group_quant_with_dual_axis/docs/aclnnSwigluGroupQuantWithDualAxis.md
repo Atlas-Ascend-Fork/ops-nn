@@ -25,7 +25,7 @@
 
 ### 接口功能
 
-融合Clipped-SwiGLU、可选逐行weight乘法以及**两个方向**的MX FP8量化，一次调用输出五路结果：
+融合Clipped-SwiGLU、可选逐token权重加权以及**两个方向**的MX FP8量化，一次调用输出五路结果：
 
 - `y1Out`、`y1ScaleOut`：沿最后一维（-1轴）量化，每个token行内每32个元素共享一个尺度。
 - `y2Out`、`y2ScaleOut`：沿行方向（-2轴）量化；提供`groupIndexOptional`时按分组边界、
@@ -226,7 +226,7 @@ aclnnStatus aclnnSwigluGroupQuantWithDualAxis(
     <tr>
       <td>outputOrigin（bool）</td>
       <td>输入</td>
-      <td>是否额外输出乘weight前的激活y_origin。</td>
+      <td>是否额外输出乘weight前的激活yOriginOut。</td>
       <td><ul><li>true时yOriginOut为 [T, H] 的量化前激活（供训练反向缓存中间结果）。</li><li>false时yOriginOut为 [0] 占位，内容无效。</li></ul></td>
       <td>-</td>
       <td>-</td>
@@ -236,7 +236,7 @@ aclnnStatus aclnnSwigluGroupQuantWithDualAxis(
     <tr>
       <td>alpha（double）</td>
       <td>输入</td>
-      <td>变体SwiGLU的silu缩放系数。</td>
+      <td>变体SwiGLU的SiLU缩放系数。</td>
       <td><ul><li>必须为有限正数。</li></ul></td>
       <td>-</td>
       <td>-</td>
@@ -419,7 +419,7 @@ aclnnStatus aclnnSwigluGroupQuantWithDualAxis(
 
 - `x`仅支持二维`[T, 2H]`、FLOAT16或BFLOAT16，`2H >= 64`且能被64整除。
 - `quantMode`仅支持`1`；`dstType`仅支持FLOAT8_E4M3FN（默认）与FLOAT8_E5M2。
-- `weightOptional`仅在提供`groupIndexOptional`时允许，元素数必须等于`T`；non-group场景传`weight`将被拒绝。
+- `weightOptional`仅在提供`groupIndexOptional`时允许，元素数必须等于`T`；non-group场景传`weightOptional`将被拒绝。
 - `groupIndexOptional`的元素值在**设备执行时**校验：非法值（负值、递减、越界、末元素不等于`T`）
   触发设备执行异常；异步调用可能在后续流同步时才报告失败，失败后所有输出均不可使用。
   `GetWorkspaceSize`阶段只校验元数据（dtype、维数、元素个数非零），不保证元素值合法。

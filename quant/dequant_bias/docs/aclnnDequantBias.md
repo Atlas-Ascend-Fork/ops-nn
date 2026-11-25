@@ -123,7 +123,7 @@ aclnnStatus aclnnDequantBias(
       <td>输入</td>
       <td>表示反量化操作输入N维度上加法的权重，公式中的输入bias。</td>
       <td><ul><li>shape为[N]，长度与x的N维长度一致。</li><li>可选输入：传入空Tensor视为不参与计算（与传空指针等价），传入时shape须为[N]。</li></ul></td>
-      <td>FLOAT，BFLOAT16，FLOAT16，INT32</td>
+      <td>FLOAT、BFLOAT16、FLOAT16、INT32</td>
       <td>ND</td>
       <td>1</td>
       <td>√</td>

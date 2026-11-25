@@ -27,7 +27,7 @@
   - 可选功能：融合smooth scale运算，在对数据输入x进行量化前先进行x=x*smooth_scale（广播逐元素乘法）。
 
 - 计算公式：
-  - 将输入x在尾轴上按$k_0$ = level0BlockSize个数分组，一组$k_0$个数$\{\{x_i\}_{i=1}^{k_0}\}$动态量化为$\{level0Scale, \{temp_i\}_{i=1}^{k_0}\}$, $k_0$ = level0BlockSize，然后将temp在尾轴上按$k_1$ = level1BlockSize个数分组，一组$k_1$个数$\{\{temp_i\}_{i=1}^{k_1}\}$动态量化为$\{level1Scale, \{y_i\}_{i=1}^{k_1}\}$, $k_1$ = level1BlockSize
+  - 将输入x在尾轴上按$k_0$ = level0BlockSize个数分组，一组$k_0$个数$\{\{x_i\}_{i=1}^{k_0}\}$动态量化为$\{level0Scale, \{temp_i\}_{i=1}^{k_0}\}$, $k_0$ = level0BlockSize，然后将temp在尾轴上按$k_1$ = level1BlockSize个数分组，一组$k_1$个数$\{\{temp_i\}_{i=1}^{k_1}\}$动态量化为$\{level1Scale, \{y_i\}_{i=1}^{k_1}\}$，$k_1$ = level1BlockSize。
 
   $$
   input\_max_i = max_i(abs(x_i))
@@ -55,9 +55,9 @@
 
   - 量化后的$y_{i}$按对应的$x_{i}$的位置组成输出yOut，level0Scale按尾轴对应的分组组成输出level0ScaleOut，level1Scale按尾轴对应的分组组成输出level1ScaleOut。
 
-  - max_i代表求第i个分组中的最大值
+  - max_i代表求第i个分组中的最大值。
 
-  - emax: 对应数据类型的最大正则数的指数位。
+  - emax: 对应数据类型的最大正规数的指数位。
 
       |   DataType    | emax |
       | :-----------: | :--: |
@@ -188,7 +188,7 @@ aclnnStatus aclnnDynamicDualLevelMxQuant(
       <td>level1ScaleOut (aclTensor*)</td>
       <td>输出</td>
       <td>表示第二级量化的scale，对应公式中的level1Scale。</td>
-      <td><ul><li>shape的大小为x的dim + 1；</li><li> shape在最后两轴的值为((ceil(x.shape[-1] / level1Blocksize) + 2 - 1) / 2, 2)，并对其进行偶数pad，pad填充值为0；</li><li> 不支持空Tensor。</li></ul></td>
+      <td><ul><li>shape的大小为x的dim + 1；</li><li> shape在最后两轴的值为((ceil(x.shape[-1] / level1BlockSize) + 2 - 1) / 2, 2)，并对其进行偶数pad，pad填充值为0；</li><li> 不支持空Tensor。</li></ul></td>
       <td>FLOAT8_E8M0</td>
       <td>ND</td>
       <td>1-8</td>
@@ -305,8 +305,8 @@ aclnnStatus aclnnDynamicDualLevelMxQuant(
 
 - 关于x、level0ScaleOut、level1ScaleOut的shape约束说明如下：
     - rank(level1ScaleOut) = rank(x) + 1。
-    - level0ScaleOut.shape[-1] = ceil(x.shape[-1] / level0Blocksize)。
-    - level1ScaleOut.shape[-2] = (ceil(x.shape[-1] / level1Blocksize) + 2 - 1) / 2。
+    - level0ScaleOut.shape[-1] = ceil(x.shape[-1] / level0BlockSize)。
+    - level1ScaleOut.shape[-2] = (ceil(x.shape[-1] / level1BlockSize) + 2 - 1) / 2。
     - level1ScaleOut.shape[-1] = 2。
     - 其他维度与输入x一致。
 - 确定性说明：aclnnDynamicDualLevelMxQuant默认确定性实现。

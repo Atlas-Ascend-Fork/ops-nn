@@ -233,7 +233,7 @@ aclnnStatus aclnnBatchNormBackward(
       <td>gradInput（aclTensor*）</td>
       <td>输出</td>
       <td>表示输入Tensor的梯度，对应公式中的`gradInput`。</td>
-      <td><ul><li>支持空Tensor。</li><li>可选输出，若outputMask[0]为True，则需要输出，否则不输出。</li><li>数据类型、shape、数据格式均需要与`gradOut`保持一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>可选输出，若outputMask[0]为true，则需要输出，否则不输出。</li><li>数据类型、shape、数据格式均需要与`gradOut`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>NC、NCL、NCHW、NHWC、NCDHW、NDHWC、ND</td>
       <td>2-8</td>
@@ -243,7 +243,7 @@ aclnnStatus aclnnBatchNormBackward(
       <td>gradWeight（aclTensor*）</td>
       <td>输出</td>
       <td>表示缩放参数的梯度，对应公式中的`gradWeight`。</td>
-      <td><ul><li>支持空Tensor。</li><li>可选输出，若outputMask[1]为True，则需要输出，否则不输出。</li><li>长度与入参`input`中channel轴的长度相等</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>可选输出，若outputMask[1]为True，则需要输出，否则不输出。</li><li>长度与入参`input`中channel轴的长度相等。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>

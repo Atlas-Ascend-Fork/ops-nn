@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：对输入tensor逐元素进行Selu激活函数的运算并输出结果tensor
+- 接口功能：对输入Tensor逐元素进行Selu激活函数的运算并输出结果Tensor。
 - 计算公式：
 
   $$
@@ -92,14 +92,14 @@ aclnnStatus aclnnInplaceSelu(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
       <td>self（aclTensor*）</td>
       <td>输入</td>
-      <td>表示Selu符号函数的计算输入，计算公式中的input_i。</td>
+      <td>表示Selu激活函数的计算输入，计算公式中的input_i。</td>
       <td><ul><li>支持空Tensor。</li><li>shape需要与out一致。</li></ul></td>
       <td>FLOAT、FLOAT16、INT32、INT8、BFLOAT16</td>
       <td>ND</td>
@@ -109,7 +109,7 @@ aclnnStatus aclnnInplaceSelu(
     <tr>
       <td>out（aclTensor*）</td>
       <td>输出</td>
-      <td>表示Selu符号函数的计算输出，计算公式中的output_i。</td>
+      <td>表示Selu激活函数的计算输出，计算公式中的output_i。</td>
       <td>shape需要与self一致。</td>
       <td>FLOAT、FLOAT16、INT32、INT8、BFLOAT16</td>
       <td>ND</td>
@@ -242,14 +242,14 @@ aclnnStatus aclnnInplaceSelu(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
       <td>selfRef（aclTensor*）</td>
       <td>输入</td>
-      <td>表示Selu符号函数的计算输入，计算公式中的input_i。</td>
+      <td>表示Selu激活函数的计算输入，计算公式中的input_i。</td>
       <td>支持空Tensor。</td>
       <td>FLOAT、FLOAT16、INT32、INT8、BFLOAT16</td>
       <td>ND</td>

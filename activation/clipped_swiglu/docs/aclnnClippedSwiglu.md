@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：带截断的Swish门控线性单元激活函数，实现x的SwiGLU计算。本接口相较于aclnnSwiGlu，新增了部分输入参数：groupIndex、alpha、limit、bias、interleaved，用于支持GPT-OSS模型使用的变体SwiGLU以及MoE模型使用的分组场景。
+- 接口功能：带截断的Swish门控线性单元激活函数，实现x的SwiGLU计算。本接口相较于aclnnSwiGlu，新增了部分输入参数：groupIndexOptional、alpha、limit、bias、interleaved，用于支持GPT-OSS模型使用的变体SwiGLU以及MoE模型使用的分组场景。
 
 - 计算公式：
 
@@ -201,7 +201,7 @@ aclnnStatus aclnnClippedSwiglu(
     <tr>
       <td>interleaved（bool）</td>
       <td>输入</td>
-      <td>公式中的输入interleaved，表示切分x时是否按奇偶方式切分</td>
+      <td>公式中的输入interleaved，表示切分x时是否按奇偶方式切分。</td>
       <td>设置为true表示对x进行奇偶切分，设置为false表示对x进行前后切分。</td>
       <td>-</td>
       <td>-</td>

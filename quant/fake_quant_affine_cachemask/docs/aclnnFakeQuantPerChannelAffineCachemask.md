@@ -125,7 +125,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
        <td>输入</td>
        <td>公式中的zero_point，表示输入伪量化的零基准参数。</td>
        <td>size需要与scale一致且需要与self在axis轴的size一致。</td>
-       <td>INT32、FLOAT16、FLOAT</td>
+       <td>INT32、FLOAT16、FLOAT32</td>
        <td>ND</td>
        <td>1</td>
        <td>√</td>
@@ -164,7 +164,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
        <td>out</td>
        <td>输出</td>
        <td>公式中的out。</td>
-       <td>shape需要和`self`一致。</td>
+       <td>shape需要和self一致。</td>
        <td>FLOAT16、FLOAT32</td>
        <td>ND</td>
        <td>1-8</td>
@@ -174,7 +174,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
        <td>mask</td>
        <td>输出</td>
        <td>公式中的mask。</td>
-       <td>shape需要和`self`一致。</td>
+       <td>shape需要和self一致。</td>
        <td>BOOL</td>
        <td>ND</td>
        <td>1-8</td>
@@ -245,7 +245,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
       <td>scale或zeroPoint的size与self在axis轴上的size大小不一致。</td>
     </tr>
     <tr>
-      <td>quantMin大于quantMax，或quant_min/quant_max绝对值不小于2^24（超出fp32可精确表示的整数域）。</td>
+      <td>quantMin大于quantMax，或quantMin/quantMax绝对值不小于2^24（超出fp32可精确表示的整数域）。</td>
     </tr>
   </tbody>
   </table>
@@ -298,7 +298,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
 - 确定性计算：
   - aclnnFakeQuantPerChannelAffineCachemask默认确定性实现。
 
-- 本aclnn接口的zero_point支持INT32、FLOAT16、FLOAT（越界dtype返回161002）。
+- 本aclnn接口的zero_point支持INT32、FLOAT16、FLOAT32（越界dtype返回161002）。
 
 <!-- npu="950" id7 -->
 - <term>Ascend 950PR&950DT系列产品</term>：浮点zero_point支持与self交叉组合；GEIR图模式另支持BFLOAT16的zero_point（可与self交叉组合）。

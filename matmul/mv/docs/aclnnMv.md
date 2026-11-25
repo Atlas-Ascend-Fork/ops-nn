@@ -141,7 +141,7 @@ aclnnStatus aclnnMv(
     </tr>
     <tr>
       <td>workspaceSize</td>
-      <td>出参</td>
+      <td>输出</td>
       <td>返回需要在Device侧申请的workspace大小。</td>
       <td>-</td>
       <td>-</td>
@@ -151,7 +151,7 @@ aclnnStatus aclnnMv(
     </tr>
     <tr>
       <td>executor</td>
-      <td>出参</td>
+      <td>输出</td>
       <td>返回op执行器，包含了算子计算流程。</td>
       <td>-</td>
       <td>-</td>
@@ -201,7 +201,7 @@ aclnnStatus aclnnMv(
     <tr>
       <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="4">161002</td>
-      <td>self,vec和out的数据类型不在支持的范围之内。</td>
+      <td>self，vec和out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
       <td>self，vec和out的数据类型不同。</td>

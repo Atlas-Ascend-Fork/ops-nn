@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：计算输入x的组归一化结果out，均值meanOut，标准差的倒数rstdOut，以及swish的输出。
+- 接口功能：计算输入x的组归一化结果yOut，均值meanOut，标准差的倒数rstdOut，以及swish的输出。
 - 计算公式：
   - **GroupNorm：**
 
@@ -45,7 +45,7 @@
     yOut = \frac{x}{1+e^{-scale * x}}
     $$
 
-    当activateSwish为True时，会计算Swish，此时swish计算公式的x为GroupNorm公式得到的out。
+    当activateSwish为true时，会计算Swish，此时Swish计算公式的x为GroupNorm公式得到的out。
 
 ## 函数原型
 

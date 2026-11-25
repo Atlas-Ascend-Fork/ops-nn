@@ -30,7 +30,7 @@
 
   | 计算场景 | TopK采样 | TopP采样 | minP采样 | 指数分布采样 | 输出中间计算结果 |备注|
   | :-------:| :------:|:-------:|:-------:|:-------:|:-------:|:-------:|
-  |Softmax-Argmax采样|×|×|×|×|×|对输入logits按每个batch，取SoftMax后取最大结果|
+  |Softmax-Argmax采样|×|×|×|×|×|对输入logits按每个batch，取Softmax后取最大结果|
   |topK采样|√|×|×|×|×|对输入logits按每个batch，取前topK[batch]个最大结果|
   |topP采样|×|√|×|×|×|对输入logits按每个batch从大到小排序，取累加值大于等于topP[batch]值的前n个结果进行采样|
   |Sample采样|×|×|×|√|×|对输入logits按每个batch，进行Softmax后与q进行除法取最大结果|
@@ -40,7 +40,7 @@
   |topK-topP-Sample采样|√|√|×|√|×|对输入logits按每个batch，先进行topK采样，再进行topP采样，最后进行Sample采样后取最大结果|
   |topK-topP-minP采样-中间结果|√|√|√|×|√|对输入logits按每个batch，先进行topK采样，再进行topP采样，最后进行minP采样，输出中间计算结果|
   |topK-minP采样-中间结果|√|×|√|×|√|对输入logits按每个batch，先进行topK采样，再进行minP采样，输出中间计算结果|
-  |topK-topP采样-中间结果|√|√|×|×|√|对输入logits按每个batch，先进行topK采样，再进行minP采样，输出中间计算结果|
+  |topK-topP采样-中间结果|√|√|×|×|√|对输入logits按每个batch，先进行topK采样，再进行topP采样，输出中间计算结果|
   |topK采样-中间结果|√|×|×|×|√|对输入logits按每个batch，进行topK采样，输出中间计算结果|
 
 - 计算公式：
@@ -50,13 +50,13 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
 
   TopK采样
 
-  1. 按分段长度v采用分段topk归并排序，用{s-1}块的topK对当前{s}块的输入进行预筛选，渐进更新单batch的topK，减少冗余数据和计算。
-  2. topK[batch]对应当前batch采样的k值，有效范围为1≤topK[batch]≤min(voc_size[batch], ks_max)，如果top[K]超出有效范围，则视为跳过当前batch的topK采样阶段，也同样会跳过当前batch的排序，将输入logits[batch]直接传入下一模块。
+  1. 按分段长度v采用分段topK归并排序，用{s-1}块的topK对当前{s}块的输入进行预筛选，渐进更新单batch的topK，减少冗余数据和计算。
+  2. topK[batch]对应当前batch采样的k值，有效范围为1≤topK[batch]≤min(voc_size[batch], ks_max)，如果topK超出有效范围，则视为跳过当前batch的topK采样阶段，也同样会跳过当前batch的排序，将输入logits[batch]直接传入下一模块。
   * 根据输入`topK[b]`的数值，本模块的处理策略如下：
 
     | 参数类型 | ≤0 | 有效域 | 无效域 |
     | :-------:| :------:|:-------:|:-------:|
-    |`topK[b]`|跳过topK采样|1≤topK≤min(ksMax, 1024, vocSize),执行topK采样|topK>min(ksMax, 1024, vocSize),跳过topK采样，选择全部有效元素|
+    |topK[b]|跳过topK采样|1≤topK≤min(ksMax, 1024, vocSize),执行topK采样|topK>min(ksMax, 1024, vocSize),跳过topK采样，选择全部有效元素|
 
   * 对当前batch分割为若干子段，滚动计算topKValue[b]：
 
@@ -78,7 +78,7 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
   $$
   ks_max有效取值范围[1,1024]，默认为1024，并且需要向上对齐到8的整数倍。
 
-  * 生成需要过滤的mask
+  * 生成需要过滤的mask。
 
   $$
   sortedValue[b] = sort(topKValue[b], descendant)
@@ -161,9 +161,9 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
 
     | 参数类型 | ≤0 | 有效域 | 无效域 |
     | :-------:| :------:|:-------:|:-------:|
-    |`minPs[b]`|跳过minP采样，保留前序结果不变|0<minPs<1,执行minP采样|minPs≥1,仅保留1个最大token|
+    |minPs[b]|跳过minP采样，保留前序结果不变|0<minPs<1,执行minP采样|minPs≥1,仅保留1个最大token|
 
-  * 如果min_ps[b]∈(0, 1)，则执行min_p采样：
+  * 如果minPs[b]∈(0, 1)，则执行minP采样：
     $$
     \text{logitsMax}[b] = \text{Max}(\text{logitsSortMasked}[b])
     $$
@@ -200,11 +200,11 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
         \max(\text{logitsSortMasked}[b, :]), & \text{if } minPs[b] \geq 1
     \end{cases}
     $$
-    min_ps[b]≥1时，每个batch仅取1个最大token，其余位置填充defLogit。
+    minPs[b]≥1时，每个batch仅取1个最大token，其余位置填充defLogit。
 
   可选输出
 
-  * 如果入参属性IsNeedLogits=True，则使用topK-topP-minP联合采样后的logitsIndexMasked，进行`logits_top_kp_select`输出。
+  * 如果入参属性isNeedLogits=True，则使用topK-topP-minP联合采样后的logitsIndexMasked，进行`logits_top_kp_select`输出。
     $$
     \text{logitsIndex}[b][v] = \text{Index}(\text{logitsMinpFiltered}[b][v] \in \text{Logits})
     $$
@@ -349,7 +349,7 @@ aclnnStatus aclnnTopKTopPSampleV2(
         <td>logits</td>
         <td>输入</td>
         <td>表示待采样的输入词频，词频索引固定为最后一维，对应公式`logits`。</td>
-        <td><ul><li>不支持空tensor。</li></ul></td>
+        <td><ul><li>不支持空Tensor。</li></ul></td>
         <td>FLOAT16、BFLOAT16、FLOAT32</td>
         <td>ND</td>
         <td>2</td>
@@ -359,7 +359,7 @@ aclnnStatus aclnnTopKTopPSampleV2(
         <td>topK</td>
         <td>输入</td>
         <td>表示每个batch采样的k值。对应公式中的`topK[b]`。</td>
-        <td><ul><li>不支持空tensor。</li><li>shape需要与`logits`前n-1维保持一致。</li></ul></td>
+        <td><ul><li>不支持空Tensor。</li><li>shape需要与`logits`前n-1维保持一致。</li></ul></td>
         <td>INT32</td>
         <td>ND</td>
         <td>1</td>
@@ -369,7 +369,7 @@ aclnnStatus aclnnTopKTopPSampleV2(
         <td>topP</td>
         <td>输入</td>
         <td>表示每个batch采样的p值。对应公式中的`topP[b]`。</td>
-        <td><ul><li>不支持空tensor。</li><li>shape需要与`logits`前n-1维保持一致，数据类型需要与`logits`保持一致。</li></ul></td>
+        <td><ul><li>不支持空Tensor。</li><li>shape需要与`logits`前n-1维保持一致，数据类型需要与`logits`保持一致。</li></ul></td>
         <td>FLOAT16、BFLOAT16、FLOAT32</td>
         <td>ND</td>
         <td>1</td>
@@ -612,10 +612,10 @@ aclnnStatus aclnnTopKTopPSampleV2(
     - aclnnTopKTopPSampleV2默认确定性实现。
   - 输入值域限制：
     - 对于所有采样参数，它们的尺寸必须满足，batch>0，0<vocSize<=2^20。
-    - 对于logits，它的元素应确保通过$exp(*)$运算后，对应结果不小于FLOAT32的最小有效值，否则对应的Safe_softmax结果将为0，可能继而导致算子的非预期输出。
+    - 对于logits，它的元素应确保通过$exp(*)$运算后，对应结果不小于FLOAT32的最小有效值，否则对应的safe_softmax结果将为0，可能继而导致算子的非预期输出。
     - topK只接受非负值作为合法输入；传入0和负数会跳过相应batch的采样。
   - 输入shape限制：
-    - logits、q、logitsTopKPselect、logitsIdx、logitsSortMasked的尺寸和维度必须完全一致。
+    - logits、q、logitsTopKPSelect、logitsIdx、logitsSortMasked的尺寸和维度必须完全一致。
     - logits、topK、topP、minPs、logitsSelectIdx、logitsIdx、logitsSortMasked除最后一维以外的所有维度必须顺序和大小完全一致。目前logits只能是2维，topK、topP、logitsSelectIdx必须是1维非空Tensor。logits、topK、topP不允许空Tensor作为输入，如需跳过相应模块，需按相应规则设置输入。
 
   - Q-Sample约束：

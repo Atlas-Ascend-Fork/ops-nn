@@ -85,7 +85,7 @@ aclnnStatus aclnnForeachTan(
       <td>x（aclTensorList*）</td>
       <td>输入</td>
       <td>表示进行正切函数运算的输入张量列表，对应公式中的`x`。</td>
-      <td><ul><li>支持空tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>-</td>
@@ -95,7 +95,7 @@ aclnnStatus aclnnForeachTan(
       <td>out（aclTensorList*）</td>
       <td>输出</td>
       <td>表示进行正切函数运算的输出张量列表，对应公式中的`y`。</td>
-      <td><ul><li>支持空tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape size等于入参`x`的shape size。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x`的数据类型和数据格式一致，且对应位置Tensor的shape与入参`x`的shape完全相等。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>-</td>

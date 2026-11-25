@@ -96,7 +96,7 @@ aclnnStatus aclnnForeachRoundOffNumberV2(
       <td>输入</td>
       <td>表示进行舍入计算的输入标量。对应公式中的`roundMode`。</td>
       <td><ul><li>roundMode的取值及对应的舍入策略如下：<ul><li>当roundMode=0，表示对输入不进行舍入操作。</li><li>当roundMode=1，表示对输入进行四舍六入五成双舍入操作。</li><li>当roundMode=2，表示对输入进行向负无穷舍入取整操作。</li><li>当roundMode=3，表示对输入进行向正无穷舍入取整操作。</li><li>当roundMode=4，表示对输入进行四舍五入舍入操作。</li><li>当roundMode=5，表示对输入进行向零舍入操作。</li><li>当roundMode=6，表示对输入进行最近邻奇数舍入操作。</li><li>当roundMode=7，表示对输入取小数部分。</li><li>当roundMode为其他时，表示对输入不进行舍入操作。</li></ul></li></ul></td>
-      <td>INT8，INT64</td>
+      <td>INT8、INT64</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

@@ -118,7 +118,7 @@ aclnnStatus aclnnForeachAddcdivScalarV2(
       <td>scalar（aclScalar*）</td>
       <td>输入</td>
       <td>表示混合运算中乘法的第二个输入标量。对应公式中的`scalar`。</td>
-      <td>数据类型与入参`x1`的数据类型具有一定对应关系：<ul><li>当`x1`的数据类型为FLOAT32，BFLOAT16时，数据类型支持FLOAT32，DOUBLE。</li><li>当`x1`的数据类型为FLOAT16时，数据类型支持FLOAT16，DOUBLE。</li></ul></td>
+      <td>数据类型与入参`x1`的数据类型具有一定对应关系：<ul><li>当`x1`的数据类型为FLOAT32、BFLOAT16时，数据类型支持FLOAT32、DOUBLE。</li><li>当`x1`的数据类型为FLOAT16时，数据类型支持FLOAT16、DOUBLE。</li></ul></td>
       <td>FLOAT32、FLOAT16、DOUBLE</td>
       <td>-</td>
       <td>-</td>
@@ -251,7 +251,7 @@ aclnnStatus aclnnForeachAddcdivScalarV2(
 
 ## 约束说明
 
-- `x1`、`x2`、`x3`的Tensor列表长度必须一致，`out`的Tensor数量必须大于等于`x1`的tensor数量，单个Tensor列表中Tensor的数量不超过256个。
+- `x1`、`x2`、`x3`的Tensor列表长度必须一致，`out`的Tensor数量必须大于等于`x1`的Tensor数量，单个Tensor列表中Tensor的数量不超过256个。
 - 确定性计算：
   - aclnnForeachAddcdivScalarV2默认确定性实现。
 

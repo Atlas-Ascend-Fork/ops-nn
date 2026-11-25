@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：激活函数，返回与输入tensor shape相同的输出tensor，输入的value小于等于-3时取0，大于等于3时取该value，其余时刻取value加3的和乘上value再除以6。
+- 接口功能：激活函数，返回与输入Tensor shape相同的输出tensor：输入元素value小于等于-3时取0；大于等于3时取value；其余情况取value与(value+3)乘积除以6的结果。
 - 计算公式：
 
   $$

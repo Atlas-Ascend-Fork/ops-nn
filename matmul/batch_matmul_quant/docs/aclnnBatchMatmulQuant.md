@@ -149,7 +149,7 @@ aclnnStatus aclnnBatchMatmulQuant(
     <tr>
       <td>out</td>
       <td>输出</td>
-      <td>输出Tensor。</td>
+      <td>输出tensor(out)。</td>
       <td>-</td>
       <td>INT8</td>
       <td>ND</td>
@@ -158,7 +158,7 @@ aclnnStatus aclnnBatchMatmulQuant(
     </tr>
     <tr>
       <td>workspaceSize</td>
-      <td>出参</td>
+      <td>输出</td>
       <td>返回需要在Device侧申请的workspace大小。</td>
       <td>-</td>
       <td>-</td>
@@ -168,7 +168,7 @@ aclnnStatus aclnnBatchMatmulQuant(
     </tr>
     <tr>
       <td>executor</td>
-      <td>出参</td>
+      <td>输出</td>
       <td>返回op执行器，包含了算子计算流程。</td>
       <td>-</td>
       <td>-</td>
@@ -265,7 +265,7 @@ aclnnStatus aclnnBatchMatmulQuant(
 
 - **返回值：**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 

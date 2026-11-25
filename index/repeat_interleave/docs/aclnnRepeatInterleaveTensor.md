@@ -159,7 +159,7 @@ aclnnStatus aclnnRepeatInterleaveTensor(
         <td>repeats、out的数据类型不一样。</td>
       </tr>
       <tr>
-        <td>repeats不为1D tensor或空tensor。</td>
+        <td>repeats不为1D tensor或空Tensor。</td>
       </tr>
       <tr>
         <td>repeatInterleave计算的结果与out的shape不一致。</td>

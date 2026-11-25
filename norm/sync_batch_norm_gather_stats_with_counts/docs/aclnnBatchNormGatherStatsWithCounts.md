@@ -113,7 +113,7 @@ aclnnStatus aclnnBatchNormGatherStatsWithCounts(
       <td>mean（aclTensor*）</td>
       <td>输入</td>
       <td>表示输入数据均值，对应公式中的`E(x)`。</td>
-      <td><ul><li>不支持空Tensor。</li><li>第一维的size需要与`invstd`和`counts`一致，第二维对应的size需要与`input`的Channel轴size一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>第一维的size需要与`invstd`和`counts`一致，第二维对应的size需要与`input`的channel轴size一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2</td>
@@ -123,7 +123,7 @@ aclnnStatus aclnnBatchNormGatherStatsWithCounts(
       <td>invstd（aclTensor*）</td>
       <td>输入</td>
       <td>表示输入数据标准差的倒数，对应公式中的`Var(x)+ eps`开平方的倒数。</td>
-      <td><ul><li>不支持空Tensor。</li><li>元素值要求均大于0，小于等于0时，精度不做保证。</li><li>第一维的size需要与`mean`和`counts`一致，第二维对应的size需要与`input`的Channel轴size一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>元素值要求均大于0，小于等于0时，精度不做保证。</li><li>第一维的size需要与`mean`和`counts`一致，第二维对应的size需要与`input`的channel轴size一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2</td>

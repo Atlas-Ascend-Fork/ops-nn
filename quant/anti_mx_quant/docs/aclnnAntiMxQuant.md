@@ -253,7 +253,7 @@ aclnnStatus aclnnAntiMxQuant(
 - 确定性计算：
   - `aclnnAntiMxQuant`默认确定性实现。
 - 关于x、mxscale的shape约束说明如下：
-  - 如果输入x的数据类型是float4_e2m1或float4_e1m2，x.shape[-1]必须是偶数。
+  - 如果输入x的数据类型是FLOAT4_E2M1或FLOAT4_E1M2，x.shape[-1]必须是偶数。
   - axis_change = axis if axis >= 0 else axis + rank(x)。
   - mxscale.shape[axis_change] = (ceil(x.shape[axis] / 32) + 2 - 1) / 2。
   - mxscale.shape[-1] = 2。

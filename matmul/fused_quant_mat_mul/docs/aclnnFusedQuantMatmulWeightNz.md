@@ -252,7 +252,7 @@ aclnnStatus aclnnFusedQuantMatmulWeightNz(
         <td>FLOAT16、BFLOAT16</td>
         <td>ND</td>
         <td>2-6</td>
-        <td>✓</td>
+        <td>√</td>
       </tr>
       <tr>
         <td>workspaceSize</td>

@@ -135,7 +135,7 @@ aclnnStatus aclnnRepeatInterleave(
       <tr>
         <td>executor（aclOpExecutor**）</td>
         <td>输出</td>
-        <td>返回op执行器，包含了算子计算流程。</td>
+        <td>返回算子执行器，包含了算子计算流程。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -221,7 +221,7 @@ aclnnStatus aclnnRepeatInterleave(
       <tr>
         <td>executor</td>
         <td>输入</td>
-        <td>op执行器，包含了算子计算流程。</td>
+        <td>算子执行器，包含了算子计算流程。</td>
       </tr>
       <tr>
         <td>stream</td>

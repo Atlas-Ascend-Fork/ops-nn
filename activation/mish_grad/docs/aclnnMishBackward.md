@@ -48,7 +48,7 @@ aclnnStatus aclnnMishBackward(
 
 ## aclnnMishBackwardGetWorkspaceSize
 
-- **参数说明**：
+- **参数说明：**
   <table style="undefined;table-layout: fixed; width: 1497px"><colgroup>
   <col style="width: 271px">
   <col style="width: 115px">

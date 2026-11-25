@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-计算[aclnnSoftMarginLoss](../../soft_margin_loss/docs/aclnnSoftMarginLoss.md)二分类逻辑损失函数的反向传播。reduction指定损失函数的计算方式，支持'none'、'mean'、'sum'。'none'表示不应用reduction，'mean'表示输出的总和将除以输出中的元素数，'sum'表示输出将被求和。
+计算[aclnnSoftMarginLoss](../../soft_margin_loss/docs/aclnnSoftMarginLoss.md)二分类逻辑损失函数的反向传播。reduction指定损失函数的缩减方式，支持'none'、'mean'、'sum'。'none'表示不应用reduction，'mean'表示输出的总和将除以输出中的元素数，'sum'表示输出将被求和。
 
 ## 函数原型
 
@@ -78,7 +78,7 @@ aclnnStatus aclnnSoftMarginLossBackward(
         <td class="tg-0pky">gradOutput（aclTensor*）</td>
         <td class="tg-0pky">输入</td>
         <td class="tg-0pky">梯度反向输入。</td>
-        <td class="tg-0pky">shape需要与self和target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与self、target的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</td>
+        <td class="tg-0pky">shape需要与self、target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与self、target的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</td>
         <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
         <td class="tg-0pky">ND</td>
         <td class="tg-0pky">1-8</td>
@@ -118,7 +118,7 @@ aclnnStatus aclnnSoftMarginLossBackward(
         <td class="tg-0pky">out（aclTensor*）</td>
         <td class="tg-0pky">输出</td>
         <td class="tg-0pky">计算输出。</td>
-        <td class="tg-0pky">shape为gradOutput、self、target的<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>结果。</td>
+        <td class="tg-0pky">shape为gradOutput、self、target的<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>结果。</td>
         <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
         <td class="tg-0pky">ND</td>
         <td class="tg-0pky">1-8</td>
@@ -175,10 +175,10 @@ aclnnStatus aclnnSoftMarginLossBackward(
         <td class="tg-0pky">gradOutput、self、target或out的数据类型不在支持的范围之内。</td>
       </tr>
       <tr>
-        <td class="tg-0lax">gradOutput、self和target、out的shape不满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>规则。</td>
+        <td class="tg-0lax">gradOutput、self和target、out的shape不满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>规则。</td>
       </tr>
       <tr>
-        <td class="tg-0pky">gradOutput、self和target做<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape与out不一致。</td>
+        <td class="tg-0pky">gradOutput、self和target做<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>后的shape与out不一致。</td>
       </tr>
       <tr>
         <td class="tg-0pky">reduction取值不在支持范围（0/1/2）之内。</td>

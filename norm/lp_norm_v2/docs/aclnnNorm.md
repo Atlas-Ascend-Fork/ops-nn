@@ -153,7 +153,7 @@ aclnnStatus aclnnNorm(
       <td>out（aclTensor*）</td>
       <td>输出</td>
       <td>公式中的输出。</td>
-      <td><ul><li>若keepdim为true，除dim指定维度上的size为1以外，其余维度的shape需要与self保持一致；当dim为空数组时，out的每个维度大小均为1。</li><li>若keepdim为false，reduce轴的维度不保留，其余维度shape需要与self一致；当dim为空数组时，out为0维Tensor。</li></ul></td>
+      <td><ul><li>若keepdim为true，除dim指定维度上的size为1以外，其余维度的shape需要与self保持一致；当dim为空数组时，out的每个维度大小均为1。</li><li>若keepdim为false，归约轴的维度不保留，其余维度shape需要与self一致；当dim为空数组时，out为0维Tensor。</li></ul></td>
       <td>
         FLOAT32、FLOAT16、BFLOAT16
       </td>

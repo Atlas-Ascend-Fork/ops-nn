@@ -112,7 +112,7 @@ aclnnStatus aclnnRepeatInterleaveInt(
         <td>out（aclTensor*）</td>
         <td>输出</td>
         <td>功能说明中数据复制完成的输出 tensor。</td>
-        <td>支持空 Tensor。<br>数据类型需要与 self 一致。<br>shape 为 1D Tensor，shape 大小与 outputSize 相同。</td>
+        <td>支持空Tensor。<br>数据类型需要与self一致。<br>shape为1D Tensor，shape大小与 outputSize相同。</td>
         <td>UINT8、UINT16、UINT32、UINT64、INT8、INT16、INT32、INT64、BOOL、FLOAT16、BFLOAT16、FLOAT</td>
         <td>ND</td>
         <td>1</td>

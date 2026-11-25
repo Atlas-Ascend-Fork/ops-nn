@@ -185,7 +185,7 @@ aclnnStatus aclnnMultiScaleDeformableAttnFunction(
       <td>attnWeight（aclTensor*）</td>
       <td>输入</td>
       <td>采样点权重Tensor。对应公式中的`attnWeight`。</td>
-      <td><ul><il>数据类型与value保持一致。</il><il>shape为(bs, num_queries, num_heads, num_levels, num_points)。</il></ul></td>
+      <td><ul><li>数据类型与value保持一致。</li><li>shape为(bs, num_queries, num_heads, num_levels, num_points)。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>5</td>
@@ -195,7 +195,7 @@ aclnnStatus aclnnMultiScaleDeformableAttnFunction(
       <td>output（aclTensor*）</td>
       <td>输出</td>
       <td>算子计算输出。对应公式中的`output`。</td>
-      <td><ul><il>数据类型与value保持一致。</il><il>shape为(bs, num_queries, num_heads * channels)。</il></ul></td>
+      <td><ul><li>数据类型与value保持一致。</li><li>shape为(bs, num_queries, num_heads * channels)。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>3</td>

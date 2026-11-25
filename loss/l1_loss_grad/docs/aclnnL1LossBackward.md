@@ -78,7 +78,7 @@ aclnnStatus aclnnL1LossBackward(
       <td class="tg-0pky">gradOutput（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">梯度反向输入。</td>
-      <td class="tg-0pky">shape需要与self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与self、target的数据类型满足数据类型推导规则（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</td>
+      <td class="tg-0pky">shape需要与self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与self、target的数据类型满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">0-8</td>
@@ -88,7 +88,7 @@ aclnnStatus aclnnL1LossBackward(
       <td class="tg-0pky">self（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">输入张量</td>
-      <td class="tg-0pky">shape需要与gradOutput、target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与gradOutput、target满足数据类型推导规则（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</td>
+      <td class="tg-0pky">shape需要与gradOutput、target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与gradOutput、target满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">0-8</td>
@@ -98,7 +98,7 @@ aclnnStatus aclnnL1LossBackward(
       <td class="tg-0pky">target（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">真实的标签</td>
-      <td class="tg-0pky">shape需要与gradOutput、self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型要与self、gradOutput满足数据类型推导规则（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</td>
+      <td class="tg-0pky">shape需要与gradOutput、self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型要与self、gradOutput满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">0-8</td>
@@ -118,7 +118,7 @@ aclnnStatus aclnnL1LossBackward(
       <td class="tg-0pky">gradInput（aclTensor*）</td>
       <td class="tg-0pky">输出</td>
       <td class="tg-0pky">计算输出</td>
-      <td class="tg-0pky">shape为gradOutput、self、target三个输入做<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape。<br>数据类型要与self满足数据类型推导规则（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）</td>
+      <td class="tg-0pky">shape为gradOutput、self、target三个输入做<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape。<br>数据类型要与self满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16、DOUBLE</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">0-8</td>

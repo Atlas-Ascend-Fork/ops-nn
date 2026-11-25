@@ -159,7 +159,7 @@
       <td rowspan="4">reduce</td>
       <td rowspan="4">输入</td>
       <td rowspan="4">选择应用的reduction操作。</td>
-      <td rowspan="4">选的操作选项以及对应的int值为(add, 1), (mul, 2)，(none, 0)。具体操作含义如下：<br>0：表示替换操作，将value按照index替换到out中的对应位置。<br>1：表示累加操作，将value按照index累加到out中的对应位置。<br>2：表示累乘操作，将value按照index累乘到out的对应位置。<br></td>
+      <td rowspan="4">选择的操作选项以及对应的int值为(add, 1)、(mul, 2)、(none, 0)。具体操作含义如下：<br>0：表示替换操作，将value按照index替换到out中的对应位置。<br>1：表示累加操作，将value按照index累加到out中的对应位置。<br>2：表示累乘操作，将value按照index累乘到out的对应位置。<br></td>
       <td rowspan="4">-</td>
       <td rowspan="4">-</td>
       <td rowspan="4">-</td>
@@ -370,7 +370,7 @@
         <td rowspan="4">reduce</td>
         <td rowspan="4">输入</td>
         <td rowspan="4">选择应用的reduction操作。</td>
-        <td rowspan="4">选的操作选项以及对应的int值为(add, 1), (mul, 2)，(none, 0)。具体操作含义如下：<br>0：表示替换操作，将value按照index替换到selfRef中的对应位置。<br>1：表示累加操作，将value按照index累加到selfRef中的对应位置<br>2：表示累乘操作，将value按照index累乘到selfRef的对应位置</td>
+        <td rowspan="4">选择的操作选项以及对应的int值为(add, 1)、(mul, 2)、(none, 0)。具体操作含义如下：<br>0：表示替换操作，将value按照index替换到selfRef中的对应位置。<br>1：表示累加操作，将value按照index累加到selfRef中的对应位置<br>2：表示累乘操作，将value按照index累乘到selfRef的对应位置</td>
         <td rowspan="4">-</td>
         <td rowspan="4">-</td>
         <td rowspan="4">-</td>
@@ -430,7 +430,7 @@
     <tr>
       <td rowspan="7">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="7">161002</td>
-      <td>selfRef、index、value的数据类型不在支持范围内</td>
+      <td>selfRef、index、value的数据类型不在支持范围内。</td>
     </tr>
     <tr>
       <td>selfRef、index的维度数不一致</td>

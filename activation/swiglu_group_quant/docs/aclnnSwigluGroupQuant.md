@@ -25,7 +25,7 @@
 
 ### 接口功能
 
-SwigluGroupQuant算子实现SwiGLU激活函数与分组量化融合计算。支持四种量化模式：
+SwigluGroupQuant算子实现SwiGLU与分组量化融合计算。支持四种量化模式：
 
 - **quant_mode=0**：Block Quant（FP8块量化，固定128元素分组）
 - **quant_mode=1**：MX Quant（FP8 MX量化，固定32元素分组）
@@ -106,7 +106,7 @@ $$
 </details>
 
 <details>
-<summary><strong>步骤四：SwiGLU激活</strong></summary>
+<summary><strong>步骤四：SwiGLU</strong></summary>
 
 SwiGLU激活函数定义（逐元素计算）：
 

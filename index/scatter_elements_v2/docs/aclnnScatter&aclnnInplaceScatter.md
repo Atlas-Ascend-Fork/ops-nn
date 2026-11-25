@@ -159,7 +159,7 @@ aclnnStatus aclnnInplaceScatter(
       <tr>
         <td>reduce（int64_t）</td>
         <td>输入</td>
-        <td>选择应用的reduction操作。</td>
+        <td>选择应用的reduce操作。</td>
         <td>可选的操作选项以及对应的int值为(add, 1)，(mul, 2)，(none, 0)。<br>具体操作含义如下：0表示替换，1表示累加，2表示累乘。</td>
         <td>-</td>
         <td>-</td>
@@ -357,7 +357,7 @@ aclnnStatus aclnnInplaceScatter(
       <tr>
         <td>reduce（int64_t）</td>
         <td>输入</td>
-        <td>选择应用的reduction操作。</td>
+        <td>选择应用的reduce操作。</td>
         <td>可选操作：0表示替换，1表示累加，2表示累乘。</td>
         <td>-</td>
         <td>-</td>
@@ -478,7 +478,7 @@ aclnnStatus aclnnInplaceScatter(
 确定性说明：
 
 <!-- npu="950" id7 -->
-- <term>Ascend 950PR&950DT系列产品</term>：默认非确定性，支持通过aclrtSetSysParamOpt开启确定性（当reduction为累乘场景，开启确定性也不生效，依旧为非确定性）。
+- <term>Ascend 950PR&950DT系列产品</term>：默认非确定性，支持通过aclrtSetSysParamOpt开启确定性（当reduce为累乘场景，开启确定性也不生效，依旧为非确定性）。
 <!-- end id7 -->
 <!-- npu="A3,910b" id8 -->
 - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：默认确定性。

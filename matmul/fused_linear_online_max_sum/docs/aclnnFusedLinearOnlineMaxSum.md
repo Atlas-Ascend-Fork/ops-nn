@@ -223,7 +223,7 @@ aclnnStatus aclnnFusedLinearOnlineMaxSum(
       <tr>
       <td>targetMaskOut</td>
       <td>输出</td>
-      <td>表示用于筛选词表的mask，公式中的targetMaskOut。</td>
+      <td>表示用于筛选词表的掩码，公式中的targetMaskOut。</td>
       <td><ul><li>shape为[(input.size(0) + 7) / 8]。</li></ul></td>
       <td>UINT8</td>
       <td>ND</td>
@@ -390,7 +390,7 @@ aclnnStatus aclnnFusedLinearOnlineMaxSum(
 
   <!-- end id8 -->
 
-- 词表索引范围说明：vocabStartIndex、vocabEndIndex均不超过16777216（2^24，float32可精确表示的整数上限）。超出该范围时aclnnFusedLinearOnlineMaxSumGetWorkspaceSize返回错误，避免内部float32比较/减法因舍入产生静默错误。
+- 词表索引范围说明：vocabStartIndex、vocabEndIndex均不超过16777216（2^24，FLOAT32可精确表示的整数上限）。超出该范围时aclnnFusedLinearOnlineMaxSumGetWorkspaceSize返回错误，避免内部FLOAT32比较/减法因舍入产生静默错误。
 
 ## 调用示例
 

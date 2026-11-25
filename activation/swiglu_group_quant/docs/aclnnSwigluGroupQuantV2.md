@@ -52,7 +52,7 @@
 步骤五：MX FP8量化（cuBLAS）
 ```
 
-> `quantMode=5`不支持`group_index`与`scale`，因此无分组截断与静态量化步骤；
+> `quantMode=5`不支持`groupIndexOptional`与`scaleOptional`，因此无分组截断与静态量化步骤；
 > 输入`x`必须为二维，全部`T`行参与计算。
 
 <details>
@@ -93,7 +93,7 @@ $$
 </details>
 
 <details>
-<summary><strong>步骤三：变体SwiGLU激活</strong></summary>
+<summary><strong>步骤三：变体SwiGLU</strong></summary>
 
 激活函数（逐元素计算），带`alpha`、`bias`的变体形式：
 
@@ -144,7 +144,7 @@ $$
 $$
 
 其中 $w[t]$ 为第 $t$ 个token的weight值，可按FLOAT16、BFLOAT16、FLOAT32传入，
-参与计算时按FP32精度处理。
+参与计算时按FP32处理。
 
 **MoE场景**：weight来自专家路由器的softmax输出，表示该token对当前专家的权重。
 
@@ -286,7 +286,7 @@ aclnnStatus aclnnSwigluGroupQuantV2(
     <tr>
       <td>weightOptional（aclTensor*）</td>
       <td>输入（可选）</td>
-      <td>MOE权重张量，用于SwiGLU输出的加权计算。</td>
+      <td>MoE权重张量，用于SwiGLU输出的加权计算。</td>
       <td><ul><li>可选参数。</li><li>不为空时，数据类型为<b>FLOAT16、BFLOAT16或FLOAT32</b>，元素个数需等于T。</li><li><b>FLOAT16、BFLOAT16为V2新增能力</b>。</li></ul></td>
       <td>FLOAT16、BFLOAT16、FLOAT32</td>
       <td>ND</td>

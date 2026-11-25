@@ -25,12 +25,12 @@
 
 - 接口功能：将 tensor `src` 中的值按指定的轴和 `index` 指定的位置关系写入或规约到 tensor `self` 中。
 - 接口定义的规约语义：
-  - `none`：替换写入
-  - `add`：累加
-  - `mul`：累乘
-  - `max`：取最大值
-  - `min`：取最小值
-  - `mean`：求平均值
+  - `none`：替换写入。
+  - `add`：累加。
+  - `mul`：累乘。
+  - `max`：取最大值。
+  - `min`：取最小值。
+  - `mean`：求平均值。
   - 各产品实际支持范围存在差异，需同时满足上文产品支持说明和本文约束说明。
 - `include_self` 语义：
   - `include_self=true`：规约时将 `self` 原始值参与计算。
@@ -348,7 +348,7 @@ aclnnStatus aclnnInplaceScatterReduce(
         <td>selfRef（aclTensor*）</td>
         <td>输入/输出</td>
         <td>scatter_reduce的目标张量。</td>
-        <td>shape需要与index和src的维度数量相同。<br>数据类型与src的数据类型一致。<br>支持空Tensor。</td>
+        <td>数据类型需要与src的数据类型一致。<br>维度数量需要与index、src相同。<br>支持空Tensor。</td>
         <td>UINT8、INT8、INT16、INT32、INT64、BOOL、FLOAT16、FLOAT32、DOUBLE、COMPLEX64、COMPLEX128、BFLOAT16</td>
         <td>ND</td>
         <td>0-8</td>
@@ -388,7 +388,7 @@ aclnnStatus aclnnInplaceScatterReduce(
         <td>reduce（int64_t）</td>
         <td>输入</td>
         <td>选择应用的reduction操作。</td>
-        <td>可选操作：0表示替换，1表示累加，2表示累乘，3表示取最大值，4表示取最小值，5表示求平均值。</td>
+        <td>可选的操作选项以及对应的int值为 (none, 0)、(add, 1)、(mul, 2)、(max, 3)、(min, 4)、(mean, 5)。<br>0表示替换，1表示累加，2表示累乘，3表示取最大值，4表示取最小值，5表示求平均值。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -398,7 +398,7 @@ aclnnStatus aclnnInplaceScatterReduce(
         <td>includeSelf（bool）</td>
         <td>输入</td>
         <td>规约计算时是否将selfRef中的原始值参与计算。</td>
-        <td>true表示self参与规约；false表示命中位置仅规约src，未命中位置保留self；空index保留self。</td>
+        <td>true表示selfRef参与规约；false表示命中位置仅规约src，未命中位置保留selfRef；空index保留selfRef。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>

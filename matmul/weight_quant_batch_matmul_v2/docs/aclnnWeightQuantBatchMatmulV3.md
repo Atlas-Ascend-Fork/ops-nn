@@ -157,7 +157,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
       <tr>
         <td>quantScaleOptional</td>
         <td>输入</td>
-        <td>实现输出量化计算的量化参数，由量化公式中的quantScale和quantOffset的数据通过`aclnnTransQuantParam`接口转化得到</td>
+        <td>实现输出量化计算的量化参数，对应量化公式中的`quantScale`和`quantOffset`，由`aclnnTransQuantParam`接口转化得到</td>
         <td>由量化公式中的`quantScale`和`quantOffset`的数据通过`aclnnTransQuantParam`接口转化得到。</td>
         <td>UINT64<sup>1</sup></td>
         <td>ND</td>
@@ -404,7 +404,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
   - **公共约束**
     - `x`和`weight`矩阵m、k、n大小在[1, 2^31-1]范围内。`weight`的Reduce维度k需要与`x`的Reduce维度k大小相等。
     - 支持的量化模式：pertensor[量化模式](../../../docs/zh/context/quant_mode_introduction.md)、perchannel[量化模式](../../../docs/zh/context/quant_mode_introduction.md)、pergroup[量化模式](../../../docs/zh/context/quant_mode_introduction.md)和MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)。
-    - `x`不支持转置，因此不支持[非连续Tensor](../../../docs/zh/context/non_contiguous_tensor.md)，weight仅转置场景支持非连续的Tensor；antiquantScale、antiquantOffsetOptional非连续Tensor仅支持转置场景并且连续性要求和weight保持一致。
+    - `x`不支持转置，因此不支持[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)，weight仅转置场景支持非连续的Tensor；antiquantScale、antiquantOffsetOptional非连续的Tensor仅支持转置场景并且连续性要求和weight保持一致。
     - `antiquantScale`不同量化模式支持的shape：
       - pertensor[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：(1,)或(1,1)。
       - perchannel[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：输入shape为(1, n)或(n,)。
@@ -462,7 +462,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
 
       除[公共约束](#公共约束)外，其余约束如下：
       - 若`weight`数据类型为INT4或FLOAT4_E2M1，则weight的最后一维应为2对齐；若`weight`数据类型为INT32或FLOAT，则weight的最后一维应为8对齐。
-      - 若`weight`数据类型为INT32/FLOAT时，必须配合`aclnnConvertWeightToINT4Pack`接口完成从INT32/FLOAT到紧密排布的INT4/FLOAT4_E2M1的转换，[详情可参考样例](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)。
+      - 若`weight`数据类型为INT32/FLOAT时，必须配合`aclnnConvertWeightToINT4Pack`接口完成从INT32/FLOAT到紧密排布的INT4/FLOAT4_E2M1的转换，[详情可参考](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)。
 
   <a id="ascend_950pr_ascend950dt_性能优化建议"></a>
 

@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：带截断的Swish门控线性单元激活函数，实现x的SwiGlu计算。本接口相较于aclnnClippedSwiglu，新增了一个输入参数：clampMode，用于支持部分新模型需要将clamp操作后移至silu激活之后的场景。
+- 接口功能：带截断的Swish门控线性单元激活函数，实现x的SwiGLU计算。本接口相较于aclnnClippedSwiglu，新增了一个输入参数：clampMode，用于支持部分新模型需要将clamp操作后移至silu激活之后的场景。
 
 - 计算公式：
 
@@ -68,7 +68,7 @@
      $$
      B = x[ : , h : ]
      $$
-  4. 根据输入参数alpha、limit、bias、clamp_mode进行变体SwiGlu计算，公式如下：
+  4. 根据输入参数alpha、limit、bias、clampMode进行变体SwiGLU计算，公式如下：
 
      当clampMode为0时，表示clamp操作在silu之前：
 
@@ -223,7 +223,7 @@ aclnnStatus aclnnClippedSwigluV2(
     <tr>
       <td>interleaved（bool）</td>
       <td>输入</td>
-      <td>公式中的输入interleaved，表示切分x时是否按奇偶方式切分</td>
+      <td>公式中的输入interleaved，表示切分x时是否按奇偶方式切分。</td>
       <td>设置为true表示对x进行奇偶切分，设置为false表示对x进行前后切分。</td>
       <td>-</td>
       <td>-</td>
@@ -233,7 +233,7 @@ aclnnStatus aclnnClippedSwigluV2(
     <tr>
       <td>clampMode（int64_t）</td>
       <td>输入</td>
-      <td>公式中的输入clampMode，表示clamp操作与silu操作执行的先后顺序</td>
+      <td>公式中的输入clampMode，表示clamp操作与silu操作执行的先后顺序。</td>
       <td>设置为1表示将A的clamp操作后移至silu激活之后，即对silu(A)的结果做clamp；设置为0表示A的clamp操作在silu激活之前。</td>
       <td>-</td>
       <td>-</td>
@@ -360,7 +360,7 @@ aclnnStatus aclnnClippedSwigluV2(
   </tbody>
   </table>
 
-- **返回值**：
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 

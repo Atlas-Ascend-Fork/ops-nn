@@ -102,7 +102,7 @@ aclnnStatus aclnnGeluBackwardV2(
       <tr>
       <td>gradOutput（aclTensor*）</td>
       <td>输入</td>
-      <td>求梯度时的权重，即为了将正向输出的tensor变为标量所相乘的权重tensor，公式中的gradOutput。</td>
+      <td>求梯度时的权重，即为了将正向输出的Tensor变为标量所相乘的权重Tensor，公式中的gradOutput。</td>
       <td><ul><li>shape需要和正向self的shape满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。</li><li>dtype与self的dtype满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）。</li><li>支持空Tensor。</li></ul></td>
       <td>FLOAT16、BFLOAT16、FLOAT32</td>
       <td>ND</td>
@@ -132,7 +132,7 @@ aclnnStatus aclnnGeluBackwardV2(
        <tr>
       <td>gradInput（aclTensor*）</td>
       <td>输出</td>
-      <td>backward计算的输出，为GELU正向入参的梯度值，即对输入进行求导后的结果，公式中的gradInput。</td>
+      <td>backward计算的输出，为Gelu正向入参的梯度值，即对输入进行求导后的结果，公式中的gradInput。</td>
       <td><ul><li>dtype与self和gradOutput进行数据类型推导后的结果一致。</li><li>shape与gradOutput和self进行broadcast后的shape一致。</li></ul></td>
       <td>FLOAT16、BFLOAT16、FLOAT32</td>
       <td>ND</td>

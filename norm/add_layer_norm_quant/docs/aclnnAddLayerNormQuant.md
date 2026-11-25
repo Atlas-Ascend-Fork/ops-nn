@@ -251,7 +251,7 @@ aclnnStatus aclnnAddLayerNormQuant(
     <tr>
       <td>quantMode（char*）</td>
       <td>输入</td>
-      <td>量化模式，用于确定融合算子融合的是静态还是动态量化算子。对应公式描述中的`quantMode`。取值可以是"static"或"dynamic"。</td>
+      <td>量化模式，用于确定融合算子的是静态还是动态量化算子。对应公式描述中的`quantMode`。取值可以是"static"或"dynamic"。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -394,7 +394,7 @@ aclnnStatus aclnnAddLayerNormQuant(
       <td>quantMode的值不是"static"或"dynamic"。</td>
     </tr>
     <tr>
-      <td>输入数据类型组合不合法，合法的数据类型组合参见下文约束与说明。</td>
+      <td>输入数据类型组合不合法，合法的数据类型组合参见下文约束说明。</td>
     </tr>
     <tr>
       <td>x1、gamma、outScales1Out的shape满足如下条件：
@@ -492,7 +492,7 @@ aclnnStatus aclnnAddLayerNormQuant(
 - 数据类型支持说明：
   - 当`quantMode`为"static"时：
 
-    | x1数据类型 | x2数据类型 | gamma数据类型 | beta数据类型 | bias数据类型 | scale1数据类型 | scale2数据类型 | zeroPoints1数据类型 | zeroPoints2数据类型 | y1数据类型 | y2数据类型 | x数据类型 | outScale1数据类型 | outScale2数据类型 |
+    | x1数据类型 | x2数据类型 | gamma数据类型 | beta数据类型 | bias数据类型 | scale1数据类型 | scale2数据类型 | zeroPoints1数据类型 | zeroPoints2数据类型 | y1数据类型 | y2数据类型 | x数据类型 | outScales1Out数据类型 | outScales2Out数据类型 |
     | ---------- | --------- | ------------- | ----------- | ------------ | -------------- | -------------- | ------------------ | ------------------- | --------- | ---------- | --------- | ----------------- | :--------------- |
     | FLOAT16    | FLOAT16   | FLOAT16       | FLOAT16     | FLOAT16      | FLOAT16        | FLOAT16        | FLOAT16            | FLOAT16             | INT8      | INT8       | FLOAT16   | FLOAT32           | FLOAT32          |
     | BFLOAT16   | BFLOAT16  | BFLOAT16      | BFLOAT16    | BFLOAT16     | BFLOAT16       | BFLOAT16       | BFLOAT16           | BFLOAT16            | INT8      | INT8       | BFLOAT16  | FLOAT32           | FLOAT32          |
@@ -502,7 +502,7 @@ aclnnStatus aclnnAddLayerNormQuant(
 
   - 当`quantMode`为"dynamic"时：
 
-    | x1数据类型 | x2数据类型 | gamma数据类型 | beta数据类型 | bias数据类型 | scale1数据类型 | scale2数据类型 | zeroPoints1数据类型 | zeroPoints2数据类型 | y1数据类型 | y2数据类型 | x数据类型 | outScale1数据类型 | outScale2数据类型 |
+    | x1数据类型 | x2数据类型 | gamma数据类型 | beta数据类型 | bias数据类型 | scale1数据类型 | scale2数据类型 | zeroPoints1数据类型 | zeroPoints2数据类型 | y1数据类型 | y2数据类型 | x数据类型 | outScales1Out数据类型 | outScales2Out数据类型 |
     | ---------- | --------- | ------------- | ----------- | ------------ | -------------- | -------------- | ------------------ | ------------------- | --------- | ---------- | --------- | ----------------- | :--------------- |
     | FLOAT16    | FLOAT16   | FLOAT16       | FLOAT16     | FLOAT16      | FLOAT16        | FLOAT16        | FLOAT16            | FLOAT16             | INT8      | INT8       | FLOAT16   | FLOAT32           | FLOAT32          |
     | BFLOAT16   | BFLOAT16  | BFLOAT16      | BFLOAT16    | BFLOAT16     | BFLOAT16       | BFLOAT16       | BFLOAT16           | BFLOAT16            | INT8      | INT8       | BFLOAT16  | FLOAT32           | FLOAT32          |

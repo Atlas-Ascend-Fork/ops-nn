@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：对输入张量列表x中的每个张量进行指数运算，指数为标量列表exponent中对应的标量。
+- 接口功能：对输入张量列表`x`中的每个张量进行指数运算，指数为标量列表`exponent`中对应的标量。
 
 - 计算公式：
 
@@ -98,7 +98,7 @@ aclnnStatus aclnnForeachPowScalarList(
       <td>scalars（aclScalarList*）</td>
       <td>输入</td>
       <td>表示进行n次方运算的指数，对应公式中的`exponent`。</td>
-      <td><ul><li>元素个数与`x`中Tensor的个数相等。</li><li>数据类型与入参`x`的数据类型具有一定对应关系：<ul><li>当`x`的数据类型为FLOAT32、FLOAT16、BFLOAT16时，数据类型支持FLOAT32、DOUBLE（当数据类型为DOUBLE时，内部转换为FLOAT32后参与计算）。</li><li>当x的数据类型为INT32时，数据类型支持INT64。</li></ul></li><li>取值的绝对值必须小于等于(2^31-1)。</li></ul></td>
+      <td><ul><li>元素个数与`x`中Tensor的个数相等。</li><li>数据类型与入参`x`的数据类型具有一定对应关系：<ul><li>当`x`的数据类型为FLOAT32、FLOAT16、BFLOAT16时，数据类型支持FLOAT32、DOUBLE（当数据类型为DOUBLE时，内部转换为FLOAT32后参与计算）。</li><li>当`x`的数据类型为INT32时，数据类型支持INT64。</li></ul></li><li>取值的绝对值必须小于等于(2^31-1)。</li></ul></td>
       <td>FLOAT32、DOUBLE、INT64</td>
       <td>-</td>
       <td>-</td>

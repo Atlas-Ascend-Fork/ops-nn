@@ -139,7 +139,7 @@ aclnnStatus aclnnAddmv(
       <td>out</td>
       <td>输出</td>
       <td>指定的1维输出向量。</td>
-      <td><ul><li>数据类型需要是self、mat、vec、alpha、beta<a href="../../../docs/zh/context/deduction_relationship.md">推导后的数据类型</a>。</li>
+      <td><ul><li>数据类型需要是self、mat、vec、alpha、beta按<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>推导后的数据类型。</li>
       <li>shape与mat和vec的乘积相同。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT、INT32、INT64、INT16、INT8、UINT8、DOUBLE</td>
       <td>ND</td>
@@ -163,7 +163,7 @@ aclnnStatus aclnnAddmv(
     </tr>
     <tr>
       <td>workspaceSize</td>
-      <td>出参</td>
+      <td>输出</td>
       <td>返回需要在Device侧申请的workspace大小。</td>
       <td>-</td>
       <td>-</td>
@@ -173,7 +173,7 @@ aclnnStatus aclnnAddmv(
     </tr>
     <tr>
       <td>executor</td>
-      <td>出参</td>
+      <td>输出</td>
       <td>返回op执行器，包含了算子计算流程。</td>
       <td>-</td>
       <td>-</td>

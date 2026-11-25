@@ -93,7 +93,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV2(
       <col style="width: 190px">
       <col style="width: 145px">
     </colgroup>
-    <thread>
+    <thead>
       <tr>
         <th>参数名</th>
         <th style="white-space: nowrap">输入/输出</th>
@@ -104,7 +104,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV2(
         <th style="white-space: nowrap">维度(shape)</th>
         <th>非连续Tensor</th>
       </tr>
-    </thread>
+    </thead>
     <tbody>
       <tr>
         <td>x</td>
@@ -435,7 +435,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV2(
   - **公共约束**
     - `x`和`weight`矩阵m、k、n大小在[1, 2^31-1]范围内。`weight`Reduce维度k需要与`x`的Reduce维度k大小相等。
     - 支持的量化模式：pertensor[量化模式](../../../docs/zh/context/quant_mode_introduction.md)、perchannel[量化模式](../../../docs/zh/context/quant_mode_introduction.md)、pergroup[量化模式](../../../docs/zh/context/quant_mode_introduction.md)和MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)。
-    - `x`不支持转置，因此不支持[非连续Tensor](../../../docs/zh/context/non_contiguous_tensor.md)，weight仅转置场景支持非连续的Tensor；antiquantScale、antiquantOffsetOptional非连续Tensor仅支持转置场景并且连续性要求和weight保持一致。
+    - `x`不支持转置，因此不支持[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)，weight仅转置场景支持非连续的Tensor；antiquantScale、antiquantOffsetOptional非连续Tensor仅支持转置场景并且连续性要求和weight保持一致。
     - `antiquantScale`不同量化模式支持的shape：
       - pertensor[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：(1,)或(1,1)。
       - perchannel[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：输入shape为(1, n)或(n,)。

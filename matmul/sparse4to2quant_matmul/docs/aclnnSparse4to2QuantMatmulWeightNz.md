@@ -102,7 +102,7 @@ aclnnStatus aclnnSparse4to2QuantMatmulWeightNz(
       <tr>
         <td>sparseWeight（const aclTensor*）</td>
         <td>输入</td>
-        <td>aclnnTransSparse4to2Para返回的压缩权重。</td>
+        <td>aclnnTransSparse4to2Para返回的稀疏权重。</td>
         <td><ul><li>不支持空Tensor。ViewShape为（n，k_half），其中k_half=ceil（k / 8）* 8 / 2。</li><li>StorageShape为（ceil（k_half / 32），ceil（n / 16），16，32），由aclnnTransSparse4to2Para的sparseWeightDims和sparseWeightDimsNum返回。</li><li>数据须按FRACTAL_NZ布局存储。可按示例使用ND格式创建aclTensor，并设置上述ViewShape和StorageShape。接口不进行数据重排。</li></ul></td>
         <td>INT8</td>
         <td>FRACTAL_NZ</td>

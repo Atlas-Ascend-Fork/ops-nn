@@ -241,16 +241,16 @@ aclnnStatus aclnnBatchNormElemt(
       <td>input和output数据的shape不在支持的范围内。</td>
     </tr>
     <tr>
-      <td>不支持input C轴为0的空Tensor。</td>
+      <td>不支持input channel轴为0的空Tensor。</td>
     </tr>
     <tr>
-      <td>mean/invstd维度不为一维，或者shape不等于input C轴的长度。</td>
+      <td>mean/invstd维度不为一维，或者shape不等于input channel轴的长度。</td>
     </tr>
     <tr>
-      <td>当weight不为空时，weight维度不为一维，或者shape不等于input C轴的长度。</td>
+      <td>当weight不为空时，weight维度不为一维，或者shape不等于input channel轴的长度。</td>
     </tr>
     <tr>
-      <td>当bias不为空时，bias维度不为一维，或者shape不等于input C轴的长度。</td>
+      <td>当bias不为空时，bias维度不为一维，或者shape不等于input channel轴的长度。</td>
     </tr>
     <tr>
       <td>input和output的数据格式不一致。</td>

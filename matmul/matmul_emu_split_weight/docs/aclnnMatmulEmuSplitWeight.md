@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：使用双路BF16 GEMM融合模拟FP32精度矩阵乘法。离线将FP32权重拆分为高位BF16与低位残差BF16，推理阶段执行两次BF16 GEMM并做线性组合，激活值全程保持BF16，两路矩阵乘均运行在Cube上。
+- 接口功能：使用双路BF16 GEMM融合模拟FP32矩阵乘法。离线将FP32权重拆分为高位BF16与低位残差BF16，推理阶段执行两次BF16 GEMM并做线性组合，激活值全程保持BF16，两路矩阵乘均运行在Cube上。
 
 - 计算公式：
 
@@ -174,7 +174,7 @@ aclnnStatus aclnnMatmulEmuSplitWeight(
       </tr>
   </tbody></table>
 
-- **返回值**
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
