@@ -10,26 +10,39 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-"""Torch reference for Centralization kernel and GEIR validation."""
+"""CPU golden and Torch comparator for Centralization kernel and GEIR validation."""
+
+import math
 
 import numpy as np
 import torch
 
 
 def _normalized_axes(axes, rank):
+    if not 1 <= rank <= 8:
+        raise ValueError(f"x rank must be in [1, 8], got {rank}")
     if axes is None:
-        # 未设置：沿用 IR 默认 {-1}，归约最后一轴。
         return (rank - 1,)
-    if len(axes) == 0:
-        # 显式空列表：不归约。
-        return ()
-    values = [axis + rank if axis < 0 else axis for axis in axes]
-    return tuple(sorted(set(values)))
+    if not isinstance(axes, (list, tuple, np.ndarray)) or np.ndim(axes) != 1:
+        raise TypeError("axes must be a one-dimensional sequence of integers")
+    normalized = set()
+    for axis in axes:
+        if isinstance(axis, (bool, np.bool_)) or not isinstance(
+            axis, (int, np.integer)
+        ):
+            raise TypeError(f"axes must contain integers, got {axis!r}")
+        axis = int(axis)
+        if not -rank <= axis < rank:
+            raise ValueError(f"axis {axis} is outside [-{rank}, {rank})")
+        normalized.add(axis % rank)
+    return tuple(sorted(normalized))
 
 
 def _centralize(x, axes):
-    compute = x.double()
+    if x.dtype not in (torch.float16, torch.float32):
+        raise TypeError(f"Centralization expects FP16 or FP32 input, got {x.dtype}")
     normalized = _normalized_axes(axes, x.dim())
+    compute = x.to(torch.float32)
     if len(normalized) == 0:
         # 空 axes 表示不归约：有限输入得到 0，NaN 和无穷输入得到 NaN。
         return (compute - compute).to(x.dtype)
@@ -44,10 +57,91 @@ def _attr(kwargs, name, default):
     return default if value is None else value
 
 
+def _center_wide_range(group):
+    if not np.isfinite(group).all():
+        return np.subtract(group, group.mean(dtype=np.float64), dtype=np.float64)
+
+    # Finite binary floats are integer multiples of the smallest subnormal.
+    # Work in those units so even a tiny remainder in width*x - sum survives.
+    info = np.finfo(group.dtype)
+    fractional_bits = info.nmant - info.minexp
+
+    def units(value):
+        numerator, denominator = float(value).as_integer_ratio()
+        return numerator << (fractional_bits - (denominator.bit_length() - 1))
+
+    width = len(group)
+    total = sum(map(units, group))
+    divisor = width << fractional_bits
+    return np.fromiter(
+        ((width * units(value) - total) / divisor for value in group),
+        dtype=group.dtype,
+        count=width,
+    )
+
+
+def _center_rows(rows):
+    width = rows.shape[1]
+    centered = np.empty_like(rows)
+    # Bound temporaries for batches of short reductions. A single long row
+    # uses the accurately summed fallback without allocating a scaled copy.
+    batch_size = max(1, (1 << 17) // width)
+    for start in range(0, len(rows), batch_size):
+        block = rows[start : start + batch_size]
+        out = centered[start : start + batch_size]
+        exact = np.zeros(len(block), dtype=bool)
+        if len(block) > 1:
+            wide = block.astype(np.float64, copy=False)
+            exponent = np.frexp(np.max(np.abs(wide), axis=1, keepdims=True))[1]
+            shift = 52 - (width - 1).bit_length() - exponent
+            scaled = np.ldexp(wide, shift)
+            # On this common binary grid, both width*x and the sum fit in
+            # 52 bits. Their difference fits in 53, so only division rounds.
+            exact = np.all(
+                np.isfinite(scaled)
+                & (scaled == np.rint(scaled))
+                & ((scaled != 0) | (wide == 0)),
+                axis=1,
+            )
+            integers = scaled[exact]
+            numerator = width * integers - integers.sum(axis=1, keepdims=True)
+            out[exact] = np.ldexp(numerator / width, -shift[exact])
+        for i in np.flatnonzero(~exact):
+            out[i] = _center_wide_range(block[i])
+    return centered
+
+
 def centralization_golden(x, **kwargs):
-    axes = _attr(kwargs, "axes", [-1])
-    value = torch.from_numpy(np.ascontiguousarray(x))
-    return [_centralize(value, axes).numpy()]
+    value = np.asarray(x)
+    axes = _normalized_axes(_attr(kwargs, "axes", [-1]), value.ndim)
+    native_types = (np.dtype("float16"), np.dtype("float32"))
+    declared = kwargs.get("input_dtypes")
+    if declared is not None:
+        declared = np.asarray(declared).item()
+    # Kernel/GEIR can also promote the dtype metadata together with the array.
+    promoted = kwargs.get("golden_mode") == "Promote" and value.dtype == np.float64
+    if promoted:
+        valid = declared in (None, np.dtype("float32"), np.dtype("float64"))
+    else:
+        valid = value.dtype in native_types and (
+            declared is None or declared in native_types
+        )
+    if not valid:
+        raise TypeError(
+            f"unsupported Centralization input dtype {value.dtype} (declared {declared})"
+        )
+
+    if value.size == 0:
+        return [np.empty_like(value)]
+    with np.errstate(invalid="ignore", over="ignore", under="ignore"):
+        if all(value.shape[axis] == 1 for axis in axes):
+            return [np.subtract(value, value)]
+        kept = tuple(i for i in range(value.ndim) if i not in axes)
+        order = kept + axes
+        groups = value.transpose(order)
+        width = math.prod(value.shape[i] for i in axes)
+        result = _center_rows(groups.reshape(-1, width)).reshape(groups.shape)
+        return [result.transpose(np.argsort(order))]
 
 
 class _CentralizationCompose:
