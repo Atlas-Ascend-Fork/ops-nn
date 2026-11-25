@@ -31,5 +31,7 @@ __global__ __aicore__ void scatter_max_with_argmax(GM_ADDR x, GM_ADDR indices, G
     (void)workspace;
     if constexpr (schMode == SCH_MODE_DEFAULT) {
         NsScatterMaxWithArgmax::Process<DTYPE_X>(x, indices, updates, y, argmax, &tilingData);
+    } else {
+        NsScatterMaxWithArgmax::ProcessP<DTYPE_X>(x, indices, updates, y, argmax, &tilingData);
     }
 }

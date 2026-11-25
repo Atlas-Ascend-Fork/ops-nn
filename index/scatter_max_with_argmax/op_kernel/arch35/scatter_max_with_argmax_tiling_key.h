@@ -25,11 +25,16 @@
 #include "ascendc/host_api/tiling/template_argument.h"
 
 #define SCH_MODE_DEFAULT 0
+#define SCH_MODE_FOR_P_OUTER 1
 
-ASCENDC_TPL_ARGS_DECL(ScatterMaxWithArgmax, ASCENDC_TPL_UINT_DECL(schMode, 1, ASCENDC_TPL_UI_LIST, SCH_MODE_DEFAULT));
+ASCENDC_TPL_ARGS_DECL(ScatterMaxWithArgmax,
+                      ASCENDC_TPL_UINT_DECL(schMode, 1, ASCENDC_TPL_UI_LIST, SCH_MODE_DEFAULT, SCH_MODE_FOR_P_OUTER));
 
 ASCENDC_TPL_SEL(ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_AIV_ONLY),
                                      ASCENDC_TPL_UINT_SEL(schMode, ASCENDC_TPL_UI_LIST, SCH_MODE_DEFAULT),
+                                     ASCENDC_TPL_TILING_STRUCT_SEL(ScatterMaxWithArgmaxTilingData)),
+                ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_AIV_ONLY),
+                                     ASCENDC_TPL_UINT_SEL(schMode, ASCENDC_TPL_UI_LIST, SCH_MODE_FOR_P_OUTER),
                                      ASCENDC_TPL_TILING_STRUCT_SEL(ScatterMaxWithArgmaxTilingData)));
 
 #endif // SCATTER_MAX_WITH_ARGMAX_TILING_KEY_H_

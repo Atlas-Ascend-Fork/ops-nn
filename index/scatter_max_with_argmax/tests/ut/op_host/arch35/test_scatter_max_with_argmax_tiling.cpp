@@ -153,7 +153,7 @@ TEST_F(ScatterMaxWithArgmaxTiling, scatter_max_with_argmax_0)
     EXPECT_EQ(tilingData.indicesNum, 4);
     EXPECT_EQ(tilingData.innerNum, 2);
     EXPECT_EQ(tilingData.rowNum, 4);
-    EXPECT_EQ(tilingData.perCoreRows, 1);
+    EXPECT_EQ(tilingData.perCoreElements, 1);
 }
 
 // x: [8, 4] float32, indices: [16] int32, updates: [16, 4] float32
@@ -168,7 +168,70 @@ TEST_F(ScatterMaxWithArgmaxTiling, scatter_max_with_argmax_1)
     EXPECT_EQ(tilingData.indicesNum, 16);
     EXPECT_EQ(tilingData.innerNum, 4);
     EXPECT_EQ(tilingData.rowNum, 8);
-    EXPECT_EQ(tilingData.perCoreRows, 1);
+    EXPECT_EQ(tilingData.perCoreElements, 1);
+}
+
+// round3 simt_for_p_outer_tilingkey_split: host threshold branch coverage.
+// x: [100, 1] float32, indices: [100] int32, updates: [100, 1] float32
+// M = 100 >= 96, E = N*D = 100, perCoreElements = ceil(100/coreNum) <= 4096
+// -> useForP = true -> TilingKey = SCH_MODE_FOR_P_OUTER(1).
+TEST_F(ScatterMaxWithArgmaxTiling, scatter_max_with_argmax_key_for_p_outer)
+{
+    uint64_t key = 0xFFFF;
+    ScatterMaxWithArgmaxTilingData tilingData = {};
+    auto st = RunScatterMaxWithArgmaxTiling({{100, 1}, {100, 1}}, {{100}, {100}}, {{100, 1}, {100, 1}}, ge::DT_FLOAT,
+                                            ge::DT_INT32, ge::DT_FLOAT, key, &tilingData);
+    EXPECT_EQ(st, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 1);
+    EXPECT_EQ(tilingData.indicesNum, 100);
+    EXPECT_EQ(tilingData.innerNum, 1);
+    EXPECT_EQ(tilingData.rowNum, 100);
+    // perCoreElements = ceil(E/coreNum)，E=100，本 UT 的 kCompileInfoString CORE_NUM=48 -> ceil(100/48)=3
+    EXPECT_EQ(tilingData.perCoreElements, 3);
+}
+
+// M=95 < 96：不进入 for-p-outer 路径 -> TilingKey = SCH_MODE_DEFAULT(0)。
+TEST_F(ScatterMaxWithArgmaxTiling, scatter_max_with_argmax_m95_legacy)
+{
+    uint64_t key = 0xFFFF;
+    ScatterMaxWithArgmaxTilingData tilingData = {};
+    auto st = RunScatterMaxWithArgmaxTiling({{95, 1}, {95, 1}}, {{95}, {95}}, {{95, 1}, {95, 1}}, ge::DT_FLOAT,
+                                            ge::DT_INT32, ge::DT_FLOAT, key, &tilingData);
+    EXPECT_EQ(st, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 0);
+}
+
+// M=96 达到下界且 E 小：进入 for-p-outer 路径 -> TilingKey = SCH_MODE_FOR_P_OUTER(1)。
+TEST_F(ScatterMaxWithArgmaxTiling, scatter_max_with_argmax_m96_for_p)
+{
+    uint64_t key = 0xFFFF;
+    ScatterMaxWithArgmaxTilingData tilingData = {};
+    auto st = RunScatterMaxWithArgmaxTiling({{96, 1}, {96, 1}}, {{96}, {96}}, {{96, 1}, {96, 1}}, ge::DT_FLOAT,
+                                            ge::DT_INT32, ge::DT_FLOAT, key, &tilingData);
+    EXPECT_EQ(st, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 1);
+}
+
+// M=65536 达到 kMaxForPIndices 上界：仍进 for-p-outer -> key=1。
+TEST_F(ScatterMaxWithArgmaxTiling, scatter_max_with_argmax_m65536_for_p)
+{
+    uint64_t key = 0xFFFF;
+    ScatterMaxWithArgmaxTilingData tilingData = {};
+    auto st = RunScatterMaxWithArgmaxTiling({{2, 1}, {2, 1}}, {{65536}, {65536}}, {{65536, 1}, {65536, 1}},
+                                            ge::DT_FLOAT, ge::DT_INT32, ge::DT_FLOAT, key, &tilingData);
+    EXPECT_EQ(st, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 1);
+}
+
+// M=65537 超出 kMaxForPIndices：退回 legacy -> key=0（排除 INT32_MAX 哨兵边界等大 M 退化场景）。
+TEST_F(ScatterMaxWithArgmaxTiling, scatter_max_with_argmax_m65537_legacy)
+{
+    uint64_t key = 0xFFFF;
+    ScatterMaxWithArgmaxTilingData tilingData = {};
+    auto st = RunScatterMaxWithArgmaxTiling({{2, 1}, {2, 1}}, {{65537}, {65537}}, {{65537, 1}, {65537, 1}},
+                                            ge::DT_FLOAT, ge::DT_INT32, ge::DT_FLOAT, key, &tilingData);
+    EXPECT_EQ(st, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(key, 0);
 }
 
 TEST_F(ScatterMaxWithArgmaxTiling, scatter_max_with_argmax_x_float16)
@@ -223,7 +286,7 @@ TEST_F(ScatterMaxWithArgmaxTiling, scatter_max_with_argmax_m_int32_max)
     EXPECT_EQ(tilingData.indicesNum, kInt32Max);
     EXPECT_EQ(tilingData.innerNum, 1);
     EXPECT_EQ(tilingData.rowNum, 1);
-    EXPECT_EQ(tilingData.perCoreRows, 1);
+    EXPECT_EQ(tilingData.perCoreElements, 1);
 }
 
 // M = INT32_MAX + 1 cannot be represented by the int32 argmax output.
@@ -249,5 +312,5 @@ TEST_F(ScatterMaxWithArgmaxTiling, scatter_max_with_argmax_empty_indices)
     EXPECT_EQ(tilingData.indicesNum, 0);
     EXPECT_EQ(tilingData.innerNum, 2);
     EXPECT_EQ(tilingData.rowNum, 4);
-    EXPECT_EQ(tilingData.perCoreRows, 1);
+    EXPECT_EQ(tilingData.perCoreElements, 1);
 }

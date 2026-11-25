@@ -143,7 +143,7 @@ static ge::graphStatus ScatterMaxWithArgmaxTilingFunc(gert::TilingContext* conte
         OP_CHECK_IF(memset_s(placeholder, sizeof(ScatterMaxWithArgmaxTilingData), 0,
                              sizeof(ScatterMaxWithArgmaxTilingData)) != EOK,
                     OP_LOGE(context, "memset_s placeholder tiling data error"), return ge::GRAPH_FAILED);
-        placeholder->perCoreRows = 1;
+        placeholder->perCoreElements = 1;
         context->SetBlockDim(1);
         size_t* placeholderWs = context->GetWorkspaceSizes(1);
         OP_CHECK_NULL_WITH_CONTEXT(context, placeholderWs);
@@ -166,18 +166,19 @@ static ge::graphStatus ScatterMaxWithArgmaxTilingFunc(gert::TilingContext* conte
     OP_CHECK_IF(ValidateInputs(context, N, M, D) != ge::GRAPH_SUCCESS, OP_LOGE(context, "ValidateInputs error"),
                 return ge::GRAPH_FAILED);
 
-    // 核数切分（按 N 行切分，两步法）
-    int64_t perCoreRows = 0;
+    // 核数切分（按元素空间切分，E=N*D，两步法）
+    int64_t totalElements = N * D;
+    int64_t perCoreElements = 0;
     int64_t needCoreNum = 0;
-    if (N == 0) {
-        perCoreRows = 1; // 空 tensor 保护
+    if (totalElements == 0) {
+        perCoreElements = 0; // 空 tensor 保护
         needCoreNum = 1;
     } else {
-        perCoreRows = Ops::Base::CeilDiv(N, coreNum); // Step 1: 物理核均分
-        if (perCoreRows < 1) {
-            perCoreRows = 1;
+        perCoreElements = Ops::Base::CeilDiv(totalElements, coreNum); // Step 1: 物理核均分
+        if (perCoreElements < 1) {
+            perCoreElements = 1;
         }
-        needCoreNum = Ops::Base::CeilDiv(N, perCoreRows); // Step 2: 反推实际核数
+        needCoreNum = Ops::Base::CeilDiv(totalElements, perCoreElements); // Step 2: 反推实际核数
         if (needCoreNum < 1) {
             needCoreNum = 1;
         }
@@ -192,7 +193,7 @@ static ge::graphStatus ScatterMaxWithArgmaxTilingFunc(gert::TilingContext* conte
     tiling->indicesNum = M;
     tiling->innerNum = D;
     tiling->rowNum = N;
-    tiling->perCoreRows = perCoreRows;
+    tiling->perCoreElements = perCoreElements;
 
     // 设置核数
     context->SetBlockDim(needCoreNum);
@@ -208,8 +209,16 @@ static ge::graphStatus ScatterMaxWithArgmaxTilingFunc(gert::TilingContext* conte
     auto res = context->SetLocalMemorySize(static_cast<uint32_t>(ubSize - DCACHE_SIZE - STATIC_UB_ESTIMATE));
     OP_CHECK_IF(res != ge::GRAPH_SUCCESS, OP_LOGE(context, "SetLocalMemorySize failed"), return ge::GRAPH_FAILED);
 
-    // TilingKey（单一场景）
-    context->SetTilingKey(GET_TPL_TILING_KEY(SCH_MODE_DEFAULT));
+    // TilingKey（双场景，host 阈值推导）：for-p-outer 寄存器累积路径（SCH_MODE_FOR_P_OUTER=1）
+    // 与 legacy 路径（SCH_MODE_DEFAULT=0）隔离到两个 kernel 模板实例。
+    // 阈值 (M >= 96) && (M <= kMaxForPIndices) && (perCoreElements <= 4096)（M=indicesNum、
+    // perCoreElements 均为既有局部量）。M 上限用于排除"M 极大 / E 极小"的退化场景（如
+    // argmax 哨兵边界用例 M=INT32_MAX、E=1）：此场景索引扫描成本远超元素量，P 路径寄存器
+    // 累积无收益且会做近乎无限次索引遍历，应退回 legacy。现有功能用例 M 最大 1024，
+    // kMaxForPIndices 远高于此，保证正常用例仍走 P 路径。
+    constexpr int64_t kMaxForPIndices = 65536;
+    bool useForP = (M >= 96) && (M <= kMaxForPIndices) && (perCoreElements <= 4096);
+    context->SetTilingKey(useForP ? GET_TPL_TILING_KEY(SCH_MODE_FOR_P_OUTER) : GET_TPL_TILING_KEY(SCH_MODE_DEFAULT));
 
     OP_LOGD(context->GetNodeName(), "End to do ScatterMaxWithArgmaxTiling");
     return ge::GRAPH_SUCCESS;

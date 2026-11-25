@@ -19,10 +19,10 @@
 #define SCATTER_MAX_WITH_ARGMAX_TILING_DATA_H_
 
 struct ScatterMaxWithArgmaxTilingData {
-    int64_t indicesNum = 0;  // M: indices 数量（也用于 argmax 初始标记值）
-    int64_t innerNum = 0;    // D: 行内元素数（x.shape[1:] 的乘积）
-    int64_t rowNum = 0;      // N: y 第0维大小（行数）
-    int64_t perCoreRows = 0; // 每核负责的行数
+    int64_t indicesNum = 0;      // M: indices 数量（也用于 argmax 初始标记值）
+    int64_t innerNum = 0;        // D: 行内元素数（x.shape[1:] 的乘积）
+    int64_t rowNum = 0;          // N: y 第0维大小（行数）
+    int64_t perCoreElements = 0; // 每核负责的元素数（E=N*D 元素空间切分；E==0 时为 0）
 };
 
 #endif // SCATTER_MAX_WITH_ARGMAX_TILING_DATA_H_

@@ -14,18 +14,38 @@
  * \file scatter_max_with_argmax_simt.h
  * \brief SIMT kernel for scatter_max_with_argmax operator
  *
- * 按 y 第0维（N行）切分到多核，不同核处理不同行（天然无冲突），
- * 核内串行扫描全部 M 个 indices（保证同一行的多次更新按 i 顺序处理，确保确定性），
- * 行内 D 个元素用线程并行加速（Grid-Stride）。
+ * 按 y/y 展平后的元素空间（E=N*D）切分到多核：perCoreElements=ceil(E/coreNum)，
+ * needCoreNum=ceil(E/perCoreElements)，解除按行切分时核数被 N=min(64,N) 卡死的问题；
+ * 不同核处理互不重叠的连续元素区间（天然无冲突）。
+ * 核内串行扫描全部 M 个 indices（保证同一元素的多次更新按 i 顺序处理，确保确定性），
+ * 命中本核元素区间时按 Grid-Stride（列 p 由线程 p mod THREAD_NUM 全局唯一拥有）
+ * 并行处理区间内的列。
  *
- * 三阶段语义：
- *   Phase 1：y 初始化为 -3.4e38（-inf），argmax 初始化为 M（哨兵值，表示未被覆盖）。
- *   Phase 2：scatter max + GT 比较（串行遍历 indices），命中本核行时按 i 顺序更新。
- *   Phase 3：对未被 indices 覆盖的位置（argmax 仍为 M），将 y 改写为 0。
- *            语义对齐 SE/MDE：未被覆盖的位置 y=0（不是 -inf）。
+ * 两阶段语义（round1 simt_2d_partition_init_fused：初始化融合，删除 Phase3）：
+ *   Phase 1：y 初始化为 0，argmax 初始化为 M（哨兵值，表示未被覆盖）。
+ *            未覆盖位置最终语义即 y=0/am=M，与 golden 一致，无需 Phase3。
+ *   Phase 2：scatter max + GT 比较（串行遍历 indices），命中本核元素区间时按 i 顺序更新；
+ *            first-cover 分支保证首个非 NaN update（即使 <= 0）覆盖初值 0，
+ *            严格 GT 保证相等不更新（tie 保留先者），NaN（uVal!=uVal）忽略。
+ *
+ * 同步约束（PB-48）：Phase2 per-index asc_syncthreads() barrier
+ * 保留——同线程 GM store->load 跨循环迭代在不加 block barrier 时不一致，
+ * 即使 asc_threadfence 也不修复；不可去除或分块。
  *
  * 优化: 索引类型通过 INDEX_T 模板参数化，数据量 <= INT32_MAX 时走 int32_t 快速路径，
  *       超出时回退 int64_t 安全路径（Rule 003）。
+ *
+ * round3 simt_for_p_outer_tilingkey_split：for-p-outer 寄存器累积路径
+ * （ScatterMaxLoopP / OpScatterMaxWithArgmaxSimtP / ProcessP，round2 探针 v3 结构逐字移植，
+ * 仅更名 + 常量 ACCUM_K=8/PREFETCH=8）作为新增函数与 legacy 四函数共存；由
+ * scatter_max_with_argmax.cpp 入口的 if constexpr (schMode) 分流到两个 kernel 模板实例
+ * （TilingKey 0/1，host tiling 阈值 (M>=96)&&(perCoreElements<=4096)），消除同一编译单元
+ * 内两路径的寄存器分配/代码布局耦合（round2 连带回归根因）。schMode=0 实例化零引用
+ * for-p-outer code（legacy codegen 与 round1 逐字节一致）；schMode=1 instantiation
+ * 零引用 legacy code。P 路径无 asc_syncthreads()（PB-48 remedy a：寄存器驻留累加器，
+ * 无 GM store->load 跨迭代）、无 InitOutputs 调用（寄存器初值 y=0/am=M），
+ * 全静态下标（禁动态下标/2D 局部数组，probe v1/v2/v4 溢出证据）、batched-8 单缓冲
+ * 索引预取（尾部 M-1 clamp）、quick-reject、末尾单次写回。
  */
 
 #ifndef SCATTER_MAX_WITH_ARGMAX_SIMT_H_
@@ -41,104 +61,97 @@
 namespace NsScatterMaxWithArgmax {
 using namespace AscendC;
 
-constexpr uint32_t THREAD_NUM = 512;  // VF 线程数，编译期常量
-constexpr float MINUS_INF = -3.4e38f; // float32 最小有限值，与 Ascend TBE 一致
+constexpr uint32_t THREAD_NUM = 512; // VF 线程数，编译期常量
+constexpr int32_t ACCUM_K = 8;       // 每线程每 chunk 累积的 (y,am) 列数（P-P21 先例 MAX_ACCUM 模式）
+constexpr int32_t PREFETCH = 8;      // indices 批量预取宽度
 
 /*!
- * \brief Phase 1: 初始化 y 和 argmax（Grid-Stride 行内并行）
- *        y[本核行] = -3.4e38f, argmax[本核行] = M
+ * \brief Phase 1: 初始化 y 和 argmax（Grid-Stride 元素并行）
+ *        y[本核元素区间] = 0, argmax[本核元素区间] = M
  */
 template <typename T, typename INDEX_T>
-__simt_callee__ __aicore__ inline void InitOutputs(INDEX_T coreElements, INDEX_T coreBaseOffset, int32_t mInt,
+__simt_callee__ __aicore__ inline void InitOutputs(INDEX_T coreElementStart, INDEX_T coreElementEnd, int32_t mInt,
                                                    __gm__ T* yGm, __gm__ int32_t* argmaxGm)
 {
     int32_t localTid = threadIdx.x;
     int32_t threadNum = blockDim.x;
-    for (INDEX_T p = static_cast<INDEX_T>(localTid); p < coreElements; p += static_cast<INDEX_T>(threadNum)) {
-        yGm[coreBaseOffset + p] = MINUS_INF;
-        argmaxGm[coreBaseOffset + p] = mInt;
+    for (INDEX_T p = coreElementStart + static_cast<INDEX_T>(localTid); p < coreElementEnd;
+         p += static_cast<INDEX_T>(threadNum)) {
+        yGm[p] = static_cast<T>(0); // y=0 即未覆盖位置的最终语义，删除 Phase3 补零
+        argmaxGm[p] = mInt;
     }
-    asc_syncthreads();
+    asc_syncthreads(); // Phase1->Phase2 GM 可见性由本 barrier 承载（保留不变）
 }
 
 /*!
- * \brief Phase 2: Scatter Max（串行遍历 indices + 行内并行）
- *        命中本核行时，行内 Grid-Stride 并行比较更新，GT 严格大于保证确定性
+ * \brief Phase 2: Scatter Max（串行遍历 indices + 命中区间列并行）
+ *        index i 对应行元素区间 [idx*D,(idx+1)*D) 与本核元素区间 [coreElementStart,
+ *        coreElementEnd) 取交 [c0,c1)；非空时线程 t 以 p≡t(mod THREAD_NUM) 网格步进
+ *        处理交内列（列所有权全局不变 -> (行,列)仍由唯一线程产出，无跨线程写冲突）。
+ *        每 index 一次 asc_syncthreads() 保留（PB-48）。
  */
 template <typename T, typename INDEX_T>
-__simt_callee__ __aicore__ inline void ScatterMaxLoop(INDEX_T M, INDEX_T D, INDEX_T coreRowStart, INDEX_T coreRowEnd,
-                                                      __gm__ int32_t* indicesGm, __gm__ T* updatesGm, __gm__ T* yGm,
-                                                      __gm__ int32_t* argmaxGm)
+__simt_callee__ __aicore__ inline void ScatterMaxLoop(INDEX_T M, INDEX_T D, INDEX_T coreElementStart,
+                                                      INDEX_T coreElementEnd, __gm__ int32_t* indicesGm,
+                                                      __gm__ T* updatesGm, __gm__ T* yGm, __gm__ int32_t* argmaxGm)
 {
     int32_t localTid = threadIdx.x;
     int32_t threadNum = blockDim.x;
+    INDEX_T threadStride = static_cast<INDEX_T>(threadNum);
     int32_t mInt = static_cast<int32_t>(M);
     for (INDEX_T i = 0; i < M; i++) {
         int32_t idx = indicesGm[i];
-        INDEX_T idxVal = static_cast<INDEX_T>(idx);
-        if (idxVal >= coreRowStart && idxVal < coreRowEnd) {
-            INDEX_T rowOffset = idxVal * D;
-            INDEX_T updateOffset = i * D;
-            for (INDEX_T p = static_cast<INDEX_T>(localTid); p < D; p += static_cast<INDEX_T>(threadNum)) {
-                T uVal = updatesGm[updateOffset + p];
-                T yVal = yGm[rowOffset + p];
-                if (argmaxGm[rowOffset + p] == mInt && uVal == uVal) {
-                    // 首次被有效 update 覆盖：即使 update 不大于内部哨兵（如 -inf）也要记录，
-                    // 避免 Phase 3 把已覆盖位置误判为未覆盖。NaN 仍按约定忽略。
-                    yGm[rowOffset + p] = uVal;
-                    argmaxGm[rowOffset + p] = static_cast<int32_t>(i);
+        // 行区间用 int64 计算：indices 越界(>=N)时 idx*D 可能 int32 溢出(UB)，
+        // 溢出回绕可能落入本核区间造成错误写入；int64 下越界行必与本核区间无交而被忽略。
+        int64_t rowStart64 = static_cast<int64_t>(idx) * static_cast<int64_t>(D);
+        int64_t rowEnd64 = rowStart64 + static_cast<int64_t>(D);
+        int64_t c0 = rowStart64 > static_cast<int64_t>(coreElementStart) ? rowStart64 : coreElementStart;
+        int64_t c1 = rowEnd64 < static_cast<int64_t>(coreElementEnd) ? rowEnd64 : coreElementEnd;
+        if (c0 < c1) {
+            // 相交区间 [c0,c1) 必落在 [coreElementStart, coreElementEnd) 内，INDEX_T 可安全表示
+            INDEX_T rowStart = static_cast<INDEX_T>(rowStart64);
+            INDEX_T col0 = static_cast<INDEX_T>(c0) - rowStart; // 行内列区间 [col0, col1)
+            INDEX_T col1 = static_cast<INDEX_T>(c1) - rowStart;
+            INDEX_T rem = col0 % threadStride;
+            INDEX_T p = col0 + ((static_cast<INDEX_T>(localTid) - rem + threadStride) % threadStride);
+            for (; p < col1; p += threadStride) {
+                T uVal = updatesGm[i * D + p];
+                T yVal = yGm[rowStart + p];
+                if (argmaxGm[rowStart + p] == mInt && uVal == uVal) {
+                    // 首次被有效 update 覆盖：即使 update 不大于初值 0（如负数）也要记录，
+                    // 保证覆盖位 y=max(非NaN updates)；NaN 仍按约定忽略。
+                    yGm[rowStart + p] = uVal;
+                    argmaxGm[rowStart + p] = static_cast<int32_t>(i);
                 } else if (uVal > yVal) { // GT 严格大于，相等不更新
-                    yGm[rowOffset + p] = uVal;
-                    argmaxGm[rowOffset + p] = static_cast<int32_t>(i);
+                    yGm[rowStart + p] = uVal;
+                    argmaxGm[rowStart + p] = static_cast<int32_t>(i);
                 }
             }
         }
-        asc_syncthreads(); // 确保本轮写完成后再进入下一轮
+        asc_syncthreads(); // 确保本轮写完成后再进入下一轮（PB-48：不可去除/分块）
     }
 }
 
 /*!
- * \brief Phase 3: 对未被覆盖的位置补零（Grid-Stride 行内并行）
- *        Phase 2 后 argmax 仍为 M 的位置表示未被 indices 覆盖，按 SE/MDE 语义将 y 改写为 0。
- *        ScatterMaxLoop 最后一轮已有 asc_syncthreads()，可安全读取 argmax 判断是否被覆盖。
- */
-template <typename T, typename INDEX_T>
-__simt_callee__ __aicore__ inline void FillZeroForUncovered(INDEX_T coreElements, INDEX_T coreBaseOffset, int32_t mInt,
-                                                            __gm__ T* yGm, __gm__ int32_t* argmaxGm)
-{
-    int32_t localTid = threadIdx.x;
-    int32_t threadNum = blockDim.x;
-    for (INDEX_T p = static_cast<INDEX_T>(localTid); p < coreElements; p += static_cast<INDEX_T>(threadNum)) {
-        if (argmaxGm[coreBaseOffset + p] == mInt) {
-            yGm[coreBaseOffset + p] = static_cast<T>(0);
-        }
-    }
-    asc_syncthreads();
-}
-
-/*!
- * \brief SIMT VF 主函数：计算本核行范围，调用 Phase1 + Phase2 + Phase3
+ * \brief SIMT VF 主函数：计算本核元素区间，调用 Phase1 + Phase2
  */
 template <typename T, typename INDEX_T>
 __simt_vf__ __aicore__ __launch_bounds__(THREAD_NUM) inline void OpScatterMaxWithArgmaxSimt(
-    INDEX_T M, INDEX_T D, INDEX_T N, INDEX_T perCoreRows, __gm__ int32_t* indicesGm, __gm__ T* updatesGm, __gm__ T* yGm,
-    __gm__ int32_t* argmaxGm)
+    INDEX_T M, INDEX_T D, INDEX_T N, INDEX_T perCoreElements, __gm__ int32_t* indicesGm, __gm__ T* updatesGm,
+    __gm__ T* yGm, __gm__ int32_t* argmaxGm)
 {
     int32_t coreIdx = blockIdx.x;
-    int64_t coreRowStart64 = static_cast<int64_t>(coreIdx) * static_cast<int64_t>(perCoreRows);
-    int64_t coreRowEnd64 = coreRowStart64 + static_cast<int64_t>(perCoreRows);
-    if (coreRowEnd64 > static_cast<int64_t>(N)) {
-        coreRowEnd64 = static_cast<int64_t>(N);
+    int64_t coreElementStart64 = static_cast<int64_t>(coreIdx) * static_cast<int64_t>(perCoreElements);
+    int64_t coreElementEnd64 = coreElementStart64 + static_cast<int64_t>(perCoreElements);
+    int64_t totalElements = static_cast<int64_t>(N) * static_cast<int64_t>(D);
+    if (coreElementEnd64 > totalElements) {
+        coreElementEnd64 = totalElements;
     }
-    INDEX_T coreRowStart = static_cast<INDEX_T>(coreRowStart64);
-    INDEX_T coreRowEnd = static_cast<INDEX_T>(coreRowEnd64);
-    INDEX_T coreRows = coreRowEnd - coreRowStart;
-    INDEX_T coreElements = coreRows * D;
-    INDEX_T coreBaseOffset = coreRowStart * D;
+    INDEX_T coreElementStart = static_cast<INDEX_T>(coreElementStart64);
+    INDEX_T coreElementEnd = static_cast<INDEX_T>(coreElementEnd64);
 
-    InitOutputs<T, INDEX_T>(coreElements, coreBaseOffset, static_cast<int32_t>(M), yGm, argmaxGm);
-    ScatterMaxLoop<T, INDEX_T>(M, D, coreRowStart, coreRowEnd, indicesGm, updatesGm, yGm, argmaxGm);
-    FillZeroForUncovered<T, INDEX_T>(coreElements, coreBaseOffset, static_cast<int32_t>(M), yGm, argmaxGm);
+    InitOutputs<T, INDEX_T>(coreElementStart, coreElementEnd, static_cast<int32_t>(M), yGm, argmaxGm);
+    ScatterMaxLoop<T, INDEX_T>(M, D, coreElementStart, coreElementEnd, indicesGm, updatesGm, yGm, argmaxGm);
 }
 
 /*!
@@ -153,7 +166,7 @@ __aicore__ inline void Process(GM_ADDR x, GM_ADDR indices, GM_ADDR updates, GM_A
     int64_t M = tilingData->indicesNum;
     int64_t D = tilingData->innerNum;
     int64_t N = tilingData->rowNum;
-    int64_t perCoreRows = tilingData->perCoreRows;
+    int64_t perCoreElements = tilingData->perCoreElements;
 
     __gm__ int32_t* indicesGm = (__gm__ int32_t*)indices;
     __gm__ T* updatesGm = (__gm__ T*)updates;
@@ -170,11 +183,165 @@ __aicore__ inline void Process(GM_ADDR x, GM_ADDR indices, GM_ADDR updates, GM_A
         // 32 位快速路径（为 grid-stride 的最后一次 p += threadNum 留出余量）
         asc_vf_call<OpScatterMaxWithArgmaxSimt<T, int32_t>>(
             dim3(THREAD_NUM), static_cast<int32_t>(M), static_cast<int32_t>(D), static_cast<int32_t>(N),
-            static_cast<int32_t>(perCoreRows), indicesGm, updatesGm, yGm, argmaxGm);
+            static_cast<int32_t>(perCoreElements), indicesGm, updatesGm, yGm, argmaxGm);
     } else {
         // 64 位安全路径
-        asc_vf_call<OpScatterMaxWithArgmaxSimt<T, int64_t>>(dim3(THREAD_NUM), M, D, N, perCoreRows, indicesGm,
+        asc_vf_call<OpScatterMaxWithArgmaxSimt<T, int64_t>>(dim3(THREAD_NUM), M, D, N, perCoreElements, indicesGm,
                                                             updatesGm, yGm, argmaxGm);
+    }
+}
+
+/*!
+ * \brief Round2 probe v3 主循环（round3 TilingKey split 移植）：for-p-outer 寄存器累积
+ *        （静态索引 + 批量预取 + quick-reject，无 barrier / 无 InitOutputs / 无 GM 跨迭代重读）。
+ *        结构相对 v2/v1 的两处修正：全静态下标（禁动态下标/2D 局部数组，溢出证据）与
+ *        每批 8 个 indices 独立 load（延迟互相掩盖，批内 quick-reject 先做整块相交判定）。
+ */
+template <typename T, typename INDEX_T>
+__simt_callee__ __aicore__ inline void ScatterMaxLoopP(INDEX_T M, INDEX_T D, INDEX_T coreElementStart,
+                                                       INDEX_T coreElementEnd, __gm__ int32_t* indicesGm,
+                                                       __gm__ T* updatesGm, __gm__ T* yGm, __gm__ int32_t* argmaxGm)
+{
+    constexpr INDEX_T stride = static_cast<INDEX_T>(THREAD_NUM); // 512，2 的幂
+    constexpr int32_t K = ACCUM_K;
+    constexpr int32_t PF = PREFETCH;
+    int32_t localTid = threadIdx.x;
+    int32_t mInt = static_cast<int32_t>(M);
+    INDEX_T span = coreElementEnd - coreElementStart;
+    if (span <= 0) {
+        return; // 空元素区间（E==0）：无输出元素需要写
+    }
+    INDEX_T chunkSpan = stride * static_cast<INDEX_T>(K);
+    INDEX_T numChunks = (span + chunkSpan - 1) / chunkSpan;
+    for (INDEX_T chunk = 0; chunk < numChunks; chunk++) {
+        INDEX_T chunkStart = coreElementStart + chunk * chunkSpan;
+        INDEX_T chunkEnd = chunkStart + chunkSpan;
+        if (chunkEnd > coreElementEnd) {
+            chunkEnd = coreElementEnd;
+        }
+        // ---- 本线程拥有的 K 个元素位置（静态索引，驻寄存器）----
+        INDEX_T posReg[K];
+#pragma unroll
+        for (int32_t q = 0; q < K; q++) {
+            posReg[q] = chunkStart + static_cast<INDEX_T>(localTid) + static_cast<INDEX_T>(q) * stride;
+        }
+        T yReg[K];
+        int32_t amReg[K];
+#pragma unroll
+        for (int32_t q = 0; q < K; q++) {
+            yReg[q] = static_cast<T>(0); // 未覆盖位最终语义 y=0（删除 Phase1 哨兵与 Phase3）
+            amReg[q] = mInt;
+        }
+        // ---- 批量预取扫描（无 barrier；重读同一 index 幂等，尾部用 M-1 clamp 安全补齐）----
+        INDEX_T numBatches = (M + static_cast<INDEX_T>(PF) - 1) / static_cast<INDEX_T>(PF);
+        for (INDEX_T b = 0; b < numBatches; b++) {
+            INDEX_T base = b * static_cast<INDEX_T>(PF);
+            int32_t idxReg[PF];
+#pragma unroll
+            for (int32_t q = 0; q < PF; q++) {
+                INDEX_T ii = base + static_cast<INDEX_T>(q);
+                if (ii >= M) {
+                    ii = M - 1; // 尾部补齐：重读末位 index（compare-select 幂等）
+                }
+                idxReg[q] = indicesGm[ii];
+            }
+#pragma unroll
+            for (int32_t q = 0; q < PF; q++) {
+                INDEX_T i = base + static_cast<INDEX_T>(q);
+                if (i >= M) {
+                    i = M - 1;
+                }
+                // 行区间用 int64 计算：indices 越界(>=N)时 idx*D 会 int32 溢出(UB)，
+                // int64 下越界行必与本 chunk 无交而被 quick-reject 忽略。
+                int64_t rowStart64 = static_cast<int64_t>(idxReg[q]) * static_cast<int64_t>(D);
+                int64_t rowEnd64 = rowStart64 + static_cast<int64_t>(D);
+                if (rowStart64 < static_cast<int64_t>(chunkEnd) && rowEnd64 > static_cast<int64_t>(chunkStart)) {
+                    // quick-reject 通过 ⟹ 行与本 chunk 有交 ⟹ rowStart/rowEnd 落在 INDEX_T 范围
+                    INDEX_T rowStart = static_cast<INDEX_T>(rowStart64);
+                    INDEX_T rowEnd = static_cast<INDEX_T>(rowEnd64);
+#pragma unroll
+                    for (int32_t j = 0; j < K; j++) {
+                        if (posReg[j] >= rowStart && posReg[j] < rowEnd) {
+                            T uVal = updatesGm[i * D + (posReg[j] - rowStart)];
+                            if (amReg[j] == mInt && uVal == uVal) {
+                                // 首次被有效 update 覆盖：即使 update 不大于初值 0 也要记录（first-cover）
+                                yReg[j] = uVal;
+                                amReg[j] = static_cast<int32_t>(i);
+                            } else if (uVal > yReg[j]) { // GT 严格大于，相等不更新（tie 保留先者）
+                                yReg[j] = uVal;
+                                amReg[j] = static_cast<int32_t>(i);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+// ---- chunk 末单次写回（每元素恰写一次）----
+#pragma unroll
+        for (int32_t q = 0; q < K; q++) {
+            if (posReg[q] < chunkEnd) {
+                yGm[posReg[q]] = yReg[q];
+                argmaxGm[posReg[q]] = amReg[q];
+            }
+        }
+    }
+}
+
+/*!
+ * \brief SIMT VF 主函数（schMode=1 实例）：计算本核元素区间，调用 for-p-outer v3 主循环
+ */
+template <typename T, typename INDEX_T>
+__simt_vf__ __aicore__ __launch_bounds__(THREAD_NUM) inline void OpScatterMaxWithArgmaxSimtP(
+    INDEX_T M, INDEX_T D, INDEX_T N, INDEX_T perCoreElements, __gm__ int32_t* indicesGm, __gm__ T* updatesGm,
+    __gm__ T* yGm, __gm__ int32_t* argmaxGm)
+{
+    int32_t coreIdx = blockIdx.x;
+    int64_t coreElementStart64 = static_cast<int64_t>(coreIdx) * static_cast<int64_t>(perCoreElements);
+    int64_t coreElementEnd64 = coreElementStart64 + static_cast<int64_t>(perCoreElements);
+    int64_t totalElements = static_cast<int64_t>(N) * static_cast<int64_t>(D);
+    if (coreElementEnd64 > totalElements) {
+        coreElementEnd64 = totalElements;
+    }
+    INDEX_T coreElementStart = static_cast<INDEX_T>(coreElementStart64);
+    INDEX_T coreElementEnd = static_cast<INDEX_T>(coreElementEnd64);
+
+    ScatterMaxLoopP<T, INDEX_T>(M, D, coreElementStart, coreElementEnd, indicesGm, updatesGm, yGm, argmaxGm);
+}
+
+/*!
+ * \brief ProcessP 发射器（schMode=1 实例）：提取 tiling 参数，根据数据量选择 32/64 位索引路径
+ *        数据量 <= INT32_MAX 时走 int32_t 快速路径，否则走 int64_t 安全路径
+ */
+template <typename T>
+__aicore__ inline void ProcessP(GM_ADDR x, GM_ADDR indices, GM_ADDR updates, GM_ADDR y, GM_ADDR argmax,
+                                const ScatterMaxWithArgmaxTilingData* tilingData)
+{
+    (void)x; // x 不参与计算，仅用于确定 shape
+    int64_t M = tilingData->indicesNum;
+    int64_t D = tilingData->innerNum;
+    int64_t N = tilingData->rowNum;
+    int64_t perCoreElements = tilingData->perCoreElements;
+
+    __gm__ int32_t* indicesGm = (__gm__ int32_t*)indices;
+    __gm__ T* updatesGm = (__gm__ T*)updates;
+    __gm__ T* yGm = (__gm__ T*)y;
+    __gm__ int32_t* argmaxGm = (__gm__ int32_t*)argmax;
+
+    // 判定最大地址偏移是否在 int32 范围内: max(N*D, M*D)
+    int64_t yElements = N * D;
+    int64_t updateElements = M * D;
+    int64_t maxElements = (yElements > updateElements) ? yElements : updateElements;
+
+    const int64_t int32SafeLimit = static_cast<int64_t>(INT32_MAX) - static_cast<int64_t>(THREAD_NUM) + 1;
+    if (maxElements <= int32SafeLimit) {
+        // 32 位快速路径（为 grid-stride 的最后一次 p += threadNum 留出余量）
+        asc_vf_call<OpScatterMaxWithArgmaxSimtP<T, int32_t>>(
+            dim3(THREAD_NUM), static_cast<int32_t>(M), static_cast<int32_t>(D), static_cast<int32_t>(N),
+            static_cast<int32_t>(perCoreElements), indicesGm, updatesGm, yGm, argmaxGm);
+    } else {
+        // 64 位安全路径
+        asc_vf_call<OpScatterMaxWithArgmaxSimtP<T, int64_t>>(dim3(THREAD_NUM), M, D, N, perCoreElements, indicesGm,
+                                                             updatesGm, yGm, argmaxGm);
     }
 }
 } // namespace NsScatterMaxWithArgmax
