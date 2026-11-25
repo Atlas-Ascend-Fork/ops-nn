@@ -77,36 +77,37 @@ public:
         pipe_->InitBuffer(input_, 1, BUFFER_FLOATS * sizeof(float));
         pipe_->InitBuffer(output_, 1, BUFFER_FLOATS * sizeof(float));
         pipe_->InitBuffer(stats_, CompensatedBN::SLOTS * WIDTH * sizeof(float));
-        channelLast_ = data_->r0 == 1 && data_->a > 1;
+        packedSpatial_ = data_->packedSpatial != 0;
+        channelTiled_ = (data_->r0 == 1 && data_->a > 1) || packedSpatial_;
     }
 
     __aicore__ inline void Process()
     {
-        const int64_t channelTile = channelLast_ ? WIDTH : 1;
+        const int64_t channelTile = channelTiled_ ? WIDTH : 1;
         const int64_t reduceBlock = GetBlockIdx() % data_->reduceBlocks;
-        const int64_t totalR = data_->r1 * data_->r0;
+        const int64_t totalR = packedSpatial_ ? data_->r1 : data_->r1 * data_->r0;
         const int64_t perBlock = (totalR + data_->reduceBlocks - 1) / data_->reduceBlocks;
         const int64_t firstR = reduceBlock * perBlock;
         const int64_t lastR = totalR < firstR + perBlock ? totalR : firstR + perBlock;
         for (int64_t c = GetBlockIdx() / data_->reduceBlocks * channelTile; c < data_->a;
              c += data_->blockNum / data_->reduceBlocks * channelTile) {
             channels_ = static_cast<uint32_t>((channelTile < data_->a - c ? channelTile : data_->a - c));
-            stride_ = channelLast_ ? BLOCK_SIZE / sizeof(T) : WIDTH;
+            stride_ = channelTiled_ && !packedSpatial_ ? BLOCK_SIZE / sizeof(T) : WIDTH;
             while (stride_ < channels_) {
                 stride_ *= 2;
             }
             ResetAndLoad(c);
             for (uint32_t stage = 0; stage < 4; ++stage) {
-                const int64_t tile = channelLast_ ? ROWS : SPATIAL_TILE;
+                const int64_t tile = packedSpatial_ ? ROWS / data_->r0 : (channelTiled_ ? ROWS : SPATIAL_TILE);
                 for (int64_t r = firstR; r < lastR;) {
                     int64_t available = lastR - r;
-                    if (!channelLast_ && data_->a > 1) {
+                    if (!channelTiled_ && data_->a > 1) {
                         const int64_t rowRemaining = data_->r0 - r % data_->r0;
                         available = available < rowRemaining ? available : rowRemaining;
                     }
                     const uint32_t count = static_cast<uint32_t>(tile < available ? tile : available);
-                    const int64_t index = channelLast_ ? r * data_->a + c :
-                                                         (r / data_->r0 * data_->a + c) * data_->r0 + r % data_->r0;
+                    const int64_t index = channelTiled_ ? (r * data_->a + c) * data_->r0 :
+                                                          (r / data_->r0 * data_->a + c) * data_->r0 + r % data_->r0;
                     ProcessTile(index, count, stage);
                     r += count;
                 }
@@ -191,7 +192,14 @@ private:
         DataCopyPad(stats[9 * WIDTH], scale_[c], copy, pad);
         DataCopyPad(stats[10 * WIDTH], offset_[c], copy, pad);
         if constexpr (IsSameType<T, float>::value) {
-            DataCopyPad(stats[17 * WIDTH], x_[c * data_->r0], copy, pad);
+            if (packedSpatial_) {
+                // Copy one reference value per channel, skipping its other spatial samples.
+                DataCopyExtParams refs{static_cast<uint16_t>(channels_), sizeof(float),
+                                       static_cast<uint32_t>((data_->r0 - 1) * sizeof(float)), 0, 0};
+                DataCopyPad<float, PaddingMode::Compact>(stats[17 * WIDTH], x_[c * data_->r0], refs, pad);
+            } else {
+                DataCopyPad(stats[17 * WIDTH], x_[c * data_->r0], copy, pad);
+            }
         }
         if (data_->useRunningMeanVar) {
             DataCopyPad(stats[11 * WIDTH], mean_[c], copy, pad);
@@ -224,13 +232,13 @@ private:
     {
         constexpr uint32_t alignElements = BLOCK_SIZE / sizeof(T);
         auto input = input_.AllocTensor<T>();
-        DataCopyExtParams copy{
-            static_cast<uint16_t>(channelLast_ ? count : 1),
-            (channelLast_ ? channels_ : count) * static_cast<uint32_t>(sizeof(T)),
-            static_cast<uint32_t>(channelLast_ ? (data_->a - channels_) * sizeof(T) : 0),
-            channelLast_ ? (stride_ - (channels_ + alignElements - 1) / alignElements * alignElements) / alignElements :
-                           0,
-            0};
+        const uint32_t spatial = packedSpatial_ ? static_cast<uint32_t>(data_->r0) : 1;
+        const uint32_t rowWidth = channelTiled_ ? channels_ * spatial : count;
+        const uint32_t paddedWidth = (rowWidth + alignElements - 1) / alignElements * alignElements;
+        DataCopyExtParams copy{static_cast<uint16_t>(channelTiled_ ? count : 1),
+                               rowWidth * static_cast<uint32_t>(sizeof(T)),
+                               static_cast<uint32_t>(channelTiled_ ? (data_->a - channels_) * spatial * sizeof(T) : 0),
+                               channelTiled_ ? (stride_ * spatial - paddedWidth) / alignElements : 0, 0};
         DataCopyPadExtParams<T> pad{false, 0, 0, 0};
         DataCopyPad(input, x_[index], copy, pad);
         input_.EnQue(input);
@@ -254,11 +262,17 @@ private:
         using namespace AscendC::Reg;
         using namespace CompensatedBN;
         auto s = (__ubuf__ float*)stats_.Get<float>().GetPhyAddr();
-        const uint32_t elements = channelLast_ ? count * stride_ : count;
+        const uint32_t spatial = packedSpatial_ ? static_cast<uint32_t>(data_->r0) : 1;
+        const uint32_t elements = channelTiled_ ? count * stride_ * spatial : count;
         const uint16_t loops = (elements + WIDTH - 1) / WIDTH;
         const uint32_t stride = stride_;
         const uint32_t width = channels_;
-        const bool last = channelLast_;
+        const bool last = channelTiled_;
+        // Offsets are resolved outside __VEC_SCOPE__: keeping these conditional
+        // expressions inside the vector function trips a bisheng 9.2.0-beta.2
+        // backend bug (stack corruption in SelectionDAG::LegalizeTypes).
+        const int32_t hiSlot = stage == 0 ? 4 : (stage == 2 ? 2 : 0);
+        const int32_t loSlot = stage == 2 ? 3 : 1;
         __VEC_SCOPE__
         {
             auto full = CreateMask<float, MaskPattern::ALL>();
@@ -268,11 +282,13 @@ private:
             Duplicate(columnMask, static_cast<int32_t>(stride - 1), full);
             And(columns, columns, columnMask, full);
             CompareScalar<int32_t, CMPMODE::LT>(validColumns, columns, static_cast<int32_t>(width), full);
+            RegTensor<uint32_t> spatialIndex;
+            Muls(spatialIndex, reinterpret_cast<RegTensor<uint32_t>&>(columns), spatial, full);
             RegTensor<float> hi, lo, x, xl, tmp, th, tl, zero, down, meanHi, meanLo, rstdHi, rstdLo, gamma, beta,
                 reference;
             Duplicate(zero, 0.0f, full);
-            LoadAlign(hi, s + (stage == 0 ? 4 : stage == 2 ? 2 : 0) * WIDTH);
-            LoadAlign(lo, s + (stage == 2 ? 3 : 1) * WIDTH);
+            LoadAlign(hi, s + hiSlot * WIDTH);
+            LoadAlign(lo, s + loSlot * WIDTH);
             LoadAlign(down, s + 5 * WIDTH);
             LoadAlign(meanHi, s);
             LoadAlign(meanLo, s + WIDTH);
@@ -290,7 +306,13 @@ private:
                 if (last) {
                     And(mask, mask, validColumns, full);
                 }
-                LoadTensorForDtypeT<T>(x, input, mask, i * WIDTH);
+                uint32_t plane = 0;
+                if (spatial > 1) {
+                    plane = (i / spatial) * WIDTH * spatial + (i % spatial);
+                    DataCopyGather(x, reinterpret_cast<__ubuf__ float*>(input) + plane, spatialIndex, mask);
+                } else {
+                    LoadTensorForDtypeT<T>(x, input, mask, i * WIDTH);
+                }
                 if (stage == 0) {
                     Abs(tmp, x, mask);
                     Max(hi, hi, tmp, full);
@@ -312,15 +334,20 @@ private:
                         } else {
                             MulPair(th, tl, x, xl, rstdHi, rstdLo, mask);
                             Normalize(th, tl, gamma, beta, mask);
-                            StoreTensorForDtypeT<T>(output, th, mask, i * WIDTH);
+                            if (spatial > 1) {
+                                DataCopyScatter(reinterpret_cast<__ubuf__ float*>(output) + plane, th, spatialIndex,
+                                                mask);
+                            } else {
+                                StoreTensorForDtypeT<T>(output, th, mask, i * WIDTH);
+                            }
                         }
                     }
                 }
             }
             if (stage < 3) {
-                StoreAlign(s + (stage == 0 ? 4 : stage == 2 ? 2 : 0) * WIDTH, hi, full);
+                StoreAlign(s + hiSlot * WIDTH, hi, full);
                 if (stage > 0) {
-                    StoreAlign(s + (stage == 2 ? 3 : 1) * WIDTH, lo, full);
+                    StoreAlign(s + loSlot * WIDTH, lo, full);
                 }
             }
         }
@@ -364,17 +391,21 @@ private:
         using namespace AscendC::Reg;
         using namespace CompensatedBN;
         auto s = (__ubuf__ float*)stats_.Get<float>().GetPhyAddr();
-        const uint16_t period = channelLast_ ? stride_ : 1;
+        const uint16_t period = channelTiled_ ? stride_ : 1;
         const float inverse = data_->invCount;
         const float inverseLow = data_->invCountLow;
         const float epsilon = data_->epsilon;
+        // Same reason as ComputeTile: resolve the slot offsets outside the
+        // vector function to avoid the bisheng 9.2.0-beta.2 backend crash.
+        const int32_t hiSlot = stage == 0 ? 4 : (stage == 2 ? 2 : 0);
+        const int32_t loSlot = stage == 2 ? 3 : 1;
         __VEC_SCOPE__
         {
             auto mask = CreateMask<float, MaskPattern::ALL>();
             RegTensor<float> hi, lo, rh, rl, zero, temp, down, up;
             Duplicate(zero, 0.0f, mask);
-            LoadAlign(hi, s + (stage == 0 ? 4 : stage == 2 ? 2 : 0) * WIDTH);
-            LoadAlign(lo, s + (stage == 2 ? 3 : 1) * WIDTH);
+            LoadAlign(hi, s + hiSlot * WIDTH);
+            LoadAlign(lo, s + loSlot * WIDTH);
             ReduceRows(hi, lo, period, stage == 0);
             if (stage == 0) {
                 MaskReg large;
@@ -512,7 +543,8 @@ private:
 
     const BatchNorm3DCompensatedTilingData* data_;
     TPipe* pipe_;
-    bool channelLast_ = false;
+    bool channelTiled_ = false;
+    bool packedSpatial_ = false;
     uint32_t channels_ = 0;
     uint32_t stride_ = 0;
     GlobalTensor<T> x_, y_;

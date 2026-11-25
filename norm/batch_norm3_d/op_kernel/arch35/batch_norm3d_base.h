@@ -35,6 +35,9 @@ using AscendC::MicroAPI::RegTensor;
 using AscendC::MicroAPI::StoreDist;
 using AscendC::MicroAPI::UpdateMask;
 
+template <typename T>
+constexpr bool UseCompensatedInference = IsSameType<T, float>::value || IsSameType<T, half>::value;
+
 constexpr static int64_t DOUBLE_BUFFER = 2;
 constexpr static int32_t BUFFER_DEPTH = 1;
 static constexpr uint16_t VECTOR_LENGTH = platform::GetVRegSize();
@@ -114,7 +117,7 @@ template <typename T>
 __aicore__ inline void ComputeInferenceRstd(RegTensor<float>& var, RegTensor<float>& rstd, RegTensor<float>& rstdLow,
                                             MaskReg& mask, float epsilon)
 {
-    if constexpr (!IsSameType<T, float>::value) {
+    if constexpr (!UseCompensatedInference<T>) {
         ComputeRstd(var, rstd, mask, epsilon);
         Duplicate(rstdLow, 0.0f, mask);
     } else {
@@ -160,7 +163,7 @@ __aicore__ inline void NormalizeInference(RegTensor<float>& x, RegTensor<float>&
     CompareScalar<float, CMPMODE::LE>(finiteScale, magnitude, 0x1.fffffep127f, finiteMean);
     Abs(magnitude, rstd, mask);
     CompareScalar<float, CMPMODE::LE>(finiteAffine, magnitude, 0x1.fffffep127f, finiteScale);
-    if constexpr (!IsSameType<T, float>::value) {
+    if constexpr (!UseCompensatedInference<T>) {
         NormalizeWithScaleBias(x, scale, bias, mean, rstd, y, mask);
     } else {
         using namespace CompensatedBN;

@@ -29,6 +29,7 @@ struct BatchNorm3DCompensatedTilingData {
     float varianceCorrection = 0.0f;
     float epsilon = 0.0f;
     float momentum = 0.0f;
+    uint32_t packedSpatial = 0;
     int32_t useRunningMeanVar = 0;
 };
 

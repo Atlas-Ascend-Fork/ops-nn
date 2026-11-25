@@ -29,7 +29,11 @@ protected:
         data_.r1 = r1_;
         data_.r0 = r0_;
         data_.a = a_;
-        const int64_t channelTile = r0_ == 1 && a_ > 1 ? 64 : 1;
+        constexpr int64_t channelLanes = 64;
+        // Split short spatial rows over channel groups when every core can own a group.
+        data_.packedSpatial = xDtype_ == ge::DT_FLOAT && r0_ > 1 && r0_ <= 8 &&
+                              a_ >= channelLanes * aicoreParams_.blockDim;
+        const int64_t channelTile = (r0_ == 1 && a_ > 1) || data_.packedSpatial ? channelLanes : 1;
         const int64_t channelGroups = (a_ + channelTile - 1) / channelTile;
         const int64_t reductionTiles = (r1_ * r0_ + 4095) / 4096;
         data_.reduceBlocks = std::min<int64_t>(std::max<int64_t>(aicoreParams_.blockDim / channelGroups, 1),

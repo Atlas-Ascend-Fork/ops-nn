@@ -146,6 +146,12 @@ private:
         copyInParams.blockLen = curTileB1Len * sizeof(T1);
         copyInParams.srcStride = (tilingData_->totalB1Len - curTileB1Len) * sizeof(T1);
         copyInParams.dstStride = (tilingData_->tileBlockB1Len - curTileB1Len) * sizeof(T1) / BLOCK_SIZE;
+        if (tilingData_->tileBlockB1Len <= 8) {
+            copyInParams.blockCount = 1;
+            copyInParams.blockLen = curTileALen * curTileB1Len * sizeof(T1);
+            copyInParams.srcStride = 0;
+            copyInParams.dstStride = 0;
+        }
         DataCopyPad<T1, PaddingMode::Normal>(xLocal, xGm_[xGmOffset], copyInParams, dataCopyPadExtParams);
         ResetLoopModePara(DataCopyMVType::OUT_TO_UB);
         xQueue_.EnQue(xLocal);
@@ -195,8 +201,12 @@ private:
         __local_mem__ T2* varLocal = (__local_mem__ T2*)var.GetPhyAddr();
         __local_mem__ T1* yLocal = (__local_mem__ T1*)y.GetPhyAddr();
 
-        VFNormalize(xLocal, gammaLocal, betaLocal, meanLocal, varLocal, yLocal, curTileB0Len, curTileALen,
-                    curTileB1Len);
+        if (tilingData_->tileBlockB1Len <= 8) {
+            VFNormalizePacked(xLocal, gammaLocal, betaLocal, meanLocal, varLocal, yLocal, curTileB0Len, curTileALen);
+        } else {
+            VFNormalize(xLocal, gammaLocal, betaLocal, meanLocal, varLocal, yLocal, curTileB0Len, curTileALen,
+                        curTileB1Len);
+        }
 
         yQueue_.EnQue(y);
 
@@ -240,6 +250,41 @@ private:
         }
         meanOutQueue_.EnQue(meanOut);
         varOutQueue_.EnQue(varOut);
+    }
+
+    __aicore__ inline void VFNormalizePacked(__local_mem__ T1* x, __local_mem__ T2* gamma, __local_mem__ T2* beta,
+                                             __local_mem__ T2* mean, __local_mem__ T2* var, __local_mem__ T1* y,
+                                             uint16_t rows, uint16_t channels)
+    {
+        const uint32_t spatial = tilingData_->tileBlockB1Len;
+        const uint32_t rowStride = tilingData_->tileBlockALen * spatial;
+        const float epsilon = tilingData_->epsilon;
+        __VEC_SCOPE__
+        {
+            RegTensor<float> g, b, m, v, inv, low, values, result;
+            RegTensor<uint32_t> index;
+            MaskReg all = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
+            AscendC::Reg::Arange(reinterpret_cast<RegTensor<int32_t>&>(index), 0);
+            AscendC::Reg::Muls(index, index, spatial, all);
+            uint32_t remaining = channels;
+            for (uint16_t k = 0; k < (channels + VL_FP32 - 1) / VL_FP32; ++k) {
+                MaskReg mask = UpdateMask<float>(remaining);
+                const uint32_t c = k * VL_FP32;
+                DataCopy(g, (__local_mem__ float*)gamma + c);
+                DataCopy(b, (__local_mem__ float*)beta + c);
+                DataCopy(m, (__local_mem__ float*)mean + c);
+                DataCopy(v, (__local_mem__ float*)var + c);
+                ComputeInferenceRstd<float>(v, inv, low, mask, epsilon);
+                for (uint16_t row = 0; row < rows; ++row) {
+                    for (uint16_t s = 0; s < spatial; ++s) {
+                        const uint32_t pos = row * rowStride + c * spatial + s;
+                        AscendC::Reg::DataCopyGather(values, (__local_mem__ float*)x + pos, index, mask);
+                        NormalizeInference<float>(values, g, b, m, inv, low, result, mask);
+                        AscendC::Reg::DataCopyScatter((__local_mem__ float*)y + pos, result, index, mask);
+                    }
+                }
+            }
+        }
     }
 
     __aicore__ inline void VFNormalize(__local_mem__ T1* xLocal, __local_mem__ T2* gammaLocal,
@@ -309,6 +354,12 @@ private:
         copyInParams.blockLen = curTileB1Len * sizeof(T1);
         copyInParams.srcStride = (tilingData_->tileBlockB1Len - curTileB1Len) * sizeof(T1) / BLOCK_SIZE;
         copyInParams.dstStride = (tilingData_->totalB1Len - curTileB1Len) * sizeof(T1);
+        if (tilingData_->tileBlockB1Len <= 8) {
+            copyInParams.blockCount = 1;
+            copyInParams.blockLen = curTileALen * curTileB1Len * sizeof(T1);
+            copyInParams.srcStride = 0;
+            copyInParams.dstStride = 0;
+        }
         DataCopyPad<T1, PaddingMode::Normal>(yGm_[yGmOffset], y, copyInParams);
         ResetLoopModePara(DataCopyMVType::UB_TO_OUT);
         yQueue_.FreeTensor(y);

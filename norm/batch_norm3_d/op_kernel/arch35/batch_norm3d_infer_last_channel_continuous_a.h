@@ -79,7 +79,7 @@ public:
         pipe_->InitBuffer(betaFp32Buf_, paramAlignLen * sizeof(float));
         pipe_->InitBuffer(gammaFp32Buf_, paramAlignLen * sizeof(float));
         pipe_->InitBuffer(meanFp32Buf_, paramAlignLen * sizeof(float));
-        pipe_->InitBuffer(rstdFp32Buf_, paramAlignLen * sizeof(float) * (IsSameType<T, float>::value ? 2 : 1));
+        pipe_->InitBuffer(rstdFp32Buf_, paramAlignLen * sizeof(float) * (UseCompensatedInference<T> ? 2 : 1));
 
         int64_t xShapeLen = tilingData_->tileBlockBLen * tilingData_->tileBlockALen;
         pipe_->InitBuffer(xQueue_, BUFFER_NUM, xShapeLen * sizeof(T));
@@ -281,7 +281,7 @@ private:
                 DataCopy(betaFp32Local + aOffset, beta, preg);
                 DataCopy(meanFp32Local + aOffset, mean, preg);
                 DataCopy(rstdFp32Local + aOffset, rstd, preg);
-                if constexpr (IsSameType<T, float>::value) {
+                if constexpr (UseCompensatedInference<T>) {
                     DataCopy(rstdFp32Local + AlignUp(tilingData_->tileBlockALen, VL_FP32) + aOffset, rstdLow, preg);
                 }
             }
@@ -315,7 +315,7 @@ private:
                 DataCopy<float, LoadDist::DIST_NORM>(beta, betaFp32Local + aOffset);
                 DataCopy<float, LoadDist::DIST_NORM>(mean, meanFp32Local + aOffset);
                 DataCopy<float, LoadDist::DIST_NORM>(rstd, rstdFp32Local + aOffset);
-                if constexpr (IsSameType<T, float>::value) {
+                if constexpr (UseCompensatedInference<T>) {
                     DataCopy<float, LoadDist::DIST_NORM>(
                         rstdLow, rstdFp32Local + AlignUp(tilingData_->tileBlockALen, VL_FP32) + aOffset);
                 }

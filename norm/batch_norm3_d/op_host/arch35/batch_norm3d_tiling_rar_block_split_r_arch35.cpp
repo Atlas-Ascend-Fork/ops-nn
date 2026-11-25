@@ -71,6 +71,11 @@ protected:
         if (r1_ < static_cast<int64_t>(aicoreParams_.blockDim)) {
             return false;
         }
+        // The cross-core variance merge uses block-padded channel statistics.
+        // Route a partial final block to the per-channel Welford reduction.
+        if (a_ % (blockSize_ / FP32_BYTE) != 0) {
+            return false;
+        }
         if (a_ * NUM_TWO >= static_cast<int64_t>(aicoreParams_.blockDim)) {
             return false;
         }
