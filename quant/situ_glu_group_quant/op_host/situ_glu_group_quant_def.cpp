@@ -87,11 +87,14 @@ public:
         // the future mode; callers must explicitly pass 1 today.
         this->Attr("group_list_type").AttrType(OPTIONAL).Int(0);
 
-        // Ascend 950 (arch35) configuration using Regbase; kernel entry file
-        // follows the {ops}.cpp convention (KERNEL_SRC default, wiki caliber).
+        // Ascend 950/350 (arch35, Regbase) 与 Ascend 960DT (dav_9201) 配置；
+        // kernel entry file follows the {ops}.cpp convention (KERNEL_SRC
+        // default, wiki caliber).
         OpAICoreConfig regbaseCfg;
         regbaseCfg.DynamicCompileStaticFlag(true).DynamicRankSupportFlag(true).DynamicShapeSupportFlag(true);
         this->AICore().AddConfig("ascend950", regbaseCfg);
+        this->AICore().AddConfig("ascend350", regbaseCfg);
+        this->AICore().AddConfig("ascend960dt", regbaseCfg);
     }
 };
 

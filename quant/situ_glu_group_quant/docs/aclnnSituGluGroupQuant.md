@@ -458,7 +458,7 @@ int main()
 
     std::vector<uint16_t> xHost(rows * 2 * epr);
     for (size_t i = 0; i < xHost.size(); i++) {
-        xHost[i] = FloatToBf16(((i % 17) - 8) * 0.25f);  // [-2.0, 2.0] 简单数据
+        xHost[i] = FloatToBf16((static_cast<float>(i % 17) - 8.0f) * 0.25f);  // [-2.0, 2.0] 简单数据
     }
     std::vector<int64_t> tokensHost = {4, 4};
 

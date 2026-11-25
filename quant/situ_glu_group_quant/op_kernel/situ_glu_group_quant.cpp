@@ -37,7 +37,7 @@ __global__ __aicore__ void situ_glu_group_quant(GM_ADDR x, GM_ADDR weight, GM_AD
     REGISTER_TILING_DEFAULT(SituGluGroupQuantTilingData);
     GET_TILING_DATA_WITH_STRUCT(SituGluGroupQuantTilingData, tilingData, tiling);
     TPipe pipe;
-#if (__NPU_ARCH__ == 3510)
+#if (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201)
     // Save the caller's overflow mode; the per-row Compute sets saturation (0)
     // for the e4m3 quant cast. Restore on exit so the SPR does not leak out.
     int64_t oriOverflowMode = AscendC::GetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>();
@@ -50,7 +50,7 @@ __global__ __aicore__ void situ_glu_group_quant(GM_ADDR x, GM_ADDR weight, GM_AD
     SituGluGroupQuantKernel<DTYPE_X, hasGroupIndex, hasWeight, kActivateLeft, kGroupListCount, kLinearDisabled> op;
     op.Init(x, groupIndex, y, y_scale, weight, &tilingData, &pipe);
     op.Process();
-#if (__NPU_ARCH__ == 3510)
+#if (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201)
     AscendC::SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(oriOverflowMode);
 #endif
 }

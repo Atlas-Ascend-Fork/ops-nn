@@ -298,7 +298,7 @@ public:
         // Assert saturation once for the e4m3 SAT cast in the quant pass (clamp to
         // 448 on overflow), matching dynamic_mx_quant / swiglu_group_quant which
         // set this at Init. The kernel entry saves/restores the original mode.
-#if (__NPU_ARCH__ == 3510)
+#if (__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201)
         AscendC::SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(0);
 #endif
     }

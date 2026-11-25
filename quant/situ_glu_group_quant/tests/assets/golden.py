@@ -45,12 +45,22 @@ __spec__ = {
     # situ_glu_group_quant: kernel/L1 表（ST 单算子层）的算子名，属性为
     # proto snake_case 口径，参考与 aclnn 同源
     "situ_glu_group_quant": "SituGluGroupQuantKernelSpec",
+    # e2e: torch 扩展（torch_extension/csrc 注册 cann_ops_nn.situ_glu_group_quant）。
+    # TTK e2e 按 api_name 精确匹配，短名与 torch.ops 全名双注册
+    # （e2e CSV 用 torch.ops.cann_ops_nn.situ_glu_group_quant；TorchAir 图模式
+    #  转换器同样按 torch.ops 全名挂接）。
+    "cann_ops_nn.situ_glu_group_quant": "SituGluGroupQuantE2ESpec",
+    "torch.ops.cann_ops_nn.situ_glu_group_quant": "SituGluGroupQuantE2ESpec",
 }
 
 # 输入修补钩子（参照 fused_adam / apply_adam_w_quant 的 customize_inputs）
 __input__ = {
     "aclnn": {"aclnnSituGluGroupQuant": "customize_inputs"},
     "kernel": {"situ_glu_group_quant": "customize_inputs"},
+    "e2e": {
+        "cann_ops_nn.situ_glu_group_quant": "customize_inputs_e2e",
+        "torch.ops.cann_ops_nn.situ_glu_group_quant": "customize_inputs_e2e",
+    },
 }
 
 _GROUP = 32  # MXFP8 group size
@@ -340,6 +350,61 @@ class AclnnSituGluGroupQuantSpec:
     }
     customize_inputs = customize_inputs
     pre_compare = staticmethod(_pre_compare_mask_scale_pad)
+
+
+def customize_inputs_e2e(x, weight=None, group_index=None, **kwargs):
+    """E2E 输入修补钩子（torch 扩展形参名 group_index，与 aclnn 的 groupIndex 区分）。"""
+    return customize_inputs(x, weight, group_index, **kwargs)
+
+
+class SituGluGroupQuantE2ESpec(AclnnSituGluGroupQuantSpec):
+    """E2E 路径（torch.ops.cann_ops_nn.situ_glu_group_quant）— torch.Tensor 入参。
+
+    torch 扩展签名（torch_extension/csrc/situ_glu_group_quant.cpp + .py schema）：
+        situ_glu_group_quant(x, weight=None, group_index=None, *,
+            beta=1.0, linear_beta=0.0, activate_left=False, axis=-1,
+            quant_mode=0, dst_type=36, dst_type_max=0.0,
+            round_mode="rint", group_list_type=0)
+    形参口径为 snake_case 且与 aclnn 顺序不同（weight/group_index 位置一致），
+    统一转发到 aclnn 参考实现；group_list_type 默认 0（cumsum 预留）会被算子
+    拒收，e2e 用例须显式传 1。
+    """
+
+    @staticmethod
+    def golden(
+        x,
+        weight=None,
+        group_index=None,
+        beta=1.0,
+        linear_beta=0.0,
+        activate_left=False,
+        axis=-1,
+        quant_mode=0,
+        dst_type=36,
+        dst_type_max=0.0,
+        round_mode="rint",
+        group_list_type=1,
+        **kwargs,
+    ):
+        return AclnnSituGluGroupQuantSpec.golden(
+            x,
+            weight,
+            group_index,
+            beta=beta,
+            linear_beta=linear_beta,
+            activateLeft=activate_left,
+            axis=axis,
+            quantMode=quant_mode,
+            dstType=dst_type,
+            dstTypeMax=dst_type_max,
+            roundModeOptional=round_mode,
+            groupListType=group_list_type,
+        )
+
+    # 判据与掩膜与 aclnn 同源（e4m3/e8m0 binary_equal + 奇 gc pad 掩膜）
+    tolerance = AclnnSituGluGroupQuantSpec.tolerance
+    pre_compare = staticmethod(_pre_compare_mask_scale_pad)
+    customize_inputs = staticmethod(customize_inputs_e2e)
 
 
 class SituGluGroupQuantKernelSpec(AclnnSituGluGroupQuantSpec):
