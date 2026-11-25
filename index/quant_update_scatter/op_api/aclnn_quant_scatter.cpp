@@ -30,6 +30,8 @@ using namespace op;
 extern "C" {
 #endif
 
+static constexpr int64_t SUPPORTED_SCATTER_AXIS = -2;
+
 static const std::initializer_list<DataType> DTYPE_SUPPORT_LIST_SELFREF = {DataType::DT_INT8};
 
 static const std::initializer_list<DataType> DTYPE_SUPPORT_LIST_INDICES = {DataType::DT_INT32, DataType::DT_INT64};
@@ -133,7 +135,7 @@ static void WarnUnsupportedAttrs(const aclTensor* updates, int64_t axis, int64_t
     if (reduction != 1) {
         OP_LOGW("Only reduction=1 (update) is supported, but got %ld. The update operation will be used.", reduction);
     }
-    if (axis != -2) {
+    if (axis != SUPPORTED_SCATTER_AXIS) {
         OP_LOGW("axis=%ld is outside the documented support (axis=-2). The value will be forwarded unchanged.", axis);
     }
     const int64_t lastDim = static_cast<int64_t>(updates->GetViewShape().GetDimNum()) - 1;
