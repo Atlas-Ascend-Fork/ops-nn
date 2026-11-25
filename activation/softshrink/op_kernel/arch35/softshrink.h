@@ -35,17 +35,15 @@
  *     · 0: 直接以 T 计算（fp32 路径）
  *     · 1: Cast IO_T → float → 计算 → Cast float → IO_T（fp16 / bf16 路径）
  *     · 当 T == bfloat16_t 时，硬件不直接支持 bf16 计算，必须设为 1
- *     · 当 T == half 时，为了与 PyTorch CPU fp16/bf16 路径对齐（升精到 fp32 计算），设为 1
+ *     · 当 T == half 时，为与 fp16/bf16 升精参考实现对齐（升精到 fp32 计算），设为 1
  *
- * 与 PyTorch CPU 实现对齐：
- *   PyTorch CPU 对 fp16/bf16 走 vectorized 升精路径 (cpu/Activation.cpp:642-663)：
- *     vector_func: Vectorized<scalar_t> → Vectorized<float> → 计算 → Vectorized<scalar_t>
- *   PyTorch CUDA 对 fp16 直接以 scalar_t 计算（不升精）；本实现按 CPU 升精路径对齐。
+ * 升精策略：
+ *   fp16/bf16 统一 Cast 到 fp32 计算，再 Cast 回原 dtype；
+ *   该策略与 fp16/bf16 升精参考实现保持一致。
  *
- * NaN 行为说明：与 PyTorch 不一致——
- *   PyTorch CUDA 显式透传 NaN（at::_isnan(a) ? a : ...）；
- *   本实现中 (NaN > lambd) 和 (NaN < -lambd) 在 AscendC 上均为 false，
- *   NaN 会被静默置 0。此为已知差异，详见 benchmark_report.md。
+ * NaN 行为说明：与 NaN 透传语义一致。
+ *   两次阈值 Compare 对 NaN 均为 false，主计算会得到 0；
+ *   随后用 Compare(x, x, NE) 识别 NaN，并把 NaN 位置恢复为原始输入。
  */
 #ifndef SOFTSHRINK_H
 #define SOFTSHRINK_H
@@ -65,7 +63,7 @@ class SoftShrink {
     // IO 类型: 由模板参数 T 直接决定（half / float / bfloat16_t）
     using IO_T = T;
     // 计算类型: NEED_UPCAST ? float : T
-    //   · fp16 / bf16 → COMPUTE_T = float（与 PyTorch CPU 升精路径对齐）
+    //   · fp16 / bf16 → COMPUTE_T = float（fp16/bf16 走 fp32 升精路径）
     //   · fp32        → COMPUTE_T = float（保持不变）
     using COMPUTE_T = typename std::conditional<NEED_UPCAST == 1, float, T>::type;
     static constexpr int32_t BUFFER_NUM = BUFFER_MODE ? 2 : 1;
@@ -174,7 +172,7 @@ __aicore__ inline void SoftShrink<T, BUFFER_MODE, NEED_UPCAST>::Compute(int64_t 
 
     if constexpr (NEED_UPCAST == 1) {
         // 升精路径（fp16/bf16）：Cast IO_T → fp32 → 计算 → Cast fp32 → IO_T
-        // 与 PyTorch CPU fp16/bf16 vectorized 升精路径完全对齐 (cpu/Activation.cpp:642-663)
+        // 沿用 fp16/bf16 升精到 fp32 的计算路径
         AscendC::LocalTensor<COMPUTE_T> floatInLocal = floatInBuf.Get<COMPUTE_T>();
 
         // Cast inputLocal(IO_T) → floatInLocal(float)
@@ -192,6 +190,11 @@ __aicore__ inline void SoftShrink<T, BUFFER_MODE, NEED_UPCAST>::Compute(int64_t 
         // Step 2: mask = (x < -lambd), out_fp32 = mask ? (x + lambd) : tmp
         AscendC::Compare(maskLocal, floatInLocal, negLambdLocal, AscendC::CMPMODE::LT, alignedNum);
         AscendC::Select(tmpLocal, maskLocal, xAddLocal, tmpLocal, AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE,
+                        alignedNum);
+
+        // NaN protection: x != x is true for NaN; restore the original NaN input.
+        AscendC::Compare(maskLocal, floatInLocal, floatInLocal, AscendC::CMPMODE::NE, alignedNum);
+        AscendC::Select(tmpLocal, maskLocal, floatInLocal, tmpLocal, AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE,
                         alignedNum);
 
         // Cast fp32 result → IO_T output
@@ -216,6 +219,11 @@ __aicore__ inline void SoftShrink<T, BUFFER_MODE, NEED_UPCAST>::Compute(int64_t 
         // Step 2: mask = (x < -lambd), out = mask ? (x + lambd) : tmp
         AscendC::Compare(maskLocal, inputLocal, negLambdLocal, AscendC::CMPMODE::LT, alignedNum);
         AscendC::Select(outputLocal, maskLocal, xAddLocal, tmpLocal, AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE,
+                        alignedNum);
+
+        // NaN protection: x != x is true for NaN; restore the original NaN input.
+        AscendC::Compare(maskLocal, inputLocal, inputLocal, AscendC::CMPMODE::NE, alignedNum);
+        AscendC::Select(outputLocal, maskLocal, inputLocal, outputLocal, AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE,
                         alignedNum);
     }
 
