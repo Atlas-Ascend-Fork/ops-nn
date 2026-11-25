@@ -259,7 +259,12 @@ static ge::graphStatus ForeachMulListTilingFunc(gert::TilingContext* context)
 
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto shapePtr = context->GetDynamicInputShape(INPUT_IDX_0, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
+        OP_CHECK_IF(shapePtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "input1",
+                        "the shape of dynamic input " + std::to_string(i) +
+                            " is missing in the tiling context; check that the graph node provides all inputs"),
+                    return ge::GRAPH_FAILED);
         auto storageShape = shapePtr->GetStorageShape();
         int64_t numel = storageShape.GetShapeSize();
         OP_CHECK_IF(totalElements > std::numeric_limits<int64_t>::max() - numel,
@@ -310,7 +315,9 @@ static ge::graphStatus ForeachMulListTilingFunc(gert::TilingContext* context)
     } else if (dataType == ge::DT_UINT8) {
         tilingKey = GET_TPL_TILING_KEY(FOREACH_MUL_LIST_TPL_SCH_MODE_UINT8);
     } else {
-        OP_LOGE(context, "unsupported dtype for foreach_mul_list");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x1", Ops::Base::ToString(dataType),
+                                              "only DT_FLOAT, DT_FLOAT16, DT_BF16, DT_INT32, DT_INT16, DT_INT8 and "
+                                              "DT_UINT8 are supported");
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(tilingKey);

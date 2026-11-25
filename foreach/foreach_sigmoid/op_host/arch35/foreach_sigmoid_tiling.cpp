@@ -171,14 +171,24 @@ static ge::graphStatus ForeachSigmoidTilingFunc(gert::TilingContext* context)
     ge::DataType xDtype = ge::DT_FLOAT;
     if (tensorNum > 0) {
         auto xDesc = context->GetDynamicInputDesc(0, 0);
-        OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
+        OP_CHECK_IF(xDesc == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "x",
+                        "the desc of dynamic input 0 is missing in the tiling context; check that the graph node "
+                        "provides all inputs"),
+                    return ge::GRAPH_FAILED);
         xDtype = xDesc->GetDataType();
     }
 
     int64_t maxTensorElements = 0;
     for (int32_t i = 0; i < tensorNum; i++) {
         auto shapePtr = context->GetDynamicInputShape(0, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
+        OP_CHECK_IF(shapePtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "x",
+                        "the shape of dynamic input " + std::to_string(i) +
+                            " is missing in the tiling context; check that the graph node provides all inputs"),
+                    return ge::GRAPH_FAILED);
         maxTensorElements = std::max(maxTensorElements, shapePtr->GetStorageShape().GetShapeSize());
     }
 
@@ -199,7 +209,12 @@ static ge::graphStatus ForeachSigmoidTilingFunc(gert::TilingContext* context)
     // 逐实例填充元素数；输出 dtype/shape 已由 ValidateForeachSigmoid 严格校验
     for (int32_t i = 0; i < tensorNum; i++) {
         auto shapePtr = context->GetDynamicInputShape(0, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
+        OP_CHECK_IF(shapePtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "x",
+                        "the shape of dynamic input " + std::to_string(i) +
+                            " is missing in the tiling context; check that the graph node provides all inputs"),
+                    return ge::GRAPH_FAILED);
         tiling->tensorElements[i] = shapePtr->GetStorageShape().GetShapeSize();
     }
 
@@ -211,7 +226,8 @@ static ge::graphStatus ForeachSigmoidTilingFunc(gert::TilingContext* context)
     } else if (xDtype == ge::DT_BF16) {
         tilingKey = GET_TPL_TILING_KEY(FOREACH_SIGMOID_SCH_MODE_BF16);
     } else {
-        OP_LOGE(context, "Unsupported x dtype");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(xDtype),
+                                              "only DT_FLOAT, DT_FLOAT16 and DT_BF16 are supported");
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(tilingKey);

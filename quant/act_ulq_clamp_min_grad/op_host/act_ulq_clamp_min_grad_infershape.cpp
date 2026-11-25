@@ -79,7 +79,11 @@ static ge::graphStatus InferShape4ActULQClampMinGrad(gert::InferShapeContext* co
 
     // 校验三输入 shape 完全相同（broadcast.kind: none）
     OP_CHECK_IF(!ShapeEqual(*yGradShape, *maskShape) || !ShapeEqual(*yGradShape, *xLossShape),
-                OP_LOGE(context, "ActULQClampMinGrad: three inputs must have identical shape (no broadcast)"),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "y_grad, clamp_min_mask, x_clamped_loss",
+                                                       Ops::Base::ToString(*yGradShape) + ", " +
+                                                           Ops::Base::ToString(*maskShape) + ", " +
+                                                           Ops::Base::ToString(*xLossShape),
+                                                       "the three inputs must have identical shape (no broadcast)"),
                 return ge::GRAPH_FAILED);
 
     // dtype 联动校验在 InferDataType 层执行（op_graph/act_ulq_clamp_min_grad_graph_infer.cpp），

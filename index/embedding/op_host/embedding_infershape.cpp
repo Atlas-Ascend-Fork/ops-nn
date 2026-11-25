@@ -29,7 +29,10 @@ static ge::graphStatus InferShapeForEmbedding(gert::InferShapeContext* context)
     auto xShape = context->GetInputShape(INPUT_IDX_X);
     OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
     int64_t xDim = xShape->GetDimNum();
-    OP_CHECK_IF(xDim != DIM_TWO, OP_LOGE(context->GetNodeName(), "x input dim should be 2."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(xDim != DIM_TWO,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(xDim),
+                                                         "the rank of x must be 2"),
+                return ge::GRAPH_FAILED);
 
     auto indiesShape = context->GetInputShape(INPUT_IDX_INDICES);
     OP_CHECK_NULL_WITH_CONTEXT(context, indiesShape);
@@ -45,7 +48,11 @@ static ge::graphStatus InferShapeForEmbedding(gert::InferShapeContext* context)
 
     outShape->SetDim(rankIndices, xShape->GetDim(xDim - 1));
     OP_CHECK_IF(xShape->GetShapeSize() > INT32_MAX || outShape->GetShapeSize() > INT32_MAX,
-                OP_LOGE(context->GetNodeName(), "input or output shape is too large."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context->GetNodeName(), "x, y",
+                    std::to_string(xShape->GetShapeSize()) + ", " + std::to_string(outShape->GetShapeSize()),
+                    "the input or output shape is too large; the shape size must not exceed INT32_MAX"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 

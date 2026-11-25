@@ -22,6 +22,9 @@
 
 #include "log/log.h"
 #include "register/op_impl_registry.h"
+#include <map>
+#include <string>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
 #include "ut_op_util.h"
@@ -374,4 +377,57 @@ TEST_F(INTrainingUpdateGradGammaBetaTiling, reject_output_element_count_overflow
 {
     uint64_t key = 0;
     EXPECT_EQ(RunTiling({1, std::numeric_limits<int64_t>::max(), 2, 1}, key), ge::GRAPH_FAILED);
+}
+
+// ============================================================================
+// 错误码负向用例: 校验整改后上报的结构化错误码
+// ============================================================================
+namespace {
+namespace errmsg_test {
+inline void ClearErrorMessages() { (void)ErrorManager::GetInstance().GetRawErrorMessages(); }
+} // namespace errmsg_test
+} // namespace
+
+// 输入dtype非float32 → EZ0020
+TEST_F(INTrainingUpdateGradGammaBetaTiling, errmsg_non_fp32_dtype_ez0020)
+{
+    uint64_t key = 0;
+    errmsg_test::ClearErrorMessages();
+    EXPECT_EQ(RunTiling({4, 64, 1, 1}, key, {}, ge::DT_FLOAT16), ge::GRAPH_FAILED);
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors.front().error_id, std::string("EZ0020"));
+}
+
+// 两输入format不一致 → EZ0018（format不匹配类）
+TEST_F(INTrainingUpdateGradGammaBetaTiling, errmsg_mixed_format_ez0018)
+{
+    uint64_t key = 0;
+    errmsg_test::ClearErrorMessages();
+    EXPECT_EQ(RunTiling({4, 64, 1, 1}, key, {}, ge::DT_FLOAT, ge::FORMAT_NCHW, {}, ge::FORMAT_NHWC), ge::GRAPH_FAILED);
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors.front().error_id, std::string("EZ0018"));
+}
+
+// rank不匹配（beta比gamma多一维）→ 多参数rank错误码（打印实际码便于核对）
+TEST_F(INTrainingUpdateGradGammaBetaTiling, errmsg_rank_mismatch)
+{
+    uint64_t key = 0;
+    errmsg_test::ClearErrorMessages();
+    EXPECT_EQ(RunTiling({4, 64, 1, 1}, key, {}, ge::DT_FLOAT, ge::FORMAT_NCHW, {4, 64, 1, 1, 1}), ge::GRAPH_FAILED);
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors.front().error_id, std::string("EZ0013"));
+}
+
+// 维度含负值（打印实际码便于核对）
+TEST_F(INTrainingUpdateGradGammaBetaTiling, errmsg_negative_dim)
+{
+    uint64_t key = 0;
+    errmsg_test::ClearErrorMessages();
+    EXPECT_EQ(RunTiling({4, 64, -1, 1}, key), ge::GRAPH_FAILED);
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors.front().error_id, std::string("EZ0010"));
 }

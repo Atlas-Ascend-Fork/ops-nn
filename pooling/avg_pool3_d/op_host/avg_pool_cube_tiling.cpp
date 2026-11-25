@@ -634,7 +634,11 @@ ge::graphStatus Tiling4AvgPool3DCube(gert::TilingContext* context, const gert::S
     const auto& fmap_storage_shape = fmap_shape->GetStorageShape();
     const auto& out_storage_shape = out_shape->GetStorageShape();
     OP_CHECK_IF((fmap_storage_shape.GetDimNum() < kShapeSize6HD) || (out_storage_shape.GetDimNum() < kShapeSize6HD),
-                OP_LOGE(op_name, "invalid fmap/out dim size"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(op_name, "x, y",
+                                                         std::to_string(fmap_storage_shape.GetDimNum()) + ", " +
+                                                             std::to_string(out_storage_shape.GetDimNum()),
+                                                         "the ranks of x and y must be at least 6"),
+                return ge::GRAPH_FAILED);
 
     gert::Shape var_value;
     int64_t shape_for_range_match[4]; // 4: ndhw

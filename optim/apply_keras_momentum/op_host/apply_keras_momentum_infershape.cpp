@@ -47,13 +47,18 @@ static ge::graphStatus InferShape4ApplyKerasMomentum(gert::InferShapeContext* co
 
     const gert::Shape* lrShape = context->GetInputShape(LR_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, lrShape);
-    OP_CHECK_IF(!IsScalarInput(lrShape), OP_LOGE(context->GetNodeName(), "lr must be scalar tensor (shape [] or [1])"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !IsScalarInput(lrShape),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "lr", std::to_string(lrShape->GetShapeSize()),
+                                                  "lr must be a scalar tensor (shape [] or [1])"),
+        return ge::GRAPH_FAILED);
 
     const gert::Shape* momentumShape = context->GetInputShape(MOMENTUM_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, momentumShape);
     OP_CHECK_IF(!IsScalarInput(momentumShape),
-                OP_LOGE(context->GetNodeName(), "momentum must be scalar tensor (shape [] or [1])"),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "momentum",
+                                                          std::to_string(momentumShape->GetShapeSize()),
+                                                          "momentum must be a scalar tensor (shape [] or [1])"),
                 return ge::GRAPH_FAILED);
 
     gert::Shape* varRefShape = context->GetOutputShape(VAR_INDEX);

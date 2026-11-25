@@ -115,8 +115,8 @@ ge::graphStatus SwigluGroupGradArch35Tiling::CalcDtype()
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext, inputDesc);
     gradYDtype = inputDesc->GetDataType();
     if (gradYDtype != ge::DT_BF16 && gradYDtype != ge::DT_FLOAT16 && gradYDtype != ge::DT_FLOAT) {
-        OP_LOGE(tilingContext->GetNodeName(), "grad_y dtype[%s] not supported",
-                ge::TypeUtils::DataTypeToSerialString(gradYDtype).c_str());
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(tilingContext->GetNodeName(), "grad_y", Ops::Base::ToString(gradYDtype),
+                                              "grad_y only supports DT_BF16, DT_FLOAT16 and DT_FLOAT");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -129,7 +129,8 @@ ge::graphStatus SwigluGroupGradArch35Tiling::CheckShape()
     const gert::Shape& gradYShape = gradYStorageShape->GetStorageShape();
     OP_CHECK_IF(
         gradYShape.GetDimNum() < 1,
-        OP_LOGE(tilingContext->GetNodeName(), "grad_y must be at least 1D, got %ld dims.", gradYShape.GetDimNum()),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(tilingContext->GetNodeName(), "grad_y",
+                                                 std::to_string(gradYShape.GetDimNum()), "grad_y must be at least 1D"),
         return ge::GRAPH_FAILED);
 
     totalRows_ = 1;
@@ -142,7 +143,8 @@ ge::graphStatus SwigluGroupGradArch35Tiling::CheckShape()
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext, xStorageShape);
     const gert::Shape& xShape = xStorageShape->GetStorageShape();
     OP_CHECK_IF(xShape.GetDimNum() < 1,
-                OP_LOGE(tilingContext->GetNodeName(), "x must be at least 1D, got %ld dims.", xShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(tilingContext->GetNodeName(), "x",
+                                                         std::to_string(xShape.GetDimNum()), "x must be at least 1D"),
                 return ge::GRAPH_FAILED);
 
     int64_t xTotalRows = 1;
@@ -151,15 +153,22 @@ ge::graphStatus SwigluGroupGradArch35Tiling::CheckShape()
     }
     doubleHiddenSize_ = xShape.GetDim(xShape.GetDimNum() - 1);
 
-    OP_CHECK_IF(xTotalRows != totalRows_,
-                OP_LOGE(tilingContext->GetNodeName(), "x rows=%ld != grad_y rows=%ld", xTotalRows, totalRows_),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        xTotalRows != totalRows_,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(tilingContext->GetNodeName(), "x, grad_y",
+                                               Ops::Base::ToString(xShape) + ", " + Ops::Base::ToString(gradYShape),
+                                               "x rows must equal grad_y rows"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         doubleHiddenSize_ != hiddenSize_ * DIM_TWO,
-        OP_LOGE(tilingContext->GetNodeName(), "x.shape[-1]=%ld != 2*H=%ld", doubleHiddenSize_, hiddenSize_ * DIM_TWO),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(tilingContext->GetNodeName(), "x", std::to_string(doubleHiddenSize_),
+                                                  "x.shape[-1] must equal 2 * grad_y.shape[-1]"),
         return ge::GRAPH_FAILED);
-    OP_CHECK_IF(hiddenSize_ <= 0, OP_LOGE(tilingContext->GetNodeName(), "H=%ld must be > 0", hiddenSize_),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        hiddenSize_ <= 0,
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(tilingContext->GetNodeName(), "grad_y", std::to_string(hiddenSize_),
+                                                  "grad_y.shape[-1] must be greater than 0"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -180,7 +189,8 @@ ge::graphStatus SwigluGroupGradArch35Tiling::ParseOptionalInputs()
                         0;
 
     OP_CHECK_IF(isWeight_ != isYOrigin_,
-                OP_LOGE(tilingContext->GetNodeName(), "weight and y_origin must be provided together"),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext->GetNodeName(), "weight, y_origin",
+                                                         "weight and y_origin must be provided together"),
                 return ge::GRAPH_FAILED);
 
     if (isWeight_ == 1) {
@@ -200,12 +210,17 @@ ge::graphStatus SwigluGroupGradArch35Tiling::ParseOptionalInputs()
 
     if (isYOrigin_ == 1) {
         const gert::Shape& yOriginShape = yOriginStorageShape->GetStorageShape();
-        OP_CHECK_IF(yOriginShape.GetDimNum() < 1, OP_LOGE(tilingContext->GetNodeName(), "y_origin must be at least 1D"),
+        OP_CHECK_IF(yOriginShape.GetDimNum() < 1,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(tilingContext->GetNodeName(), "y_origin",
+                                                             std::to_string(yOriginShape.GetDimNum()),
+                                                             "y_origin must be at least 1D"),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(yOriginShape.GetDim(yOriginShape.GetDimNum() - 1) != hiddenSize_,
-                    OP_LOGE(tilingContext->GetNodeName(), "y_origin.shape[-1]=%ld must equal H=%ld",
-                            yOriginShape.GetDim(yOriginShape.GetDimNum() - 1), hiddenSize_),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            yOriginShape.GetDim(yOriginShape.GetDimNum() - 1) != hiddenSize_,
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(tilingContext->GetNodeName(), "y_origin",
+                                                      std::to_string(yOriginShape.GetDim(yOriginShape.GetDimNum() - 1)),
+                                                      "y_origin.shape[-1] must equal grad_y.shape[-1]"),
+            return ge::GRAPH_FAILED);
         int64_t yOriginTotalRows = 1;
         for (size_t i = 0; i < yOriginShape.GetDimNum() - 1; ++i) {
             yOriginTotalRows *= yOriginShape.GetDim(i);
@@ -219,9 +234,9 @@ ge::graphStatus SwigluGroupGradArch35Tiling::ParseOptionalInputs()
     if (isGroupIndex_ == 1) {
         const gert::Shape& groupIndexShape = groupIndexStorageShape->GetStorageShape();
         OP_CHECK_IF(groupIndexShape.GetDimNum() != 1 || groupIndexShape.GetDim(0) < 1,
-                    OP_LOGE(tilingContext->GetNodeName(),
-                            "group_index must be a non-empty 1D tensor, got dimNum=%ld, dim[0]=%ld",
-                            groupIndexShape.GetDimNum(), groupIndexShape.GetDim(0)),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(tilingContext->GetNodeName(), "group_index",
+                                                           Ops::Base::ToString(groupIndexShape),
+                                                           "group_index must be a non-empty 1D tensor"),
                     return ge::GRAPH_FAILED);
         groupIndexG_ = groupIndexShape.GetDim(0);
     }
@@ -237,8 +252,9 @@ ge::graphStatus SwigluGroupGradArch35Tiling::ParseAttrs()
     const float* clampLimitAttr = attrs->GetAttrPointer<float>(CLAMPLIMIT_ATTR_INDEX);
     if (clampLimitAttr != nullptr) {
         OP_CHECK_IF(*clampLimitAttr != -1.0f && !(*clampLimitAttr > 0.0f),
-                    OP_LOGE(tilingContext->GetNodeName(), "clamp_limit must be -1.0 (no clamp) or > 0.0, but got %f",
-                            *clampLimitAttr),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(tilingContext->GetNodeName(), "clamp_limit",
+                                                          std::to_string(*clampLimitAttr),
+                                                          "clamp_limit must be -1.0 (no clamp) or greater than 0.0"),
                     return ge::GRAPH_FAILED);
         if (*clampLimitAttr > 0.0f) {
             hasClamp_ = 1;
@@ -523,13 +539,21 @@ ge::graphStatus SwigluGroupGradArch35Tiling::GetShapeAttrsInfo()
 {
     OP_CHECK_IF(GetPlatformInfo() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext->GetNodeName(), "GetPlatformInfo failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CalcDtype() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext->GetNodeName(), "CalcDtype failed"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckShape() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext->GetNodeName(), "CheckShape failed"),
+    OP_CHECK_IF(
+        CalcDtype() != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "CalcDtype failed; propagate the lower-layer first error"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckShape() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(),
+                                       "CheckShape failed; propagate the lower-layer first error"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(ParseOptionalInputs() != ge::GRAPH_SUCCESS,
-                OP_LOGE(tilingContext->GetNodeName(), "ParseOptionalInputs failed"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(ParseAttrs() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext->GetNodeName(), "ParseAttrs failed"),
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(),
+                                       "ParseOptionalInputs failed; propagate the lower-layer first error"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ParseAttrs() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(),
+                                       "ParseAttrs failed; propagate the lower-layer first error"),
                 return ge::GRAPH_FAILED);
 
     tiling = tilingContext->GetTilingData<SwigluGroupGradTilingData>();

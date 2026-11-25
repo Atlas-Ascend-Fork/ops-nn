@@ -149,9 +149,12 @@ static ge::graphStatus ComputeCorrectPad(gert::TilingContext* context, int64_t o
 {
     // (outDim-1)*stride 溢出保护
     int64_t product = 0;
-    OP_CHECK_IF(__builtin_mul_overflow(outDim - 1, static_cast<int64_t>(stride), &product),
-                OP_LOGE(context, "(outDim-1)*stride overflow: outDim=%ld stride=%d", outDim, stride),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        __builtin_mul_overflow(outDim - 1, static_cast<int64_t>(stride), &product),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "strides",
+                                              "outDim=" + std::to_string(outDim) + ", stride=" + std::to_string(stride),
+                                              "(outDim-1) * stride overflows int64"),
+        return ge::GRAPH_FAILED);
     // 逐项检查加/减法溢出
     int64_t step1 = 0;
     OP_CHECK_IF(__builtin_add_overflow(product, static_cast<int64_t>(kDim), &step1),
@@ -193,10 +196,12 @@ static ge::graphStatus ComputePads(gert::TilingContext* context, const char* pad
     } else if (strcmp(paddingMode, "SAME") == 0) {
         // SAME 分支：(outDim-1)*stride 乘法溢出保护
         int64_t totalPadH = 0;
-        OP_CHECK_IF(
-            __builtin_mul_overflow(tiling->outH - 1, static_cast<int64_t>(tiling->strideH), &totalPadH),
-            OP_LOGE(context, "SAME (outH-1)*strideH overflow: outH=%ld strideH=%d", tiling->outH, tiling->strideH),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(__builtin_mul_overflow(tiling->outH - 1, static_cast<int64_t>(tiling->strideH), &totalPadH),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "strides",
+                        "outH=" + std::to_string(tiling->outH) + ", strideH=" + std::to_string(tiling->strideH),
+                        "(outH-1) * strideH overflows int64 under the SAME mode"),
+                    return ge::GRAPH_FAILED);
         int64_t stepH1 = 0;
         OP_CHECK_IF(__builtin_add_overflow(totalPadH, static_cast<int64_t>(tiling->kH), &stepH1),
                     OP_LOGE(context, "SAME totalPadH + kH overflow: totalPadH=%ld kH=%d", totalPadH, tiling->kH),
@@ -208,10 +213,12 @@ static ge::graphStatus ComputePads(gert::TilingContext* context, const char* pad
             totalPadH = 0;
         }
         int64_t totalPadW = 0;
-        OP_CHECK_IF(
-            __builtin_mul_overflow(tiling->outW - 1, static_cast<int64_t>(tiling->strideW), &totalPadW),
-            OP_LOGE(context, "SAME (outW-1)*strideW overflow: outW=%ld strideW=%d", tiling->outW, tiling->strideW),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(__builtin_mul_overflow(tiling->outW - 1, static_cast<int64_t>(tiling->strideW), &totalPadW),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "strides",
+                        "outW=" + std::to_string(tiling->outW) + ", strideW=" + std::to_string(tiling->strideW),
+                        "(outW-1) * strideW overflows int64 under the SAME mode"),
+                    return ge::GRAPH_FAILED);
         int64_t stepW1 = 0;
         OP_CHECK_IF(__builtin_add_overflow(totalPadW, static_cast<int64_t>(tiling->kW), &stepW1),
                     OP_LOGE(context, "SAME totalPadW + kW overflow: totalPadW=%ld kW=%d", totalPadW, tiling->kW),
@@ -383,11 +390,17 @@ static ge::graphStatus ParseAttrs(gert::TilingContext* context, AvgPoolUpdateTil
     // outH*strideH/outW*strideW 溢出保护（保护 kernel 侧 idx*stride 运算）
     int64_t productH = 0;
     OP_CHECK_IF(__builtin_mul_overflow(tiling->outH, static_cast<int64_t>(tiling->strideH), &productH),
-                OP_LOGE(context, "outH * strideH overflow: outH=%ld strideH=%d", tiling->outH, tiling->strideH),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "strides",
+                    "outH=" + std::to_string(tiling->outH) + ", strideH=" + std::to_string(tiling->strideH),
+                    "outH * strideH overflows int64"),
                 return ge::GRAPH_FAILED);
     int64_t productW = 0;
     OP_CHECK_IF(__builtin_mul_overflow(tiling->outW, static_cast<int64_t>(tiling->strideW), &productW),
-                OP_LOGE(context, "outW * strideW overflow: outW=%ld strideW=%d", tiling->outW, tiling->strideW),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "strides",
+                    "outW=" + std::to_string(tiling->outW) + ", strideW=" + std::to_string(tiling->strideW),
+                    "outW * strideW overflows int64"),
                 return ge::GRAPH_FAILED);
 
     // padding_mode 解析 pads（三分支计算在 ComputePads 中）

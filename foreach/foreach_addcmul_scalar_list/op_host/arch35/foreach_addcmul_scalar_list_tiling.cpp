@@ -67,7 +67,8 @@ static ge::graphStatus GetTilingKeyByDtype(gert::TilingContext* context, ge::Dat
             tilingKey = TILING_KEY_BF16;
             return ge::GRAPH_SUCCESS;
         default:
-            OP_LOGE(context, "unsupported dtype: %d", static_cast<int32_t>(dtype));
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "input1", Ops::Base::ToString(dtype),
+                                                  "only DT_FLOAT, DT_FLOAT16 and DT_BFLOAT16 are supported");
             return ge::GRAPH_FAILED;
     }
 }
@@ -226,7 +227,12 @@ static ge::graphStatus ComputeMaxTensorElements(gert::TilingContext* context, ui
 
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto idxTensorShapePtr = context->GetDynamicInputShape(INPUT_IDX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, idxTensorShapePtr);
+        OP_CHECK_IF(idxTensorShapePtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "input1",
+                        "the shape of dynamic input " + std::to_string(i) +
+                            " is missing in the tiling context; check that the graph node provides all inputs"),
+                    return ge::GRAPH_FAILED);
         auto idxTensorShape = idxTensorShapePtr->GetStorageShape();
         int64_t numel = idxTensorShape.GetShapeSize();
         tilingData->tensorElements[i] = numel;
@@ -235,7 +241,12 @@ static ge::graphStatus ComputeMaxTensorElements(gert::TilingContext* context, ui
         }
         if (i == 0) {
             auto idxTensorDtypePtr = context->GetDynamicInputDesc(INPUT_IDX, i);
-            OP_CHECK_NULL_WITH_CONTEXT(context, idxTensorDtypePtr);
+            OP_CHECK_IF(idxTensorDtypePtr == nullptr,
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                            context->GetNodeName(), "input1",
+                            "the desc of dynamic input 0 is missing in the tiling context; check that the graph "
+                            "node provides all inputs"),
+                        return ge::GRAPH_FAILED);
             dataType = idxTensorDtypePtr->GetDataType();
         }
     }

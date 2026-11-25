@@ -19,6 +19,9 @@
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "ut_op_util.h"
+#include <map>
+#include <string>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "test_cube_util.h"
 #include "../../../../op_kernel/arch35/avg_pool_update_tiling_data.h"
 
@@ -308,4 +311,92 @@ TEST_F(AvgPoolUpdateTiling, avg_pool_update_x1_empty_fail)
                   false,
                   true},
                  {false});
+}
+
+// ============================================================================
+// 错误码负向用例: outH*strideH / outW*strideW int64溢出 → EZ0026
+// 注: (outDim-1)*stride 与 SAME 分支的乘法保护位于 ParseAttrs 的
+// outH*strideH/outW*strideW 溢出检查之后，同类极端输入先在此处以正式码拦截
+// ============================================================================
+namespace {
+namespace errmsg_test {
+inline void ClearErrorMessages() { (void)ErrorManager::GetInstance().GetRawErrorMessages(); }
+
+inline void ExpectFirstError(const std::string& expectedCode, const std::map<std::string, std::string>& expectedArgs)
+{
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors.front().error_id, expectedCode);
+    for (const auto& expected : expectedArgs) {
+        const auto actual = errors.front().args_map.find(expected.first);
+        ASSERT_NE(actual, errors.front().args_map.end());
+        EXPECT_EQ(actual->second, expected.second);
+    }
+}
+} // namespace errmsg_test
+
+ge::graphStatus RunTilingRaw(const std::vector<int64_t>& x1Shape, const std::vector<int64_t>& x2Shape,
+                             const std::vector<int64_t>& strides)
+{
+    fe::PlatFormInfos pf;
+    std::map<std::string, std::string> soc, ai, intr;
+    GetPlatFormInfos(R"({"hardware_info":{"UB_SIZE":253952,"CORE_NUM":64}})", soc, ai, intr);
+    std::map<std::string, std::string> version;
+    version["Short_SoC_version"] = "Ascend950";
+    version["NpuArch"] = "3510";
+    pf.Init();
+
+    auto opType = std::string("AvgPoolUpdate");
+    auto tilingFn = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
+
+    gert::StorageShape x1S = MakeStorageShape(x1Shape);
+    gert::StorageShape x2S = MakeStorageShape(x2Shape);
+    gert::StorageShape yS = MakeStorageShape(x1Shape);
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsh = gert::ContinuousVector::Create<size_t>(4096);
+    auto th = gert::TilingContextFaker()
+                  .NodeIoNum(2, 1)
+                  .IrInstanceNum({1, 1})
+                  .InputShapes({&x1S, &x2S})
+                  .OutputShapes({&yS})
+                  .CompileInfo(&compileInfo)
+                  .NodeAttrs({{"ksize", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 1, 1})},
+                              {"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(strides)},
+                              {"padding_mode", Ops::NN::AnyValue::CreateFrom<std::string>("SAME")},
+                              {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({0, 0, 0, 0})},
+                              {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NHWC")},
+                              {"ceil_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                              {"exclusive", Ops::NN::AnyValue::CreateFrom<bool>(true)}})
+                  .PlatformInfo(reinterpret_cast<char*>(&pf))
+                  .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .TilingData(param.get())
+                  .Workspace(reinterpret_cast<gert::ContinuousVector*>(wsh.get()))
+                  .Build();
+    auto* ctx = th.GetContext<gert::TilingContext>();
+    ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc);
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", ai);
+    ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
+    ctx->GetPlatformInfo()->SetPlatformRes("version", version);
+    return tilingFn(ctx);
+}
+} // namespace
+
+// outH * strideH int64溢出 → EZ0026
+TEST_F(AvgPoolUpdateTiling, errmsg_out_h_times_stride_h_overflow_ez0026)
+{
+    errmsg_test::ClearErrorMessages();
+    // NHWC: x1 = {N, outH, outW, C}，outH 取大维与 2^31-1 步长相乘溢出
+    EXPECT_EQ(RunTilingRaw({1, 8589934595, 1, 1}, {1, 1, 1, 1}, {1, 2147483647, 1, 1}), ge::GRAPH_FAILED);
+    errmsg_test::ExpectFirstError("EZ0026", {{"param_name", "strides"}});
+}
+
+// outW * strideW int64溢出 → EZ0026
+TEST_F(AvgPoolUpdateTiling, errmsg_out_w_times_stride_w_overflow_ez0026)
+{
+    errmsg_test::ClearErrorMessages();
+    EXPECT_EQ(RunTilingRaw({1, 1, 8589934595, 1}, {1, 1, 1, 1}, {1, 1, 2147483647, 1}), ge::GRAPH_FAILED);
+    errmsg_test::ExpectFirstError("EZ0026", {{"param_name", "strides"}});
 }

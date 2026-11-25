@@ -29,14 +29,16 @@ static ge::graphStatus InferDataType4FusedBiasLeakyReluGrad(gert::InferDataTypeC
 
     ge::DataType yGradDtype = context->GetInputDataType(IDX_0);
     OP_CHECK_IF(yGradDtype != ge::DT_FLOAT16 && yGradDtype != ge::DT_FLOAT,
-                OP_LOGE(context, "FusedBiasLeakyReluGrad: y_grad dtype must be FLOAT16 or FLOAT, got %d",
-                        static_cast<int>(yGradDtype)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "y_grad", Ops::Base::ToString(yGradDtype),
+                                                      "y_grad only supports DT_FLOAT16 and DT_FLOAT"),
                 return ge::GRAPH_FAILED);
 
     ge::DataType featuresDtype = context->GetInputDataType(1);
     OP_CHECK_IF(featuresDtype != yGradDtype,
-                OP_LOGE(context, "FusedBiasLeakyReluGrad: features dtype must match y_grad dtype, got %d vs %d",
-                        static_cast<int>(featuresDtype), static_cast<int>(yGradDtype)),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context->GetNodeName(), "features, y_grad",
+                    Ops::Base::ToString(featuresDtype) + ", " + Ops::Base::ToString(yGradDtype),
+                    "features dtype must match y_grad dtype"),
                 return ge::GRAPH_FAILED);
 
     context->SetOutputDataType(IDX_0, yGradDtype);

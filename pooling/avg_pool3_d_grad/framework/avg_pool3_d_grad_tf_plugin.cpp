@@ -53,7 +53,8 @@ static Status ParseParamsAvgPool3DGrad(const google::protobuf::Message* op_src, 
     std::string data_format_attr;
     if (op.GetAttr("data_format", data_format_attr) == ge::GRAPH_SUCCESS) {
         if (data_format_attr != "NCDHW" && data_format_attr != "NDHWC") {
-            OP_LOGE(GetOpName(op).c_str(), "data_format only support NCDHW and NDHWC.");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(GetOpName(op).c_str(), "data_format", data_format_attr,
+                                                  "data_format only supports NCDHW and NDHWC");
             return FAILED;
         }
         data_format = data_format_attr == "NCDHW" ? ge::FORMAT_NCDHW : ge::FORMAT_NDHWC;

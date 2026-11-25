@@ -50,12 +50,20 @@ static graphStatus InferShapeForFakeQuantWithMinMaxVarsGradient(gert::InferShape
     // Validate gradients and x have identical shape
     if (!Ops::Base::IsUnknownRank(*gradShape) && !Ops::Base::IsUnknownRank(*xShape)) {
         OP_CHECK_IF(gradShape->GetDimNum() != xShape->GetDimNum(),
-                    OP_LOGE(context, "gradients and x must have identical shape."), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                        context->GetNodeName(), "gradients, x",
+                        std::to_string(gradShape->GetDimNum()) + ", " + std::to_string(xShape->GetDimNum()),
+                        "gradients and x must have identical shape"),
+                    return ge::GRAPH_FAILED);
         for (size_t i = 0; i < xShape->GetDimNum(); ++i) {
             const int64_t gradDim = gradShape->GetDim(i);
             const int64_t xDim = xShape->GetDim(i);
             OP_CHECK_IF(gradDim >= 0 && xDim >= 0 && gradDim != xDim,
-                        OP_LOGE(context, "gradients and x must have identical shape."), return ge::GRAPH_FAILED);
+                        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                            context->GetNodeName(), "gradients, x",
+                            Ops::Base::ToString(*gradShape) + ", " + Ops::Base::ToString(*xShape),
+                            "gradients and x must have identical shape"),
+                        return ge::GRAPH_FAILED);
         }
     }
 
@@ -64,11 +72,15 @@ static graphStatus InferShapeForFakeQuantWithMinMaxVarsGradient(gert::InferShape
     OP_CHECK_IF(!Ops::Base::IsUnknownRank(*minShape) &&
                     (minShape->GetDimNum() > 1 ||
                      (minShape->GetDimNum() == 1 && minShape->GetDim(0) >= 0 && minShape->GetDim(0) != 1)),
-                OP_LOGE(context, "min must be a scalar or have shape (1,)."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "min", Ops::Base::ToString(*minShape),
+                                                          "min must be a scalar or have shape (1,)"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(!Ops::Base::IsUnknownRank(*maxShape) &&
                     (maxShape->GetDimNum() > 1 ||
                      (maxShape->GetDimNum() == 1 && maxShape->GetDim(0) >= 0 && maxShape->GetDim(0) != 1)),
-                OP_LOGE(context, "max must be a scalar or have shape (1,)."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "max", Ops::Base::ToString(*maxShape),
+                                                          "max must be a scalar or have shape (1,)"),
+                return ge::GRAPH_FAILED);
 
     // Set output shapes
     gert::Shape* yShape = context->GetOutputShape(OUTPUT_IDX_Y);

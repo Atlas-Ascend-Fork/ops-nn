@@ -70,7 +70,8 @@ ge::graphStatus FakeQuantWithMinMaxVarsGradientTiling::GetOpParam()
         totalLen_ *= shape.GetDim(i);
     }
     if (totalLen_ < 0) {
-        OP_LOGE(context_->GetNodeName(), "Invalid input shape, total len %ld.", totalLen_);
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context_->GetNodeName(), "x", std::to_string(totalLen_),
+                                                  "the total element count is negative");
         return ge::GRAPH_FAILED;
     }
 
@@ -81,17 +82,18 @@ ge::graphStatus FakeQuantWithMinMaxVarsGradientTiling::GetOpParam()
     OP_CHECK_NULL_WITH_CONTEXT(context_, gradShape);
     const gert::Shape& gradStorage = gradShape->GetStorageShape();
     OP_CHECK_IF((gradStorage.GetDimNum() != shape.GetDimNum()),
-                OP_LOGE(context_->GetNodeName(),
-                        "FakeQuantWithMinMaxVarsGradient gradients and x must have identical shape, rank %zu vs %zu.",
-                        gradStorage.GetDimNum(), shape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context_->GetNodeName(), "gradients, x",
+                    std::to_string(gradStorage.GetDimNum()) + ", " + std::to_string(shape.GetDimNum()),
+                    "gradients and x must have identical shape"),
                 return ge::GRAPH_FAILED);
     for (size_t i = 0; i < shape.GetDimNum(); ++i) {
-        OP_CHECK_IF((gradStorage.GetDim(i) != shape.GetDim(i)),
-                    OP_LOGE(context_->GetNodeName(),
-                            "FakeQuantWithMinMaxVarsGradient gradients and x must have identical shape, "
-                            "dim %zu: %ld vs %ld.",
-                            i, gradStorage.GetDim(i), shape.GetDim(i)),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            (gradStorage.GetDim(i) != shape.GetDim(i)),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context_->GetNodeName(), "gradients, x",
+                                                   Ops::Base::ToString(gradStorage) + ", " + Ops::Base::ToString(shape),
+                                                   "gradients and x must have identical shape"),
+            return ge::GRAPH_FAILED);
     }
 
     // Validate min/max: rank-0 scalar or shape (1,); concrete storage shapes at tiling
@@ -102,18 +104,16 @@ ge::graphStatus FakeQuantWithMinMaxVarsGradientTiling::GetOpParam()
     OP_CHECK_NULL_WITH_CONTEXT(context_, maxShape);
     const gert::Shape& minStorage = minShape->GetStorageShape();
     const gert::Shape& maxStorage = maxShape->GetStorageShape();
-    OP_CHECK_IF((minStorage.GetDimNum() > 1 || (minStorage.GetDimNum() == 1 && minStorage.GetDim(0) != 1)),
-                OP_LOGE(context_->GetNodeName(),
-                        "FakeQuantWithMinMaxVarsGradient min must be a scalar or have shape (1,), "
-                        "got dimNum %zu dim0 %ld.",
-                        minStorage.GetDimNum(), minStorage.GetDim(0)),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF((maxStorage.GetDimNum() > 1 || (maxStorage.GetDimNum() == 1 && maxStorage.GetDim(0) != 1)),
-                OP_LOGE(context_->GetNodeName(),
-                        "FakeQuantWithMinMaxVarsGradient max must be a scalar or have shape (1,), "
-                        "got dimNum %zu dim0 %ld.",
-                        maxStorage.GetDimNum(), maxStorage.GetDim(0)),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (minStorage.GetDimNum() > 1 || (minStorage.GetDimNum() == 1 && minStorage.GetDim(0) != 1)),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context_->GetNodeName(), "min", Ops::Base::ToString(minStorage),
+                                                  "min must be a scalar or have shape (1,)"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (maxStorage.GetDimNum() > 1 || (maxStorage.GetDimNum() == 1 && maxStorage.GetDim(0) != 1)),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context_->GetNodeName(), "max", Ops::Base::ToString(maxStorage),
+                                                  "max must be a scalar or have shape (1,)"),
+        return ge::GRAPH_FAILED);
 
     // Validate dtypes
     auto gDesc = context_->GetInputDesc(INPUT_GRAD_INDEX);
@@ -121,7 +121,10 @@ ge::graphStatus FakeQuantWithMinMaxVarsGradientTiling::GetOpParam()
     OP_CHECK_NULL_WITH_CONTEXT(context_, gDesc);
     OP_CHECK_NULL_WITH_CONTEXT(context_, xDesc);
     OP_CHECK_IF((gDesc->GetDataType() != ge::DT_FLOAT || xDesc->GetDataType() != ge::DT_FLOAT),
-                OP_LOGE(context_->GetNodeName(), "FakeQuantWithMinMaxVarsGradient only supports float32 inputs."),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context_->GetNodeName(), "gradients, x",
+                    Ops::Base::ToString(gDesc->GetDataType()) + ", " + Ops::Base::ToString(xDesc->GetDataType()),
+                    "gradients and x only support DT_FLOAT"),
                 return ge::GRAPH_FAILED);
 
     // Read attributes (NOT tensor values)
@@ -136,8 +139,8 @@ ge::graphStatus FakeQuantWithMinMaxVarsGradientTiling::GetOpParam()
 
     // Validate num_bits range [2, 16]
     OP_CHECK_IF((numBits_ < 2 || numBits_ > 16),
-                OP_LOGE(context_->GetNodeName(), "FakeQuantWithMinMaxVarsGradient num_bits must be in [2,16], got %ld.",
-                        numBits_),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "num_bits", std::to_string(numBits_),
+                                                      "num_bits must be in range [2, 16]"),
                 return ge::GRAPH_FAILED);
 
     // NOTE: min/max are tensor inputs, NOT read here.

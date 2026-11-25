@@ -439,8 +439,8 @@ static ge::graphStatus TilingFuncFusedBiasLeakyReluGrad(gert::TilingContext* con
     // stack buffers in FillIOStrides/ComputeStrides are sized kRank. A rank>8
     // shape would overflow those fixed-size arrays.
     OP_CHECK_IF(rank > FUSED_BIAS_LEAKY_RELU_GRAD_RANK_8,
-                OP_LOGE(context, "Squeezed rank %ld exceeds maximum supported rank %d", rank,
-                        FUSED_BIAS_LEAKY_RELU_GRAD_RANK_8),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(rank),
+                                                         "rank must not exceed 8"),
                 return ge::GRAPH_FAILED);
 
     bool isEmpty = false;

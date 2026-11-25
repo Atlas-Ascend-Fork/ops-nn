@@ -15,6 +15,29 @@
 #include <string>
 #include <vector>
 #include <gtest/gtest.h>
+
+#include <map>
+#include <string>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
+
+namespace {
+namespace errmsg_test {
+inline void ClearErrorMessages() { (void)ErrorManager::GetInstance().GetRawErrorMessages(); }
+
+inline void ExpectFirstError(const std::string& expectedCode, const std::map<std::string, std::string>& expectedArgs)
+{
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors.front().error_id, expectedCode);
+    for (const auto& expected : expectedArgs) {
+        const auto actual = errors.front().args_map.find(expected.first);
+        ASSERT_NE(actual, errors.front().args_map.end());
+        EXPECT_EQ(actual->second, expected.second);
+    }
+}
+} // namespace errmsg_test
+} // namespace
+
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "kernel_run_context_facker.h"
@@ -39,6 +62,8 @@ struct TilingCase {
     bool hasGroupIndex = false;
     gert::Shape weightShape = {};
     ge::graphStatus expectedStatus = ge::GRAPH_SUCCESS;
+    std::string expectErrorId;
+    std::map<std::string, std::string> expectErrorArgs;
 };
 
 class SwigluGroupGradTilingTest : public testing::Test {
@@ -166,7 +191,11 @@ void ExecuteTilingCase(const TilingCase& testCase)
     tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
     tilingContext->GetPlatformInfo()->SetPlatformRes("version", socVersions);
 
+    errmsg_test::ClearErrorMessages();
     EXPECT_EQ(tilingFunc(tilingContext), testCase.expectedStatus);
+    if (!testCase.expectErrorId.empty()) {
+        errmsg_test::ExpectFirstError(testCase.expectErrorId, testCase.expectErrorArgs);
+    }
 }
 
 TEST_F(SwigluGroupGradTilingTest, tiling_fp32) { ExecuteTilingCase({}); }
@@ -326,3 +355,72 @@ TEST_F(SwigluGroupGradTilingTest, tiling_rejects_nan_clamp_limit)
 }
 
 } // namespace
+
+// ============================================================================
+// 错误码负向用例: 校验 E*9*** 整改后上报的结构化错误码
+// ============================================================================
+
+TEST_F(SwigluGroupGradTilingTest, errmsg_grad_y_dtype_unsupported_ez0020)
+{
+    TilingCase testCase;
+    testCase.dtype = ge::DT_INT32;
+    testCase.expectedStatus = ge::GRAPH_FAILED;
+    testCase.expectErrorId = "EZ0020";
+    testCase.expectErrorArgs = {{"param_name", "grad_y"},
+                                {"op_name", "SwigluGroupGrad"},
+                                {"incorrect_dtype", "DT_INT32"},
+                                {"reason", "grad_y only supports DT_BF16, DT_FLOAT16 and DT_FLOAT"}};
+    ExecuteTilingCase(testCase);
+}
+
+TEST_F(SwigluGroupGradTilingTest, errmsg_grad_y_rank_zero_ez0012)
+{
+    TilingCase testCase;
+    testCase.gradYShape = gert::Shape({});
+    testCase.xShape = gert::Shape({});
+    testCase.expectedStatus = ge::GRAPH_FAILED;
+    testCase.expectErrorId = "EZ0012";
+    testCase.expectErrorArgs = {{"param_name", "grad_y"},
+                                {"op_name", "SwigluGroupGrad"},
+                                {"incorrect_dim", "0"},
+                                {"reason", "grad_y must be at least 1D"}};
+    ExecuteTilingCase(testCase);
+}
+
+TEST_F(SwigluGroupGradTilingTest, errmsg_x_last_dim_mismatch_ez0015)
+{
+    TilingCase testCase;
+    testCase.xShape = gert::Shape({4, 16});
+    testCase.expectedStatus = ge::GRAPH_FAILED;
+    testCase.expectErrorId = "EZ0015";
+    testCase.expectErrorArgs = {{"param_name", "x"},
+                                {"op_name", "SwigluGroupGrad"},
+                                {"incorrect_size", "16"},
+                                {"reason", "x.shape[-1] must equal 2 * grad_y.shape[-1]"}};
+    ExecuteTilingCase(testCase);
+}
+
+TEST_F(SwigluGroupGradTilingTest, errmsg_weight_without_y_origin_ez0037)
+{
+    TilingCase testCase;
+    testCase.hasWeight = true;
+    testCase.expectedStatus = ge::GRAPH_FAILED;
+    testCase.expectErrorId = "EZ0037";
+    testCase.expectErrorArgs = {{"param_name", "weight, y_origin"},
+                                {"op_name", "SwigluGroupGrad"},
+                                {"reason", "weight and y_origin must be provided together"}};
+    ExecuteTilingCase(testCase);
+}
+
+TEST_F(SwigluGroupGradTilingTest, errmsg_clamp_limit_invalid_ez0026)
+{
+    TilingCase testCase;
+    testCase.clampLimit = 0.0f;
+    testCase.expectedStatus = ge::GRAPH_FAILED;
+    testCase.expectErrorId = "EZ0026";
+    testCase.expectErrorArgs = {{"param_name", "clamp_limit"},
+                                {"op_name", "SwigluGroupGrad"},
+                                {"incorrect_value", "0.000000"},
+                                {"reason", "clamp_limit must be -1.0 (no clamp) or greater than 0.0"}};
+    ExecuteTilingCase(testCase);
+}

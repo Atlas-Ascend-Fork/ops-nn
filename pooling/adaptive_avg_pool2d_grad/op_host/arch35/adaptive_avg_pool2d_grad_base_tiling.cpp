@@ -144,9 +144,13 @@ void AdaptiveAvgPool2dGradTilingBase::SetOtherInputParams()
 ge::graphStatus AdaptiveAvgPool2dGradTilingBase::GetShapeAttrsInfo()
 {
     OP_LOGD(context_->GetNodeName(), "Enter AdaptiveAvgPool2dGradTilingBase GetShapeAttrsInfo.");
-    OP_CHECK_IF(CheckInputDtype() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "The input dtype is invalid."),
+    OP_CHECK_IF(CheckInputDtype() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                       "The input dtype is invalid; propagate the lower-layer first error"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckInputShape(), OP_LOGE(context_->GetNodeName(), "The input relationship is invalid."),
+    OP_CHECK_IF(!CheckInputShape(),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                       "The input relationship is invalid; propagate the lower-layer first error"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(SetInputParams() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "Get input shape failed."),
                 return ge::GRAPH_FAILED);

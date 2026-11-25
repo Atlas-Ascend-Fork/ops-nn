@@ -49,8 +49,9 @@ static ge::graphStatus CalcDtype(gert::TilingContext* context, SwigluGroupGradIn
 
     if (inputData.gradYDtype != ge::DT_BF16 && inputData.gradYDtype != ge::DT_FLOAT16 &&
         inputData.gradYDtype != ge::DT_FLOAT) {
-        OP_LOGE(context->GetNodeName(), "grad_y dtype[%s] not supported",
-                ge::TypeUtils::DataTypeToSerialString(inputData.gradYDtype).c_str());
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "grad_y",
+                                              Ops::Base::ToString(inputData.gradYDtype),
+                                              "grad_y only supports DT_BF16, DT_FLOAT16 and DT_FLOAT");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -62,9 +63,11 @@ static ge::graphStatus CheckShape(gert::TilingContext* context, SwigluGroupGradI
     OP_CHECK_NULL_WITH_CONTEXT(context, gradYStorageShape);
     const gert::Shape& gradYShape = gradYStorageShape->GetStorageShape();
 
-    OP_CHECK_IF(gradYShape.GetDimNum() < 1,
-                OP_LOGE(context->GetNodeName(), "grad_y must be at least 1D, got %ld dims.", gradYShape.GetDimNum()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        gradYShape.GetDimNum() < 1,
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "grad_y",
+                                                 std::to_string(gradYShape.GetDimNum()), "grad_y must be at least 1D"),
+        return ge::GRAPH_FAILED);
 
     inputData.totalRows = 1;
     for (size_t i = 0; i < gradYShape.GetDimNum() - 1; ++i) {
@@ -78,7 +81,8 @@ static ge::graphStatus CheckShape(gert::TilingContext* context, SwigluGroupGradI
     const gert::Shape& xShape = xStorageShape->GetStorageShape();
 
     OP_CHECK_IF(xShape.GetDimNum() < 1,
-                OP_LOGE(context->GetNodeName(), "x must be at least 1D, got %ld dims.", xShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x",
+                                                         std::to_string(xShape.GetDimNum()), "x must be at least 1D"),
                 return ge::GRAPH_FAILED);
 
     int64_t xTotalRows = 1;
@@ -87,13 +91,19 @@ static ge::graphStatus CheckShape(gert::TilingContext* context, SwigluGroupGradI
     }
     inputData.dim2H = xShape.GetDim(xShape.GetDimNum() - 1);
 
-    OP_CHECK_IF(xTotalRows != inputData.totalRows,
-                OP_LOGE(context->GetNodeName(), "x rows=%ld != grad_y rows=%ld", xTotalRows, inputData.totalRows),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        xTotalRows != inputData.totalRows,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "x, grad_y",
+                                               Ops::Base::ToString(xShape) + ", " + Ops::Base::ToString(gradYShape),
+                                               "x rows must equal grad_y rows"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(inputData.dim2H != inputData.H * DIM_TWO,
-                OP_LOGE(context->GetNodeName(), "x.shape[-1]=%ld != 2*H=%ld", inputData.dim2H, inputData.H * DIM_TWO),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "x", std::to_string(inputData.dim2H),
+                                                          "x.shape[-1] must equal 2 * grad_y.shape[-1]"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(inputData.H <= 0, OP_LOGE(context->GetNodeName(), "H=%ld must be > 0", inputData.H),
+    OP_CHECK_IF(inputData.H <= 0,
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "grad_y", std::to_string(inputData.H),
+                                                          "grad_y.shape[-1] must be greater than 0"),
                 return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -139,37 +149,50 @@ static ge::graphStatus ParseOptionalInputs(gert::TilingContext* context, SwigluG
         inputData.isWeight = 1;
         auto gradWeightOut = context->GetOutputShape(1);
         OP_CHECK_IF(gradWeightOut == nullptr,
-                    OP_LOGE(context->GetNodeName(), "grad_weight must be non-null when weight is present"),
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "grad_weight",
+                                                             "grad_weight must be non-null when weight is present"),
                     return ge::GRAPH_FAILED);
         const gert::Shape& gradWeightShape = gradWeightOut->GetStorageShape();
         OP_CHECK_IF(gradWeightShape.GetDimNum() != weightShape->GetDimNum(),
-                    OP_LOGE(context->GetNodeName(), "grad_weight dims=%ld must match weight dims=%ld",
-                            gradWeightShape.GetDimNum(), weightShape->GetDimNum()),
+                    OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                        context->GetNodeName(), "grad_weight, weight",
+                        std::to_string(gradWeightShape.GetDimNum()) + ", " + std::to_string(weightShape->GetDimNum()),
+                        "grad_weight rank must match weight rank"),
                     return ge::GRAPH_FAILED);
         for (int64_t i = 0; i < static_cast<int64_t>(weightShape->GetDimNum()); ++i) {
             OP_CHECK_IF(gradWeightShape.GetDim(i) != weightShape->GetDim(i),
-                        OP_LOGE(context->GetNodeName(), "grad_weight.shape[%ld]=%ld must match weight.shape[%ld]=%ld",
-                                i, gradWeightShape.GetDim(i), i, weightShape->GetDim(i)),
+                        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                            context->GetNodeName(), "grad_weight, weight",
+                            Ops::Base::ToString(gradWeightShape) + ", " + Ops::Base::ToString(*weightShape),
+                            "grad_weight shape must match weight shape"),
                         return ge::GRAPH_FAILED);
         }
         OP_CHECK_IF(yOriginShape == nullptr,
-                    OP_LOGE(context->GetNodeName(), "y_origin must be present when weight is present"),
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "weight, y_origin",
+                                                             "y_origin must be present when weight is present"),
                     return ge::GRAPH_FAILED);
         inputData.isYOrigin = 1;
 
-        OP_CHECK_IF(yOriginShape->GetDimNum() < 1, OP_LOGE(context->GetNodeName(), "y_origin must be at least 1D"),
+        OP_CHECK_IF(yOriginShape->GetDimNum() < 1,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "y_origin",
+                                                             std::to_string(yOriginShape->GetDimNum()),
+                                                             "y_origin must be at least 1D"),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(yOriginShape->GetDim(yOriginShape->GetDimNum() - 1) != inputData.H,
-                    OP_LOGE(context->GetNodeName(), "y_origin.shape[-1]=%ld must equal H=%ld",
-                            yOriginShape->GetDim(yOriginShape->GetDimNum() - 1), inputData.H),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            yOriginShape->GetDim(yOriginShape->GetDimNum() - 1) != inputData.H,
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                context->GetNodeName(), "y_origin", std::to_string(yOriginShape->GetDim(yOriginShape->GetDimNum() - 1)),
+                "y_origin.shape[-1] must equal grad_y.shape[-1]"),
+            return ge::GRAPH_FAILED);
         int64_t yOriginTotalRows = 1;
         for (size_t i = 0; i < yOriginShape->GetDimNum() - 1; ++i) {
             yOriginTotalRows *= yOriginShape->GetDim(i);
         }
         OP_CHECK_IF(yOriginTotalRows != inputData.totalRows,
-                    OP_LOGE(context->GetNodeName(), "y_origin outer numel(%ld) must equal totalRows(%ld)",
-                            yOriginTotalRows, inputData.totalRows),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        context->GetNodeName(), "y_origin, grad_y",
+                        std::to_string(yOriginTotalRows) + ", " + std::to_string(inputData.totalRows),
+                        "y_origin outer numel must equal grad_y outer numel"),
                     return ge::GRAPH_FAILED);
 
         auto weightElementNum = weightShape->GetShapeSize();
@@ -184,8 +207,9 @@ static ge::graphStatus ParseOptionalInputs(gert::TilingContext* context, SwigluG
     if (groupIndexShape != nullptr) {
         inputData.isGroupIndex = 1;
         OP_CHECK_IF(groupIndexShape->GetDimNum() != 1 || groupIndexShape->GetDim(0) < 1,
-                    OP_LOGE(context->GetNodeName(), "group_index must be a non-empty 1D tensor, got dimNum=%ld.",
-                            groupIndexShape->GetDimNum()),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "group_index",
+                                                           Ops::Base::ToString(*groupIndexShape),
+                                                           "group_index must be a non-empty 1D tensor"),
                     return ge::GRAPH_FAILED);
         inputData.groupIndexG = groupIndexShape->GetDim(0);
     }
@@ -204,8 +228,9 @@ static ge::graphStatus ParseAttrs(gert::TilingContext* context, SwigluGroupGradI
 
     if (clampLimitAttr != nullptr) {
         OP_CHECK_IF(*clampLimitAttr != -1.0f && !(*clampLimitAttr > 0.0f),
-                    OP_LOGE(context->GetNodeName(), "clamp_limit must be -1.0 (no clamp) or > 0.0, but got %f",
-                            *clampLimitAttr),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "clamp_limit",
+                                                          std::to_string(*clampLimitAttr),
+                                                          "clamp_limit must be -1.0 (no clamp) or greater than 0.0"),
                     return ge::GRAPH_FAILED);
         if (*clampLimitAttr > 0.0f) {
             inputData.hasClamp = 1;
