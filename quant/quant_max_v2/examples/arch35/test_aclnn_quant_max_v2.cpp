@@ -99,8 +99,8 @@ int main()
     aclTensor* yScale = nullptr; // 仅动态量化输出，静态量化传 nullptr
     std::vector<float> xHostData = {1, 2, 3, 4, -1, -2, -3, -4, 5, 6, 7, 8, -5, -6, -7, -8,
                                     2, 4, 6, 8, 1,  3,  5,  7,  9, 8, 7, 6, 5,  4,  3,  2};
-    std::vector<int64_t> groupListHostData = {4, 8}; // cumsum：前4行一组、后4行一组
-    std::vector<float> yHostData(GetShapeSize(yShape), 0);
+    std::vector<int64_t> groupListHostData = {4, 8};         // cumsum：前4行一组、后4行一组
+    std::vector<uint8_t> yHostData(GetShapeSize(yShape), 0); // y 的 dtype 由 dstType 决定（34=HIFLOAT8，1 字节）
     std::vector<float> amaxHostData(GetShapeSize(amaxShape), 0);
     std::vector<float> yScaleHostData(GetShapeSize(yScaleShape), 0);
     // 创建x aclTensor（模拟BF16，此处按效果以FLOAT演示）
@@ -109,8 +109,8 @@ int main()
     // 创建groupList aclTensor
     ret = CreateAclTensor(groupListHostData, groupListShape, &groupListDeviceAddr, aclDataType::ACL_INT64, &groupList);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    // 创建y aclTensor
-    ret = CreateAclTensor(yHostData, yShape, &yDeviceAddr, aclDataType::ACL_FLOAT, &y);
+    // 创建y aclTensor（dtype 与 dstType 一致：34=HIFLOAT8）
+    ret = CreateAclTensor(yHostData, yShape, &yDeviceAddr, aclDataType::ACL_HIFLOAT8, &y);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建amax aclTensor
     ret = CreateAclTensor(amaxHostData, amaxShape, &amaxDeviceAddr, aclDataType::ACL_FLOAT, &amax);
@@ -145,12 +145,23 @@ int main()
 
     // 5.获取输出的值，将device侧内存上的结果拷贝至host侧
     auto ySize = GetShapeSize(yShape);
-    std::vector<float> yResult(ySize, 0);
-    ret = aclrtMemcpy(yResult.data(), yResult.size() * sizeof(yResult[0]), yDeviceAddr, ySize * sizeof(float),
+    std::vector<uint8_t> yResult(ySize, 0);
+    ret = aclrtMemcpy(yResult.data(), yResult.size() * sizeof(yResult[0]), yDeviceAddr, ySize * sizeof(uint8_t),
                       ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
     for (int64_t i = 0; i < ySize; i++) {
-        LOG_PRINT("y[%ld] is: %f\n", i, yResult[i]);
+        LOG_PRINT("y[%ld] is: 0x%02x\n", i, yResult[i]);
+    }
+    std::vector<float> amaxResult(GetShapeSize(amaxShape), 0);
+    ret = aclrtMemcpy(amaxResult.data(), amaxResult.size() * sizeof(amaxResult[0]), amaxDeviceAddr,
+                      GetShapeSize(amaxShape) * sizeof(float), ACL_MEMCPY_DEVICE_TO_HOST);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy amax from device to host failed. ERROR: %d\n", ret); return ret);
+    std::vector<float> yScaleResult(GetShapeSize(yScaleShape), 0);
+    ret = aclrtMemcpy(yScaleResult.data(), yScaleResult.size() * sizeof(yScaleResult[0]), yScaleDeviceAddr,
+                      GetShapeSize(yScaleShape) * sizeof(float), ACL_MEMCPY_DEVICE_TO_HOST);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy yScale from device to host failed. ERROR: %d\n", ret); return ret);
+    for (int64_t i = 0; i < GetShapeSize(amaxShape); i++) {
+        LOG_PRINT("amax[%ld] is: %f, yScale[%ld] is: %f\n", i, amaxResult[i], i, yScaleResult[i]);
     }
 
     // 6.释放aclTensor
