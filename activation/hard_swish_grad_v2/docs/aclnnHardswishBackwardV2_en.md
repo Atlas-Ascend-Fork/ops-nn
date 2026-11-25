@@ -25,8 +25,8 @@
 
 ## Function
 
-- Description: Backward propagation of [aclnnHardswish](../../hard_swish/docs/aclnnHardswish&aclnnInplaceHardswish.md). Computes the gradient of tensor self.
-- API functional difference: Compared with [aclnnHardswishBackward](../../hard_swish_grad/docs/aclnnHardswishBackward.md), aclnnHardswishBackwardV2 makes slight adjustments to the formula. For details, see "Formula".
+- Description: Backward propagation of [aclnnHardswish](../../hard_swish/docs/aclnnHardswish&aclnnInplaceHardswish_en.md). Computes the gradient of tensor self.
+- API functional difference: Compared with [aclnnHardswishBackward](../../hard_swish_grad/docs/aclnnHardswishBackward_en.md), aclnnHardswishBackwardV2 makes slight adjustments to the formula. For details, see "Formula".
 - Formula:
 
   $$
