@@ -145,7 +145,7 @@ aclnnStatus aclnnConvolution(
   <td>padding (aclIntArray*)</td>
   <td>Input</td>
   <td>The padding of input.</td>
-  <td>When the dimension of input is 3 and transposed=false, the Array Length of padding must be 1 or 2. When the dimension of input is 3 and transposed=true, the Array Length of padding must be 1. When the dimension of input is 4, the Array Length of padding must be 2 or 4. When the dimension of input is 5, the Array Length of padding must be 3. The value of padding must be greater than or equal to 0.</td>
+  <td>When the dimension of input is 3 and transposed=false, the Array Length of padding must be 1 or 2. If the length is 2, the two values indicate the front and back padding respectively, and the output formula needs to use the two padding values accordingly. When the dimension of input is 3 and transposed=true, the Array Length of padding must be 1. When the dimension of input is 4, the Array Length of padding must be 2 or 4. If the length is 4, the four values indicate the front and back padding of H and the front and back padding of W respectively, and the output formula needs to use the four padding values accordingly. When the dimension of input is 5, the Array Length of padding must be 3. The value of padding must be greater than or equal to 0.</td>
   <td>INT64</td>
   <td>-</td>
   <td>-</td>
@@ -195,7 +195,7 @@ aclnnStatus aclnnConvolution(
   <td>output (aclTensor*)</td>
   <td>Output</td>
   <td>Denotes the convolution output.</td>
-  <td><ul><li>Supports empty tensors.</li><li>The data type must be consistent with the data type deduced from input and weight.</li><li>The number of channels equals the first dimension of weight, and other dimensions are ≥ 0.</li></ul></td>
+  <td><ul><li>Supports empty tensors.</li><li>The data type must be consistent with the data type deduced from input and weight.</li><li>When transposed=false, the number of channels equals the first dimension of weight; when transposed=true, the number of channels equals weight.shape[1]*groups. Other dimensions are ≥ 0.</li></ul></td>
   <td>FLOAT, FLOAT16, BFLOAT16, HIFLOAT8, FLOAT8_E4M3FN</td>
   <td>NCL, NCHW, NCDHW</td>
   <td>3-5</td>

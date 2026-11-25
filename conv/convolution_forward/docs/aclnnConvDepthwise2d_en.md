@@ -303,7 +303,7 @@ aclnnStatus aclnnConvDepthwise2d(
   </tr>
   <tr>
     <th scope="row">bias</th>
-    <td>      HIFLOAT8 and FLOAT8_E4M3FN are not supported for the data type of bias. The data type of bias must be the same as those of input and weight.
+    <td>      HIFLOAT8 and FLOAT8_E4M3FN are not supported for the data type of bias. The data type of bias must be the same as those of self and weight.
     </td>
     <td>      When the data type of self is HIFLOAT8, the data type of bias is eventually converted to FLOAT for computation.
     </td>
@@ -531,7 +531,10 @@ int main() {
   int32_t deviceId = 0;
   aclrtStream stream;
   auto ret = aclnnConvDepthwise2dTest(deviceId, stream);
-  CHECK_FREE_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnConvDepthwise2dTest failed. ERROR: %d\n", ret); return ret);
+  if (ret != ACL_SUCCESS) {
+    LOG_PRINT("aclnnConvDepthwise2dTest failed. ERROR: %d\n", ret);
+    return ret;
+  }
 
   Finalize(deviceId, stream);
   return 0;

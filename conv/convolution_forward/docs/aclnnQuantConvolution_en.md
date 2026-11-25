@@ -595,7 +595,7 @@ int aclnnQuantConvolutionTest(int32_t deviceId, aclrtStream& stream, std::vector
   // 3. Call the CANN operator library API. Change it to the specific API.
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
-  // Call the first-phase API of aclnnConvolution.
+  // Call the first-phase API of aclnnQuantConvolution.
   ret = aclnnQuantConvolutionGetWorkspaceSize(input, weight, bias, scale, nullptr, strides, pads, dilations,
                                               false, nullptr, 1, 0, nullptr, result, &workspaceSize, &executor);
   CHECK_FREE_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnQuantConvolutionGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
@@ -607,7 +607,7 @@ int aclnnQuantConvolutionTest(int32_t deviceId, aclrtStream& stream, std::vector
     CHECK_FREE_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
     workspaceAddrPtr.reset(workspaceAddr);
   }
-  // Call the second-phase API of aclnnConvolution.
+  // Call the second-phase API of aclnnQuantConvolution.
   ret = aclnnQuantConvolution(workspaceAddr, workspaceSize, executor, stream);
   CHECK_FREE_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnQuantConvolution failed. ERROR: %d\n", ret); return ret);
 
@@ -634,7 +634,7 @@ int main() {
   int32_t deviceId = 0;
   aclrtStream stream;
   std::vector<aclDataType> dtypesInfo = {aclDataType::ACL_INT8, aclDataType::ACL_INT8, aclDataType::ACL_FLOAT,
-  aclDataType::ACL_FLOAT, aclDataType::ACL_BF16}; // datatypes of input/weight/bias/scale/output, respectively
+    aclDataType::ACL_FLOAT, aclDataType::ACL_BF16};
   auto ret = aclnnQuantConvolutionTest(deviceId, stream, dtypesInfo);
   CHECK_FREE_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnQuantConvolutionTest failed. ERROR: %d\n", ret); return ret);
 

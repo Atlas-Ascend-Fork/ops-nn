@@ -143,7 +143,7 @@ aclnnStatus aclnnConvolution(
   <td>padding（aclIntArray*）</td>
   <td>输入</td>
   <td>对input的填充。</td>
-  <td>当input的维度为3且transposed=false时，padding数组长度需等于1或2。当input的维度为3且transposed=true时，padding数组长度需等于1。当input的维度为4时，padding数组长度需等于2或4。当input的维度为5时，padding数组长度需等于3。padding值应大于等于0。</td>
+  <td>当input的维度为3且transposed=false时，padding数组长度需等于1或2；若为2，分别表示前、后填充，输出公式需要相应使用两个填充值。当input的维度为3且transposed=true时，padding数组长度需等于1。当input的维度为4时，padding数组长度需等于2或4；若为4，分别表示H前、H后、W前、W后填充，输出公式需要相应使用四个填充值。当input的维度为5时，padding数组长度需等于3。padding值应大于等于0。</td>
   <td>INT64</td>
   <td>-</td>
   <td>-</td>
@@ -193,7 +193,7 @@ aclnnStatus aclnnConvolution(
   <td>output（aclTensor*）</td>
   <td>输出</td>
   <td>表示卷积输出。</td>
-  <td><ul><li>支持空Tensor。</li><li>数据类型需要与input、weight推导之后的数据类型保持一致。</li><li>通道数等于weight第一维，其他维度≥0。</li></ul></td>
+  <td><ul><li>支持空Tensor。</li><li>数据类型需要与input、weight推导之后的数据类型保持一致。</li><li>transposed=false时，通道数等于weight第一维；transposed=true时，通道数等于weight.shape[1]*groups，其他维度≥0。</li></ul></td>
   <td>FLOAT、FLOAT16、BFLOAT16、HIFLOAT8、FLOAT8_E4M3FN</td>
   <td>NCL、NCHW、NCDHW</td>
   <td>3-5</td>

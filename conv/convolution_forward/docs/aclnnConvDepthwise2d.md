@@ -303,7 +303,7 @@ aclnnStatus aclnnConvDepthwise2d(
   <tr>
     <th scope="row">bias</th>
     <td>
-      bias数据类型不支持HIFLOAT8、FLOAT8_E4M3FN。数据类型与input、weight一致。
+      bias数据类型不支持HIFLOAT8、FLOAT8_E4M3FN。数据类型与self、weight一致。
     </td>
     <td>
       当self数据类型为HIFLOAT8时，bias数据类型最终会转成FLOAT参与计算。
@@ -536,7 +536,10 @@ int main() {
   int32_t deviceId = 0;
   aclrtStream stream;
   auto ret = aclnnConvDepthwise2dTest(deviceId, stream);
-  CHECK_FREE_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnConvDepthwise2dTest failed. ERROR: %d\n", ret); return ret);
+  if (ret != ACL_SUCCESS) {
+    LOG_PRINT("aclnnConvDepthwise2dTest failed. ERROR: %d\n", ret);
+    return ret;
+  }
 
   Finalize(deviceId, stream);
   return 0;
