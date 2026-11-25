@@ -35,7 +35,7 @@
 aclnnStatus aclnnSoftsignBackwardGetWorkspaceSize(
   const aclTensor  *gradients,
   const aclTensor  *features,
-  aclTensor        *output,
+  const aclTensor  *output,
   uint64_t         *workspaceSize,
   aclOpExecutor    **executor)
 ```
@@ -75,7 +75,7 @@ aclnnStatus aclnnSoftsignBackward(
     </tr></thead>
   <tbody>
     <tr>
-      <td>gradients（aclTensor*）</td>
+      <td>gradients（const&nbsp;aclTensor*）</td>
       <td>输入</td>
       <td>表示上游梯度张量，对应公式中gradients。</td>
       <td><ul><li>支持空Tensor。</li><li>数据类型需要与features的数据类型一致。</li><li>shape需要与features的shape完全相同。</li></ul></td>
@@ -85,7 +85,7 @@ aclnnStatus aclnnSoftsignBackward(
       <td>√</td>
     </tr>
     <tr>
-      <td>features（aclTensor*）</td>
+      <td>features（const&nbsp;aclTensor*）</td>
       <td>输入</td>
       <td>表示Softsign前向函数的输入特征张量，对应公式中features。</td>
       <td><ul><li>支持空Tensor。</li><li>数据类型需要与gradients的数据类型一致。</li><li>shape需要与gradients的shape完全相同。</li></ul></td>
@@ -95,7 +95,7 @@ aclnnStatus aclnnSoftsignBackward(
       <td>√</td>
     </tr>
     <tr>
-      <td>output（aclTensor*）</td>
+      <td>output（const&nbsp;aclTensor*）</td>
       <td>输出</td>
       <td>表示计算得到的梯度输出张量，对应公式中output。</td>
       <td><ul><li>不支持空Tensor。</li><li>数据类型需要与输入的数据类型一致。</li><li>shape需要与输入的shape相同。</li></ul></td>

@@ -34,7 +34,7 @@
 ```cpp
 aclnnStatus aclnnSoftsignGetWorkspaceSize(
   const aclTensor  *self,
-  aclTensor        *out,
+  const aclTensor  *out,
   uint64_t         *workspaceSize,
   aclOpExecutor    **executor)
 ```
@@ -84,7 +84,7 @@ aclnnStatus aclnnSoftsign(
       <td>√</td>
     </tr>
     <tr>
-      <td>out（aclTensor*）</td>
+      <td>out（const&nbsp;aclTensor*）</td>
       <td>输出</td>
       <td>输出张量，对应公式中out。</td>
       <td><ul><li>不支持空Tensor。</li><li>数据类型需要与self一致。</li><li>shape需要与self一致。</li></ul></td>
