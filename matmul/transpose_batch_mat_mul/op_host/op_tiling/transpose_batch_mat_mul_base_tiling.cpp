@@ -610,6 +610,7 @@ ge::graphStatus TransposeBatchMatMulBaseTiling::GetShape()
                     CUBE_INNER_ERR_REPORT(args_.opName, "invalid input/output dim num"), return ge::GRAPH_FAILED);
 
     auto attrs = context_->GetAttrs();
+    OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
     size_t idx = 0;
     aPermList_ = attrs->GetAttrPointer<gert::ContinuousVector>(idx++);
     bPermList_ = attrs->GetAttrPointer<gert::ContinuousVector>(idx++);
