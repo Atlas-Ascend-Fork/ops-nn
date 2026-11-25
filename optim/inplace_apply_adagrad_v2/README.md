@@ -13,7 +13,7 @@
 
 ## 功能说明
 
-- **算子功能**：执行 Adagrad V2 优化器的单步参数更新。通过累积历史梯度的平方和来自适应调整每个参数的学习率，V2 相比 V1 在分母添加 epsilon 参数提供数值稳定性保护。Inplace 语义，var 和 accum 输出与输入共享 Device 内存。对标 CANNDEV 中 `ApplyAdagradV2D` 接口的计算语义。
+- **算子功能**：执行Adagrad V2优化器的单步参数更新。通过累积历史梯度的平方和来自适应调整每个参数的学习率，V2相比V1在分母添加epsilon参数提供数值稳定性保护。Inplace语义，var和accum输出与输入共享Device内存。
 
 - **计算公式**：
 
@@ -46,22 +46,29 @@
 <tbody>
   <tr>
     <td>var</td>
-    <td>输入 / 输出 (inplace)</td>
-    <td>待更新的参数张量，应来自Variable。对应公式中的var。Kernel内inplace更新，输出与输入var共享Device内存。</td>
+    <td>输入/输出(inplace)</td>
+    <td>待更新的参数张量，应来自Variable。对应公式中的var。</td>
     <td>FLOAT</td>
     <td>ND</td>
   </tr>
   <tr>
     <td>accum</td>
-    <td>输入 / 输出 (inplace)</td>
-    <td>梯度平方累积和，应来自Variable。对应公式中的accum。shape/dtype 必须与var一致；Kernel内inplace更新，输出与输入accum共享Device内存。</td>
+    <td>输入/输出(inplace)</td>
+    <td>梯度平方累积和，应来自Variable。对应公式中的accum。shape/dtype必须与var一致。</td>
     <td>FLOAT</td>
     <td>ND</td>
   </tr>
   <tr>
     <td>lr</td>
     <td>输入</td>
-    <td>学习率，对应公式中的lr。shape={1} 的 1 元素scalar Tensor。</td>
+    <td>学习率，对应公式中的lr。<strong>单元素Tensor</strong>。</td>
+    <td>FLOAT</td>
+    <td>ND</td>
+  </tr>
+  <tr>
+    <td>epsilon</td>
+    <td>输入</td>
+    <td>用于数值稳定性的小常数，对应公式中的epsilon，加在sqrt之外。<strong>单元素Tensor</strong>。</td>
     <td>FLOAT</td>
     <td>ND</td>
   </tr>
@@ -73,50 +80,18 @@
     <td>ND</td>
   </tr>
   <tr>
-    <td>epsilon</td>
-    <td>属性</td>
-    <td>用于数值稳定性的小常数，对应公式中的epsilon。REQUIRED_ATTR，必填。</td>
-    <td>FLOAT</td>
-    <td>-</td>
-  </tr>
-  <tr>
     <td>update_slots</td>
     <td>属性</td>
     <td>是否更新accum。默认true。当设为false时，accum保持不变。</td>
     <td>BOOL</td>
     <td>-</td>
   </tr>
-  <tr>
-    <td>use_locking</td>
-    <td>属性</td>
-    <td>是否在更新时加锁。默认false。当前实现不支持设置为true，仅支持false。</td>
-    <td>BOOL</td>
-    <td>-</td>
-  </tr>
-  <tr>
-    <td>var (output)</td>
-    <td>输出</td>
-    <td>更新后的var Tensor，与输入var共享Device内存（inplace）。</td>
-    <td>FLOAT</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>accum (output)</td>
-    <td>输出</td>
-    <td>更新后的accum Tensor，与输入accum共享Device内存（inplace）。</td>
-    <td>FLOAT</td>
-    <td>ND</td>
-  </tr>
 </tbody></table>
 
 ## 约束说明
 
 - 输入张量var、accum、grad必须具有相同的形状和数据类型
-- 支持空Tensor
-- 支持的维度范围为0-8维
-- `update_slots`和`use_locking`为可选属性，默认值分别为`true`和`false`；仅支持`use_locking=false`。
-- `lr`的shape须为`[1]`；`epsilon`须为非负有限值。
-- ACLNN通路支持非连续输入，接口层会通过`AutoContiguous()`连续化；GE图通路仅接受ND格式。
+- `lr`、`epsilon`须为单元素Tensor
 
 ## 调用说明
 

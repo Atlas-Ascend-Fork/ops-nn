@@ -18,24 +18,22 @@
  * \file inplace_apply_adagrad_v2_tiling_arch35.cpp
  * \brief InplaceApplyAdagradV2 Host 侧 Tiling 计算（arch35 / DAV_3510）
  *
- * lr is a scalar Tensor input, read by kernel from GM_ADDR at runtime
- * (not stored in TilingData). epsilon is a REQUIRED_ATTR(Float), stored
- * in TilingData. update_slots is a bool attribute encoded in TilingKey
- * (no cache collision for discrete bool).
+ * lr and epsilon are single-element Tensor inputs, read by kernel from
+ * GM_ADDR at runtime (not stored in TilingData). update_slots is a bool
+ * attribute encoded in TilingKey (no cache collision for discrete bool).
  *
- * 属性顺序对齐 CANNDEV ApplyAdagradV2D：epsilon(0), update_slots(1), use_locking(2)
+ * 属性顺序：update_slots(0)
  *
  * Tiling 计算流程：
  *   1. 获取平台信息（ubSize, coreNum）
- *   2. 获取 shape 信息（dim0, dtype）+ epsilon/update_slots 属性
+ *   2. 获取 shape 信息（dim0, dtype）+ update_slots 属性 + lr/epsilon 单元素校验
  *   3. 空 Tensor 短路
  *   4. 多核切分（blockFormer, blockNum）
  *   5. UB 切分（ubFormer, ubLoop*, ubTail*）
- *   6. 设置 TilingKey（dtype × updateSlots = 6 组合）
+ *   6. 设置 TilingKey（仅 FP32 无 dtype 维度，updateSlots = 2 组合）
  */
 
 #include "register/op_def_registry.h"
-#include <cmath>
 #include "op_common/log/log.h"
 #include "op_common/op_host/util/math_util.h"
 #include "op_common/op_host/util/platform_util.h"
@@ -52,22 +50,18 @@ constexpr size_t WORKSPACE_NUM = 1;
 constexpr int64_t MIN_TILING_BITS_SIZE_PER_CORE = 32768; // 4KB in bits
 constexpr int64_t ELEM_ALIGN_FACTOR = 512;               // 多核切分元素对齐因子
 constexpr int64_t ALIGN_256 = 256;                       // UB 对齐字节数
-constexpr size_t MAX_SUPPORTED_RANK = 8;                 // README 接口约束：支持 0-8 维
-constexpr uint32_t INPUT_COUNT = 4;
-constexpr uint32_t OUTPUT_COUNT = 2;
+constexpr uint32_t INPUT_COUNT = 5;
 
-// 输入索引（对齐 CANNDEV ApplyAdagradV2D：var, accum, lr, grad）
+// 输入索引：var, accum, lr, epsilon, grad
 constexpr uint32_t VAR_INPUT_INDEX = 0;
 constexpr uint32_t ACCUM_INPUT_INDEX = 1;
 constexpr uint32_t LR_INPUT_INDEX = 2;
-constexpr uint32_t GRAD_INPUT_INDEX = 3;
-constexpr const char* INPUT_NAMES[INPUT_COUNT] = {"var", "accum", "lr", "grad"};
-constexpr const char* OUTPUT_NAMES[OUTPUT_COUNT] = {"var", "accum"};
+constexpr uint32_t EPS_INPUT_INDEX = 3;
+constexpr uint32_t GRAD_INPUT_INDEX = 4;
+constexpr const char* INPUT_NAMES[INPUT_COUNT] = {"var", "accum", "lr", "epsilon", "grad"};
 
-// 属性索引（对齐 CANNDEV ApplyAdagradV2D：epsilon, update_slots, use_locking）
-constexpr uint32_t EPSILON_ATTR_INDEX = 0;
-constexpr uint32_t UPDATE_SLOTS_ATTR_INDEX = 1;
-constexpr uint32_t USE_LOCKING_ATTR_INDEX = 2;
+// 属性索引：update_slots
+constexpr uint32_t UPDATE_SLOTS_ATTR_INDEX = 0;
 
 // Buffer 数量（用于 UB 空间计算）
 constexpr int64_t BITS_PER_BYTE = 8;
@@ -92,9 +86,16 @@ static ge::graphStatus QueryV2DPlatInfo(gert::TilingContext* ctx, uint64_t* ubCa
     OP_CHECK_NULL_WITH_CONTEXT(ctx, platInfo);
     auto platform = platform_ascendc::PlatformAscendC(platInfo);
     *aivCoreCnt = platform.GetCoreNumAiv();
-    OP_CHECK_IF(*aivCoreCnt == 0, OP_LOGE(ctx, "aiv core count is 0"), return ge::GRAPH_FAILED);
+    if (*aivCoreCnt <= 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx->GetNodeName(), "aivCoreNum", std::to_string(*aivCoreCnt).c_str(),
+                                              "aiv core count must be positive");
+        return ge::GRAPH_FAILED;
+    }
     platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, *ubCapacity);
-    OP_CHECK_IF(*ubCapacity == 0, OP_LOGE(ctx, "ub capacity is 0"), return ge::GRAPH_FAILED);
+    if (*ubCapacity == 0) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(ctx->GetNodeName(), "ubSize", "0", "ub capacity must be positive");
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
@@ -106,121 +107,100 @@ static ge::graphStatus ValidateInputShapes(gert::TilingContext* context, const g
     auto inputGrad = context->GetInputShape(GRAD_INPUT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputGrad);
 
-    OP_CHECK_IF(
-        inputAccum->GetStorageShape() != varShape || inputGrad->GetStorageShape() != varShape,
-        OP_LOGE(context,
-                "InplaceApplyAdagradV2: accum and grad shapes must exactly match var shape; actual accum "
-                "shape=%s, actual grad shape=%s, legal var shape=%s",
-                Ops::Base::ToString(inputAccum->GetStorageShape()).c_str(),
-                Ops::Base::ToString(inputGrad->GetStorageShape()).c_str(), Ops::Base::ToString(varShape).c_str()),
-        return ge::GRAPH_FAILED);
+    if (inputAccum->GetStorageShape() != varShape || inputGrad->GetStorageShape() != varShape) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "accum,grad",
+            (Ops::Base::ToString(inputAccum->GetStorageShape()) + "," +
+             Ops::Base::ToString(inputGrad->GetStorageShape()))
+                .c_str(),
+            (std::string("accum and grad shapes must exactly match var shape ") + Ops::Base::ToString(varShape))
+                .c_str());
+        return ge::GRAPH_FAILED;
+    }
 
     *dim0 = NormalizeScalarShape(varShape).GetShapeSize();
     return ge::GRAPH_SUCCESS;
 }
 
-// 校验 dtype + 标量输入 lr
+// 校验 dtype + 单元素输入 lr/epsilon
 static ge::graphStatus ValidateDtypeAndScalar(gert::TilingContext* context, ge::DataType* dataType)
 {
-    // dtype/format 校验（对齐 OpDef：4 个输入均仅支持 FP32 + ND）
+    // dtype 校验（对齐 OpDef：5 个输入均仅支持 FP32）
+    // format 不做 host 侧校验：ND-only 声明（def.cpp Format({FORMAT_ND})）的 format
+    // 准入由框架层单一事实源把关，host 侧不做冗余校验。
     for (uint32_t i = 0; i < INPUT_COUNT; ++i) {
         auto inputDesc = context->GetInputDesc(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
-        OP_CHECK_IF(inputDesc->GetDataType() != ge::DT_FLOAT,
-                    OP_LOGE(context,
-                            "InplaceApplyAdagradV2: input[%u] unsupported dtype %d; input name=%s, legal "
-                            "dtype=FLOAT",
-                            i, static_cast<int>(inputDesc->GetDataType()), INPUT_NAMES[i]),
-                    return ge::GRAPH_FAILED);
-        const auto format = inputDesc->GetFormat().GetStorageFormat();
-        OP_CHECK_IF(format != ge::FORMAT_ND,
-                    OP_LOGE(context,
-                            "InplaceApplyAdagradV2: input[%u] format %d is unsupported; input name=%s, legal "
-                            "format=ND",
-                            i, static_cast<int>(format), INPUT_NAMES[i]),
-                    return ge::GRAPH_FAILED);
+        if (inputDesc->GetDataType() != ge::DT_FLOAT) {
+            OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), INPUT_NAMES[i],
+                                      Ops::Base::ToString(inputDesc->GetDataType()).c_str(), "FLOAT");
+            return ge::GRAPH_FAILED;
+        }
     }
     *dataType = ge::DT_FLOAT;
 
-    for (uint32_t i = 0; i < OUTPUT_COUNT; ++i) {
-        auto outputDesc = context->GetOutputDesc(i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
-        const auto format = outputDesc->GetFormat().GetStorageFormat();
-        OP_CHECK_IF(format != ge::FORMAT_ND,
-                    OP_LOGE(context,
-                            "InplaceApplyAdagradV2: output[%u] format %d is unsupported; output name=%s, legal "
-                            "format=ND",
-                            i, static_cast<int>(format), OUTPUT_NAMES[i]),
-                    return ge::GRAPH_FAILED);
+    // 校验输入 lr 为单元素 tensor
+    auto lrInput = context->GetInputShape(LR_INPUT_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, lrInput);
+    const auto& lrShape = lrInput->GetStorageShape();
+    if (lrShape.GetShapeSize() != 1) {
+        OP_LOGE_FOR_INVALID_SHAPE(context->GetNodeName(), "lr", Ops::Base::ToString(lrShape).c_str(),
+                                  "a single-element tensor");
+        return ge::GRAPH_FAILED;
     }
 
-    // 校验标量输入 lr 为 1-element
-    auto scalarInput = context->GetInputShape(LR_INPUT_INDEX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scalarInput);
-    const auto& scalarShape = scalarInput->GetStorageShape();
-    OP_CHECK_IF(scalarShape.GetDimNum() != 1 || scalarShape.GetDim(0) != 1,
-                OP_LOGE(context,
-                        "InplaceApplyAdagradV2: input[%u] (lr) must have scalar shape [1]; actual shape=%s, legal "
-                        "shape=[1]",
-                        LR_INPUT_INDEX, Ops::Base::ToString(scalarShape).c_str()),
-                return ge::GRAPH_FAILED);
+    // 校验输入 epsilon 为单元素 tensor（与 lr 同口径）
+    auto epsInput = context->GetInputShape(EPS_INPUT_INDEX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, epsInput);
+    const auto& epsShape = epsInput->GetStorageShape();
+    if (epsShape.GetShapeSize() != 1) {
+        OP_LOGE_FOR_INVALID_SHAPE(context->GetNodeName(), "epsilon", Ops::Base::ToString(epsShape).c_str(),
+                                  "a single-element tensor");
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
-// 读取属性（属性顺序：epsilon(0), update_slots(1), use_locking(2)）
-static ge::graphStatus ReadAttrs(gert::TilingContext* context, float* epsilonVal, bool* updateSlots)
+// 读取属性（属性顺序：update_slots(0)）
+static ge::graphStatus ReadAttrs(gert::TilingContext* context, bool* updateSlots)
 {
     const auto* attrs = context->GetAttrs();
     if (attrs != nullptr) {
-        const float* epsPtr = attrs->GetFloat(EPSILON_ATTR_INDEX);
-        if (epsPtr != nullptr) {
-            *epsilonVal = *epsPtr;
-        } else {
-            *epsilonVal = 1e-10f;
-        }
-        OP_CHECK_IF(!std::isfinite(*epsilonVal) || *epsilonVal < 0.0f,
-                    OP_LOGE(context, "epsilon must be finite and non-negative"), return ge::GRAPH_FAILED);
         const bool* usPtr = attrs->GetBool(UPDATE_SLOTS_ATTR_INDEX);
         if (usPtr != nullptr) {
             *updateSlots = *usPtr;
         } else {
             *updateSlots = true;
         }
-        const bool* lockingPtr = attrs->GetBool(USE_LOCKING_ATTR_INDEX);
-        OP_CHECK_IF(lockingPtr != nullptr && *lockingPtr,
-                    OP_LOGE(context, "use_locking=true is unsupported by this implementation"),
-                    return ge::GRAPH_FAILED);
     } else {
-        *epsilonVal = 1e-10f;
         *updateSlots = true;
     }
     return ge::GRAPH_SUCCESS;
 }
 
-// 获取 shape 和 epsilon/update_slots 属性（CACHE-SAFE: 不读 lr，lr 由 kernel 从 GM_ADDR 读）
+// 获取 shape 和 update_slots 属性（CACHE-SAFE: 不读 lr/epsilon，两者由 kernel 从 GM_ADDR 读）
 static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* dim0, ge::DataType* dataType,
-                                         float* epsilonVal, bool* updateSlots)
+                                         bool* updateSlots)
 {
     // 获取 var shape（展平为 dim0）
     auto inputVar = context->GetInputShape(VAR_INPUT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputVar);
     const auto& varShape = inputVar->GetStorageShape();
-    OP_CHECK_IF(
-        varShape.GetDimNum() > MAX_SUPPORTED_RANK,
-        OP_LOGE(context, "InplaceApplyAdagradV2: var rank %zu exceeds supported range [0, 8]", varShape.GetDimNum()),
-        return ge::GRAPH_FAILED);
 
-    // shape 一致性校验
-    OP_CHECK_IF(ValidateInputShapes(context, varShape, dim0) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "ValidateInputShapes error"), return ge::GRAPH_FAILED);
+    // shape 一致性校验（错误码已由内层语义宏上报，透传返回值）
+    if (ValidateInputShapes(context, varShape, dim0) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    // dtype + 标量校验
-    OP_CHECK_IF(ValidateDtypeAndScalar(context, dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "ValidateDtypeAndScalar error"), return ge::GRAPH_FAILED);
+    // dtype + 单元素 lr/epsilon 校验（错误码已由内层语义宏上报，透传返回值）
+    if (ValidateDtypeAndScalar(context, dataType) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     // 读取属性
-    OP_CHECK_IF(ReadAttrs(context, epsilonVal, updateSlots) != ge::GRAPH_SUCCESS, OP_LOGE(context, "ReadAttrs error"),
-                return ge::GRAPH_FAILED);
+    if (ReadAttrs(context, updateSlots) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     return ge::GRAPH_SUCCESS;
 }
@@ -235,7 +215,7 @@ static ge::graphStatus GetWorkspaceSize(gert::TilingContext* context)
 }
 
 // Compute multi-core partitioning and UB tiling, writing results into TilingData (steps 5-6).
-// V2D 仅支持 FP32（对齐 CANNDEV ApplyAdagradV2D），bufferDivisor 固定。
+// V2D 仅支持 FP32，bufferDivisor 固定。
 static void ComputeMultiCorePartition(int64_t dim0, ge::DataType dataType, int64_t availableCoreNum, uint64_t ubSize,
                                       InplaceApplyAdagradV2TilingData* tiling)
 {
@@ -243,7 +223,10 @@ static void ComputeMultiCorePartition(int64_t dim0, ge::DataType dataType, int64
     (void)dataType; // 仅 FP32，无需分支
     constexpr int64_t elemBytes = sizeof(float);
     constexpr int64_t minDtypeBits = elemBytes * BITS_PER_BYTE; // 32
-    int64_t coreNum = (dim0 * minDtypeBits + MIN_TILING_BITS_SIZE_PER_CORE - 1) / MIN_TILING_BITS_SIZE_PER_CORE;
+    // 先除后加: CeilDiv(dim0, MIN_TILING_BITS_SIZE_PER_CORE / minDtypeBits) 无
+    // dim0 × minDtypeBits 中间乘法, 规避大 dim0 下 int64 乘法溢出; 数学上等价于
+    // ceil(dim0 * minDtypeBits / MIN_TILING_BITS_SIZE_PER_CORE)。
+    int64_t coreNum = CeilDiv(dim0, MIN_TILING_BITS_SIZE_PER_CORE / minDtypeBits);
     coreNum = std::min(coreNum, availableCoreNum);
 
     int64_t blockFormer = CeilAlign(CeilDiv(dim0, coreNum), ELEM_ALIGN_FACTOR);
@@ -264,7 +247,7 @@ static void ComputeMultiCorePartition(int64_t dim0, ge::DataType dataType, int64
     int64_t ubLoopOfTailBlock = CeilDiv(blockTail, ubFormer);
     int64_t ubTailOfTailBlock = blockTail - (ubLoopOfTailBlock - 1) * ubFormer;
 
-    // 写入 TilingData 分区字段（lr 不存入 TilingData，kernel 从 GM_ADDR 读取）
+    // 写入 TilingData 分区字段（lr/epsilon 不存入 TilingData，kernel 从 GM_ADDR 读取）
     tiling->coreNum = static_cast<int32_t>(coreNum);
     tiling->blockFormer = blockFormer;
     tiling->blockNum = blockNum;
@@ -275,18 +258,17 @@ static void ComputeMultiCorePartition(int64_t dim0, ge::DataType dataType, int64
     tiling->ubTailOfTailBlock = ubTailOfTailBlock;
 }
 
-// Fill TilingData: memset + empty-tensor short-circuit + multi-core partition + epsilon.
+// Fill TilingData: memset + empty-tensor short-circuit + multi-core partition.
 static ge::graphStatus FillTilingData(gert::TilingContext* context, int64_t dim0, ge::DataType dataType,
-                                      float epsilonVal, bool updateSlots, int64_t availableCoreNum, uint64_t ubSize)
+                                      bool updateSlots, int64_t availableCoreNum, uint64_t ubSize)
 {
     InplaceApplyAdagradV2TilingData* tiling = context->GetTilingData<InplaceApplyAdagradV2TilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
-    OP_CHECK_IF(
-        memset_s(tiling, sizeof(InplaceApplyAdagradV2TilingData), 0, sizeof(InplaceApplyAdagradV2TilingData)) != EOK,
-        OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
-
-    // epsilon 从 REQUIRED_ATTR(Float) 读取，存入 TilingData
-    tiling->epsilon = epsilonVal;
+    if (memset_s(tiling, sizeof(InplaceApplyAdagradV2TilingData), 0, sizeof(InplaceApplyAdagradV2TilingData)) != EOK) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "tilingData", "memset_s failed",
+                                              "failed to set tiling data");
+        return ge::GRAPH_FAILED;
+    }
 
     if (dim0 == 0) {
         context->SetBlockDim(1);
@@ -308,26 +290,28 @@ static ge::graphStatus FillTilingData(gert::TilingContext* context, int64_t dim0
 static ge::graphStatus InplaceApplyAdagradV2TilingFunc(gert::TilingContext* context)
 {
     OP_LOGI(context, "Enter InplaceApplyAdagradV2TilingFunc");
-    // 1. 获取平台信息
+    // 1. 获取平台信息（错误码已由内层语义宏上报，透传返回值）
     uint64_t ubSize;
     int64_t availableCoreNum;
-    OP_CHECK_IF(QueryV2DPlatInfo(context, &ubSize, &availableCoreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "QueryV2DPlatInfo error"), return ge::GRAPH_FAILED);
+    if (QueryV2DPlatInfo(context, &ubSize, &availableCoreNum) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    // 2. 获取 shape/属性信息（CACHE-SAFE: 不读 lr；epsilon 从 Attr 读）
+    // 2. 获取 shape/属性信息（CACHE-SAFE: 不读 lr/epsilon 值；错误码已由内层语义宏上报）
     int64_t dim0;
     ge::DataType dataType;
-    float epsilonVal;
     bool updateSlots;
-    OP_CHECK_IF(GetShapeAttrsInfo(context, &dim0, &dataType, &epsilonVal, &updateSlots) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+    if (GetShapeAttrsInfo(context, &dim0, &dataType, &updateSlots) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    // 3. Workspace 声明
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
+    // 3. Workspace 声明（null 检查宏自带日志，透传返回值）
+    if (GetWorkspaceSize(context) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     // 4. 填充 TilingData + 多核切分
-    return FillTilingData(context, dim0, dataType, epsilonVal, updateSlots, availableCoreNum, ubSize);
+    return FillTilingData(context, dim0, dataType, updateSlots, availableCoreNum, ubSize);
 }
 
 static ge::graphStatus TilingParseForInplaceApplyAdagradV2([[maybe_unused]] gert::TilingParseContext* context)

@@ -18,9 +18,9 @@
  * \file inplace_apply_adagrad_v2.cpp
  * \brief InplaceApplyAdagradV2 算子 Kernel 入口（arch35 / DAV_3510 架构）
  *
- * 对齐 CANNDEV ApplyAdagradV2D：2 输出（var, accum），仅支持 FLOAT。
- * lr 为标量 Tensor 输入，kernel 从 GM_ADDR 运行时读取，不存入 TilingData。
- * epsilon 为 REQUIRED_ATTR(Float)，存入 TilingData。
+ * 2 输出（var, accum），仅支持 FLOAT。
+ * lr 与 epsilon 均为单元素 Tensor 输入，kernel 从 GM_ADDR 运行时读取，
+ * 不存入 TilingData。
  *
  * 模板参数：
  *   - UPDATE_SLOTS: 是否更新 accum（bool），编码到 TilingKey
@@ -31,20 +31,15 @@
 
 #include "inplace_apply_adagrad_v2.h"
 
-// 提取参数列表为宏，避免双入口签名重复
-#define INPLACE_APPLY_ADAGRAD_V2_PARAMS                                                  \
-    GM_ADDR var, GM_ADDR accum, GM_ADDR lr, GM_ADDR grad,                        \
-    GM_ADDR var_out, GM_ADDR accum_out, GM_ADDR workspace, GM_ADDR tiling
-
 // NPU 入口：template + UPDATE_SLOTS 模板参数，由 ASCENDC_TPL 机制实例化多 binary。
 template <bool UPDATE_SLOTS>
-__global__ __aicore__ void inplace_apply_adagrad_v2(INPLACE_APPLY_ADAGRAD_V2_PARAMS)
+__global__ __aicore__ void inplace_apply_adagrad_v2(GM_ADDR var, GM_ADDR accum, GM_ADDR lr, GM_ADDR epsilon,
+                                                    GM_ADDR grad, GM_ADDR var_out, GM_ADDR accum_out, GM_ADDR workspace,
+                                                    GM_ADDR tiling)
 {
     REGISTER_TILING_DEFAULT(InplaceApplyAdagradV2TilingData);
     GET_TILING_DATA_WITH_STRUCT(InplaceApplyAdagradV2TilingData, tilingData, tiling);
     NsInplaceApplyAdagradV2::InplaceApplyAdagradV2Kernel<float, UPDATE_SLOTS> op;
-    op.Init(var, accum, lr, grad, var_out, accum_out, &tilingData);
+    op.Init(var, accum, lr, epsilon, grad, var_out, accum_out, &tilingData);
     op.Process();
 }
-
-#undef INPLACE_APPLY_ADAGRAD_V2_PARAMS

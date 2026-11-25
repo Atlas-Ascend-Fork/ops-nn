@@ -18,13 +18,13 @@
  * \file inplace_apply_adagrad_v2_def.cpp
  * \brief InplaceApplyAdagradV2 算子定义（输入输出、dtype、format 配置）
  *
- * 对齐 CANNDEV ApplyAdagradV2D：2 输出（var, accum），仅支持 FLOAT。
- * lr 为标量 Tensor 输入，kernel 从 GM_ADDR 运行时读取（CACHE-SAFE）。
- * epsilon 为 REQUIRED_ATTR(Float)，存入 TilingData。
+ * 2 输出（var, accum），仅支持 FLOAT。
+ * lr 与 epsilon 均为单元素 Tensor 输入，kernel 从 GM_ADDR 运行时读取
+ * （CACHE-SAFE，不存入 TilingData）。
  *
- * 输入：var, accum, lr, grad（lr 为标量 Tensor, shape=[]）
+ * 输入：var, accum, lr, epsilon, grad（lr/epsilon 为单元素 Tensor）
  * 输出：var, accum（shape/dtype 与输入一致）
- * 属性：epsilon(float), update_slots(bool), use_locking(bool)
+ * 属性：update_slots(bool)
  */
 
 #include "register/op_def_registry.h"
@@ -39,51 +39,50 @@ public:
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT})
             .Format({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
-            .AutoContiguous();
+            .UnknownShapeFormat({ge::FORMAT_ND});
 
         this->Input("accum")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT})
             .Format({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
-            .AutoContiguous();
+            .UnknownShapeFormat({ge::FORMAT_ND});
 
-        // lr: 标量 Tensor (shape=[])，CACHE-SAFE 设计：kernel 从 GM_ADDR 读取
+        // lr: 单元素 Tensor，CACHE-SAFE 设计：kernel 从 GM_ADDR 读取
         this->Input("lr")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT})
             .Format({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
-            .AutoContiguous();
+            .UnknownShapeFormat({ge::FORMAT_ND});
+
+        // epsilon: 单元素 Tensor（输入 #4），CACHE-SAFE 设计：kernel 从 GM_ADDR 读取
+        this->Input("epsilon")
+            .ParamType(REQUIRED)
+            .DataType({ge::DT_FLOAT})
+            .Format({ge::FORMAT_ND})
+            .UnknownShapeFormat({ge::FORMAT_ND});
 
         this->Input("grad")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT})
             .Format({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
-            .AutoContiguous();
+            .UnknownShapeFormat({ge::FORMAT_ND});
 
         // 输出：var（shape/dtype 与输入 var 一致）
         this->Output("var")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT})
             .Format({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
-            .AutoContiguous();
+            .UnknownShapeFormat({ge::FORMAT_ND});
 
         // 输出：accum（shape/dtype 与输入 accum 一致）
         this->Output("accum")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT})
             .Format({ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND})
-            .AutoContiguous();
+            .UnknownShapeFormat({ge::FORMAT_ND});
 
-        // 属性顺序对齐 CANNDEV ApplyAdagradV2D：epsilon(0), update_slots(1), use_locking(2)
-        this->Attr("epsilon").Float();
+        // 属性：update_slots(0)
         this->Attr("update_slots").AttrType(OPTIONAL).Bool(true);
-        this->Attr("use_locking").AttrType(OPTIONAL).Bool(false);
 
         OpAICoreConfig aiCoreConfig;
         aiCoreConfig.DynamicCompileStaticFlag(true)
@@ -91,8 +90,7 @@ public:
             .DynamicRankSupportFlag(true)
             .DynamicShapeSupportFlag(true)
             .NeedCheckSupportFlag(false)
-            .PrecisionReduceFlag(true)
-            .ExtendCfgInfo("opFile.value", "inplace_apply_adagrad_v2");
+            .PrecisionReduceFlag(true);
         opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_3510, aiCoreConfig);
     }
 };

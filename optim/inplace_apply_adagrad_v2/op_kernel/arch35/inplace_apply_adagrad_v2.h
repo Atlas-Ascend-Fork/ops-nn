@@ -18,12 +18,12 @@
  * \file inplace_apply_adagrad_v2.h
  * \brief InplaceApplyAdagradV2Kernel 算子 Kernel 类定义（arch35 架构，RegBase EleWise）
  *
- * 对齐 CANNDEV ApplyAdagradV2D：2 输出（var, accum），仅支持 FLOAT。
- * lr 为标量 Tensor 输入，kernel 从 GM_ADDR 运行时读取（DataCopyPad + GetValue），
- * 不存入 TilingData。epsilon 为 REQUIRED_ATTR(Float)，存入 TilingData。
+ * 2 输出（var, accum），仅支持 FLOAT。
+ * lr 与 epsilon 均为单元素 Tensor 输入，kernel 从 GM_ADDR 运行时读取
+ * （DataCopyPad + GetValue），不存入 TilingData。
  *
  * 模板参数：
- *   - T: 数据类型（float，对齐 CANNDEV ApplyAdagradV2D 仅支持 float32）
+ *   - T: 数据类型（float，仅支持 float32）
  *   - UPDATE_SLOTS: 是否更新 accum（编译期 bool，编码到 TilingKey）
  *
  * 计算公式：
@@ -64,7 +64,7 @@ class InplaceApplyAdagradV2Kernel {
 public:
     __aicore__ inline InplaceApplyAdagradV2Kernel() {}
 
-    __aicore__ inline void Init(GM_ADDR var, GM_ADDR accum, GM_ADDR lr, GM_ADDR grad, GM_ADDR var_out,
+    __aicore__ inline void Init(GM_ADDR var, GM_ADDR accum, GM_ADDR lr, GM_ADDR epsilon, GM_ADDR grad, GM_ADDR var_out,
                                 GM_ADDR accum_out, const InplaceApplyAdagradV2TilingData* tilingData);
     __aicore__ inline void Process();
 
@@ -73,14 +73,14 @@ private:
     __aicore__ inline void CopyIn(int64_t offset, int64_t tileSize);
     __aicore__ inline void ComputeFP32(int64_t tileSize);
     __aicore__ inline void CopyOut(int64_t offset, int64_t tileSize);
-    __aicore__ inline void ReadLrScalar(GM_ADDR lr);
+    __aicore__ inline void ReadScalar(GM_ADDR scalarAddr, float* value);
     __aicore__ inline void SetupGlobalTensors(GM_ADDR var, GM_ADDR accum, GM_ADDR grad, GM_ADDR var_out,
                                               GM_ADDR accum_out, int64_t blockLength);
 
 private:
     TPipe pipe;
 
-    // === 标量读取队列（CACHE-SAFE: 从 GM_ADDR 读取 lr） ===
+    // === 标量读取队列（CACHE-SAFE: 从 GM_ADDR 读取 lr/epsilon） ===
     TQue<QuePosition::VECIN, 1> queSc;
 
     // === FP32 路径队列（T=float 时使用） ===
@@ -100,7 +100,7 @@ private:
     GlobalTensor<T> varInGM;
     GlobalTensor<T> accumInGM;
 
-    // TilingData 缓存（不含 lr，CACHE-SAFE）
+    // TilingData 缓存（不含 lr/epsilon，CACHE-SAFE）
     int64_t blockFormer_ = 0;
     int64_t blockNum_ = 0;
     int64_t ubFormer_ = 0;
@@ -110,7 +110,7 @@ private:
     int64_t ubTailOfTailBlock_ = 0;
     // lr: 从 GM_ADDR 读取（CACHE-SAFE，不存入 TilingData）
     float lr_ = 0.0f;
-    // epsilon: 从 TilingData 读取（REQUIRED_ATTR(Float)，存入 TilingData）
+    // epsilon: 从 GM_ADDR 读取（CACHE-SAFE，不存入 TilingData）
     float epsilon_ = 0.0f;
     // updateSlots: 编译期模板参数 UPDATE_SLOTS
 };
@@ -120,10 +120,10 @@ private:
 // =============================================================================
 template <typename T, bool UPDATE_SLOTS>
 __aicore__ inline void InplaceApplyAdagradV2Kernel<T, UPDATE_SLOTS>::Init(
-    GM_ADDR var, GM_ADDR accum, GM_ADDR lr, GM_ADDR grad, GM_ADDR var_out, GM_ADDR accum_out,
+    GM_ADDR var, GM_ADDR accum, GM_ADDR lr, GM_ADDR epsilon, GM_ADDR grad, GM_ADDR var_out, GM_ADDR accum_out,
     const InplaceApplyAdagradV2TilingData* tilingData)
 {
-    // 缓存 TilingData（lr 不存入 TilingData，CACHE-SAFE；epsilon 存入 TilingData）
+    // 缓存 TilingData（lr/epsilon 不存入 TilingData，CACHE-SAFE）
     blockFormer_ = tilingData->blockFormer;
     blockNum_ = tilingData->blockNum;
     ubFormer_ = tilingData->ubFormer;
@@ -131,10 +131,11 @@ __aicore__ inline void InplaceApplyAdagradV2Kernel<T, UPDATE_SLOTS>::Init(
     ubTailOfFormerBlock_ = tilingData->ubTailOfFormerBlock;
     ubLoopOfTailBlock_ = tilingData->ubLoopOfTailBlock;
     ubTailOfTailBlock_ = tilingData->ubTailOfTailBlock;
-    epsilon_ = tilingData->epsilon;
 
-    // CACHE-SAFE: 从 GM_ADDR 读取 lr 标量（epsilon 从 TilingData 读取）
-    ReadLrScalar(lr);
+    // CACHE-SAFE: 从 GM_ADDR 读取 lr/epsilon 标量（queSc 单次 InitBuffer，两标量共用）
+    pipe.InitBuffer(queSc, 1, SCALAR_UB_SIZE);
+    ReadScalar(lr, &lr_);
+    ReadScalar(epsilon, &epsilon_);
 
     // 计算当前核处理的元素范围
     int64_t blockIdx = AscendC::GetBlockIdx();
@@ -153,13 +154,12 @@ __aicore__ inline void InplaceApplyAdagradV2Kernel<T, UPDATE_SLOTS>::Init(
 }
 
 // =============================================================================
-// ReadLrScalar — CACHE-SAFE: 从 GM_ADDR 读取 lr 标量
+// ReadScalar — CACHE-SAFE: 从 GM_ADDR 读取 lr/epsilon 单元素标量
+// （queSc 已由 Init 单次 InitBuffer，此处仅 Alloc→Copy→Sync→Read→Free）
 // =============================================================================
 template <typename T, bool UPDATE_SLOTS>
-__aicore__ inline void InplaceApplyAdagradV2Kernel<T, UPDATE_SLOTS>::ReadLrScalar(GM_ADDR lr)
+__aicore__ inline void InplaceApplyAdagradV2Kernel<T, UPDATE_SLOTS>::ReadScalar(GM_ADDR scalarAddr, float* value)
 {
-    pipe.InitBuffer(queSc, 1, SCALAR_UB_SIZE);
-
     DataCopyExtParams cpSc;
     cpSc.blockCount = 1;
     cpSc.blockLen = MTE2_MIN_BLOCK_SIZE;
@@ -167,13 +167,13 @@ __aicore__ inline void InplaceApplyAdagradV2Kernel<T, UPDATE_SLOTS>::ReadLrScala
     cpSc.dstStride = 0;
 
     LocalTensor<float> scBuf = queSc.template AllocTensor<float>();
-    GlobalTensor<float> lrGM;
-    lrGM.SetGlobalBuffer((__gm__ float*)lr, 1);
-    DataCopyPad(scBuf, lrGM[0], cpSc, {false, 0, 0, 0});
+    GlobalTensor<float> scalarGM;
+    scalarGM.SetGlobalBuffer((__gm__ float*)scalarAddr, 1);
+    DataCopyPad(scBuf, scalarGM[0], cpSc, {false, 0, 0, 0});
     event_t evtMte2S = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_S));
     SetFlag<HardEvent::MTE2_S>(evtMte2S);
     WaitFlag<HardEvent::MTE2_S>(evtMte2S);
-    lr_ = scBuf.GetValue(0);
+    *value = scBuf.GetValue(0);
     queSc.FreeTensor(scBuf);
 }
 
@@ -276,7 +276,7 @@ __aicore__ inline void InplaceApplyAdagradV2Kernel<T, UPDATE_SLOTS>::ComputeFP32
     AscendC::LocalTensor<T> outVarLocal = outVarQueue.template AllocTensor<T>();
     AscendC::LocalTensor<T> outAccumLocal = outAccumQueue.template AllocTensor<T>();
 
-    // lr 从 GM_ADDR 读取（CACHE-SAFE），epsilon 从 TilingData 读取（REQUIRED_ATTR）
+    // lr/epsilon 均从 GM_ADDR 读取（CACHE-SAFE，不存入 TilingData）
     // Step 1: workBuf = grad²
     AscendC::Mul(outVarLocal, gradLocal, gradLocal, tileSize);
 
@@ -299,7 +299,14 @@ __aicore__ inline void InplaceApplyAdagradV2Kernel<T, UPDATE_SLOTS>::ComputeFP32
 
     // Step 7: outVarLocal = var - update
     AscendC::Sub(outVarLocal, varLocal, gradLocal, tileSize);
-    AscendC::DataCopy(outAccumLocal, accumLocal, tileSize);
+    // UB→UB DataCopy 按 32B 块搬运, 元素数非 32B 整数倍时按 32B 向下取整, 尾部
+    // tileSize%8 个元素被丢弃（out_accum 尾块静默数据错误）。对齐安全形态: 搬运长度
+    // 向上取整到 32B 块, 尾部元素不丢; 多搬运的元素仅落在 UB 队列缓冲区内部
+    // （容量 ubFormer, 64 元素对齐, 不小于取整后长度）, CopyOut 仍按 tileSize 字节
+    // 精确回写 GM, 与 CopyIn/CopyOut 的 DataCopyPad 尾块口径一致。
+    const int64_t elemsPerBlock = MTE2_MIN_BLOCK_SIZE / static_cast<int64_t>(sizeof(T));
+    const int64_t alignedLen = (tileSize + elemsPerBlock - 1) / elemsPerBlock * elemsPerBlock;
+    AscendC::DataCopy(outAccumLocal, accumLocal, static_cast<uint32_t>(alignedLen));
 
     outVarQueue.template EnQue<T>(outVarLocal);
     outAccumQueue.template EnQue<T>(outAccumLocal);

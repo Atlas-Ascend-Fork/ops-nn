@@ -18,9 +18,9 @@
  * \file inplace_apply_adagrad_v2_tiling_data.h
  * \brief TilingData 结构体定义（RegBase 标准 C++ struct）
  *
- * lr is a scalar Tensor input, read directly from GM_ADDR (device memory)
- * by the kernel at runtime, avoiding tiling data cache issues.
- * epsilon is a REQUIRED_ATTR(Float), stored in TilingData.
+ * lr and epsilon are single-element Tensor inputs, read directly from
+ * GM_ADDR (device memory) by the kernel at runtime, avoiding tiling data
+ * cache issues.
  * update_slots is a bool attribute encoded in TilingKey (no cache collision
  * for discrete bool values).
  */
@@ -30,10 +30,10 @@
 
 struct InplaceApplyAdagradV2TilingData {
     // === 多核切分参数 ===
-    int64_t dim0 = 0;                // 元素总数量（所有维度展平）
-    int32_t coreNum = 0;             // 实际使用核数
-    int64_t blockFormer = 0;         // 每核基础元素数（512 元素对齐）
-    int64_t blockNum = 0;            // 虚拟 block 数量
+    int64_t dim0 = 0;        // 元素总数量（所有维度展平）
+    int32_t coreNum = 0;     // 实际使用核数
+    int64_t blockFormer = 0; // 每核基础元素数（512 元素对齐）
+    int64_t blockNum = 0;    // 虚拟 block 数量
 
     // === UB 切分参数 ===
     int64_t ubFormer = 0;            // UB tile 基础大小（256B 对齐后的元素数）
@@ -42,9 +42,8 @@ struct InplaceApplyAdagradV2TilingData {
     int64_t ubLoopOfTailBlock = 0;   // 尾 block UB 循环次数
     int64_t ubTailOfTailBlock = 0;   // 尾 block 尾部元素数
 
-    // epsilon: 从 REQUIRED_ATTR(Float) 读取，存入 TilingData
-    float epsilon = 0.0f;
     // lr 不存入 TilingData（CACHE-SAFE: kernel 从 GM_ADDR 读取）
+    // epsilon 不存入 TilingData（CACHE-SAFE: kernel 从 GM_ADDR 读取）
     // update_slots 不存入 TilingData（编译期模板参数 UPDATE_SLOTS，编码到 TilingKey）
 };
 

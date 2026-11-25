@@ -132,8 +132,7 @@ ge::Operator AddInitializerAssign(const std::string& name, ge::Operator& variabl
     auto assign = ge::op::Assign(name.c_str())
                       .set_input_ref(variable)
                       .set_input_value(value)
-                      .set_attr_validate_shape(true)
-                      .set_attr_use_locking(false);
+                      .set_attr_validate_shape(true);
     assign.update_input_desc_ref(desc);
     assign.update_input_desc_value(desc);
     assign.update_output_desc_ref(desc);
@@ -151,6 +150,7 @@ void BuildGraph(const ShapeVector& shape, ge::Graph& graph, std::vector<ge::Oper
     auto varData = AddData("inplace_apply_adagrad_v2_var_data", index++, tensorDesc, graph, graphInputs);
     auto accumData = AddData("inplace_apply_adagrad_v2_accum_data", index++, tensorDesc, graph, graphInputs);
     auto lr = AddData("inplace_apply_adagrad_v2_lr", index++, scalarDesc, graph, graphInputs);
+    auto epsilon = AddData("inplace_apply_adagrad_v2_epsilon", index++, scalarDesc, graph, graphInputs);
     auto grad = AddData("inplace_apply_adagrad_v2_grad", index, tensorDesc, graph, graphInputs);
 
     auto var = AddVariable("inplace_apply_adagrad_v2_var", 0U, varData, tensorDesc, graph);
@@ -163,13 +163,13 @@ void BuildGraph(const ShapeVector& shape, ge::Graph& graph, std::vector<ge::Oper
     op.set_input_var(var);
     op.set_input_accum(accum);
     op.set_input_lr(lr);
+    op.set_input_epsilon(epsilon);
     op.set_input_grad(grad);
-    op.set_attr_epsilon(kEpsilon);
     op.set_attr_update_slots(true);
-    op.set_attr_use_locking(false);
     op.update_input_desc_var(tensorDesc);
     op.update_input_desc_accum(tensorDesc);
     op.update_input_desc_lr(scalarDesc);
+    op.update_input_desc_epsilon(scalarDesc);
     op.update_input_desc_grad(tensorDesc);
     op.update_output_desc_var(tensorDesc);
     op.update_output_desc_accum(tensorDesc);
@@ -193,7 +193,7 @@ StaticInputs MakeInputs()
 std::vector<ge::Tensor> MakeFeeds(const StaticInputs& inputs)
 {
     return {MakeFloatTensor(inputs.shape, inputs.var), MakeFloatTensor(inputs.shape, inputs.accum),
-            MakeFloatScalar(inputs.lr), MakeFloatTensor(inputs.shape, inputs.grad)};
+            MakeFloatScalar(inputs.lr), MakeFloatScalar(kEpsilon), MakeFloatTensor(inputs.shape, inputs.grad)};
 }
 
 ExpectedOutputs ComputeGolden(const StaticInputs& inputs)

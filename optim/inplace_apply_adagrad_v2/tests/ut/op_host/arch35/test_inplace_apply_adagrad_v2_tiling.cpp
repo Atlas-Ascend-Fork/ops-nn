@@ -41,14 +41,12 @@ struct AdagradV2TilingOverrides {
     ge::DataType inputDtype = ge::DT_UNDEFINED;
     int32_t shapeInputIndex = -1;
     gert::StorageShape* inputShape = nullptr;
-    int32_t formatInputIndex = -1;
-    int32_t formatOutputIndex = -1;
 };
 
 static void DoTilingTest(ge::DataType varDtype, gert::StorageShape& varShape, gert::StorageShape& scalarShape,
                          bool updateSlots, ge::graphStatus expectedStatus = ge::GRAPH_SUCCESS,
                          ge::DataType accumDtype = ge::DT_UNDEFINED, gert::StorageShape* accumShape = nullptr,
-                         ge::Format inputFormat = ge::FORMAT_ND, const AdagradV2TilingOverrides& overrides = {})
+                         const AdagradV2TilingOverrides& overrides = {})
 {
     std::string opType("InplaceApplyAdagradV2");
     ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str()), nullptr);
@@ -74,9 +72,11 @@ static void DoTilingTest(ge::DataType varDtype, gert::StorageShape& varShape, ge
     auto wsSize = reinterpret_cast<gert::ContinuousVector*>(wsHolder.get());
     ge::DataType effectiveAccumDtype = accumDtype == ge::DT_UNDEFINED ? varDtype : accumDtype;
     gert::StorageShape* effectiveAccumShape = accumShape == nullptr ? &varShape : accumShape;
-    std::array<ge::DataType, 4> inputDtypes = {varDtype, effectiveAccumDtype, ge::DT_FLOAT, varDtype};
-    std::array<gert::StorageShape*, 4> inputShapes = {&varShape, effectiveAccumShape, &scalarShape, &varShape};
-    std::array<ge::Format, 4> inputFormats = {inputFormat, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
+    std::array<ge::DataType, 5> inputDtypes = {varDtype, effectiveAccumDtype, ge::DT_FLOAT, ge::DT_FLOAT, varDtype};
+    std::array<gert::StorageShape*, 5> inputShapes = {&varShape, effectiveAccumShape, &scalarShape, &scalarShape,
+                                                      &varShape};
+    std::array<ge::Format, 5> inputFormats = {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+                                              ge::FORMAT_ND};
     std::array<ge::Format, 2> outputFormats = {ge::FORMAT_ND, ge::FORMAT_ND};
     if (overrides.dtypeInputIndex >= 0) {
         ASSERT_LT(overrides.dtypeInputIndex, static_cast<int32_t>(inputDtypes.size()));
@@ -87,23 +87,20 @@ static void DoTilingTest(ge::DataType varDtype, gert::StorageShape& varShape, ge
         ASSERT_NE(overrides.inputShape, nullptr);
         inputShapes[static_cast<size_t>(overrides.shapeInputIndex)] = overrides.inputShape;
     }
-    if (overrides.formatInputIndex >= 0) {
-        ASSERT_LT(overrides.formatInputIndex, static_cast<int32_t>(inputFormats.size()));
-        inputFormats[static_cast<size_t>(overrides.formatInputIndex)] = ge::FORMAT_NCHW;
-    }
-    if (overrides.formatOutputIndex >= 0) {
-        ASSERT_LT(overrides.formatOutputIndex, static_cast<int32_t>(outputFormats.size()));
-        outputFormats[static_cast<size_t>(overrides.formatOutputIndex)] = ge::FORMAT_NCHW;
-    }
 
-    // V2D: 4 inputs (var/accum/grad = varDtype, lr = DT_FLOAT), 2 outputs (var, accum)
-    // 输入顺序对齐 CANNDEV ApplyAdagradV2D：var(0), accum(1), lr(2), grad(3)
-    // 属性顺序：epsilon(0), update_slots(1), use_locking(2)
+    // 属性按索引序构造：update_slots(0)——faker 属性索引随 NodeAttrs 传入序
+    // （epsilon 已迁输入 tensor#4，不再是属性）
+    std::vector<std::pair<std::string, Ops::NN::AnyValue>> nodeAttrs;
+    nodeAttrs.emplace_back("update_slots", Ops::NN::AnyValue::CreateFrom<bool>(updateSlots));
+
+    // V2D: 5 inputs (var/accum/grad = varDtype, lr/epsilon = DT_FLOAT), 2 outputs (var, accum)
+    // 输入顺序：var(0), accum(1), lr(2), epsilon(3), grad(4)
+    // 属性顺序：update_slots(0)
     auto holder = gert::TilingContextFaker()
                       .SetOpType(opType)
-                      .NodeIoNum(4, 2)
-                      .IrInstanceNum({1, 1, 1, 1})
-                      .InputShapes({inputShapes[0], inputShapes[1], inputShapes[2], inputShapes[3]})
+                      .NodeIoNum(5, 2)
+                      .IrInstanceNum({1, 1, 1, 1, 1})
+                      .InputShapes({inputShapes[0], inputShapes[1], inputShapes[2], inputShapes[3], inputShapes[4]})
                       .OutputShapes({&varShape, &varShape})
                       .CompileInfo(&compileInfo)
                       .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
@@ -111,10 +108,10 @@ static void DoTilingTest(ge::DataType varDtype, gert::StorageShape& varShape, ge
                       .NodeInputTd(1, inputDtypes[1], inputFormats[1], inputFormats[1])
                       .NodeInputTd(2, inputDtypes[2], inputFormats[2], inputFormats[2])
                       .NodeInputTd(3, inputDtypes[3], inputFormats[3], inputFormats[3])
+                      .NodeInputTd(4, inputDtypes[4], inputFormats[4], inputFormats[4])
                       .NodeOutputTd(0, varDtype, outputFormats[0], outputFormats[0])
                       .NodeOutputTd(1, varDtype, outputFormats[1], outputFormats[1])
-                      .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-10f)},
-                                  {"update_slots", Ops::NN::AnyValue::CreateFrom<bool>(updateSlots)}})
+                      .NodeAttrs(nodeAttrs)
                       .TilingData(param.get())
                       .Workspace(wsSize)
                       .Build();
@@ -173,70 +170,48 @@ TEST_F(InplaceApplyAdagradV2TilingTest, tiling_exact_shape_mismatch_rejected)
     DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_FAILED, ge::DT_UNDEFINED, &accumShape);
 }
 
-TEST_F(InplaceApplyAdagradV2TilingTest, tiling_non_scalar_lr_rejected)
+TEST_F(InplaceApplyAdagradV2TilingTest, tiling_single_element_lr_1x1_accepted)
 {
+    // lr 为 (1,1) 单元素 tensor（元素总数为 1）：接受
     gert::StorageShape varShape = {{16}, {16}};
     gert::StorageShape scalarShape = {{1, 1}, {1, 1}};
+    DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true);
+}
+
+TEST_F(InplaceApplyAdagradV2TilingTest, tiling_single_element_lr_scalar_accepted)
+{
+    // lr 为 rank-0 标量 tensor（StorageShape{{},{}}，元素总数为 1）：接受
+    gert::StorageShape varShape = {{16}, {16}};
+    gert::StorageShape scalarShape = {{}, {}};
+    DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true);
+}
+
+TEST_F(InplaceApplyAdagradV2TilingTest, tiling_multi_element_lr_rejected)
+{
+    // lr 为 (1,2) 两元素 tensor（元素总数 != 1）：拒绝
+    gert::StorageShape varShape = {{16}, {16}};
+    gert::StorageShape scalarShape = {{1, 2}, {1, 2}};
     DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_FAILED);
 }
 
-TEST_F(InplaceApplyAdagradV2TilingTest, tiling_unsupported_format_rejected)
+TEST_F(InplaceApplyAdagradV2TilingTest, tiling_rank_9_accepted)
 {
-    gert::StorageShape varShape = {{1, 2, 3, 4}, {1, 2, 3, 4}};
-    gert::StorageShape scalarShape = {{1}, {1}};
-    DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_FAILED, ge::DT_UNDEFINED, nullptr,
-                 ge::FORMAT_NCHW);
-}
-
-TEST_F(InplaceApplyAdagradV2TilingTest, tiling_rank_9_rejected)
-{
+    // rank-9 var：elewise 展平计算，rank 不参与校验
     gert::StorageShape varShape = {{1, 1, 1, 1, 1, 1, 1, 1, 2}, {1, 1, 1, 1, 1, 1, 1, 1, 2}};
     gert::StorageShape scalarShape = {{1}, {1}};
-    DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_FAILED);
+    DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true);
 }
 
 TEST_F(InplaceApplyAdagradV2TilingTest, tiling_each_input_unsupported_dtype_rejected)
 {
     gert::StorageShape varShape = {{4}, {4}};
     gert::StorageShape scalarShape = {{1}, {1}};
-    for (int32_t i = 0; i < 4; ++i) {
+    for (int32_t i = 0; i < 5; ++i) {
         SCOPED_TRACE("input index " + std::to_string(i));
         AdagradV2TilingOverrides overrides;
         overrides.dtypeInputIndex = i;
         overrides.inputDtype = ge::DT_INT8;
-        DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_FAILED, ge::DT_UNDEFINED, nullptr,
-                     ge::FORMAT_ND, overrides);
-    }
-}
-
-TEST_F(InplaceApplyAdagradV2TilingTest, tiling_each_input_format_rejected)
-{
-    gert::StorageShape varShape = {{1, 1, 1, 1}, {1, 1, 1, 1}};
-    gert::StorageShape scalarShape = {{1}, {1}};
-    gert::StorageShape rankFourLrShape = {{1, 1, 1, 1}, {1, 1, 1, 1}};
-    for (int32_t i = 0; i < 4; ++i) {
-        SCOPED_TRACE("input index " + std::to_string(i));
-        AdagradV2TilingOverrides overrides;
-        overrides.formatInputIndex = i;
-        if (i == 2) {
-            overrides.shapeInputIndex = i;
-            overrides.inputShape = &rankFourLrShape;
-        }
-        DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_FAILED, ge::DT_UNDEFINED, nullptr,
-                     ge::FORMAT_ND, overrides);
-    }
-}
-
-TEST_F(InplaceApplyAdagradV2TilingTest, tiling_each_output_format_rejected)
-{
-    gert::StorageShape varShape = {{1, 1, 1, 1}, {1, 1, 1, 1}};
-    gert::StorageShape scalarShape = {{1}, {1}};
-    for (int32_t i = 0; i < 2; ++i) {
-        SCOPED_TRACE("output index " + std::to_string(i));
-        AdagradV2TilingOverrides overrides;
-        overrides.formatOutputIndex = i;
-        DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_FAILED, ge::DT_UNDEFINED, nullptr,
-                     ge::FORMAT_ND, overrides);
+        DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_FAILED, ge::DT_UNDEFINED, nullptr, overrides);
     }
 }
 
@@ -245,12 +220,54 @@ TEST_F(InplaceApplyAdagradV2TilingTest, tiling_each_tensor_shape_mismatch_reject
     gert::StorageShape varShape = {{4}, {4}};
     gert::StorageShape mismatchShape = {{2, 2}, {2, 2}};
     gert::StorageShape scalarShape = {{1}, {1}};
-    for (const int32_t i : {1, 3}) {
+    for (const int32_t i : {1, 4}) {
         SCOPED_TRACE("input index " + std::to_string(i));
         AdagradV2TilingOverrides overrides;
         overrides.shapeInputIndex = i;
         overrides.inputShape = &mismatchShape;
-        DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_FAILED, ge::DT_UNDEFINED, nullptr,
-                     ge::FORMAT_ND, overrides);
+        DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_FAILED, ge::DT_UNDEFINED, nullptr, overrides);
     }
+}
+
+TEST_F(InplaceApplyAdagradV2TilingTest, tiling_single_element_epsilon_1x1_accepted)
+{
+    // epsilon 为 (1,1) 单元素 tensor（元素总数为 1）：接受
+    gert::StorageShape varShape = {{16}, {16}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    gert::StorageShape epsShape = {{1, 1}, {1, 1}};
+    AdagradV2TilingOverrides overrides;
+    overrides.shapeInputIndex = 3;
+    overrides.inputShape = &epsShape;
+    DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_SUCCESS, ge::DT_UNDEFINED, nullptr, overrides);
+}
+
+TEST_F(InplaceApplyAdagradV2TilingTest, tiling_single_element_epsilon_scalar_accepted)
+{
+    // epsilon 为 rank-0 标量 tensor（StorageShape{{},{}}，元素总数为 1）：接受
+    gert::StorageShape varShape = {{16}, {16}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    gert::StorageShape epsShape = {{}, {}};
+    AdagradV2TilingOverrides overrides;
+    overrides.shapeInputIndex = 3;
+    overrides.inputShape = &epsShape;
+    DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_SUCCESS, ge::DT_UNDEFINED, nullptr, overrides);
+}
+
+TEST_F(InplaceApplyAdagradV2TilingTest, tiling_multi_element_epsilon_rejected)
+{
+    // epsilon 为 (1,2) 两元素 tensor（元素总数 != 1）：拒绝
+    gert::StorageShape varShape = {{16}, {16}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    gert::StorageShape epsShape = {{1, 2}, {1, 2}};
+    AdagradV2TilingOverrides overrides;
+    overrides.shapeInputIndex = 3;
+    overrides.inputShape = &epsShape;
+    DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true, ge::GRAPH_FAILED, ge::DT_UNDEFINED, nullptr, overrides);
+}
+
+TEST_F(InplaceApplyAdagradV2TilingTest, tiling_scalar_var_0d)
+{
+    gert::StorageShape varShape = {{}, {}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+    DoTilingTest(ge::DT_FLOAT, varShape, scalarShape, true);
 }

@@ -15,7 +15,7 @@ English | [简体中文](./README.md)
 
 ## Function
 
-- **Operator function**: Perform a single-step parameter update of the Adagrad V2 optimizer. The operator adaptively adjusts the learning rate of each parameter by accumulating the sum of squares of historical gradients. Compared with V1, V2 adds the epsilon parameter in the denominator for numerical stability protection. The operator has inplace semantics: the var and accum outputs share device memory with the inputs. The computation semantics are aligned with the `ApplyAdagradV2D` API in CANNDEV.
+- **Operator function**: Perform a single-step parameter update of the Adagrad V2 optimizer. The operator adaptively adjusts the learning rate of each parameter by accumulating the sum of squares of historical gradients. Compared with V1, V2 adds the epsilon parameter in the denominator for numerical stability protection. The operator has inplace semantics: the var and accum outputs share device memory with the inputs.
 
 - **Formula**:
 
@@ -48,22 +48,29 @@ English | [简体中文](./README.md)
 <tbody>
   <tr>
     <td>var</td>
-    <td>Input / Output (inplace)</td>
-    <td>Parameter tensor to be updated. It should come from Variable and corresponds to var in the formula. The kernel updates it in place, and the output shares device memory with input var.</td>
+    <td>Input/Output (inplace)</td>
+    <td>Parameter tensor to be updated. It should come from Variable and corresponds to var in the formula.</td>
     <td>FLOAT</td>
     <td>ND</td>
   </tr>
   <tr>
     <td>accum</td>
-    <td>Input / Output (inplace)</td>
-    <td>Accumulated sum of squared gradients. It should come from Variable and corresponds to accum in the formula. The shape/dtype must be the same as those of var. The kernel updates it in place, and the output shares device memory with input accum.</td>
+    <td>Input/Output (inplace)</td>
+    <td>Accumulated sum of squared gradients. It should come from Variable and corresponds to accum in the formula. The shape/dtype must be the same as those of var.</td>
     <td>FLOAT</td>
     <td>ND</td>
   </tr>
   <tr>
     <td>lr</td>
     <td>Input</td>
-    <td>Learning rate, corresponding to lr in the formula. A 1-element scalar tensor with shape={1}.</td>
+    <td>Learning rate, corresponding to lr in the formula. <strong>A single-element tensor</strong>.</td>
+    <td>FLOAT</td>
+    <td>ND</td>
+  </tr>
+  <tr>
+    <td>epsilon</td>
+    <td>Input</td>
+    <td>Small constant for numerical stability, corresponding to epsilon in the formula, added outside the sqrt. <strong>A single-element tensor</strong>.</td>
     <td>FLOAT</td>
     <td>ND</td>
   </tr>
@@ -75,50 +82,18 @@ English | [简体中文](./README.md)
     <td>ND</td>
   </tr>
   <tr>
-    <td>epsilon</td>
-    <td>Attribute</td>
-    <td>Small constant for numerical stability, corresponding to epsilon in the formula. REQUIRED_ATTR, mandatory.</td>
-    <td>FLOAT</td>
-    <td>-</td>
-  </tr>
-  <tr>
     <td>update_slots</td>
     <td>Attribute</td>
     <td>Indicates whether to update accum. Default value: true. When this parameter is set to false, accum remains unchanged.</td>
     <td>BOOL</td>
     <td>-</td>
   </tr>
-  <tr>
-    <td>use_locking</td>
-    <td>Attribute</td>
-    <td>Indicates whether to lock during the update. Default value: false. The current implementation does not support setting this parameter to true, and only false is supported.</td>
-    <td>BOOL</td>
-    <td>-</td>
-  </tr>
-  <tr>
-    <td>var (output)</td>
-    <td>Output</td>
-    <td>Updated var tensor, which shares device memory with input var (inplace).</td>
-    <td>FLOAT</td>
-    <td>ND</td>
-  </tr>
-  <tr>
-    <td>accum (output)</td>
-    <td>Output</td>
-    <td>Updated accum tensor, which shares device memory with input accum (inplace).</td>
-    <td>FLOAT</td>
-    <td>ND</td>
-  </tr>
 </tbody></table>
 
 ## Constraints
 
 - Input tensors var, accum, and grad must have the same shape and data type.
-- Empty tensors are supported.
-- The supported dimension range is 0D to 8D.
-- `update_slots` and `use_locking` are optional attributes, with default values of `true` and `false` respectively. Only `use_locking=false` is supported.
-- The shape of `lr` must be `[1]`, and `epsilon` must be a non-negative finite value.
-- The ACLNN path supports non-contiguous inputs, and the API layer makes them contiguous through `AutoContiguous()`. The GE graph path accepts only the ND format.
+- `lr` and `epsilon` must be single-element tensors.
 
 ## Invocation Description
 

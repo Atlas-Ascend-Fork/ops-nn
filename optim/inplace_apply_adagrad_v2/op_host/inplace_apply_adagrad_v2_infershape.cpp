@@ -18,8 +18,8 @@
  * \file inplace_apply_adagrad_v2_infershape.cpp
  * \brief InplaceApplyAdagradV2 形状推导
  *
- * lr 为标量 Tensor 输入（input 2），不影响输出 shape。
- * epsilon 为 REQUIRED_ATTR(Float)，不影响输出 shape。
+ * lr 与 epsilon 均为单元素 Tensor 输入（input 2 / input 3），
+ * 不影响输出 shape（与 lr 同形态：infershape 不约束单元素输入）。
  * 输出 shape：
  *   var.shape   = input var.shape
  *   accum.shape = input accum.shape
@@ -35,27 +35,11 @@ using namespace ge;
 
 namespace ops {
 
-// 输入数量: var, accum, lr, grad
-constexpr uint32_t INPUT_COUNT = 4;
 // 输出数量: var, accum
 constexpr uint32_t OUTPUT_COUNT = 2;
 
 static ge::graphStatus InferShape4InplaceApplyAdagradV2(gert::InferShapeContext* context)
 {
-    // Format 校验 — 仅支持 ND format（检查全部输入: var, accum, lr, grad）
-    for (uint32_t i = 0; i < INPUT_COUNT; ++i) {
-        const auto* inputTensor = context->GetInputTensor(i);
-        if (inputTensor != nullptr) {
-            auto format = inputTensor->GetStorageFormat();
-            if (format != ge::FORMAT_ND) {
-                const std::string inputName = "input[" + std::to_string(i) + "]";
-                OP_LOGE_FOR_INVALID_FORMAT(context->GetNodeName(), inputName.c_str(), Ops::Base::ToString(format),
-                                           "ND");
-                return ge::GRAPH_FAILED;
-            }
-        }
-    }
-
     // var shape → output var shape
     const gert::Shape* varShape = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, varShape);

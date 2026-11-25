@@ -18,13 +18,13 @@
  * \file inplace_apply_adagrad_v2_tiling_key.h
  * \brief TilingKey 模板参数定义（ASCENDC_TPL_ARGS_DECL 方式）
  *
- * lr 为标量 Tensor 输入，kernel 从 GM_ADDR 运行时读取，
- * 无需 TilingKey 编码 lr 值。
+ * lr 与 epsilon 均为单元素 Tensor 输入，kernel 从 GM_ADDR 运行时读取，
+ * 无需 TilingKey 编码 lr/epsilon 值。
  *
  * 模板参数：
  *   - UPDATE_SLOTS: 是否更新 accum（bool, 0=false / 1=true）
  *
- * 仅支持 FLOAT（对齐 CANNDEV ApplyAdagradV2D），无需 DTYPE 维度。
+ * 仅支持 FLOAT，无需 DTYPE 维度。
  * TilingKey 编码：1 updateSlots × 1 = 2 个 Kernel 二进制
  *
  * 禁止使用 TILING_KEY_IS 宏。
@@ -35,18 +35,10 @@
 
 #include "ascendc/host_api/tiling/template_argument.h"
 
-ASCENDC_TPL_ARGS_DECL(InplaceApplyAdagradV2,
-    ASCENDC_TPL_BOOL_DECL(UPDATE_SLOTS, 0, 1)
-);
+ASCENDC_TPL_ARGS_DECL(InplaceApplyAdagradV2, ASCENDC_TPL_BOOL_DECL(UPDATE_SLOTS, 0, 1));
 
 // 2 个 TilingKey 组合（updateSlots true/false）
-ASCENDC_TPL_SEL(
-    ASCENDC_TPL_ARGS_SEL(
-        ASCENDC_TPL_BOOL_SEL(UPDATE_SLOTS, 1)
-    ),
-    ASCENDC_TPL_ARGS_SEL(
-        ASCENDC_TPL_BOOL_SEL(UPDATE_SLOTS, 0)
-    ),
-);
+ASCENDC_TPL_SEL(ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_BOOL_SEL(UPDATE_SLOTS, 1)),
+                ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_BOOL_SEL(UPDATE_SLOTS, 0)), );
 
 #endif // __INPLACE_APPLY_ADAGRAD_V2_TILING_KEY_H__
