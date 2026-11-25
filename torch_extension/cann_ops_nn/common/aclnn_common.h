@@ -1041,7 +1041,17 @@ inline void ApplyDeterministicConfig()
                         "fallback to ACL_OPT_DETERMINISTIC binary switch, deterministic_level will be ignored.");
         }
     }
-    aclError ret = aclrtCtxSetSysParamOpt(aclSysParamOpt::ACL_OPT_DETERMINISTIC, deterministicAlgorithmsStatus ? 1 : 0);
+    const int64_t deterministicValue = deterministicAlgorithmsStatus ? 1 : 0;
+    // 同步 torch-npu：进程级（非 ctx）与 ctx 级都下发，ctx 级优先级高于进程级
+    static bool setParamWarned = false;
+    aclError ret = aclrtSetSysParamOpt(aclSysParamOpt::ACL_OPT_DETERMINISTIC, deterministicValue);
+    if (ret != ACL_SUCCESS && !setParamWarned) {
+        setParamWarned = true;
+        ASCEND_LOGW("aclrtSetSysParamOpt(ACL_OPT_DETERMINISTIC) failed, ret=%d, "
+                    "deterministic config may be incorrect.",
+                    static_cast<int>(ret));
+    }
+    ret = aclrtCtxSetSysParamOpt(aclSysParamOpt::ACL_OPT_DETERMINISTIC, deterministicValue);
     if (ret != ACL_SUCCESS) {
         ASCEND_LOGW("aclrtCtxSetSysParamOpt(ACL_OPT_DETERMINISTIC) failed, ret=%d, "
                     "deterministic config may be incorrect.",
