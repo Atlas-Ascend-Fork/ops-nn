@@ -48,6 +48,8 @@ static ge::graphStatus Tiling(gert::TilingContext* context)
     uint64_t ubBytes = 0;
     platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubBytes);
     const bool largeDense = numTokens >= 128 && hiddenDim >= 128 && vocabSize >= 1024;
+    // A half N128 fragment can still amortize direct-path setup for large W.
+    const bool directDense = largeDense || (numTokens >= 64 && hiddenDim >= 512 && vocabSize >= 16384);
     // BF16's exact probability VF benefits from smaller CV batches in the
     // measured long-N partition. Keep enough V tasks for several core waves.
     const bool bf16 = context->GetInputDesc(0)->GetDataType() == ge::DT_BF16;
@@ -58,10 +60,10 @@ static ge::graphStatus Tiling(gert::TilingContext* context)
             vocabTileSize /= 2;
         }
     }
-    // Full G resides in two L1 slots. Split-M Fixpipe needs even logical M;
-    // odd-V inputs retain the existing general path rather than reading an
-    // uncomputed padded L0C row. No public input constraint is added.
-    if (largeDense && numTokens <= 512 && vocabSize % 2 == 0) {
+    // The UB direct path uses a full overlapping Cube tile for an odd final
+    // tile. The GM comparison path retains its even-V restriction.
+    if (directDense && numTokens <= 512 &&
+        (vocabSize % 2 == 0 || !(ChunkLossGradOptions::BUILD_MASK & ChunkLossGradOptions::P_VIA_GM))) {
         using namespace ChunkLossGradOptions;
         uint32_t options = bf16 ? BUILD_MASK :
                                   (BUILD_MASK & (REUSE_METADATA | P_VIA_GM | REUSE_LOGITS_WEIGHT | LOGITS_GROUP_TWO |
@@ -72,12 +74,9 @@ static ge::graphStatus Tiling(gert::TilingContext* context)
             options &= ~(REUSE_LOGITS_WEIGHT | LOGITS_GROUP_TWO | REUSE_LOGITS_L0A);
         }
         const bool pViaGm = (options & P_VIA_GM) != 0;
-        uint32_t directVt = vocabTileSize;
-        if (options & BF16_VT128) {
-            directVt = 128;
-            while (directVt > 16 && (vocabSize + directVt - 1) / directVt < 4 * platform.GetCoreNumAic()) {
-                directVt /= 2;
-            }
+        uint32_t directVt = (!bf16 || (options & BF16_VT128)) ? 128 : 64;
+        while (directVt > 16 && (vocabSize + directVt - 1) / directVt < 4 * platform.GetCoreNumAic()) {
+            directVt /= 2;
         }
         uint64_t l1Bytes = 0;
         platform.GetCoreMemSize(platform_ascendc::CoreMemType::L1, l1Bytes);

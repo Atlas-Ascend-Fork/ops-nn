@@ -201,7 +201,7 @@ aclnnStatus aclnnChunkLossBackward(
       <td>
         <ul>
           <li>不支持空Tensor。</li>
-          <li>须为有限值，并与softmaxSum配对使用。</li>
+          <li>-</li>
         </ul>
       </td>
       <td>FLOAT32</td>
@@ -216,7 +216,7 @@ aclnnStatus aclnnChunkLossBackward(
       <td>
         <ul>
           <li>不支持空Tensor。</li>
-          <li>须为有限正值；不接受logsumexp或未减去最大值的指数和。</li>
+          <li>-</li>
         </ul>
       </td>
       <td>FLOAT32</td>
@@ -359,7 +359,6 @@ aclnnStatus aclnnChunkLossBackward(
 - N、H、V均为正整数且不超过2147483647，N×H和V×H均不超过⌊(2^63−1)/4⌋。
 - 非忽略标签须满足0 ≤ labels[i] < V。
 - `alpha`为正向损失归一化分母的倒数，须为有限正数且不超过FLOAT32最大有限值，转换为FLOAT32后仍须大于0。跨chunk调用时共用同一全局`alpha`，由调用方累加各次输出。
-- `softmaxMax`和`softmaxSum`须为有限正值。
 - `gradOutput`的shape为[1]，支持正、负或零值。
 - 确定性计算：
 

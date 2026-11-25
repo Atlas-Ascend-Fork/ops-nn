@@ -13,15 +13,17 @@
 namespace optiling {
 static ge::graphStatus Tiling(gert::TilingContext* context)
 {
-    // Complete Cube tiles use the one-window route. Keep tails on key0 until
-    // the MDL tail-path L1 initialization diagnostics are resolved.
+    // Kernel packing keeps all three Cube dimensions aligned for tail windows.
     if (context && context->GetInputShape(0) && context->GetInputShape(1)) {
         const auto& hiddenShape = context->GetInputShape(0)->GetStorageShape();
         const auto& weightShape = context->GetInputShape(1)->GetStorageShape();
         if (hiddenShape.GetDimNum() == 2 && weightShape.GetDimNum() == 2 && hiddenShape[0] >= 128 &&
-            hiddenShape[0] <= 512 && hiddenShape[1] >= 128 && hiddenShape[1] <= 8192 && hiddenShape[0] % 128 == 0 &&
-            hiddenShape[1] % 128 == 0 && weightShape[0] >= 1024 && weightShape[0] % 128 == 0) {
-            const auto result = BuildChunkLossGradTiling<ChunkLossGradArch22TilingData, 512, 128>(context);
+            hiddenShape[0] <= 512 && hiddenShape[1] >= 128 && hiddenShape[1] <= 8192 && weightShape[0] >= 1024) {
+            const uint64_t window = (uint64_t(hiddenShape[0]) + 127) / 128 * 128;
+            const uint64_t hiddenPitch = (uint64_t(hiddenShape[1]) + 127) / 128 * 128;
+            const bool packedHidden = uint64_t(hiddenShape[0]) != window || uint64_t(hiddenShape[1]) != hiddenPitch;
+            const auto result = BuildChunkLossGradTiling<ChunkLossGradArch22TilingData, 512, 128>(
+                context, packedHidden ? window : 0, hiddenPitch);
             if (result == ge::GRAPH_SUCCESS) {
                 context->SetTilingKey(1);
                 return result;

@@ -68,16 +68,27 @@ public:
         const uint64_t total = (tilingData.vocabSize + tilingData.vocabTile - 1) / tilingData.vocabTile;
         tasks = group < total ? (total - 1 - group) / tilingData.coreNum + 1 : 0;
     }
-    __aicore__ inline uint64_t V0(uint64_t i) const { return (group + i * tilingData.coreNum) * tilingData.vocabTile; }
+    __aicore__ inline uint64_t V0(uint64_t i) const { return LogicalV0(i) - SkipRows(i); }
     __aicore__ inline uint32_t Rows(uint64_t i) const
     {
         const uint64_t rest = tilingData.vocabSize - V0(i);
         return rest < tilingData.vocabTile ? rest : tilingData.vocabTile;
     }
+    __aicore__ inline uint32_t SkipRows(uint64_t i) const
+    {
+        const uint64_t rest = tilingData.vocabSize - LogicalV0(i);
+        // Split-M Fixpipe receives a full tile. Only the nonoverlapping
+        // suffix belongs to this task and may be written to gradWeight.
+        return rest < tilingData.vocabTile && (rest & 1) ? tilingData.vocabTile - rest : 0;
+    }
     uint32_t group = 0, lane = 0;
     uint64_t tasks = 0;
 
 private:
+    __aicore__ inline uint64_t LogicalV0(uint64_t i) const
+    {
+        return (group + i * tilingData.coreNum) * tilingData.vocabTile;
+    }
     Tiling tilingData;
 };
 
@@ -268,10 +279,14 @@ public:
         }
         sync.GReady(task % 2);
     }
-    __aicore__ inline void Finalize(uint64_t vocabOffset, uint32_t vocabCount)
+    __aicore__ inline void Finalize(uint64_t vocabOffset, uint32_t vocabCount, uint32_t skipRows)
     {
-        const uint32_t rows = vocabCount / 2;
-        const uint64_t first = vocabOffset + lane * rows;
+        const uint32_t tileRows = vocabCount / 2;
+        const uint32_t laneStart = lane * tileRows;
+        const uint32_t overlap = skipRows > laneStart ? skipRows - laneStart : 0;
+        const uint32_t skipped = overlap < tileRows ? overlap : tileRows;
+        const uint32_t rows = tileRows - skipped;
+        const uint64_t first = vocabOffset + laneStart + skipped;
         for (uint32_t h0 = 0; h0 < tilingData.hiddenDim; h0 += P_H) {
             const uint32_t hc = tilingData.hiddenDim - h0 < P_H ? tilingData.hiddenDim - h0 : P_H;
             const uint32_t pitch = (hc + 15) / 16 * 16;
@@ -281,6 +296,14 @@ public:
             } else {
                 sync.WaitTile(slot);
             }
+            if (rows == 0) {
+                if constexpr (separate) {
+                    sync.PFree(slot);
+                } else {
+                    sync.TileFree(slot);
+                }
+                continue;
+            }
             const uint32_t outputSlot = doubleOutput ? outputSequence++ % 2 : 0;
             if constexpr (doubleOutput) {
                 WaitOutput(outputSlot);
@@ -289,7 +312,7 @@ public:
                 WaitFlag<HardEvent::MTE3_V>(0);
             }
             auto low = outputBuf.template Get<InputType>()[outputSlot * tilingData.vectorChunk];
-            auto partialTile = sharedBuf.template Get<float>()[slot * (tilingData.vocabTile / 2) * P_H];
+            auto partialTile = sharedBuf.template Get<float>()[(slot * (tilingData.vocabTile / 2) + skipped) * P_H];
             if (hc == P_H) {
                 // Full H256 rows are contiguous in both UB tensors. Use
                 // the existing flat VF instead of one inner loop per row.
@@ -395,7 +418,7 @@ public:
                 if (i + 1 < scheduler.tasks) {
                     vec.MakeFullG(i + 1, scheduler.V0(i + 1), scheduler.Rows(i + 1));
                 }
-                vec.Finalize(scheduler.V0(i), scheduler.Rows(i));
+                vec.Finalize(scheduler.V0(i), scheduler.Rows(i), scheduler.SkipRows(i));
             }
             vec.Drain();
         }
