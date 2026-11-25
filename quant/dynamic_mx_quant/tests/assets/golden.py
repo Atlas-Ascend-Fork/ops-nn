@@ -16,7 +16,28 @@ import re
 import numpy as np
 from ml_dtypes import bfloat16
 
-__golden__ = {"kernel": {"dynamic_mx_quant": "dynamic_mx_quant_golden"}}
+__golden__ = {
+    "kernel": {"dynamic_mx_quant": "dynamic_mx_quant_golden"},
+    "aclnn": {
+        "aclnnDynamicMxQuant": "aclnn_dynamic_mx_quant_golden",
+        "aclnnDynamicMxQuantV2": "aclnn_dynamic_mx_quant_v2_golden",
+        "aclnnDynamicMxQuantV3": "aclnn_dynamic_mx_quant_v3_golden",
+    },
+    "e2e": {"torch_npu.npu_dynamic_mx_quant": "npu_dynamic_mx_quant_golden"},
+}
+
+# TestSpec 新通路的类注册表：算子名/API 名 -> 文件末尾的 Spec 类。
+# TTK 优先按 __spec__ 解析 golden；上面的 __golden__ 保留用于旧通路兼容。
+__spec__ = {
+    "dynamic_mx_quant": "DynamicMxQuantKernelSpec",  # kernel / geir
+    "aclnnDynamicMxQuant": "DynamicMxQuantAclnnSpec",  # aclnn V1
+    "aclnnDynamicMxQuantV2": "DynamicMxQuantAclnnV2Spec",  # aclnn V2
+    "aclnnDynamicMxQuantV3": "DynamicMxQuantAclnnV3Spec",  # aclnn V3
+    "torch_npu.npu_dynamic_mx_quant": "DynamicMxQuantE2ESpec",  # e2e
+}
+
+# torch_npu passes torch ScalarType IDs; the kernel/ACLNN attributes use CANN IDs.
+TORCH_DTYPE_ENUM_TO_CANN = {23: 35, 24: 36, 291: 35, 292: 36, 296: 40, 297: 41}
 
 
 DATA_TYPE_INT_TO_STR = {
@@ -631,12 +652,14 @@ def _nvfp4_reference(
         )[:, :k]
     exact = ((~np.isfinite(product)) | (product == 0)).reshape(rows, blocks * 16)[:, :k]
     scales[:, :blocks] = scale_codes
+    # Two logical FP4 elements share one byte: even index in the low nibble,
+    # odd index in the high nibble. Adjacent E4M3 scales occupy two raw bytes.
     packed = codes[:, ::2] | (codes[:, 1::2] << 4)
     return packed.ravel(), scales.ravel(), exact.astype(np.uint8).ravel()
 
 
 def _nvfp4_ttk_outputs(x, **params):
-    """TTK expects logical dtype arrays; the local ACLNN runner uses raw bytes."""
+    """Kernel/ACLNN TTK compares logical FP4 and FP8 views of scale bytes."""
     from en_dtypes import float4_e2m1
     from ml_dtypes import float8_e4m3fn
 
@@ -648,6 +671,31 @@ def _nvfp4_ttk_outputs(x, **params):
     return values.astype(float4_e2m1).reshape(x.shape), scales.view(
         float8_e4m3fn
     ).reshape(scale_shape)
+
+
+def _nvfp4_source(x, metadata):
+    """Restore the source dtype when TTK carries FP16/BF16 data in FP32."""
+    if x.dtype.name != "float32":
+        return x, False
+    if metadata.get("golden_mode") == "Promote":
+        return x, True
+
+    input_dtypes = metadata.get("input_dtypes")
+    if input_dtypes is None:
+        input_dtypes = metadata.get("tensor_dtypes")
+    if isinstance(input_dtypes, (tuple, list)):
+        source_dtype = input_dtypes[0] if input_dtypes else None
+    else:
+        source_dtype = input_dtypes
+    source_dtype = str(source_dtype).lower() if source_dtype is not None else ""
+    if source_dtype in ("bfloat16", "bf16"):
+        return x.astype(bfloat16), False
+    if source_dtype in ("float16", "fp16"):
+        return x.astype(np.float16), False
+    raise ValueError(
+        "NVFP4 float32 carrier needs FP16/BF16 source metadata "
+        "or trusted TTK golden_mode=Promote"
+    )
 
 
 def dynamic_mx_quant_golden(
@@ -678,32 +726,7 @@ def dynamic_mx_quant_golden(
         if dst_type != 40 or dst_type_max != 0.0:
             raise ValueError("NVFP4 requires dst_type=40 and dst_type_max=0")
 
-        # Promote widens already-rounded source values exactly. Current TTK
-        # also replaces input_dtypes, so do not guess BF16 from float32.
-        promoted_source = False
-        if x.dtype.name == "float32":
-            if kwargs.get("golden_mode") == "Promote":
-                promoted_source = True
-            else:
-                from ml_dtypes import bfloat16
-
-                input_dtypes = kwargs.get("input_dtypes")
-                if isinstance(input_dtypes, (tuple, list)):
-                    source_dtype = input_dtypes[0] if input_dtypes else None
-                else:
-                    source_dtype = input_dtypes
-                source_dtype = (
-                    str(source_dtype).lower() if source_dtype is not None else ""
-                )
-                if source_dtype in ("bfloat16", "bf16"):
-                    x = x.astype(bfloat16)
-                elif source_dtype in ("float16", "fp16"):
-                    x = x.astype(np.float16)
-                else:
-                    raise ValueError(
-                        "NVFP4 float32 carrier needs FP16/BF16 source metadata "
-                        "or trusted TTK golden_mode=Promote"
-                    )
+        x, promoted_source = _nvfp4_source(x, kwargs)
 
         params = dict(
             axis=axis,
@@ -734,3 +757,367 @@ def dynamic_mx_quant_golden(
             max_low_bound=max_low_bound,
         )
         return ret[1], ret[0]
+
+
+def _to_numpy(x):
+    """Convert ACLNN/E2E inputs to numpy without losing BF16 source values."""
+    if hasattr(x, "detach"):
+        tensor = x.detach().cpu()
+        if str(tensor.dtype) == "torch.bfloat16":
+            return tensor.float().numpy().astype(bfloat16)
+        return tensor.numpy()
+    return np.asarray(x)
+
+
+def _aclnn_dynamic_mx_quant_golden(
+    x,
+    axis,
+    round_mode,
+    dst_type,
+    blocksize,
+    scale_alg,
+    dst_type_max,
+    max_low_bound,
+    metadata,
+):
+    x = _to_numpy(x)
+    metadata = dict(metadata)
+    tensor_dtypes = metadata.get("tensor_dtypes")
+    if tensor_dtypes and "input_dtypes" not in metadata:
+        metadata["input_dtypes"] = tensor_dtypes[:1]
+    # TTK's ACLNN Promote mode widens FP16/BF16 to FP32 and replaces
+    # tensor_dtypes before calling this golden. The values have already been
+    # rounded to their source dtype, so preserve those exact values here.
+    if int(scale_alg) == 3 and x.dtype == np.float32 and tensor_dtypes:
+        if str(tensor_dtypes[0]).lower() == "float32":
+            metadata["golden_mode"] = "Promote"
+    metadata.setdefault(
+        "output_dtypes",
+        (
+            DATA_TYPE_INT_TO_STR[int(dst_type)],
+            "float8_e4m3fn" if int(scale_alg) == 3 else "float8_e8m0",
+        ),
+    )
+    return dynamic_mx_quant_golden(
+        x,
+        axis=int(axis),
+        round_mode=round_mode or "rint",
+        dst_type=int(dst_type),
+        blocksize=int(blocksize),
+        scale_alg=int(scale_alg),
+        dst_type_max=float(dst_type_max),
+        max_low_bound=float(max_low_bound),
+        **metadata,
+    )
+
+
+def aclnn_dynamic_mx_quant_golden(
+    x,
+    axis=-1,
+    roundModeOptional=None,
+    dstType=40,
+    blocksize=32,
+    scaleAlg=0,
+    yOut=None,
+    mxscaleOut=None,
+    **kwargs,
+):
+    """ACLNN V1: positional attributes follow GetWorkspaceSize."""
+    return _aclnn_dynamic_mx_quant_golden(
+        x, axis, roundModeOptional, dstType, blocksize, scaleAlg, 0.0, 0.0, kwargs
+    )
+
+
+def aclnn_dynamic_mx_quant_v2_golden(
+    x,
+    axis=-1,
+    roundModeOptional=None,
+    dstType=40,
+    blocksize=32,
+    scaleAlg=0,
+    dstTypeMax=0.0,
+    yOut=None,
+    mxscaleOut=None,
+    **kwargs,
+):
+    """ACLNN V2 adds dstTypeMax to the V1 attribute order."""
+    return _aclnn_dynamic_mx_quant_golden(
+        x,
+        axis,
+        roundModeOptional,
+        dstType,
+        blocksize,
+        scaleAlg,
+        dstTypeMax,
+        0.0,
+        kwargs,
+    )
+
+
+def aclnn_dynamic_mx_quant_v3_golden(
+    x,
+    axis=-1,
+    roundModeOptional=None,
+    dstType=40,
+    blocksize=32,
+    scaleAlg=0,
+    dstTypeMax=0.0,
+    maxLowBound=0.0,
+    yOut=None,
+    mxscaleOut=None,
+    **kwargs,
+):
+    """ACLNN V3 supports NVFP4 (scaleAlg=3) and maxLowBound."""
+    return _aclnn_dynamic_mx_quant_golden(
+        x,
+        axis,
+        roundModeOptional,
+        dstType,
+        blocksize,
+        scaleAlg,
+        dstTypeMax,
+        maxLowBound,
+        kwargs,
+    )
+
+
+def npu_dynamic_mx_quant_golden(
+    x,
+    *,
+    axis=-1,
+    round_mode="rint",
+    dst_type=296,
+    block_size=32,
+    scale_alg=0,
+    dst_type_max=0.0,
+    max_low_bound=0.0,
+    **kwargs,
+):
+    """E2E TTK comparison uses logical FP4 y and raw uint8 scale bytes.
+
+    torch_npu returns packed uint8 y and a uint8 scale, including NVFP4's
+    E4M3 scale. For testcases declaring float4_e2m1 in tensor_dtypes, TTK
+    expands the packed device y before calling its comparison. Return one
+    logical FP4 value per input element to match that comparison path.
+    Sibling FP4 E2E goldens that compare the device representation directly
+    instead return packed y. TTK leaves scale as torch_npu's raw uint8
+    bytes, so a numeric conversion to FP8 would change the result.
+    """
+    dst_type = TORCH_DTYPE_ENUM_TO_CANN[int(dst_type)]
+    x = _to_numpy(x)
+    if int(scale_alg) == 3:
+        if dst_type != 40 or dst_type_max != 0.0:
+            raise ValueError("NVFP4 requires dst_type=40 and dst_type_max=0")
+        x, promoted_source = _nvfp4_source(x, kwargs)
+        packed, scale, _ = _nvfp4_reference(
+            x,
+            axis=int(axis),
+            blocksize=int(block_size),
+            round_mode=round_mode,
+            max_low_bound=max_low_bound,
+            promoted_source=promoted_source,
+        )
+        from en_dtypes import float4_e2m1
+
+        # In each packed byte, the low nibble is the even element and the
+        # high nibble is the odd element; unpack in that order for TTK.
+        codes = np.stack((packed & 15, packed >> 4), axis=-1).ravel()
+        values = _NVFP4_FP4[codes & 7] * np.where(
+            codes & 8, np.float32(-1), np.float32(1)
+        )
+        blocks = (x.shape[-1] + 15) // 16
+        return (
+            values.astype(float4_e2m1).reshape(x.shape),
+            scale.reshape(*x.shape[:-1], (blocks + 1) // 2, 2),
+        )
+
+    y, scale = _aclnn_dynamic_mx_quant_golden(
+        x,
+        axis,
+        round_mode,
+        dst_type,
+        block_size,
+        scale_alg,
+        dst_type_max,
+        max_low_bound,
+        kwargs,
+    )
+    # E2E also compares legacy scale algorithms against raw torch_npu bytes.
+    return np.ascontiguousarray(y), np.ascontiguousarray(scale).view(np.uint8)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# TestSpec 分块：每个通路一个类，golden 只按签名转发到上方原有函数，
+# 不改变任何量化/打包计算逻辑。类名由上方 __spec__ 注册。
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class DynamicMxQuantKernelSpec:
+    """kernel / geir 通路（输入 numpy.ndarray），参数名对齐 dynamic_mx_quant_def.cpp。
+
+    转发目标：dynamic_mx_quant_golden（保持不变）。
+    """
+
+    def golden(
+        x,
+        *,
+        axis=-1,
+        round_mode="rint",
+        dst_type=40,
+        blocksize=32,
+        scale_alg=0,
+        dst_type_max=0.0,
+        max_low_bound=0.0,
+        **kwargs,
+    ):
+        return dynamic_mx_quant_golden(
+            x,
+            axis=axis,
+            round_mode=round_mode,
+            dst_type=dst_type,
+            blocksize=blocksize,
+            scale_alg=scale_alg,
+            dst_type_max=dst_type_max,
+            max_low_bound=max_low_bound,
+            **kwargs,
+        )
+
+
+class DynamicMxQuantAclnnSpec:
+    """aclnnDynamicMxQuant V1：属性顺序对齐 GetWorkspaceSize。
+
+    转发目标：aclnn_dynamic_mx_quant_golden（保持不变）。
+    """
+
+    def golden(
+        x,
+        axis=-1,
+        roundModeOptional=None,
+        dstType=40,
+        blocksize=32,
+        scaleAlg=0,
+        yOut=None,
+        mxscaleOut=None,
+        **kwargs,
+    ):
+        return aclnn_dynamic_mx_quant_golden(
+            x,
+            axis,
+            roundModeOptional,
+            dstType,
+            blocksize,
+            scaleAlg,
+            yOut,
+            mxscaleOut,
+            **kwargs,
+        )
+
+
+class DynamicMxQuantAclnnV2Spec:
+    """aclnnDynamicMxQuantV2：在 V1 属性顺序中增加 dstTypeMax。
+
+    转发目标：aclnn_dynamic_mx_quant_v2_golden（保持不变）。
+    """
+
+    def golden(
+        x,
+        axis=-1,
+        roundModeOptional=None,
+        dstType=40,
+        blocksize=32,
+        scaleAlg=0,
+        dstTypeMax=0.0,
+        yOut=None,
+        mxscaleOut=None,
+        **kwargs,
+    ):
+        return aclnn_dynamic_mx_quant_v2_golden(
+            x,
+            axis,
+            roundModeOptional,
+            dstType,
+            blocksize,
+            scaleAlg,
+            dstTypeMax,
+            yOut,
+            mxscaleOut,
+            **kwargs,
+        )
+
+
+class DynamicMxQuantAclnnV3Spec:
+    """aclnnDynamicMxQuantV3：支持 NVFP4（scaleAlg=3）与 maxLowBound。
+
+    转发目标：aclnn_dynamic_mx_quant_v3_golden（保持不变）。
+    """
+
+    def golden(
+        x,
+        axis=-1,
+        roundModeOptional=None,
+        dstType=40,
+        blocksize=32,
+        scaleAlg=0,
+        dstTypeMax=0.0,
+        maxLowBound=0.0,
+        yOut=None,
+        mxscaleOut=None,
+        **kwargs,
+    ):
+        return aclnn_dynamic_mx_quant_v3_golden(
+            x,
+            axis,
+            roundModeOptional,
+            dstType,
+            blocksize,
+            scaleAlg,
+            dstTypeMax,
+            maxLowBound,
+            yOut,
+            mxscaleOut,
+            **kwargs,
+        )
+
+
+class DynamicMxQuantE2ESpec:
+    """torch_npu.npu_dynamic_mx_quant E2E 通路（输入 torch.Tensor）。
+
+    转发目标：npu_dynamic_mx_quant_golden（保持不变）。
+    """
+
+    def pre_compare(y_out, scale_out, y_golden, scale_golden):
+        """Normalize packed E2M1 bytes when TTK leaves E2E output packed."""
+        if (
+            isinstance(y_out, np.ndarray)
+            and isinstance(y_golden, np.ndarray)
+            and y_out.dtype == np.uint8
+            and str(y_golden.dtype) == "float4_e2m1"
+            and y_out.size * 2 == y_golden.size
+        ):
+            codes = np.stack((y_out & 15, y_out >> 4), axis=-1)
+            y_out = codes.reshape(y_golden.shape).view(y_golden.dtype)
+        return y_out, scale_out, y_golden, scale_golden
+
+    def golden(
+        x,
+        *,
+        axis=-1,
+        round_mode="rint",
+        dst_type=296,
+        block_size=32,
+        scale_alg=0,
+        dst_type_max=0.0,
+        max_low_bound=0.0,
+        **kwargs,
+    ):
+        return npu_dynamic_mx_quant_golden(
+            x,
+            axis=axis,
+            round_mode=round_mode,
+            dst_type=dst_type,
+            block_size=block_size,
+            scale_alg=scale_alg,
+            dst_type_max=dst_type_max,
+            max_low_bound=max_low_bound,
+            **kwargs,
+        )
