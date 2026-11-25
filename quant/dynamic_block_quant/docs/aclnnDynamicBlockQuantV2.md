@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：对输入张量，通过给定的rowBlockSize和colBlockSize将输入划分成多个数据块，以数据块为基本粒度进行量化。在每个块中，先计算出当前块对应的量化参数scaleOut，并根据scaleOut对输入进行量化。输出最终的量化结果，以及每个块的量化参数scaleOut。
+- 接口功能：对输入张量，通过给定的`rowBlockSize`和`colBlockSize`将输入划分成多个数据块，以数据块为基本粒度进行量化。在每个块中，先计算出当前块对应的量化参数`scaleOut`，并根据`scaleOut`对输入进行量化。输出最终的量化结果，以及每个块的量化参数`scaleOut`。
 
 - 计算公式：
 
@@ -138,7 +138,7 @@ aclnnStatus aclnnDynamicBlockQuantV2(
       <td>rowBlockSize（int64_t）</td>
       <td>输入</td>
       <td>指定一个block的行大小。</td>
-      <td>支持取值1，128，256，512。</td>
+      <td>支持取值1、128、256、512。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -148,7 +148,7 @@ aclnnStatus aclnnDynamicBlockQuantV2(
       <td>colBlockSize（int64_t）</td>
       <td>输入</td>
       <td>指定一个block的列大小。</td>
-      <td>支持取值64，128，192，256。</td>
+      <td>支持取值64、128、192、256。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -158,7 +158,7 @@ aclnnStatus aclnnDynamicBlockQuantV2(
       <td>dstTypeMax（double）</td>
       <td>输入</td>
       <td>目标数据类型的最大值。</td>
-      <td><ul><li>当前只支持目标数据类型为HIFLOAT8，且可选取值为0.0，15.0，56.0，224.0，32768.0</li><li>0.0表示使用数据类型原始的最大值。</li></ul></td>
+      <td><ul><li>当前只支持目标数据类型为HIFLOAT8，且可选取值为0.0、15.0、56.0、224.0、32768.0</li><li>0.0表示使用数据类型原始的最大值。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

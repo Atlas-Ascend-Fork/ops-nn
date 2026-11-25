@@ -25,7 +25,7 @@
 
 - 接口功能：在-1轴和-2轴上同时进行目的数据类型为FLOAT4类、FLOAT8类的MX量化。在给定的-1轴和-2轴上，每32个数，计算出这两组数对应的量化尺度mxscale1、mxscale2作为输出mxscale1Out、mxscale2Out的对应部分，然后分别对两组数所有元素除以对应的mxscale1或mxscale2，根据round_mode转换到对应的dstType，得到量化结果y1和y2分别作为输出y1Out和y2Out的对应部分。在dstType为FLOAT8_E4M3FN、FLOAT8_E5M2时，根据scaleAlg的取值来指定计算mxscale的不同算法。
 
-- 合轴说明：算子实现时，会对-2轴（不包含）之前的所有轴进行合轴处理。即对于输入shape为$(d_0, d_1, ..., d_{n-3}, d_{n-2}, d_{n-1})$的张量，-2轴之前的维度$(d_0, d_1, ..., d_{n-3})$会被合并为一个维度，等效于将输入reshape为$(d_0 \times d_1 \times ... \times d_{n-3}, d_{n-2}, d_{n-1})$后再进行量化计算。
+- 合轴说明：算子实现时，会对-2轴（不包含）之前的所有轴进行合轴处理，即对于输入shape为$(d_0, d_1, ..., d_{n-3}, d_{n-2}, d_{n-1})$的张量，-2轴之前的维度$(d_0, d_1, ..., d_{n-3})$会被合并为一个维度，等效于将输入reshape为$(d_0 \times d_1 \times ... \times d_{n-3}, d_{n-2}, d_{n-1})$后再进行量化计算。
 
 - 计算公式：
   - 场景1，当scaleAlg为0时，即OCP Microscaling Formats (Mx) Specification实现：
@@ -74,7 +74,7 @@
         $$
         Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{32})
         $$
-      - 将FP32映射到目标数据类型FP8可表示的范围内，其中$Amax(DType)$是目标精度能表示的最大值
+      - 将FP32映射到目标数据类型FP8可表示的范围内，其中$Amax(DType)$是目标精度能表示的最大值：
         $$
         S_{fp32}^b = \frac{Amax(D_{fp32}^b)}{Amax(DType)}
         $$

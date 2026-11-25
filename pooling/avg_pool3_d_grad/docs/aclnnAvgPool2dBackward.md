@@ -25,7 +25,7 @@
 
 - 接口功能：二维平均池化的反向传播，计算二维平均池化正向传播的输入梯度。
 
-- 计算公式：假设二维平均池化正向的输入张量为$X$，输出张量为$Y$，池化窗口大小为$k*k$,步长为$s$,则$X$的梯度$\frac{\partial L}{\partial X}$计算公式为：
+- 计算公式：假设二维平均池化正向的输入张量为$X$，输出张量为$Y$，池化窗口大小为$k*k$，步长为$s$，则$X$的梯度$\frac{\partial L}{\partial X}$计算公式为：
 
   $$
   \frac{\partial L}{\partial X_{i,j}}=\frac{1}{k^2}\sum_{n=0}^{k-1}\frac{\partial L}{\partial Y_{\lfloor\frac{i*s+m}{k}\rfloor,\lfloor\frac{j*s+n}{k}\rfloor}}
@@ -118,7 +118,7 @@ aclnnStatus aclnnAvgPool2dBackward(
       <td>kernelSize</td>
       <td>输入</td>
       <td>池化窗口大小，公式中的k。</td>
-      <td>长度为1(kH=kW)或2(kH, kW)，数值大于0。</td>
+      <td>长度为1（kH=kW）或2（kH, kW），数值大于0。</td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
@@ -179,7 +179,7 @@ aclnnStatus aclnnAvgPool2dBackward(
     <tr>
       <td>cubeMathType</td>
       <td>输入</td>
-      <td>指定Cube单元的计算逻辑</td>
+      <td>指定Cube单元的计算逻辑。</td>
       <td>-</td>
       <td>INT8</td>
       <td>-</td>
@@ -189,7 +189,7 @@ aclnnStatus aclnnAvgPool2dBackward(
     <tr>
       <td>gradInput</td>
       <td>输出</td>
-      <td>输出的tensor，公式中的out。</td>
+      <td>输出的Tensor，公式中的out。</td>
       <td>-</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>NCHW、NCL</td>
@@ -296,14 +296,14 @@ aclnnStatus aclnnAvgPool2dBackward(
       <td>属性padding超过kernelSize对应位置的1/2，例如paddingH=2，kernelSizeH=2，paddingH>kernelSizeH*1/2。</td>
     </tr>
     <tr>
-      <td>传入的divisorOverride不在支持范围内，但对Ascend 950PR&950DT系列产品无此校验</td>
+      <td>传入的divisorOverride不在支持范围内，但对Ascend 950PR&950DT系列产品无此校验。</td>
     </tr>
   </tbody>
   </table>
 
 ## aclnnAvgPool2dBackward
 
-- **参数说明：**
+- **参数说明**
   <table style="undefined;table-layout: fixed; width: 1166px"><colgroup>
   <col style="width: 173px">
   <col style="width: 133px">

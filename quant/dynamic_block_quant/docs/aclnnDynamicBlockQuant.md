@@ -96,7 +96,7 @@ aclnnStatus aclnnDynamicBlockQuant(
     <tr>
       <td>x（aclTensor*）</td>
       <td>输入</td>
-      <td>表示算子输入的Tensor。对应公式中的`x`。</td>
+      <td>表示算子输入的Tensor，对应公式中的`x`。</td>
       <td>支持空Tensor。</td>
       <td>FLOAT16、BFLOAT16、FLOAT32</td>
       <td>ND</td>
@@ -137,7 +137,7 @@ aclnnStatus aclnnDynamicBlockQuant(
       <td>rowBlockSize（int64_t）</td>
       <td>输入</td>
       <td>指定一个block的行大小。</td>
-      <td>支持取值1，64, 128，256，512。</td>
+      <td>支持取值1，64，128，256，512。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -156,7 +156,7 @@ aclnnStatus aclnnDynamicBlockQuant(
     <tr>
       <td>yOut（aclTensor*）</td>
       <td>输出</td>
-      <td>表示量化后的输出Tensor。对应公式中的`yOut`。</td>
+      <td>表示量化后的输出Tensor，对应公式中的`yOut`。</td>
       <td><ul><li>支持空Tensor。</li><li>shape与`x`保持一致。</li></ul></td>
       <td>INT8、FLOAT8_E4M3FN、FLOAT8_E5M2、HIFLOAT8</td>
       <td>ND</td>

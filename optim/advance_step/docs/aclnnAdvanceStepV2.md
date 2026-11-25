@@ -56,7 +56,7 @@
   $$
 
   $$
-slotMapping[i * tokenEachReqs + j] = blockTables[i, ⌊nextPos_{i,j} / blockSize⌋] * blockSize + nextPos_{i,j} \% blockSize
+  slotMapping[i * tokenEachReqs + j] = blockTables[i, ⌊nextPos_{i,j} / blockSize⌋] * blockSize + nextPos_{i,j} \% blockSize
   $$
 
 ## 函数原型
@@ -127,7 +127,7 @@ aclnnStatus aclnnAdvanceStepV2(
     <tr>
       <td>sampledTokenIds（aclTensor*）</td>
       <td>输入</td>
-      <td>待进行AdvanceStepV2计算的入参，用于储存tokenID，公式中的输入sampledTokenIds。</td>
+      <td>待进行AdvanceStepV2计算的入参，用于存储tokenID，公式中的输入sampledTokenIds。</td>
       <td><ul><li>不支持空Tensor。</li><li>shape第一维长度与numSeqs一致，第二维长度为1+specNum。</li><li>取值范围为非负整数（0为合法值），-1为无接受token哨兵值。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
@@ -137,7 +137,7 @@ aclnnStatus aclnnAdvanceStepV2(
      <tr>
       <td>inputPositions（aclTensor*）</td>
       <td>输入/输出</td>
-      <td>待进行AdvanceStepV2计算的入参/出参，公式中的输出inputPositions，用于记录token的index。</td>
+      <td>待进行AdvanceStepV2计算的入参/出参，公式中的输出inputPositions，用于记录token的索引。</td>
       <td><ul><li>不支持空Tensor。</li><li>shape为[numSeqs * (1+specNum)]。</li><li>取值范围为非负整数（0为合法值）。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
@@ -168,7 +168,7 @@ aclnnStatus aclnnAdvanceStepV2(
       <td>blockTables（aclTensor*）</td>
       <td>输入</td>
       <td>待进行AdvanceStepV2计算的入参，用于记录不同blockIdx下block的物理块编号，公式中的输入blockTables。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape第一维长度与numSeqs一致，第二维长度blockTablesStride大于0，且须覆盖更新后位置的block索引：V2路径按每序列更新后位置（inputPositions值+acceptedNum[i]+1）计，须满足其小于blockTablesStride*blockSize；回落V1路径时按更新前seqLens最大值/blockSize计。</li><li>取值范围为非负整数（0为合法值）。</li><li>更新后位置越出blockTables覆盖范围属未定义输入域，kernel对查表下标越界做防御性检查并写入0。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape第一维长度与numSeqs一致，第二维长度blockTablesStride大于0，且须覆盖更新后位置的block索引：V2路径按每序列更新后位置（inputPositions值+acceptedNum[i]+1）计，须满足其小于blockTablesStride * blockSize；回落V1路径时按更新前seqLens最大值/blockSize计。</li><li>取值范围为非负整数（0为合法值）。</li><li>更新后位置越出blockTables覆盖范围属未定义输入域，kernel对查表下标越界做防御性检查并写入0。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
       <td>2</td>
@@ -366,7 +366,7 @@ aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/co
   - blockTables查表覆盖约束：blockTables第二维须覆盖更新后位置的block索引，即满足 pos + acceptedNum + 1 < blockTablesStride * blockSize（pos为更新前的inputPositions值）。
   - 越界防护行为：V2路径对契约外查表列号（q ∉ [0, blockTablesStride)，含跨行平坦下标与负值）防御性写0——块号与余数同时屏蔽，不发生GM越界读；该输入域的计算语义未定义。
 - V2路径规模约束：
-  - specNum受每序列输入缓冲的UB预算限制：tokenEachReqs=specNum+1过大时tiling以Invalid ubRequired失败（561002拒绝），specNum规模上限取决于芯片可用UB。
+  - specNum受每序列输入缓冲的UB预算限制：tokenEachReqs = specNum + 1过大时tiling以Invalid ubRequired失败（561002拒绝），specNum规模上限取决于芯片可用UB。
 - V2路径取值域约束：
   - blockSize与blockTablesStride须小于2^31（tiling校验，违反时报561002）。
   - 中间计算以int32参与运算：inputPositions、acceptedNum的值及slotMapping计算结果须在int32表示域内。token ID（sampledTokenIds、specToken）按INT64非负全域取值，仅-1哨兵检索经fp32（fp32不可精确表示的非-1值不会误判为哨兵，边界外取值已由用例验证）。

@@ -24,9 +24,9 @@
 ## 功能说明
 
 - 接口功能：
-计算α与batch1、batch2的矩阵乘结果的乘积，再与β和self的乘积求和。
-注意：batch1、batch2必须是三维Tensor，两个shape仅在aclnnBaddbmm支持做broadcast，两个shape在aclnnInplaceBaddbmm做broadcast则会被拦截。
-self必须能broadcast到batch1@batch2的结果shape，支持N方向、M方向、scalar及per-batch scalar等broadcast形式。broadcast是指较小的shape扩展至较大的shape，使两个Tensor的shape互相兼容，即对应的每一维度必须相同或其中一个为1。
+  计算α与batch1、batch2的矩阵乘结果的乘积，再与β和self的乘积求和。
+  注意：batch1、batch2必须是三维Tensor，两个shape仅在aclnnBaddbmm支持做broadcast，两个shape在aclnnInplaceBaddbmm做broadcast则会被拦截。
+  self必须能broadcast到batch1@batch2的结果shape，支持N方向、M方向、scalar及per-batch scalar等broadcast形式。broadcast是指较小的shape扩展至较大的shape，使两个Tensor的shape互相兼容，即对应的每一维度必须相同或其中一个为1。
 
 - 计算公式：
 
@@ -109,7 +109,7 @@ aclnnStatus aclnnInplaceBaddbmm(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -225,7 +225,7 @@ aclnnStatus aclnnInplaceBaddbmm(
     - cubeMathType=0，当输入数据类型为FLOAT16或BFLOAT16时，矩阵乘计算会使用FLOAT16 / BFLOAT16输入、FLOAT32输出的方式传递，当输入为其他数据类型时不做处理；
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=2，当输入数据类型是FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理；
-    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=4，当self、batch1和batch2均为FLOAT16或均为BFLOAT16时，批量矩阵乘与bias相加过程使用FLOAT32中间结果计算，支持self相对批量矩阵乘结果进行broadcast，输出数据类型由out指定。
 
   <!-- end id8 -->
@@ -233,7 +233,7 @@ aclnnStatus aclnnInplaceBaddbmm(
   - <term>Ascend 950PR&950DT系列产品</term>：
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=2，当输入数据类型是FLOAT32时，会转换为FLOAT16计算；当输入为其他数据类型时不做处理；
-    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=4时不做处理。
 
   <!-- end id9 -->
@@ -279,7 +279,7 @@ aclnnStatus aclnnInplaceBaddbmm(
       <td>self不能与batch1@batch2做broadcast操作。</td>
     </tr>
     <tr>
-      <td>self与batch1@batch2必须同时为空tensor或同时不为空tensor。</td>
+      <td>self与batch1@batch2必须同时为空Tensor或同时不为空Tensor。</td>
     </tr>
     <tr>
       <td>self、batch1、batch2或out的数据类型不满足推导规则。</td>
@@ -351,13 +351,13 @@ aclnnStatus aclnnInplaceBaddbmm(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
       <td>selfRef</td>
       <td>输入|输出</td>
-      <td>输入输出tensor，即公式中的输入self与out。</td>
+      <td>输入输出Tensor，即公式中的输入self与out。</td>
       <td><ul>
       <li>数据类型与batch1@batch2的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。</li><li>shape后两维需要与batch1@batch2后两维一致。</li>
       <li>支持空Tensor。</li></ul></td>
@@ -449,21 +449,21 @@ aclnnStatus aclnnInplaceBaddbmm(
     - 不支持BFLOAT16数据类型；
     - 当输入数据类型为FLOAT32时不支持cubeMathType=0；
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理；
-    - 不支持cubeMathType=3。
+    - 不支持cubeMathType=3；
     - cubeMathType=4时不做处理。
   <!-- end id11 -->
   <!-- npu="A3,910b" id12 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=2，当输入数据类型是FLOAT32时，会转换为FLOAT16计算；当输入为其他数据类型时不做处理；
-    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=4，当selfRef、batch1和batch2均为FLOAT16或均为BFLOAT16时，批量矩阵乘与bias相加过程使用FLOAT32中间结果计算。
   <!-- end id12 -->
   <!-- npu="950" id13 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=2，当输入数据类型是FLOAT32时，会转换为FLOAT16计算；当输入为其他数据类型时不做处理；
-    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=4时不做处理。
 
   <!-- end id13 -->
@@ -562,7 +562,7 @@ aclnnStatus aclnnInplaceBaddbmm(
 ## 约束说明
 
 - 确定性说明：
-aclnnBaddbmm&aclnnInplaceBaddbmm默认确定性实现。
+  aclnnBaddbmm&aclnnInplaceBaddbmm默认确定性实现。
 
 <!-- npu="910,310p" id14 -->
 - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：Cube单元不支持FLOAT32计算。当输入为FLOAT32，可通过设置cubeMathType=1（ALLOW_FP32_DOWN_PRECISION）来允许接口内部cast到FLOAT16进行计算。

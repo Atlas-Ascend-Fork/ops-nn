@@ -28,7 +28,7 @@
 
 - 计算公式：
 
-  假定输入（input）的shape是 $(N, C_{\text{in}}, D, H, W)$，(weight)的shape是 $(C_{\text{out}}, C_{\text{in}}, K_d, K_h, K_w)$，输出（output）的shape是 $(N, C_{\text{out}}, D_{\text{out}}, H_{\text{out}}, W_{\text{out}})$，其中 $N$ 表示批次大小（batch size），$C$ 是通道数，$D$、$H$ 和 $W$ 分别是样本的深度、高度和宽度，$K_d$、$K_h$ 和 $K_w$ 分别是卷积核的深度、高度和宽度，那输出将被表示为：
+  假定输入（input）的shape是 $(N, C_{\text{in}}, D, H, W)$，（weight）的shape是 $(C_{\text{out}}, C_{\text{in}}, K_d, K_h, K_w)$，输出（output）的shape是 $(N, C_{\text{out}}, D_{\text{out}}, H_{\text{out}}, W_{\text{out}})$，其中 $N$ 表示批次大小（batch size），$C$ 是通道数，$D$、$H$ 和 $W$ 分别是样本的深度、高度和宽度，$K_d$、$K_h$ 和 $K_w$ 分别是卷积核的深度、高度和宽度，那输出将被表示为：
 
   $$
   \text{output}(N_i, C_{\text{out}_j}, D_{\text{out}}, H_{\text{out}}, W_{\text{out}}) = \sum_{k = 0}^{C_{\text{in}} - 1} \text{weight}(C_{\text{out}_j}, k) \star \text{input}(N_i, k) + \text{bias}(C_{\text{out}_j})
@@ -253,7 +253,7 @@ aclnnStatus aclnnConvolution(
   <td>返回值</td>
   <td>错误码</td>
   <td>描述</td>
-  </tr>  </thead>
+  </tr></thead>
   <tr>
   <td align="left">ACLNN_ERR_PARAM_NULLPTR</td>
   <td align="left">161001</td>
@@ -267,7 +267,7 @@ aclnnStatus aclnnConvolution(
   <tr><td align="left">input和output数据类型不一致；transposed=false时，支持input和output数据类型不一致，不会触发该类型报错。</td></tr>
   <tr><td align="left">stride、padding、dilation、outputPadding输入shape不对。</td></tr>
   <tr><td align="left">groups输入不对的情况。</td></tr>
-  <tr><td align="left">output的shape不满足infershape结果。</td></tr>
+  <tr><td align="left">output的shape不满足InferShape结果。</td></tr>
   <tr><td align="left">outputPadding值不满足要求。</td></tr>
   <tr><td align="left">input、weight、bias、output传入的空Tensor中部分维度为零的不满足要求。</td></tr>
   <tr><td align="left">transposed=false时，input空间尺度在padding操作后小于weight（经过dilation扩张（如存在dilation>1的情况））的空间尺度。</td></tr>
@@ -282,7 +282,7 @@ aclnnStatus aclnnConvolution(
   <tr>
   <td align="left">ACLNN_ERR_RUNTIME_ERROR</td>
   <td align="left">361001</td>
-  <td align="left">API调用npu runtime的接口异常，如SocVersion不支持。</td>
+  <td align="left">API调用NPU Runtime的接口异常，如SocVersion不支持。</td>
   </tr>
   </table>
 
@@ -439,18 +439,18 @@ aclnnStatus aclnnConvolution(
      </td>
      <td>
         <ul>
-          <li>为0(KEEP_DTYPE)时，不做输入数据类型转换。</li>
-          <li>为1(ALLOW_FP32_DOWN_PRECISION)时，当输入是FLOAT允许转换为HFLOAT32计算。</li>
+          <li>为0（KEEP_DTYPE）时，不做输入数据类型转换。</li>
+          <li>为1（ALLOW_FP32_DOWN_PRECISION）时，当输入是FLOAT允许转换为HFLOAT32计算。</li>
           <li>为2(USE_FP16)时，当输入是BFLOAT16不支持该选项。</li>
           <li>为3(USE_HF32)时，当输入是FLOAT转换为HFLOAT32计算。</li>
         </ul>
      </td>
      <td>
         <ul>
-          <li>为0(KEEP_DTYPE)时，当输入是FLOAT暂不支持。</li>
-          <li>为1(ALLOW_FP32_DOWN_PRECISION)时，当输入是FLOAT允许转换为FLOAT16计算。</li>
-          <li>为2(USE_FP16)时，当输入是BFLOAT16不支持该选项。</li>
-          <li>为3(USE_HF32)时暂不支持。</li>
+          <li>为0（KEEP_DTYPE）时，当输入是FLOAT暂不支持。</li>
+          <li>为（ALLOW_FP32_DOWN_PRECISION）时，当输入是FLOAT允许转换为FLOAT16计算。</li>
+          <li>为2（USE_FP16）时，当输入是BFLOAT16不支持该选项。</li>
+          <li>为3（USE_HF32）时暂不支持。</li>
         </ul>
      </td>
      <td>
@@ -464,18 +464,18 @@ aclnnStatus aclnnConvolution(
    <tr>
      <th scope="row">其他约束</th>
      <td>
-        input, weight, bias中每一组tensor的每一维大小都应不大于1000000。
+        input、weight、bias中每一组Tensor的每一维大小都应不大于1000000。
      </td>
      <td>
         <ul>
           <li>当前仅支持2D卷积且仅支持transposed等于false，暂不支持1D、3D卷积。</li>
-          <li>input, weight, bias中每一组tensor的每一维大小都应不大于1000000。</li>
+          <li>input、weight、bias中每一组Tensor的每一维大小都应不大于1000000。</li>
         </ul>
      </td>
      <td>
         <ul>
           <li>支持1D和2D卷积，3D卷积正向场景仅支持FLOAT16。</li>
-          <li>input, weight, bias中每一组tensor的每一维大小都应不大于1000000。</li>
+          <li>input、weight、bias中每一组Tensor的每一维大小都应不大于1000000。</li>
         </ul>
      </td>
      <td>

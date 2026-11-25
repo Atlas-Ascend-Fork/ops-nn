@@ -31,7 +31,7 @@
   out_{i} = gradOutput_{i} \times gradSelf_{i}
   $$
 
-  其中gradSelf的计算公式为
+  其中gradSelf的计算公式为：
 
   $$
   gradSelf_{i} = \begin{cases}
@@ -41,14 +41,14 @@
   \end{cases}
   $$
 
-  对于非有限值，算子按比较、选择和乘法运算执行：`self`为NaN时，两次比较结果均为false，`gradSelf`取1；
+  对于非有限值，算子按比较、选择和乘法运算执行：`self`为NaN时，两次比较结果均为false，`gradSelf`取1。
   当`gradOutput`为正负Inf且`gradSelf`为0时，输出遵循IEEE 754乘法语义，结果为NaN。
 
 ## 函数原型
 
 每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnHardswishBackwardV2GetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnHardswishBackwardV2”接口执行计算。
 
-```Cpp
+```cpp
 aclnnStatus aclnnHardswishBackwardV2GetWorkspaceSize(
   const aclTensor* gradOutput,
   const aclTensor* self,
@@ -57,7 +57,7 @@ aclnnStatus aclnnHardswishBackwardV2GetWorkspaceSize(
   aclOpExecutor**  executor)
 ```
 
-```Cpp
+```cpp
 aclnnStatus aclnnHardswishBackwardV2(
   void*             workspace,
   uint64_t          workspaceSize,
@@ -104,7 +104,7 @@ aclnnStatus aclnnHardswishBackwardV2(
     <tr>
       <td>self（aclTensor*）</td>
       <td>输入</td>
-      <td>输入数据。公式中的self。</td>
+      <td>输入数据，公式中的self。</td>
       <td><ul><li>支持空Tensor。</li><li>shape需要与gradOutput、out相同。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>ND、NCHW、NHWC</td>
@@ -170,7 +170,7 @@ aclnnStatus aclnnHardswishBackwardV2(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的gradOutput, self是空指针。</td>
+      <td>传入的gradOutput、self是空指针。</td>
     </tr>
     <tr>
       <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>

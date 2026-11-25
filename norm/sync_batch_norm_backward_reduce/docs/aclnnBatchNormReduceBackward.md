@@ -33,7 +33,7 @@
 - 计算公式：
 
   $$
-  gradWeight = \frac{\partial l}{\partial γ} = \sum^m_{i=0} \frac{\partial l}{\partial y_i} \cdot \hat{(x_i)} = \frac{1}{{\sqrt{σ^2_B + eps}}} \cdot \sum^m_{i=0} \frac{\partial l}  {\partial y_i} \cdot (x_i-μ_B)
+  gradWeight = \frac{\partial l}{\partial γ} = \sum^m_{i=0} \frac{\partial l}{\partial y_i} \cdot \hat{(x_i)} = \frac{1}{{\sqrt{σ^2_B + eps}}} \cdot \sum^m_{i=0} \frac{\partial l} {\partial y_i} \cdot (x_i-μ_B)
   $$
 
   $$
@@ -100,7 +100,7 @@ aclnnStatus aclnnBatchNormReduceBackward(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
@@ -188,7 +188,7 @@ aclnnStatus aclnnBatchNormReduceBackward(
       <td>sumDy（aclTensor*）</td>
       <td>输出</td>
       <td>表示正向输出梯度`gradOut`的累加和，对应公式中的`sumDy`。</td>
-      <td><ul><li>可选输出，如果`inputG`为True则输出，shape的size需要与`input`的channel轴的长度相等。</li><li>数据格式与`gradOut`保持一致。</li></ul></td>
+      <td><ul><li>可选输出，如果`inputG`为true则输出，shape的size需要与`input`的channel轴的长度相等。</li><li>数据格式与`gradOut`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -198,7 +198,7 @@ aclnnStatus aclnnBatchNormReduceBackward(
       <td>sumDyXmu（aclTensor*）</td>
       <td>输出</td>
       <td>表示正向输出梯度`gradOut`与输入中心化后数据`(x-μ<sub>B</sub>)`乘积之和，对应公式中的`sumDyXmu`。</td>
-      <td><ul><li>可选输出，如果`inputG`为True则输出，shape的size需要与`input`的channel轴的长度相等。</li><li>数据格式与`gradOut`保持一致。</li></ul></td>
+      <td><ul><li>可选输出，如果`inputG`为true则输出，shape的size需要与`input`的channel轴的长度相等。</li><li>数据格式与`gradOut`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -208,7 +208,7 @@ aclnnStatus aclnnBatchNormReduceBackward(
       <td>gradWeight（aclTensor*）</td>
       <td>输出</td>
       <td>表示缩放参数的梯度，对应公式中的`gradWeight`。</td>
-      <td><ul><li>可选输出，如果`weightG`为True则输出，shape的size需要与`input`的channel轴的长度相等。</li><li>数据格式与`gradOut`保持一致。</li></ul></td>
+      <td><ul><li>可选输出，如果`weightG`为true则输出，shape的size需要与`input`的channel轴的长度相等。</li><li>数据格式与`gradOut`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
@@ -218,7 +218,7 @@ aclnnStatus aclnnBatchNormReduceBackward(
       <td>gradBias（aclTensor*）</td>
       <td>输出</td>
       <td>表示偏置参数的梯度，对应公式中的`gradBias`。</td>
-      <td><ul><li>可选输出，如果`biasG`为True则输出，shape的size需要与`input`的channel轴的长度相等。</li><li>数据格式与`gradOut`保持一致。</li></ul></td>
+      <td><ul><li>可选输出，如果`biasG`为true则输出，shape的size需要与`input`的channel轴的长度相等。</li><li>数据格式与`gradOut`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>

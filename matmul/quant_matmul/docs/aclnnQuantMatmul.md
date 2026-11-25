@@ -25,7 +25,7 @@
 
 ## 功能说明
 
-- 接口功能：完成量化的矩阵乘计算，最小支持维度为2维，最大支持输入维度为3维。相似接口有[aclnnMm](../../mat_mul_v3/docs/aclnnMm.md)（仅支持2维Tensor作为输入的矩阵乘）和[aclnnBatchMatMul](../../batch_mat_mul_v3/docs/aclnnBatchMatMul.md)（仅支持三维的矩阵乘，其中第一维是Batch维度）。
+- 接口功能：完成量化的矩阵乘计算，最小支持输入维度为2维，最大支持输入维度为3维。相似接口有[aclnnMm](../../mat_mul_v3/docs/aclnnMm.md)（仅支持2维Tensor作为输入的矩阵乘）和[aclnnBatchMatMul](../../batch_mat_mul_v3/docs/aclnnBatchMatMul.md)（仅支持三维的矩阵乘，其中第一维是Batch维度）。
 
 - 计算公式：
 
@@ -79,7 +79,7 @@ aclnnStatus aclnnQuantMatmul(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -251,8 +251,8 @@ aclnnStatus aclnnQuantMatmul(
 
 该接口迁移到aclnnQuantMatmulV4接口的方法：
 
-- 输入x1，x2，bias可以直接转为aclnnQuantMatmulV4接口中的x1，x2，bias。
-- 输入deqScale为FLOAT型，将这个FLOAT数构造成shape为（1，）的FLOAT型aclTensor（参考[调用示例](#调用示例)中的CreateAclTensor）,再利用aclnnTransQuantParamV2转为shape为（1，）的uint64_t的aclTensor（参考[aclnnQuantMatmulV4调用示例](../../quant_batch_matmul_v3/docs/aclnnQuantMatmulV4.md#调用示例)），记为**scale**，对标aclnnQuantMatmulV4接口中的scale。
+- 输入x1、x2、bias可以直接转为aclnnQuantMatmulV4接口中的x1、x2、bias。
+- 输入deqScale为FLOAT型，将这个FLOAT数构造成shape为（1，）的FLOAT型aclTensor（参考[调用示例](#调用示例)中的CreateAclTensor），再利用aclnnTransQuantParamV2转为shape为（1，）的uint64_t的aclTensor（参考[aclnnQuantMatmulV4调用示例](../../quant_batch_matmul_v3/docs/aclnnQuantMatmulV4.md#调用示例)），记为**scale**，对标aclnnQuantMatmulV4接口中的scale。
 - aclnnQuantMatmulV4接口中的可选输入offset/pertokenScaleOptional设置为nullptr，transposeX1和transposeX2均设置为false。
 - 接口参数设置为`aclnnQuantMatmulV4GetWorkspaceSize(x1, x2, scale, nullptr, nullptr, bias, false, false, out, workspaceSize, executor)`。
 

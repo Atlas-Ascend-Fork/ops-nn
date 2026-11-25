@@ -218,7 +218,7 @@ aclnnStatus aclnnSwigluMxQuantWithDualAxis(
       <td>输出</td>
       <td>表示SwiGLU结果量化-1轴后的对应结果，对应公式中的<i>P<sub>i</sub></i>。</td>
       <td><ul><li>shape为[M, N]，即SwiGLU输出的一半。</li></ul></td>
-      <td>FLOAT8_E5M2, FLOAT8_E4M3FN, FLOAT4_E2M1, FLOAT4_E1M2</td>
+      <td>FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、FLOAT4_E1M2</td>
       <td>ND</td>
       <td>2</td>
       <td>×</td>

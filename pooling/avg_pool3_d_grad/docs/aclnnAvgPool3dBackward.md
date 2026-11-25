@@ -153,7 +153,7 @@ aclnnStatus aclnnAvgPool3dBackward(
     <tr>
       <td>ceilMode</td>
       <td>输入</td>
-      <td>推导的输出out的shape是否向上取整。</td>
+      <td>推导的输出output的shape是否向上取整。</td>
       <td>-</td>
       <td>BOOL</td>
       <td>-</td>
@@ -183,7 +183,7 @@ aclnnStatus aclnnAvgPool3dBackward(
     <tr>
       <td>output</td>
       <td>输出</td>
-      <td>输出的tensor。</td>
+      <td>输出的Tensor。</td>
       <td>shape与入参self相同</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -240,7 +240,7 @@ aclnnStatus aclnnAvgPool3dBackward(
       <td>传入的gradOutput、self和output的数据类型/维度不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>传入kernelSize，stride, padding的维度不在支持的范围之内。</td>
+      <td>传入kernelSize、stride、padding的维度不在支持的范围之内。</td>
     </tr>
     <tr>
       <td>传入的kernelSize、stride某个维度值小于等于0，padding某个维度值小于0。</td>

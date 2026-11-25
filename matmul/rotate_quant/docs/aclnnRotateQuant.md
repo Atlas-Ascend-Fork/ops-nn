@@ -65,7 +65,7 @@
     - <term>Ascend 950PR&950DT系列产品</term>：MX量化
 
       - 场景1，当scaleAlg为0时：
-        - 将输入x在axis维度上按k = 32个数分组，一组k个数  $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\}$, k = 32
+        - 将输入x在axis维度上按k = 32个数分组，一组k个数 $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\}$，k = 32。
 
           $$
           shared\_exp = floor(log_2(max_i(|V_i|))) - emax \\
@@ -85,13 +85,13 @@
 
       - 场景2，当scaleAlg为1时，只涉及FP8类型：
         - 将长向量按块分，每块长度为k，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型FP8。如果最后一块不足k个元素，把缺失值视为0，按照完整块处理。
-        - 找到该块中数值的最大绝对值:
+        - 找到该块中数值的最大绝对值：
 
           $$
           Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
           $$
 
-        - 将FP32映射到目标数据类型FP8可表示的范围内，其中$Amax(DType)$是目标精度能表示的最大值
+        - 将FP32映射到目标数据类型FP8可表示的范围内，其中$Amax(DType)$是目标精度能表示的最大值：
 
           $$
           S_{fp32}^b = \frac{Amax(D_{fp32}^b)}{Amax(DType)}
@@ -111,7 +111,7 @@
 
       - 场景3，当scaleAlg为2时，只涉及FP4_E2M1类型：
         - 当dstTypeMax = 6.0/7.0时：
-          - 将输入x在axis维度上按k = 32个数分组，一组k个数  $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\}$, k = 32：
+          - 将输入x在axis维度上按k = 32个数分组，一组k个数 $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\}$，k = 32：
 
             $$
             shared\_exp = \begin{cases} ceil(log_2(max_i(|V_i|))) - emax, & \text{如果} 尾数位的高比特前一/两位 \text{为1，且尾数不全为0} \\ floor(log_2(max_i(|V_i|))) - emax, & \text{其它} \end{cases} \\
@@ -124,7 +124,7 @@
           - 量化后的 $P_{i}$ 按对应的 $V_{i}$ 的位置组成输出yOut，mxscale按对应的axis维度上的分组组成输出mxscaleOut。
         - 当dstTypeMax != 6.0/7.0时：
           - 将长向量按块分，每块长度为k，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型。如果最后一块不足k个元素，把缺失值视为0，按照完整块处理。
-          - 找到该块中数值的最大绝对值:
+          - 找到该块中数值的最大绝对值：
 
             $$
             Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
@@ -239,7 +239,7 @@ aclnnStatus aclnnRotateQuant(
     <tr>
       <td>axis(int64_t)</td>
       <td>输入</td>
-      <td>表示量化发生的轴（reduce轴）</td>
+      <td>表示量化发生的轴（Reduce轴）</td>
       <td>目前只支持-1或最后一维的正索引。</td>
       <td>INT64</td>
       <td>-</td>
@@ -407,13 +407,13 @@ aclnnStatus aclnnRotateQuant(
 
 <!-- npu="950" id9 -->
 - <term>Ascend 950PR&950DT系列产品</term>：
-  - x的shape为(*, N)，维度范围[1, 7]；rotation的shape为(K, K)或(N/K, K, K)，维度范围[2, 3], K当前版本仅支持取32，64，128，256。
+  - x的shape为(*, N)，维度范围[1, 7]；rotation的shape为(K, K)或(N/K, K, K)，维度范围[2, 3]，K当前版本仅支持取32、64、128、256。
   - x最后一维的长度(N)必须是K的整数倍。
   - yOut的输出类型为FLOAT4_E2M1、FLOAT8_E4M3FN或FLOAT8_E5M2，shape与x相同。
   - x和rotation的数据类型必须相同，必须同时为BFLOAT16或FLOAT16。
   - rotation最后两维的长度必须一致。
   - scaleOut的shape必须是(*, CeilDiv(N,64), 2)，shape的维度支持2-8，数据类型为FLOAT8_E8M0。
-  - yOut的数据类型必须在[FLOAT4_E2M1,FLOAT8_E4M3FN,FLOAT8_E5M2],yOut的shape必须和x的shape保持一致。
+  - yOut的数据类型必须在[FLOAT4_E2M1,FLOAT8_E4M3FN,FLOAT8_E5M2]，yOut的shape必须和x的shape保持一致。
   - alpha为可选输入，不为空指针时，shape为(1,)，数据类型为BFLOAT16，有效取值范围(0.0, 1.0)。传入空指针或者不在有效取值范围内不做clamp处理。
   - axis目前只支持-1或者D-1，D为x的shape的维数。
   - roundMode支持"rint"、"round"、"floor"，传入空指针时，采用"rint"模式。当yOut的数据类型为FLOAT8_E4M3FN或FLOAT8_E5M2时，roundMode仅支持"rint"。

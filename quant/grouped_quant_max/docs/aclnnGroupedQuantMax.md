@@ -41,7 +41,7 @@
     amax[g] = \max(|x\_g|)
     $$
 
-    其中，$x$表示输入张量，$x\_g$表示输入张量的第g组数据，g=0时下界为0；$scale$表示量化缩放因子，$amax[g]$为输入张量对应group组绝对值的最大值，$\text{dst\_type}$指定输出类型，$\text{round\_mode}$指定舍入模式。
+    其中，$x$表示输入张量，$x\_g$表示输入张量的第g组数据，g = 0时下界为0；$scale$表示量化缩放因子，$amax[g]$为输入张量对应group组绝对值的最大值，$\text{dst\_type}$指定输出类型，$\text{round\_mode}$指定舍入模式。
 
 ## 函数原型
 
@@ -115,7 +115,7 @@ aclnnStatus aclnnGroupedQuantMax(
       <td>√</td>
     </tr>
     <tr>
-      <td>groupList （aclTensor*）</td>
+      <td>groupList（aclTensor*）</td>
       <td>输入</td>
       <td>表示输入x在0轴上每个group的偏移（cumsum模式），对应公式中group_list。</td>
       <td><ul><li>不支持空Tensor。</li><li>表示量化分组的起始索引，要求大于0，且单调递增，并且最后一个数需要与x的0轴大小相等。</li><li>shape为[num_groups]，num_groups取值范围为1-384。</li></ul></td>

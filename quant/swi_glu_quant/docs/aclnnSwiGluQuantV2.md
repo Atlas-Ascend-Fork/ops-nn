@@ -30,7 +30,7 @@
   $$
     Act = SwiGLU(x) = Swish(A)*B \\
     Y_{tmp}^0 = Act[0\colon g[0],\colon] * smooth\_scales[0\colon g[0],\colon], i=0 \\
-    Y_{tmp}^i = Act[g[i]\colon g[i+1], \colon] *  smooth\_scales[g[i]\colon g[i+1], \colon], i \in (0, G) \cap \mathbb{Z}\\
+    Y_{tmp}^i = Act[g[i]\colon g[i+1], \colon] * smooth\_scales[g[i]\colon g[i+1], \colon], i \in (0, G) \cap \mathbb{Z}\\
     scale=dstTypeScale/row\_max(abs(Y_{tmp}))
   $$
 
@@ -43,7 +43,7 @@
   $$
     Act = SwiGLU(x) = Swish(A)*B \\
     Y_{tmp}^0 = Act[0\colon g[0],\colon] * smooth\_scales[0\colon g[0],\colon] + offsets[0\colon g[0],\colon], i=0 \\
-    Y_{tmp}^i = Act[g[i]\colon g[i+1], \colon] *  smooth\_scales[g[i]\colon g[i+1], \colon] + offsets[g[i]\colon g[i+1], \colon], i \in (0, G) \cap \mathbb{Z}\\
+    Y_{tmp}^i = Act[g[i]\colon g[i+1], \colon] * smooth\_scales[g[i]\colon g[i+1], \colon] + offsets[g[i]\colon g[i+1], \colon], i \in (0, G) \cap \mathbb{Z}\\
   $$
   $$
     Y = Cast(Y_{tmp})

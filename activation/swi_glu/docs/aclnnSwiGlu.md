@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：Swish门控线性单元激活函数，实现x的SwiGlu计算。
+- 接口功能：Swish门控线性单元激活函数，实现x的SwiGLU计算。
 
 - 计算公式：
 
@@ -75,7 +75,7 @@ aclnnStatus aclnnSwiGlu(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
   <tbody>

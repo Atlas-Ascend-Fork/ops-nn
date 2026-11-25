@@ -97,7 +97,7 @@ aclnnStatus aclnnGroupedDynamicBlockQuantV2(
     <tr>
       <td>x (aclTensor*)</td>
       <td>输入</td>
-      <td>表示算子输入的Tensor。对应公式中的input。</td>
+      <td>表示算子输入的Tensor，对应公式中的input。</td>
       <td>-</td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -117,7 +117,7 @@ aclnnStatus aclnnGroupedDynamicBlockQuantV2(
     <tr>
       <td>minScale (double)</td>
       <td>输入</td>
-      <td>表示参与scaleOut计算的最小scale值。对应公式中的min_scale。</td>
+      <td>表示参与scaleOut计算的最小scale值，对应公式中的min_scale。</td>
       <td>要求该值大于等于0。</td>
       <td>DOUBLE</td>
       <td>-</td>
@@ -187,7 +187,7 @@ aclnnStatus aclnnGroupedDynamicBlockQuantV2(
     <tr>
       <td>yOut (aclTensor*)</td>
       <td>输出</td>
-      <td>表示量化后的输出Tensor。对应公式中的y。</td>
+      <td>表示量化后的输出Tensor，对应公式中的y。</td>
       <td>shape的维度与x保持一致。</td>
       <td>HIFLOAT8、FLOAT8_E4M3FN、FLOAT8_E5M2</td>
       <td>ND</td>

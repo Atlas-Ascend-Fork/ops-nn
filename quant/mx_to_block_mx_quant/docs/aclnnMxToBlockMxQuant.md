@@ -139,7 +139,7 @@ aclnnStatus aclnnMxToBlockMxQuant(
       <td>scale1 (aclTensor*)</td>
       <td>输出</td>
       <td>表示-1轴每个分组对应的量化尺度。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape需满足约束说明中的公式</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape需满足约束说明中的公式。</li></ul></td>
       <td>FLOAT8_E8M0</td>
       <td>ND</td>
       <td>3-4</td>
@@ -267,7 +267,7 @@ aclnnStatus aclnnMxToBlockMxQuant(
 
 - **返回值：**
 
-  aclnnStatus: 返回状态码,具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 

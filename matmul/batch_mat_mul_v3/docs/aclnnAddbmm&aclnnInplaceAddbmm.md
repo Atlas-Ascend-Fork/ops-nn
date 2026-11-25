@@ -213,7 +213,7 @@ aclnnStatus aclnnInplaceAddbmm(
   <!-- npu="950,A3,910b" id7 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>、<term>Ascend 950PR&950DT系列产品</term>：
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型是FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理；
+    - cubeMathType=2，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理；
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
   <!-- end id7 -->
   <!-- npu="910,310p" id8 -->
@@ -367,7 +367,7 @@ aclnnStatus aclnnInplaceAddbmm(
       <td>batch2</td>
       <td>输入</td>
       <td>公式中的输入batch2。</td>
-      <td><ul><li>数据类型与self、batch1的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。</li><li>shape仅支持三维且第一个维度batch2需要与batch1的batch维度满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a></li>。<li>支持空Tensor。</li></ul></td>
+      <td><ul><li>数据类型与self、batch1的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。</li><li>shape仅支持三维且第一个维度batch2需要与batch1的batch维度满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>。</li><li>支持空Tensor。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>ND</td>
       <td>3</td>
@@ -560,7 +560,7 @@ aclnnStatus aclnnInplaceAddbmm(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

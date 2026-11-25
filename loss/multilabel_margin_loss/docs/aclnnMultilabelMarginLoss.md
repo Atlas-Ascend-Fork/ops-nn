@@ -25,7 +25,7 @@
 
 - 接口功能：计算多标签间隔损失（multilabel margin loss）。
 - 计算公式：
-self为输入，shape为(N,C)或者(C)，其中N表示batch size，C表示类别数。target表示真实标签，shape为(N，C)或者(C)，其中每个元素的取值范围是[-1, C - 1]，为确保与输入相同的形状，用-1填充，即首个-1之前的标签代表样本所属真实标签yTrue。如y=[0,3,-1,1],真实标签yTrue为[0,3]。对于每个样本计算的公式如下:
+self为输入，shape为(N,C)或者(C)，其中N表示batch size，C表示类别数。target表示真实标签，shape为(N，C)或者(C)，其中每个元素的取值范围是[-1, C - 1]，为确保与输入相同的形状，用-1填充，即首个-1之前的标签代表样本所属真实标签yTrue。如y=[0,3,-1,1]，真实标签yTrue为[0,3]。对于每个样本计算的公式如下：
 
   $$
     istarget[k]=\begin{cases}
@@ -46,7 +46,7 @@ self为输入，shape为(N,C)或者(C)，其中N表示batch size，C表示类别
   \ell(x, y) = L = \{l_1,\dots,l_N\}^\top
   $$
 
-  如果`reduction`不是`none`,那么
+  如果`reduction`不是`none`，那么
 
   $$
   \ell(x, y) = \begin{cases}
@@ -149,7 +149,7 @@ aclnnStatus aclnnMultilabelMarginLoss(
     <tr>
       <td class="tg-0pky">isTarget（aclTensor*）</td>
       <td class="tg-0pky">输出</td>
-      <td class="tg-0pky">公式中的输出`istarget`（target派生的0/1掩码）</td>
+      <td class="tg-0pky">公式中的输出isTarget（target派生的0/1掩码）</td>
       <td class="tg-0pky">shape为(N，C)或者(C)</td>
       <td class="tg-0pky">与self保持一致（FLOAT、FLOAT16、BFLOAT16）</td>
       <td class="tg-0pky">ND</td>
@@ -273,7 +273,7 @@ aclnnStatus aclnnMultilabelMarginLoss(
     - aclnnMultilabelMarginLoss默认非确定性实现。
 - isTarget数据类型跟随self（0/1掩码，torch契约is_target==self）；self、out、isTarget三者须一致（FLOAT/FLOAT16/BFLOAT16）。
 - 空tensor：仅支持N(batch)轴为空，即 `[0,C]`（N=0、C≥1）；类别维C=0（`[N,0]`/`[0,0]`/1D `[0]`）为非法输入，返回ACLNN_ERR_PARAM_INVALID(161002)。
-  `[0,C]` 时isTarget为空张量；out取值遵循归约的通用约定：`reduction=none`时out为空张量，`reduction=sum`时out为0，`reduction=mean`时out为nan（0/0）。
+  `[0,C]` 时isTarget为空Tensor；out取值遵循归约的通用约定：`reduction=none`时out为空张量，`reduction=sum`时out为0，`reduction=mean`时out为NaN（0/0）。
 
 ## 调用示例
 

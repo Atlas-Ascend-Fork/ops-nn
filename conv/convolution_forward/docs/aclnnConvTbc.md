@@ -108,7 +108,7 @@ aclnnStatus aclnnConvTbc(
   <td>公式中的bias，表示卷积偏置。</td>
   <td><ul>
   <li>数据类型与self、weight一致。</li>
-  <li>一维，长度等于输出通道数C<sub>out</sub>(即weight的第三个维度)，不允许传入空指针。</li>
+  <li>一维，长度等于输出通道数C<sub>out</sub>（即weight的第三个维度），不允许传入空指针。</li>
   </ul></td>
   <td>FLOAT、FLOAT16、BFLOAT16</td>
   <td>ND</td>
@@ -133,7 +133,7 @@ aclnnStatus aclnnConvTbc(
   <li>支持空Tensor。</li>
   <li>数据类型与self一致。</li>
   <li>shape为（H<sub>out</sub>,N,C<sub>out</sub>）。</li>
-  <li>通道数等于输出通道数C<sub>out</sub>(即weight的第三个维度)，其他维度≥0。</li>
+  <li>通道数等于输出通道数C<sub>out</sub>（即weight的第三个维度），其他维度≥0。</li>
   </ul></td>
   <td>FLOAT、FLOAT16、BFLOAT16、HIFLOAT8</td>
   <td>ND、NCL</td>
@@ -181,7 +181,7 @@ aclnnStatus aclnnConvTbc(
 
   aclnnStatus：返回状态码，具体参见 <a href="../../../docs/zh/context/aclnn_return_code.md">aclnn返回码</a>。
 
-  一段接口完成入参校验，出现以下场景时报错：
+  第一段接口完成入参校验，出现以下场景时报错：
 
   <table style="undefined;table-layout: fixed; width: 1430px"><colgroup>
     <col style="width:250px">
@@ -205,13 +205,13 @@ aclnnStatus aclnnConvTbc(
   <td align="left">self、weight、bias、output的数据类型和格式不在支持的范围内。</td>
   </tr>
   <tr><td align="left">self、weight、output数据类型不一致。</td></tr>
-  <tr><td align="left">output的shape不满足infershape结果。</td></tr>
+  <tr><td align="left">output的shape不满足InferShape结果。</td></tr>
   <tr><td align="left">output的shape中存在小于0的情况。</td></tr>
   <tr><td align="left">self的dim不为3。</td></tr>
   <tr><td align="left">weight的dim不为3。</td></tr>
   <tr><td align="left">bias的dim不为1。</td></tr>
   <tr><td align="left">self的第三个维度值（C<sub>in</sub>）不等于weight的第二个维度值（C<sub>in</sub>）。</td></tr>
-  <tr><td align="left">bias的长度不等于weight的输出通道数C<sub>out</sub>(即weight的第三个维度)。</td></tr>
+  <tr><td align="left">bias的长度不等于weight的输出通道数C<sub>out</sub>（即weight的第三个维度）。</td></tr>
   <tr>
   <td align="left">ACLNN_ERR_INNER_NULLPTR</td>
   <td align="left">561103</td>
@@ -220,7 +220,7 @@ aclnnStatus aclnnConvTbc(
   <tr>
   <td align="left">ACLNN_ERR_RUNTIME_ERROR</td>
   <td align="left">361001</td>
-  <td align="left">API调用npu runtime的接口异常，如SocVersion不支持。</td>
+  <td align="left">API调用NPU Runtime的接口异常，如SocVersion不支持。</td>
   </tr>
   </table>
 

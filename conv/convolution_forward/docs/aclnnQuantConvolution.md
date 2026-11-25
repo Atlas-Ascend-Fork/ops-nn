@@ -170,7 +170,7 @@ aclnnStatus aclnnQuantConvolution(
   <tr>
   <td>transposed（bool）</td>
   <td>输入</td>
-  <td>预留参数。表示是否为转置量化卷积。</td>
+  <td>预留参数，表示是否为转置量化卷积。</td>
   <td>目前暂不支持，传入false即可。</td>
   <td>BOOL</td>
   <td>-</td>
@@ -180,7 +180,7 @@ aclnnStatus aclnnQuantConvolution(
   <tr>
   <td>outputPadding（aclIntArray*）</td>
   <td>输入</td>
-  <td>预留参数。表示转置卷积情况下，对输出所有边的填充。</td>
+  <td>预留参数，表示转置卷积情况下，对输出所有边的填充。</td>
   <td>非转置卷积情况下，忽略该属性配置。目前暂不支持，传入空指针nullptr即可。</td>
   <td>INT64</td>
   <td>-</td>
@@ -253,7 +253,7 @@ aclnnStatus aclnnQuantConvolution(
 
   aclnnStatus：返回状态码，具体参见 <a href="../../../docs/zh/context/aclnn_return_code.md">aclnn返回码</a>。
 
-  一段接口完成入参校验，出现以下场景时报错：
+  第一段接口完成入参校验，出现以下场景时报错：
 
   <table style="undefined;table-layout: fixed; width: 1430px"><colgroup>
     <col style="width:250px">
@@ -279,7 +279,7 @@ aclnnStatus aclnnQuantConvolution(
   <tr><td align="left">stride、padding、dilation输入shape不对。</td></tr>
   <tr><td align="left">groups输入不对的情况。</td></tr>
   <tr><td align="left">scale和bias输入shape不对。</td></tr>
-  <tr><td align="left">output的shape不满足infershape结果。</td></tr>
+  <tr><td align="left">output的shape不满足InferShape结果。</td></tr>
   <tr><td align="left">传入tensor中任意维度为零的均不满足要求。</td></tr>
   <tr><td align="left">input空间尺度在padding操作后小于weight（经过dilation扩张（如存在dilation>1的情况））的空间尺度。</td></tr>
   <tr><td align="left">weight和input通道数不满足要求。</td></tr>
@@ -293,7 +293,7 @@ aclnnStatus aclnnQuantConvolution(
   <tr>
   <td align="left">ACLNN_ERR_RUNTIME_ERROR</td>
   <td align="left">361001</td>
-  <td align="left">API调用npu runtime的接口异常，如SocVersion不支持。</td>
+  <td align="left">API调用NPU Runtime的接口异常，如SocVersion不支持。</td>
   </tr>
   </table>
 

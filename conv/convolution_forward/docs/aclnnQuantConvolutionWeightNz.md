@@ -102,7 +102,7 @@ aclnnStatus aclnnQuantConvolutionWeightNz(
   <td>weight（aclTensor*）</td>
   <td>输入</td>
   <td>公式中的weight，表示卷积权重。</td>
-  <td><ul><li>其原shape的C维度需要与input的C维度保持一致。</li><li>不支持空Tensor。</li><li>数据类型与input的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li><li>FRACTAL_Z_3D是3D卷积权重格式。格式各个维度表示：（D * C1 * H * W，N1，N0，C0），其中D，H，W为transdata前的NCDHW。N0=16，C0=32，N1与C<sub>out</sub>满足关系：N1=CEIL(C<sub>out</sub>,N0)，C1与C<sub>in</sub>满足关系：C1=CEIL(C<sub>in</sub>,C0)。 </li><li>所有维度≥1。</li></ul></td>
+  <td><ul><li>其原shape的C维度需要与input的C维度保持一致。</li><li>不支持空Tensor。</li><li>数据类型与input的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li><li>FRACTAL_Z_3D是3D卷积权重格式。格式各个维度表示：（D * C1 * H * W，N1，N0，C0），其中D、H、W为transdata前的NCDHW。N0=16，C0=32，N1与C<sub>out</sub>满足关系：N1=CEIL(C<sub>out</sub>,N0)，C1与C<sub>in</sub>满足关系：C1=CEIL(C<sub>in</sub>,C0)。 </li><li>所有维度≥1。</li></ul></td>
   <td>INT8</td>
   <td>FRACTAL_Z_3D</td>
   <td>4</td>
@@ -280,11 +280,11 @@ aclnnStatus aclnnQuantConvolutionWeightNz(
     <tr><td align="left">stride、padding、dilation输入shape不对。</td></tr>
     <tr><td align="left">groups输入不对的情况。</td></tr>
     <tr><td align="left">scale和bias输入shape不对。</td></tr>
-    <tr><td align="left">output的shape不满足infershape结果。</td></tr>
+    <tr><td align="left">output的shape不满足InferShape结果。</td></tr>
     <tr><td align="left">传入tensor中任意维度为零的均不满足要求。</td></tr>
     <tr><td align="left">input空间尺度在padding操作后小于weight（经过dilation扩张（如存在dilation>1的情况））的空间尺度。</td></tr>
     <tr><td align="left">weight和input通道数不满足要求。</td></tr>
-    <tr><td align="left">weight的转化前后shape不满足转化关系。</td></tr>
+    <tr><td align="left">weight的转换前后shape不满足转换关系。</td></tr>
     <tr><td align="left">stride、dilation小于0情况下不满足要求。</td></tr>
     <tr><td align="left">当前处理器不支持卷积。</td></tr>
     <tr>
@@ -295,7 +295,7 @@ aclnnStatus aclnnQuantConvolutionWeightNz(
     <tr>
     <td align="left">ACLNN_ERR_RUNTIME_ERROR</td>
     <td align="left">361001</td>
-    <td align="left">API调用npu runtime的接口异常，如SocVersion不支持。</td>
+    <td align="left">API调用NPU Runtime的接口异常，如SocVersion不支持。</td>
     </tr>
     </table>
 
@@ -407,7 +407,7 @@ aclnnStatus aclnnQuantConvolutionWeightNz(
         <ul>
           <li>算子仅支持在推理场景下调用。</li>
           <li>仅支持正向三维卷积。</li>
-          <li>input, weight原shape, bias, scale中每一组tensor的每一维大小都应小于1000000。</li>
+          <li>input、weight原shape、bias、scale中每一组tensor的每一维大小都应小于1000000。</li>
         </ul>
      </td>
    </tr>

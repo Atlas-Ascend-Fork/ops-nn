@@ -339,7 +339,7 @@ aclnnStatus aclnnAddRmsNormDynamicQuantV2(
       <td>输入或输出的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>输入或输出的shape不满足约束条件</td>
+      <td>输入或输出的shape不满足约束条件。</td>
     </tr>
   </tbody></table>
 

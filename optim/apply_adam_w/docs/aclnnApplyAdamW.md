@@ -30,7 +30,7 @@
   $$
   g_t=\begin{cases}-g_t
   & \text{ if } maximize= true\\
-  g_t  & \text{ if } maximize=false
+  g_t & \text{ if } maximize=false
   \end{cases}
   $$
 
@@ -53,7 +53,7 @@
   $$
   v_t=\begin{cases}\max(maxGradNorm, v_t)
   & \text{ if } amsgrad = true\\
-  v_t  & \text{ if } amsgrad = false
+  v_t & \text{ if } amsgrad = false
   \end{cases}
   $$
 
@@ -230,7 +230,7 @@ aclnnStatus aclnnApplyAdamW(
     <tr>
       <td class="tg-0lax">grad（aclTensor*）</td>
       <td class="tg-0lax">输入</td>
-      <td class="tg-0lax">梯度数据，公式中的g</td>
+      <td class="tg-0lax">梯度数据，公式中的g。</td>
       <td class="tg-0lax">shape要求与输入varRef保持一致。</td>
       <td class="tg-0lax">与varRef保持一致</td>
       <td class="tg-0lax">ND</td>

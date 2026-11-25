@@ -175,7 +175,7 @@ aclnnStatus aclnnEinsum(
     </tr>
     <tr>
       <td>当equation=='a,b-&gt;ab':
-      <ul><li>tensorList中包含2个Tensor (i.e. tensors[0] & tensors[1]);</li>
+      <ul><li>tensors中包含2个Tensor (i.e. tensors[0] & tensors[1]);</li>
       <li>tensors[0]、tensors[1]、output三者数据类型需保持一致;</li>
       <li>tensors[0] 必须为1维;</li>
       <li>tensors[1] 必须为1维。</li></ul>
@@ -236,7 +236,7 @@ aclnnStatus aclnnEinsum(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

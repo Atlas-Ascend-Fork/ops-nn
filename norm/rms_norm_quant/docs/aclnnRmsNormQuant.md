@@ -181,7 +181,7 @@ aclnnStatus aclnnRmsNormQuant(
   - <term>Atlas推理系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>：入参`x`、`gamma`、`beta`、`scale`的数据类型仅支持FLOAT16；`scale`的shape为`[1]`；出参`y`的数据类型仅支持INT8。
   <!-- end id7 -->
   <!-- npu="A3,910b" id8 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：入参`x`、`gamma`、`beta`、`scale`的数据类型仅支持FLOAT16，BFLOAT16；`offset`仅支持INT8；`scale`的shape为`[1]`；出参`y`的数据类型仅支持INT8、INT32（INT4量化结果通过INT32承载，此时`y`的最后一维为`x`最后一维的1/8，不支持直接以INT4数据类型声明输出）。
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：入参`x`、`gamma`、`beta`、`scale`的数据类型仅支持FLOAT16、BFLOAT16；`offset`仅支持INT8；`scale`的shape为`[1]`；出参`y`的数据类型仅支持INT8、INT32（INT4量化结果通过INT32承载，此时`y`的最后一维为`x`最后一维的1/8，不支持直接以INT4数据类型声明输出）。
   <!-- end id8 -->
 
   <!-- npu="950" id15 -->
@@ -271,10 +271,10 @@ aclnnStatus aclnnRmsNormQuant(
 - <term>Ascend 950PR&950DT系列产品</term>、<term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>：空Tensor是shape中存在0的Tensor，不等同于空指针或标量。满足其余shape、数据类型约束时，支持`x`与`y`均为空Tensor，第一段接口返回0字节workspace，第二段接口不执行计算。必选参数仍须提供Tensor对象。
 <!-- end id16 -->
 
-- 当输入参数scale或offset的值为NaN，或者RmsNorm的计算结果（对应计算公式中的$quant\_in_i$）为NaN时，该接口的最终输出结果为0。
+- 当输入参数`scale`或`offset`的值为NaN，或者RmsNorm的计算结果（对应计算公式中的$quant\_in_i$）为NaN时，该接口的最终输出结果为0。
 
 <!-- npu="310p" id9 -->
-- <term>Atlas推理系列产品</term>：x、y的尾轴长度，以及gamma的尾轴长度必须大于等于32 Byte。
+- <term>Atlas推理系列产品</term>：`x`、`y`的尾轴长度，以及`gamma`的尾轴长度必须大于等于32 Byte。
 <!-- end id9 -->
 <!-- npu="950" id10 -->
 - <term>Ascend 950PR&950DT系列产品</term>：当`y`的数据类型为INT4时，`x`、`gamma`以及`beta`的最后一维必须为偶数。

@@ -28,9 +28,9 @@
 
   算子包含三个可单独开启，但上下游处理关系保持不变的采样算法（从原始输入到最终输出）：TopK采样、TopP采样、指数采样（本文档中Sample所指）。它们可以构成八种计算场景。如下表所示：
 
-  | 计算场景 | TopK采样 | TopP采样 | 指数分布采样 |备注|
+  | 计算场景 | TopK采样 | TopP采样 | 指数采样 |备注|
   | :-------:| :------:|:-------:|:-------:|:-------:|
-  |Softmax-Argmax采样|×|×|×|对输入logits按每个batch，取SoftMax后取最大结果|
+  |Softmax-Argmax采样|×|×|×|对输入logits按每个batch，取Softmax后取最大结果|
   |topK采样|√|×|×|对输入logits按每个batch，取前topK[batch]个最大结果|
   |topP采样|×|√|×|对输入logits按每个batch从大到小排序，取累加值大于等于topP[batch]值的前n个结果进行采样|
   |Sample采样|×|×|√|对输入logits按每个batch，进行Softmax后与q进行除法取最大结果|
@@ -120,7 +120,7 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
   topPValue[b] = {Max(topKGuess)}_{s=1}^{\left \lceil \frac{S}{v} \right \rceil }\left \{ topPValue[b]\left \{s-1 \right \}  \cup \left \{ logitsValue[b][v] \ge topKMin[b][s-1] \right \} \right \}
   $$
 
-  * 如果在访问到logitsValue[b]的第1e4个元素之前，以下条件得到满足，则视为topKGuess成功，
+  * 如果在访问到logitsValue[b]的第1e4个元素之前，以下条件得到满足，则视为topKGuess成功
 
   $$
   \sum^{topKGuess}(topPValue[b]) \ge topP[b]\\
@@ -155,7 +155,7 @@ logits中的每一行logits[batch][:]根据相应的topK[batch]、topP[batch]、
   logitsTopKPSelect[b][logitsIdx[b][v]]=sortedValue[b][v]
   $$
 
-  * 对`logitsSort`进行指数分布采样：
+  * 对`logitsSort`进行指数采样：
 
     $$
     probs = safe\_softmax(logitsSort)
@@ -281,7 +281,7 @@ aclnnStatus aclnnTopKTopPSample(
       <tr>
         <td>isNeedLogits</td>
         <td>输入</td>
-        <td>表示控制logitsTopKPselect的输出条件，建议设置为0。</td>
+        <td>表示控制logitsTopKPSelect的输出条件，建议设置为0。</td>
         <td>-</td>
         <td>BOOL</td>
         <td>-</td>
@@ -436,14 +436,14 @@ aclnnStatus aclnnTopKTopPSample(
 - 确定性计算：
   - aclnnTopKTopPSample默认确定性实现。
 - 对于logits，它的元素应确保通过$exp(*)$运算后，对应结果不小于FLOAT32的最小有效值，否则对应的Safe_softmax结果将为0，可能继而导致算子的非预期输出。
-- 对于所有采样参数，它们的尺寸必须满足，batch>0，0<vocSize<=2^20。
+- 对于所有采样参数，它们的尺寸必须满足，batch>0，0<voc_size<=2^20。
 - topK和topP只接受非负值作为合法输入；传入0和负数不会跳过相应batch的采样，反而会引起预期之外的错误。
-- logits、q、logitsTopKPselect的尺寸和维度必须完全一致。
+- logits、q、logitsTopKPSelect的尺寸和维度必须完全一致。
 - logits、topK、topP、logitsSelectIdx除最后一维以外的所有维度必须顺序和大小完全一致。目前logits只能是2维，topK、topP、logitsSelectIdx必须是1维非空Tensor。logits、topK、topP不允许空Tensor作为输入，如需跳过相应模块，需按相应规则设置输入。
 - 如果需要单独跳过topK模块，请传入[batch, 1]大小的Tensor，并使每个元素均为无效值。
-- 如果1024<topK[batch]<vocSize[batch]，则视为选择当前batch的全部有效元素并跳过topK采样。
+- 如果1024<topK[batch]<voc_size[batch]，则视为选择当前batch的全部有效元素并跳过topK采样。
 - 如果需要单独跳过topP模块，请传入[batch, 1]大小的Tensor，并使每个元素均≥1。
-- 如果需要单独跳过sample模块，传入`q=nullptr`即可；如需使用sample模块，则必须传入尺寸为[batch, vocSize]的Tensor。
+- 如果需要单独跳过sample模块，传入`q=nullptr`即可；如需使用sample模块，则必须传入尺寸为[batch, voc_size]的Tensor。
 
 ## 调用示例
 

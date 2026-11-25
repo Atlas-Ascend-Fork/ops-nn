@@ -143,7 +143,7 @@ aclnnStatus aclnnWeightQuantBatchMatmul(
       <td>addOffset</td>
       <td>输入</td>
       <td>对x2反量化得到公式中的输入mat2。</td>
-      <td>shape支持1或者n或者（1, 1）或者（1, n）或者（n, 1），需和x2满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>。m < 64时不参与计算,任意情况都可以为空。</td>
+      <td>shape支持1或者n或者（1, 1）或者（1, n）或者（n, 1），需和x2满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>。m < 64时不参与计算，任意情况都可以为空。</td>
       <td>FLOAT16</td>
       <td>ND</td>
       <td>1或者n或者（1, 1）或者（1, n）或者（n, 1）</td>
@@ -153,7 +153,7 @@ aclnnStatus aclnnWeightQuantBatchMatmul(
       <td>mulScale</td>
       <td>输入</td>
       <td>对x2反量化得到公式中的输入mat2。</td>
-      <td>shape支持1或者n或者（1, 1）或者（1, n）或者（n, 1），需和x2满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>。m < 64时不参与计算,任意情况都可以为空。</td>
+      <td>shape支持1或者n或者（1, 1）或者（1, n）或者（n, 1），需和x2满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>。m < 64时不参与计算，任意情况都可以为空。</td>
       <td>FLOAT16</td>
       <td>ND</td>
       <td>1或者n或者（1, 1）或者（1, n）或者（n, 1）</td>
@@ -262,7 +262,7 @@ aclnnStatus aclnnWeightQuantBatchMatmul(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的x1或x2，diagonalMatrix（m < 64时），deqOffset（m < 64时），deqScale（m < 64时）是空指针。</td>
+      <td>传入的x1或x2、diagonalMatrix（m < 64时）、deqOffset（m < 64时）、deqScale（m < 64时）是空指针。</td>
     </tr>
     <tr>
       <td>ACLNN_ERR_PARAM_INVALID</td>
@@ -328,7 +328,7 @@ aclnnStatus aclnnWeightQuantBatchMatmul(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include <cmath>

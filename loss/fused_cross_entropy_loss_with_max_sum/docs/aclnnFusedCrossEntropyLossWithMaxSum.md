@@ -83,7 +83,7 @@ aclnnStatus aclnnFusedCrossEntropyLossWithMaxSum(
       <th class="tg-0pky">使用说明</th>
       <th class="tg-0pky">数据类型</th>
       <th class="tg-0pky">数据格式</th>
-      <th class="tg-0pky">维度(shape)</th>
+      <th class="tg-0pky">维度（shape）</th>
       <th class="tg-0pky">非连续Tensor</th>
     </tr></thead>
   <tbody>
@@ -160,7 +160,7 @@ aclnnStatus aclnnFusedCrossEntropyLossWithMaxSum(
     <tr>
       <td class="tg-0pky">lossOut（aclTensor*）</td>
       <td class="tg-0pky">输出</td>
-      <td class="tg-0pky">中间变量，公式中的loss。</td>
+      <td class="tg-0pky">中间变量，公式中的lossOut。</td>
       <td class="tg-0pky">shape与logitsMax一致。</td>
       <td class="tg-0pky">FLOAT</td>
       <td class="tg-0pky">ND</td>

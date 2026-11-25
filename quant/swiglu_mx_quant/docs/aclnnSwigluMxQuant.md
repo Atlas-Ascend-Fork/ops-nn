@@ -109,7 +109,7 @@
   其中，x\_glu和x\_linear由x<sub>i</sub>沿activateDim轴前后分半得到（非交错分块）。此模式下忽略gluAlpha和gluBias参数（sigmoid固定使用alpha=1，不添加bias），axis必须为-1。
 
 - 场景1，当scaleAlg为0时，DynamicMxQuant计算逻辑：
-    - 将输入x在axis维度上按k = blocksize = 32个数分组，一组k个数  $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\}$, k = blocksize
+    - 将输入x在axis维度上按k = blocksize = 32个数分组，一组k个数 $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\}$，k = blocksize。
 
     $$
     shared\_exp = floor(log_2(max_i(|V_i|))) - emax \\
@@ -322,7 +322,7 @@ aclnnStatus aclnnSwigluMxQuant(
       <td>roundModeOptional（char*）</td>
       <td>输入</td>
       <td>表示对输出y结果的舍入模式。</td>
-      <td><ul><li>取值范围是：["rint", "round", "floor"]。</li><li>当输出y的数据类型为FLOAT8_E5M2、FLOAT8_E4M3FN时，仅支持"rint"模式。</li><li>支持传入空指针，传入空指针时，则表示使用“rint”。</li></ul></td>
+      <td><ul><li>取值范围是：["rint", "round", "floor"]。</li><li>当输出y的数据类型为FLOAT8_E5M2、FLOAT8_E4M3FN时，仅支持"rint"模式。</li><li>支持传入空指针，传入空指针时，则表示使用"rint"。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

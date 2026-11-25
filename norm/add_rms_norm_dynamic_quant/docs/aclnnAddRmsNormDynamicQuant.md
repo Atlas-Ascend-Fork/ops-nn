@@ -137,7 +137,7 @@ aclnnStatus aclnnAddRmsNormDynamicQuant(
         <th>使用说明</th>
         <th>数据类型</th>
         <th>数据格式</th>
-        <th>维度(shape)</th>
+        <th>维度（shape）</th>
         <th>非连续Tensor</th>
       </tr></thead>
     <tbody>
@@ -215,7 +215,7 @@ aclnnStatus aclnnAddRmsNormDynamicQuant(
       <td>y2Out（aclTensor*）</td>
       <td>输出</td>
       <td>表示量化输出Tensor，对应公式中的`y2Out`。</td>
-      <td><ul><li>支持空Tensor。</li><li>当smoothScale2Optional不存在时，此输出无意义。</li><li>如果`y2Out`输出无意义时，shape为[1]；其他场景，shape需要与`y1Out`保持一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>当smoothScale2Optional不存在时，此输出无意义。</li><li>当`y2Out`输出无意义时，shape为[1]；其他场景，shape需要与`y1Out`保持一致。</li></ul></td>
       <td>INT8、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN</td>
       <td>ND</td>
       <td>2-8</td>
@@ -235,7 +235,7 @@ aclnnStatus aclnnAddRmsNormDynamicQuant(
       <td>scale1Out（aclTensor*）</td>
       <td>输出</td>
       <td>表示第一路量化的输出，对应公式中的`scale1Out`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape需要与输入`x1`除最后一维后的shape一致，或者与`x1`除了最后一维的乘积一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape需要与输入`x1`除了最后一维后的shape一致，或者与`x1`除了最后一维的乘积一致。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
       <td>1-8</td>
@@ -301,7 +301,7 @@ aclnnStatus aclnnAddRmsNormDynamicQuant(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>如果传入参数是必选输入，输出或者必选属性，且是空指针，则返回161001。</td>
+      <td>如果传入参数是必选输入、输出或者必选属性，且是空指针，则返回161001。</td>
     </tr>
     <tr>
       <td>ACLNN_ERR_PARAM_INVALID</td>
@@ -362,7 +362,7 @@ aclnnStatus aclnnAddRmsNormDynamicQuant(
 
 - **返回值**
 
-  aclnnStatus：返回状态码。（具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)）
+  aclnnStatus：返回状态码（具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)）。
 
 ## 约束说明
 

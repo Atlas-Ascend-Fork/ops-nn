@@ -306,7 +306,7 @@ aclnnStatus aclnnAddRmsNormQuant(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>如果传入参数是必选输入，输出或者必选属性，且是空指针。</td>
+      <td>如果传入参数是必选输入、输出或者必选属性，且是空指针。</td>
     </tr>
     <tr>
       <td>ACLNN_ERR_PARAM_INVALID</td>

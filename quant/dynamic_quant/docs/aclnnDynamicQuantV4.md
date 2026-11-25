@@ -178,7 +178,7 @@ aclnnStatus aclnnDynamicQuantV4(
       <td>quantMode（char*） </td>
       <td>输入</td>
       <td>用于指定量化的模式。</td>
-      <td><ul><li>当前支持"pertoken"、"pertensor"和"perchannel"。</li><li>当quantMode取"pertensor"或"perchannel"时，groupIndexOptional必须是nullptr。</li></ul></td>
+      <td><ul><li>当前支持“pertoken”、“pertensor”和“perchannel”。</li><li>当quantMode取“pertensor”或“perchannel”时，groupIndexOptional必须是nullptr。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

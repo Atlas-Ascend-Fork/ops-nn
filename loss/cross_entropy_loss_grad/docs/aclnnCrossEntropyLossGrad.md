@@ -59,7 +59,7 @@
 
   $$
   predictionsGradLossOut_{ij}=\begin{cases}
-  nllLossGrad_i, & j=target(i)  \\
+  nllLossGrad_i, & j=target(i) \\
   0, & j ≠ target(i)
   \end{cases}
   $$
@@ -90,14 +90,14 @@
 
   $$
   gradZ=\begin{cases}
-  grad + gradZloss, & 传入gradZloss  \\
+  grad + gradZloss, & 传入gradZloss \\
   grad, & 不传gradZloss
   \end{cases}
   $$
 
   $$
   zlossGrad=\begin{cases}
-  gradZ / sum(ignoreMask), & &reduction = mean  \\
+  gradZ / sum(ignoreMask), & &reduction = mean \\
   gradZ, & &reduction = sum \\
   gradZ, & &reduction = none
   \end{cases}
@@ -215,7 +215,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
       <tr>
         <td>gradZlossOptional（aclTensor*）</td>
         <td>可选输入</td>
-        <td>参数与公式中gradZloss对应。zloss相关输入，如果正向有zloss的额外输出，反向有个grad_zloss的输入。</td>
+        <td>参数与公式中gradZloss对应。zloss相关输入，如果正向有zloss的额外输出，反向有个gradZloss的输入。</td>
         <td><ul><li>当reductionOptional为none时，要求为一个维度为1D的Tensor。</li><li>当reductionOptional为mean/sum时，要求为一个维度为0D的Tensor。</li><li>当前暂不支持。</li></ul></td>
         <td>FLOAT16、FLOAT、BFLOAT16</td>
         <td>ND</td>
@@ -225,7 +225,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
       <tr>
         <td>lseForZlossOptional（aclTensor*）</td>
         <td>可选输入</td>
-        <td>zloss相关输入，如果lse_square_scale_for_zloss非0，正向额外输出的lse_for_zloss中间结果给反向用于计算lse。</td>
+        <td>zloss相关输入，如果lseSquareScaleForZloss非0，正向额外输出的lseForZloss中间结果给反向用于计算lse。</td>
         <td><ul><li>要求为一个维度为1D的Tensor。</li><li>当前暂不支持。</li></ul></td>
         <td>FLOAT16、FLOAT、BFLOAT16</td>
         <td>ND</td>
@@ -265,7 +265,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
       <tr>
         <td>lseSquareScaleForZloss（double）</td>
         <td>输入</td>
-        <td>zloss相关属性，0.0走pytorch原生分支，非0.0走zloss新分支。</td>
+        <td>zloss相关属性，0.0走PyTorch原生分支，非0.0走zloss新分支。</td>
         <td>当前暂不支持。</td>
         <td>DOUBLE</td>
         <td>-</td>
@@ -279,7 +279,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
         <td>-</td>
         <td>与gradLoss一致</td>
         <td>ND</td>
-        <td>(N,C)</td>
+        <td>(N, C)</td>
         <td>-</td>
       </tr>
       <tr>

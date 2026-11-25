@@ -79,14 +79,14 @@ aclnnStatus aclnnForeachAddListV2(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
       <td>x1（aclTensorList*）</td>
       <td>输入</td>
-      <td>表示加法运算的第一个输入张量列表。公式中的`x1`。</td>
+      <td>表示加法运算的第一个输入张量列表，公式中的`x1`。</td>
       <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16、INT32、INT16、INT8、UINT8</td>
       <td>ND</td>
@@ -161,7 +161,7 @@ aclnnStatus aclnnForeachAddListV2(
       - 当`x1`的数据类型为BFLOAT16、FLOAT32时，数据类型支持FLOAT32、DOUBLE。
       - 当`x1`的数据类型为FLOAT16时，数据类型支持FLOAT16、FLOAT32、DOUBLE。
       - 当`x1`的数据类型为INT32、INT16、INT8、UINT8时，数据类型支持INT32、INT64。
-    - 入参`x1`、`x2`和出参`y`支持包含的最大Tensor个数均为256。
+    - 入参`x1`、`x2`和出参`out`支持包含的最大Tensor个数均为256。
   <!-- end id8 -->
 
 - **返回值**
