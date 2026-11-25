@@ -68,7 +68,7 @@ static void FillSingleTileTiling(BNInferGradTilingData<R>* td, const std::vector
     td->multicore.cores_tail = 0;
 
     td->rank = rank;
-    td->per_buf_bytes = 32768; // 32KB/slot，5 槽 <UB；单 tile 元素数远小于此
+    td->per_buf_bytes = 24576; // 24KB/slot，6 槽 <UB；单 tile 元素数远小于此
     td->num_inputs = 3;
     td->num_outputs = 1;
 

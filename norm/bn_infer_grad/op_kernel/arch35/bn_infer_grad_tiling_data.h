@@ -31,7 +31,7 @@
 // grads, scale, batch_variance 三个 GM 输入（epsilon 为 Attr 标量，不占 GM slot）
 constexpr int64_t kMaxInputSlots = 3;  // 本算子最大输入张量数
 constexpr int64_t kMaxOutputSlots = 1; // 本算子最大输出张量数
-constexpr int64_t kPhysNodes = 5;      // 物理存活节点 P（= TBuf 槽位数，float32 路径）
+constexpr int64_t kPhysNodes = 6;      // 物理存活节点 P（= TBuf 槽位数，补偿除法需额外残差槽）
 
 struct SplitResult {
     int64_t axis;     // UB 切分轴

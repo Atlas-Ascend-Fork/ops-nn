@@ -22,8 +22,10 @@
  *     ② var_abs    = abs(var_eps)                   (Abs)
  *     ③ var_sqrt   = sqrt(var_abs)                  (Sqrt)
  *     ④ ratio      = scale / var_sqrt               (Div，直接除，避免 1/sqrt 的额外舍入)
- *     ⑤ original   = ratio * grads                  (Mul)
- *     ⑥ balanced   = (grads * scale) / var_sqrt     (Mul + Div，优先顺序：grads*scale 不溢出时精度更好)
+ *     ⑤ original   = ratio * grads                  (Mul，溢出后备顺序)
+ *     ⑥ balanced   = (grads * scale) / var_sqrt     (精确积 + 残差补偿除法，优先顺序)
+ *        精确积：p = grads*scale; pe = fma(grads, scale, -p)
+ *        残差补偿：q0 = p/s; r = p - s*q0 + pe; q = q0 + r/s
  *     ⑦ balanced 有限时取 balanced，否则取 original（避免 grads*scale 溢出或 scale/sqrt 下溢）
  *
  *   FP16/BF16 路径：
@@ -262,8 +264,8 @@ __aicore__ inline void BNInferGradKernel<T, RANK>::Process()
     // the same scale/variance GM addresses.
     AscendC::NdDmaDci();
 
-    // 物理槽位分配（P=5，所有 dtype 路径）
-    constexpr int UB0 = 0, UB1 = 1, UB2 = 2, UB3 = 3, UB4 = 4;
+    // 物理槽位分配（P=6，所有 dtype 路径）
+    constexpr int UB0 = 0, UB1 = 1, UB2 = 2, UB3 = 3, UB4 = 4, UB5 = 5;
     constexpr float kFloatMax = 3.4028234663852886e38F;
 
     const float epsilon = td_->epsilon_value;
@@ -301,12 +303,22 @@ __aicore__ inline void BNInferGradKernel<T, RANK>::Process()
             AscendC::Sqrt(buf_[UB3].Get<float>(), buf_[UB3].Get<float>(), count);
             // ④ ratio = scale / var_sqrt：直接一次除法，省掉 1/sqrt 后再乘的一次舍入
             AscendC::Div(buf_[UB4].Get<float>(), buf_[UB2].Get<float>(), buf_[UB3].Get<float>(), count);
-            // ⑤ original = ratio * grads
+            // ⑤ original = ratio * grads（仅作溢出后备，不参与正常值域）
             AscendC::Mul(buf_[UB1].Get<float>(), buf_[UB4].Get<float>(), buf_[UB0].Get<float>(), count);
-            // ⑥ balanced = (grads * scale) / var_sqrt，作为 FP32 中间溢出的等价后备顺序
-            //    （各级 op 的 dst 与输入 buffer 均不重叠，避免原地 div 的硬件约束）
+            // ⑥ p = grads * scale；pe = fma(grads, scale, -p) 为乘积的精确残差
             AscendC::Mul(buf_[UB4].Get<float>(), buf_[UB0].Get<float>(), buf_[UB2].Get<float>(), count);
+            AscendC::Muls(buf_[UB5].Get<float>(), buf_[UB4].Get<float>(), -1.0f, count); // UB5 = -p
+            AscendC::MulAddDst(buf_[UB5].Get<float>(), buf_[UB0].Get<float>(), buf_[UB2].Get<float>(),
+                               count); // UB5 = grads*scale - p = pe
+            // ⑥.1 q0 = p / var_sqrt
             AscendC::Div(buf_[UB0].Get<float>(), buf_[UB4].Get<float>(), buf_[UB3].Get<float>(), count);
+            // ⑥.2 r = p - s*q0 + pe（MulAddDst 单次舍入），再把残差折回 q = q0 + r/s
+            AscendC::Muls(buf_[UB2].Get<float>(), buf_[UB0].Get<float>(), -1.0f, count); // UB2 = -q0
+            AscendC::MulAddDst(buf_[UB4].Get<float>(), buf_[UB3].Get<float>(), buf_[UB2].Get<float>(),
+                               count); // UB4 = s*(-q0) + p = r0
+            AscendC::Add(buf_[UB4].Get<float>(), buf_[UB4].Get<float>(), buf_[UB5].Get<float>(), count); // r
+            AscendC::Div(buf_[UB2].Get<float>(), buf_[UB4].Get<float>(), buf_[UB3].Get<float>(), count); // r/s
+            AscendC::Add(buf_[UB0].Get<float>(), buf_[UB0].Get<float>(), buf_[UB2].Get<float>(), count); // q
             // ⑦ balanced 有限时取 balanced（grads*scale 不溢出，且避免 scale/sqrt 下溢），
             //    否则取 original（Inf/NaN 与有限值比较均为 false）
             AscendC::Abs(buf_[UB3].Get<float>(), buf_[UB0].Get<float>(), count);
@@ -341,17 +353,27 @@ __aicore__ inline void BNInferGradKernel<T, RANK>::Process()
             AscendC::Sqrt(buf_[UB4].Get<float>(), buf_[UB4].Get<float>(), count);
             // ⑤ ratio = scale / var_sqrt：直接一次除法，省掉 1/sqrt 后再乘的一次舍入
             AscendC::Div(buf_[UB0].Get<float>(), buf_[UB3].Get<float>(), buf_[UB4].Get<float>(), count);
-            // ⑥ original = ratio * grads_fp32
+            // ⑥ original = ratio * grads_fp32（仅作溢出后备）
             AscendC::Mul(buf_[UB2].Get<float>(), buf_[UB0].Get<float>(), buf_[UB1].Get<float>(), count);
-            // ⑦ balanced = (grads_fp32 * scale) / var_sqrt（gs 写入 UB1，ratio 保留在 UB0）
-            //    （各级 op 的 dst 与输入 buffer 均不重叠，避免原地 div 的硬件约束）
-            AscendC::Mul(buf_[UB1].Get<float>(), buf_[UB1].Get<float>(), buf_[UB3].Get<float>(), count);
-            AscendC::Div(buf_[UB3].Get<float>(), buf_[UB1].Get<float>(), buf_[UB4].Get<float>(), count);
+            // ⑦ p = grads_fp32 * scale；pe = fma(grads_fp32, scale, -p)
+            AscendC::Mul(buf_[UB5].Get<float>(), buf_[UB1].Get<float>(), buf_[UB3].Get<float>(), count);
+            AscendC::Muls(buf_[UB0].Get<float>(), buf_[UB5].Get<float>(), -1.0f, count); // UB0 = -p
+            AscendC::MulAddDst(buf_[UB0].Get<float>(), buf_[UB1].Get<float>(), buf_[UB3].Get<float>(),
+                               count); // UB0 = grads*scale - p = pe
+            // ⑦.1 q0 = p / var_sqrt
+            AscendC::Div(buf_[UB1].Get<float>(), buf_[UB5].Get<float>(), buf_[UB4].Get<float>(), count);
+            // ⑦.2 r = p - s*q0 + pe，再折回 q = q0 + r/s
+            AscendC::Muls(buf_[UB3].Get<float>(), buf_[UB1].Get<float>(), -1.0f, count); // UB3 = -q0
+            AscendC::MulAddDst(buf_[UB5].Get<float>(), buf_[UB4].Get<float>(), buf_[UB3].Get<float>(),
+                               count); // UB5 = s*(-q0) + p = r0
+            AscendC::Add(buf_[UB5].Get<float>(), buf_[UB5].Get<float>(), buf_[UB0].Get<float>(), count); // r
+            AscendC::Div(buf_[UB3].Get<float>(), buf_[UB5].Get<float>(), buf_[UB4].Get<float>(), count); // r/s
+            AscendC::Add(buf_[UB1].Get<float>(), buf_[UB1].Get<float>(), buf_[UB3].Get<float>(), count); // q
             // ⑧ balanced 有限时取 balanced（grads*scale 不溢出，且避免 scale/sqrt 下溢），否则取 original
-            AscendC::Abs(buf_[UB0].Get<float>(), buf_[UB3].Get<float>(), count);
-            AscendC::CompareScalar(buf_[UB1].Get<uint8_t>(), buf_[UB0].Get<float>(), kFloatMax, AscendC::CMPMODE::LE,
+            AscendC::Abs(buf_[UB0].Get<float>(), buf_[UB1].Get<float>(), count);
+            AscendC::CompareScalar(buf_[UB3].Get<uint8_t>(), buf_[UB0].Get<float>(), kFloatMax, AscendC::CMPMODE::LE,
                                    count);
-            AscendC::Select(buf_[UB0].Get<float>(), buf_[UB1].Get<uint8_t>(), buf_[UB3].Get<float>(),
+            AscendC::Select(buf_[UB0].Get<float>(), buf_[UB3].Get<uint8_t>(), buf_[UB1].Get<float>(),
                             buf_[UB2].Get<float>(), AscendC::SELMODE::VSEL_TENSOR_TENSOR_MODE, count);
 
             // ⑨ Cast x_backprop_fp32(UB0) → x_backprop(fp16/bf16, UB1)
