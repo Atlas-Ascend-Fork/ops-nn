@@ -188,11 +188,6 @@ static aclnnStatus CheckParams(const aclTensor* self, const aclTensor* target, c
     // 4. 检查输出输出shape
     CHECK_RET(CheckShape(self, target, weight, out, totalWeightOut, reduction), ACLNN_ERR_PARAM_INVALID);
 
-    // 5. 检查 target 值域（device 数据，需 D2H 回读；越界时 legacy kernel 静默产生错误 loss）
-    CHECK_RET(
-        CheckTargetValueRange(target, self->GetViewShape().GetDim(self->GetViewShape().GetDimNum() - 1), ignoreIndex),
-        ACLNN_ERR_PARAM_INVALID);
-
     CheckFormat(self);
 
     return ACLNN_SUCCESS;
