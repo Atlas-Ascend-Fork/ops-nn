@@ -92,9 +92,9 @@ aclnnStatus aclnnSituGluGetWorkspaceSize(
     double beta,
     double linearBeta,
     bool activateLeft,
-    const aclTensor *out,
+    aclTensor *out,
     uint64_t *workspaceSize,
-    aclOpExecutor **executor)
+    aclOpExecutor **executor);
 ```
 
 ```cpp
@@ -102,7 +102,7 @@ aclnnStatus aclnnSituGlu(
     void *workspace,
     uint64_t workspaceSize,
     aclOpExecutor *executor,
-    aclrtStream stream)
+    aclrtStream stream);
 ```
 
 ## aclnnSituGluGetWorkspaceSize
@@ -138,7 +138,7 @@ aclnnStatus aclnnSituGlu(
       <td><ul><li>支持空Tensor（输出为对应空Tensor）。</li><li>shape必须在入参dim对应的维度上为偶数。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
-      <td>1-25</td>
+      <td>1-8</td>
       <td>√</td>
     </tr>
     <tr>
@@ -188,7 +188,7 @@ aclnnStatus aclnnSituGlu(
       <td><ul><li>支持空Tensor。</li><li>shape在入参dim对应的维度上为x的一半，其他维度与x一致。</li><li>数据类型与x一致。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
-      <td>1-25</td>
+      <td>1-8</td>
       <td>×</td>
     </tr>
     <tr>

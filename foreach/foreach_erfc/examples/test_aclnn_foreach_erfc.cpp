@@ -151,7 +151,7 @@ int main()
     std::vector<aclTensor*> tempOutput{out1, out2};
     tensorListOutput = aclCreateTensorList(tempOutput.data(), tempOutput.size());
 
-    // 3. 调用CANN算子库API，需要修改为具体的API名称
+    // 3. 调用CANN算子库API aclnnForeachErfc
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor = nullptr;
     // 调用aclnnForeachErfc第一段接口

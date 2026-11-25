@@ -272,7 +272,7 @@ aclnnStatus aclnnInplaceCelu(
   <tbody>
       <tr>
       <td>selfRef（aclTensor*）</td>
-      <td>输入</td>
+      <td>输入/输出</td>
       <td>表示CELU激活函数的输入，公式中的x。</td>
       <td>支持空Tensor。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>

@@ -110,7 +110,7 @@ aclnnStatus aclnnGeGluV3Backward(
       <td>dim（int64_t）</td>
       <td>输入</td>
       <td>-</td>
-      <td>取值范围为[-self.dim(), self.dim()-1]。</td>
+      <td>当self.dim()=0时，取值范围为[-1, 0]；当self.dim()>0时，取值范围为[-self.dim(), self.dim()-1]。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

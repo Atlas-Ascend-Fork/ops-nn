@@ -122,7 +122,7 @@ aclnnStatus aclnnDequantSwigluQuant(
       <td><ul><li>可选参数，支持传空指针。</li></ul></td>
       <td>FLOAT</td>
       <td>ND</td>
-      <td>1</td>
+      <td>1或2</td>
       <td>x</td>
     </tr>
       <tr>
@@ -132,7 +132,7 @@ aclnnStatus aclnnDequantSwigluQuant(
       <td><ul><li>shape支持1维或2维，shape表示为[H]或[groupNum, H]，且取值H和x最后一维保持一致。当groupIndexOptional为空指针时，shape为[H]；当groupIndexOptional不为空指针时，shape为[groupNum, H]。</li><li>可选参数，支持传空指针。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16、INT32</td>
       <td>ND</td>
-      <td>1</td>
+      <td>1或2</td>
       <td>x</td>
     </tr>
        <tr>
@@ -162,7 +162,7 @@ aclnnStatus aclnnDequantSwigluQuant(
       <td><ul><li>可选参数，支持传空指针。</li></ul></td>
       <td>INT32、INT64</td>
       <td>ND</td>
-      <td>1</td>
+      <td>1或2</td>
       <td>x</td>
     </tr>
       <tr>
@@ -198,11 +198,11 @@ aclnnStatus aclnnDequantSwigluQuant(
     <tr>
       <td>scaleOut（aclTensor*）</td>
       <td>输出</td>
-      <td>-</td>
-      <td>-</td>
+      <td>动态量化输出的scale。</td>
+      <td>shape与yOut去除最后一维后的shape一致。</td>
       <td>FLOAT</td>
       <td>ND</td>
-      <td>-</td>
+      <td>与yOut去除尾轴一致</td>
       <td>x</td>
     </tr>
        <tr>
@@ -254,7 +254,7 @@ aclnnStatus aclnnDequantSwigluQuant(
     - quantScaleOptional参数中，仅支持FLOAT，仅支持quantModeOptional为dynamic的场景。当quantModeOptional为dynamic时，shape表示为[H/2]或[groupNum, H/2]。当groupIndexOptional为空指针时，shape为[H/2]；当groupIndexOptional不为空指针时，shape为[groupNum, H/2]。
     - quantOffsetOptional参数中，暂时不支持该参数。
     - groupIndexOptional参数中，仅支持INT64。shape为[groupNum]，groupNum大于等于1。可选参数，支持传空指针。
-    - quantModeOptional参数中，仅支持“dynamic”，支持传入空指针，传入空指针时，则默认使用“static”。
+    - quantModeOptional参数中，仅支持“dynamic”；不支持传入空指针，需显式传入“dynamic”。
     - yOut参数中，shape为[N...,H/2]，yOut的尾轴需要不超过5120。
     - scaleOut参数中，shape不超过7维，不小于1维，shape为[N,...]，shape与yOut去除尾轴后的shape一致。
   <!-- end id8 -->

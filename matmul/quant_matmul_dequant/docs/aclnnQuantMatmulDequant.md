@@ -457,8 +457,8 @@ int main() {
 
   std::vector<uint16_t> xHostData(GetShapeSize(xShape));
   std::vector<uint8_t> weightHostData(GetShapeSize(weightShape));
-  std::vector<uint16_t> weightScaleHostData(GetShapeSize(weightScaleShape));
-  std::vector<uint16_t> xScaleHostData(GetShapeSize(xScaleShape));
+  std::vector<float> weightScaleHostData(GetShapeSize(weightScaleShape));
+  std::vector<float> xScaleHostData(GetShapeSize(xScaleShape));
   std::vector<uint16_t> smoothScaleHostData(GetShapeSize(smoothScaleShape));
   std::vector<uint16_t> outHostData(GetShapeSize(outShape));
 

@@ -229,7 +229,7 @@ aclnnStatus aclnnHardshrink(
 - 确定性计算：
   - aclnnHardshrink默认确定性实现。
 - lambd取值无限制，为负时等效于0，结果与不收缩一致。
-- lambd为+inf时输出全为0；lambd为-inf或NaN时，`|x| <= lambd`恒为假，输入原样输出。
+- lambd为+inf时（输入NaN除外）输出0；lambd为-inf时输入原样输出；lambd为NaN时（输入NaN除外）输出0，输入为NaN时输出NaN。
 - self与out的数据类型均在支持列表内即可，允许二者不同，内部按out的dtype转换。
 
 - 输入为NaN时，输出为NaN；如需输出0，需在调用前对输入做预处理。

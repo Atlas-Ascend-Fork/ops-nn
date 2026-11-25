@@ -155,7 +155,7 @@ aclnnStatus aclnnForeachCopy(
       <td>x或out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>x和out的数据类型不一致。</td>
+      <td>x和out的数据类型不满足参数说明中的对应关系。</td>
     </tr>
     <tr>
       <td rowspan="3">ACLNN_ERR_INNER_TILING_ERROR</td>

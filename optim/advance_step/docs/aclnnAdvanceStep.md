@@ -25,7 +25,7 @@
 
 - 接口功能：
 
-  vLLM是一个高性能的LLM推理和服务框架，专注于优化大规模语言模型的推理效率。它的核心特点包括PageAttention和高效内存管理。advance_step算子的主要作用是推进推理步骤，即在每个生成步骤中更新模型的状态并生成新的inputTokens、inputPositions、seqLens和slotMapping，为vLLM的推理提升效率。
+  vLLM是一个高性能的LLM推理和服务框架，专注于优化大规模语言模型的推理效率。它的核心特点包括PagedAttention和高效内存管理。advance_step算子的主要作用是推进推理步骤，即在每个生成步骤中更新模型的状态并生成新的inputTokens、inputPositions、seqLens和slotMapping，为vLLM的推理提升效率。
 
 - 计算公式：
 
@@ -108,9 +108,9 @@ aclnnStatus aclnnAdvanceStep(
   <tbody>
     <tr>
       <td>inputTokens（aclTensor*）</td>
-      <td>输入</td>
+      <td>输入/输出</td>
       <td>待进行AdvanceStep计算的入参/出参，公式中的输出inputTokens，用于更新vLLM模型中的token值。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape长度与numSeqs一致。</li><li>取值范围为非负整数（0为合法值）。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape长度与numSeqs一致。</li><li>取值范围为非负整数（0为合法值）；padding行（[numQueries, numSeqs)）由kernel写入-1。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
       <td>1</td>
@@ -120,7 +120,7 @@ aclnnStatus aclnnAdvanceStep(
       <td>sampledTokenIds（aclTensor*）</td>
       <td>输入</td>
       <td>待进行AdvanceStep计算的入参，用于存储tokenID，公式中的输入sampledTokenIds。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape第一维长度与numQueries一致，第二维长度为1。</li><li>取值范围为非负整数（0为合法值）。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape第一维长度与numQueries一致，第二维长度为1。</li><li>取值范围为非负整数（0为合法值）；padding行（[numQueries, numSeqs)）由kernel写入-1。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
       <td>2</td>
@@ -130,7 +130,7 @@ aclnnStatus aclnnAdvanceStep(
       <td>inputPositions（aclTensor*）</td>
       <td>输入/输出</td>
       <td>待进行AdvanceStep计算的入参/出参，公式中的输出inputPositions，用于记录token的index。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape长度与numSeqs一致。</li><li>取值范围为非负整数（0为合法值）。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape长度与numSeqs一致。</li><li>取值范围为非负整数（0为合法值）；padding行（[numQueries, numSeqs)）由kernel写入-1。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
       <td>1</td>
@@ -140,7 +140,7 @@ aclnnStatus aclnnAdvanceStep(
       <td>seqLens（aclTensor*）</td>
       <td>输入/输出</td>
       <td>待进行AdvanceStep计算的入参/出参，用于记录不同blockIdx下seq的长度，公式中的输入/输出seqLens。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape长度与numSeqs一致。</li><li>取值范围为非负整数（0为合法值）。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape长度与numSeqs一致。</li><li>取值范围为非负整数（0为合法值）；padding行（[numQueries, numSeqs)）由kernel写入-1。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
       <td>1</td>
@@ -150,7 +150,7 @@ aclnnStatus aclnnAdvanceStep(
       <td>slotMapping（aclTensor*）</td>
       <td>输入/输出</td>
       <td>待进行AdvanceStep计算的入参/出参，公式中的输出slotMapping，用于将token值在序列中的位置映射到物理位置。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape长度与numSeqs一致。</li><li>取值范围为非负整数（0为合法值）。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape长度与numSeqs一致。</li><li>取值范围为非负整数（0为合法值）；padding行（[numQueries, numSeqs)）由kernel写入-1。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
       <td>1</td>
@@ -160,7 +160,7 @@ aclnnStatus aclnnAdvanceStep(
       <td>blockTables（aclTensor*）</td>
       <td>输入</td>
       <td>待进行AdvanceStep计算的入参，用于记录不同blockIdx下block的物理块编号，公式中的输入blockTables。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape第一维长度与numSeqs一致，第二维长度须覆盖更新后位置的block索引（V1路径更新后位置等于更新前的seqLens值），即大于（seqLens中的最大值）/blockSize。</li><li>取值范围为非负整数（0为合法值）。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape第一维长度与numSeqs一致，第二维长度须覆盖更新后位置的block索引（V1路径更新后位置等于更新前的seqLens值），即大于（seqLens中的最大值）/blockSize。</li><li>取值范围为非负整数（0为合法值）；padding行（[numQueries, numSeqs)）由kernel写入-1。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
       <td>2</td>

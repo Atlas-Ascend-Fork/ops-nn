@@ -68,7 +68,7 @@ aclnnStatus aclnnGroupNormSilu(
     void *         workspace,
     uint64_t       workspaceSize,
     aclOpExecutor *executor,
-    aclrtStream    stream)
+    aclrtStream    stream);
 ```
 
 ## aclnnGroupNormSiluGetWorkspaceSize

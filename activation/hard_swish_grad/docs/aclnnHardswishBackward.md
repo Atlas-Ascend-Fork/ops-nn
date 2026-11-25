@@ -101,7 +101,7 @@ aclnnStatus aclnnHardswishBackward(
       <td>self（aclTensor*）</td>
       <td>输入</td>
       <td>表示输入数据，公式中的self。</td>
-      <td><ul><li>支持空Tensor。</li><li>softplus的正向输入值。</li><li>shape需要与gradOutput、gradInput相同。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>hardswish的正向输入值。</li><li>shape需要与gradOutput、out相同。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>ND</td>
       <td>0-8</td>

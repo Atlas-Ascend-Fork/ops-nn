@@ -28,7 +28,7 @@
 - 算子支持范围：当前SwiGluQuant支持MoE场景（传入groupIndexOptional）和非MoE场景（groupIndexOptional传空），SwiGluQuant的输入x和group_index来自于GroupedMatMul算子和MoeInitRouting的输出，通过group_index入参实现MoE分组动态量化、静态per_tensor量化、静态per_channel量化功能。
 - MoE场景动态量化计算公式：
   $$
-    Act = SwiGlu(x) = Swish(A)*B \\
+    Act = SwiGLU(x) = Swish(A)*B \\
     Y_{tmp}^0 = Act[0\colon g[0],\colon] * smooth\_scales[0\colon g[0],\colon], i=0 \\
     Y_{tmp}^i = Act[g[i]\colon g[i+1], \colon] *  smooth\_scales[g[i]\colon g[i+1], \colon], i \in (0, G) \cap \mathbb{Z}\\
     scale=dstTypeScale/row\_max(abs(Y_{tmp}))
@@ -42,7 +42,7 @@
 - MoE场景静态量化计算公式：
   $$
     Act = SwiGLU(x) = Swish(A)*B \\
-    Y_{tmp}^0 = Act(0\colon g[0],\colon) * smooth\_scales[0\colon g[0],\colon] + offsets[0\colon g[0],\colon], i=0 \\
+    Y_{tmp}^0 = Act[0\colon g[0],\colon] * smooth\_scales[0\colon g[0],\colon] + offsets[0\colon g[0],\colon], i=0 \\
     Y_{tmp}^i = Act[g[i]\colon g[i+1], \colon] *  smooth\_scales[g[i]\colon g[i+1], \colon] + offsets[g[i]\colon g[i+1], \colon], i \in (0, G) \cap \mathbb{Z}\\
   $$
   $$

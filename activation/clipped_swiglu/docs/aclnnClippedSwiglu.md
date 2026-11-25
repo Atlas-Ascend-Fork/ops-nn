@@ -440,7 +440,7 @@ int main()
     std::vector<float> outHostData = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-    int dim = -1;
+    int64_t dim = -1;
     float alpha = 1.702;
     float limit = 7.0;
     float bias = 1.0;
@@ -450,6 +450,7 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建groupIndex aclTensor
     ret = CreateAclTensor(groupIndexData, groupIndexShape, &groupIndexDeviceAddr, aclDataType::ACL_INT64, &groupIndex);
+    CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建out aclTensor
     ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT, &out);
     CHECK_RET(ret == ACL_SUCCESS, return ret);

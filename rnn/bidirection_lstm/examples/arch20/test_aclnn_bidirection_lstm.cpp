@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include <cstring>
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"
@@ -33,15 +34,43 @@ int64_t GetShapeSize(const std::vector<int64_t>& shape)
     return shapeSize;
 }
 
+float HalfToFloat(uint16_t value)
+{
+    uint32_t sign = static_cast<uint32_t>(value & 0x8000U) << 16U;
+    uint32_t exponent = (value >> 10U) & 0x1FU;
+    uint32_t fraction = value & 0x03FFU;
+    uint32_t bits;
+    if (exponent == 0) {
+        if (fraction == 0) {
+            bits = sign;
+        } else {
+            exponent = 127U - 15U + 1U;
+            while ((fraction & 0x0400U) == 0) {
+                fraction <<= 1U;
+                --exponent;
+            }
+            fraction &= 0x03FFU;
+            bits = sign | (exponent << 23U) | (fraction << 13U);
+        }
+    } else if (exponent == 0x1FU) {
+        bits = sign | 0x7F800000U | (fraction << 13U);
+    } else {
+        bits = sign | ((exponent + 127U - 15U) << 23U) | (fraction << 13U);
+    }
+    float result;
+    memcpy(&result, &bits, sizeof(result));
+    return result;
+}
+
 void PrintOutResult(std::vector<int64_t>& shape, void** deviceAddr)
 {
     auto size = GetShapeSize(shape);
-    std::vector<float> resultData(size, 0);
+    std::vector<uint16_t> resultData(size, 0);
     auto ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), *deviceAddr,
                            size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return );
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return);
     for (int64_t i = 0; i < size; i++) {
-        LOG_PRINT("mean result[%ld] is: %f\n", i, resultData[i]);
+        LOG_PRINT("result[%ld] is: %f\n", i, HalfToFloat(resultData[i]));
     }
 }
 

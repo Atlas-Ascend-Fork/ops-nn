@@ -271,6 +271,8 @@ aclnnStatus aclnnForeachAddcmulScalar(
 
 ## 调用示例
 
+示例按 y_i = x1_i + scalar × x2_i × x3_i 逐元素计算并打印out1、out2，运行后可据此核对结果。
+
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
 ```Cpp

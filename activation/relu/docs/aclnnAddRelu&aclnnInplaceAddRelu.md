@@ -27,11 +27,11 @@
 - 计算公式：
 
   $$
-  out_i = self_i+alpha \times other_i
+  out_i = relu(self_i+alpha \times other_i)
   $$
 
   $$
-  relu(self) = \begin{cases} self, & self\gt 0 \\ 0, & self\le 0 \end{cases}
+  relu(x) = \begin{cases} x, & x\gt 0 \\ 0, & x\le 0 \end{cases}
   $$
 
 ## 函数原型
@@ -285,7 +285,7 @@
       <td>selfRef（aclTensor*）</td>
       <td>输入|输出</td>
       <td>公式中的self与out，表示待转换的目标张量。</td>
-      <td>与other的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>），且需要是推导之后可转换的数据类型。</td>
+      <td>与other的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>），且需要是推导之后可转换的数据类型；selfRef的shape必须等于selfRef与other广播后的shape，即other需能广播到selfRef。</td>
       <td>BFLOAT16、FLOAT16、FLOAT32、INT8、UINT8、INT16、INT32、INT64</td>
       <td>ND</td>
       <td>0-8</td>
@@ -428,7 +428,7 @@
 - 确定性计算：
   - aclnnAddRelu&aclnnInplaceAddRelu默认确定性实现。
 
-- 针对selfRef数据类型为INT8，other数据类型为INT32的场景：
+- 针对输出数据类型为INT8（aclnnAddRelu的out或aclnnInplaceAddRelu的selfRef），other数据类型为INT32的场景：
     由于cast算子将INT32转换成INT8类型时存在精度问题（具体参见[aclnnCast](https://gitcode.com/cann/ops-math/blob/master/math/cast/docs/aclnnCast.md)），该场景下输出结果精度无法保证。
 
 ## 调用示例
@@ -526,7 +526,7 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 创建alpha aclScalar
   alpha = aclCreateScalar(&alphaValue, aclDataType::ACL_FLOAT);
-  CHECK_RET(alpha != nullptr, return ret);
+  CHECK_RET(alpha != nullptr, LOG_PRINT("aclCreateScalar failed. ERROR: %d\n", ret); return -1);
   // 创建out aclTensor
   ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT, &out);
   CHECK_RET(ret == ACL_SUCCESS, return ret);

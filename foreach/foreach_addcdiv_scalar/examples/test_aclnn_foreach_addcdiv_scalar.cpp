@@ -134,6 +134,7 @@ int main()
     }
 
     // 2. 构造输入与输出，需要根据API的接口自定义构造
+    // 示例中的input、other、another系列变量分别对应接口参数x1、x2、x3。
     // 创建input1 aclTensor
     ret = CreateAclTensor(input1HostData, selfShape1, &input1DeviceAddr, aclDataType::ACL_FLOAT, &input1);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("create input1 failed. ERROR: %d\n", ret); goto cleanup);

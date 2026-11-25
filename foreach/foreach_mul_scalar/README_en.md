@@ -65,7 +65,7 @@ English | [简体中文](./README.md)
     <tr>
       <td>y</td>
       <td>Output</td>
-      <td>Indicates the output tensor list of x multiplied by scalar, corresponding to `y` in the formula. Its data type and data format are consistent with the data type and data format of input parameter `x`, and its shape size is greater than or equal to the shape size of input parameter `x`. The data types of all tensors in this parameter are consistent.</td>
+      <td>Indicates the output tensor list of x multiplied by scalar, corresponding to `y` in the formula. Its data type and data format are consistent with the data type and data format of input parameter `x`, and its shape is the same as that of the tensor at the corresponding position in input parameter `x`. The data types of all tensors in this parameter are consistent.</td>
       <td>FLOAT32, FLOAT16, INT32, BFLOAT16</td>
       <td>ND</td>
     </tr>

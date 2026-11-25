@@ -171,12 +171,13 @@ aclnnStatus aclnnForeachAddScalarList(
     </tr>
     <tr>
       <td>out的Tensor个数小于入参`x`的Tensor个数。</td>
-    </tr>    <tr>
+    </tr>
+    <tr>
       <td>scalars的元素个数与`x`中Tensor的个数不一致。</td>
     </tr>
     <tr>
-      <td rowspan="3">ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td rowspan="3">561002</td>
+      <td rowspan="4">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="4">561002</td>
       <td>x与out的shape不满足约束。</td>
     </tr>
     <tr>
@@ -345,28 +346,28 @@ int main() {
   void* out2DeviceAddr = nullptr;
   aclTensor* input1 = nullptr;
   aclTensor* input2 = nullptr;
-  aclScalar* alpha1 = nullptr;
-  aclScalar* alpha2 = nullptr;
+  aclScalar* scalar1 = nullptr;
+  aclScalar* scalar2 = nullptr;
   aclTensor* out1 = nullptr;
   aclTensor* out2 = nullptr;
   std::vector<float> input1HostData = {1, 2, 3, 4, 5, 6};
   std::vector<float> input2HostData = {7, 8, 9};
   std::vector<float> out1HostData(6, 0);
   std::vector<float> out2HostData(3, 0);
-  float alpha1Value = 1.2f;
-  float alpha2Value = 2.2f;
+  float scalar1Value = 1.2f;
+  float scalar2Value = 2.2f;
   // 创建input1 aclTensor
   ret = CreateAclTensor(input1HostData, selfShape1, &input1DeviceAddr, aclDataType::ACL_FLOAT, &input1);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 创建input2 aclTensor
   ret = CreateAclTensor(input2HostData, selfShape2, &input2DeviceAddr, aclDataType::ACL_FLOAT, &input2);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
-  // 创建alpha1 aclScalar
-  alpha1 = aclCreateScalar(&alpha1Value, aclDataType::ACL_FLOAT);
-  CHECK_RET(alpha1 != nullptr, return ret);
-  // 创建alpha2 aclScalar
-  alpha2 = aclCreateScalar(&alpha2Value, aclDataType::ACL_FLOAT);
-  CHECK_RET(alpha2 != nullptr, return ret);
+  // 创建scalar1 aclScalar
+  scalar1 = aclCreateScalar(&scalar1Value, aclDataType::ACL_FLOAT);
+  CHECK_RET(scalar1 != nullptr, return -1);
+  // 创建scalar2 aclScalar
+  scalar2 = aclCreateScalar(&scalar2Value, aclDataType::ACL_FLOAT);
+  CHECK_RET(scalar2 != nullptr, return -1);
   // 创建out1 aclTensor
   ret = CreateAclTensor(out1HostData, outShape1, &out1DeviceAddr, aclDataType::ACL_FLOAT, &out1);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -377,8 +378,8 @@ int main() {
   aclTensorList* tensorListInput = aclCreateTensorList(tempInput.data(), tempInput.size());
   std::vector<aclTensor*> tempOutput{out1, out2};
   aclTensorList* tensorListOutput = aclCreateTensorList(tempOutput.data(), tempOutput.size());
-  std::vector<aclScalar*> tempscalar{alpha1, alpha2};
-  aclScalarList* scalarlist = aclCreateScalarList(tempscalar.data(), tempscalar.size());
+  std::vector<aclScalar*> tempScalar{scalar1, scalar2};
+  aclScalarList* scalarlist = aclCreateScalarList(tempScalar.data(), tempScalar.size());
 
   // 3. 调用CANN算子库API，需要修改为具体的API名称
   uint64_t workspaceSize = 0;

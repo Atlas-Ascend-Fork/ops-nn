@@ -25,7 +25,7 @@
 
 - 接口功能：
 
-  vLLM是一个高性能的LLM推理和服务框架，专注于优化大规模语言模型的推理效率。它的核心特点包括PageAttention和高效内存管理。advance_step算子的主要作用是推进推理步骤，即在每个生成步骤中更新模型的状态并生成新的inputTokens、inputPositions、seqLens和slotMapping，为vLLM的推理提升效率。
+  vLLM是一个高性能的LLM推理和服务框架，专注于优化大规模语言模型的推理效率。它的核心特点包括PagedAttention和高效内存管理。advance_step算子的主要作用是推进推理步骤，即在每个生成步骤中更新模型的状态并生成新的inputTokens、inputPositions、seqLens和slotMapping，为vLLM的推理提升效率。
 
 - 计算公式：
 
@@ -56,7 +56,7 @@
   $$
 
   $$
-slotMapping[i * tokenEachReqs + j] = blockTablesFlat[⌊nextPos_{i,j} / blockSize⌋ + blockTablesStride * i] * blockSize + nextPos_{i,j} \% blockSize
+slotMapping[i * tokenEachReqs + j] = blockTables[i, ⌊nextPos_{i,j} / blockSize⌋] * blockSize + nextPos_{i,j} \% blockSize
   $$
 
 ## 函数原型
@@ -65,11 +65,11 @@ slotMapping[i * tokenEachReqs + j] = blockTablesFlat[⌊nextPos_{i,j} / blockSiz
 
 ```Cpp
 aclnnStatus aclnnAdvanceStepV2GetWorkspaceSize(
-  aclTensor *inputTokensRef,
+  aclTensor *inputTokens,
   const aclTensor *sampledTokenIds,
-  aclTensor *inputPositionsRef,
-  aclTensor *seqLensRef,
-  aclTensor *slotMappingRef,
+  aclTensor *inputPositions,
+  aclTensor *seqLens,
+  aclTensor *slotMapping,
   const aclTensor *blockTables,
   const aclTensor *specTokenOptional,
   const aclTensor *acceptedNumOptional,
@@ -147,7 +147,7 @@ aclnnStatus aclnnAdvanceStepV2(
     <tr>
       <td>seqLens（aclTensor*）</td>
       <td>输入/输出</td>
-      <td>待进行AdvanceStepV2计算的入参/出参，用于记录不同blockIdx下seq的长度，公式中的输入/输出seqLens。</td>
+      <td>待进行AdvanceStepV2计算的入参/出参，用于记录各序列在每个token位置的序列长度，公式中的输入/输出seqLens。</td>
       <td><ul><li>不支持空Tensor。</li><li>shape为[numSeqs * (1+specNum)]。</li><li>取值范围为非负整数（0为合法值）。</li></ul></td>
       <td>INT64</td>
       <td>ND</td>
@@ -197,7 +197,7 @@ aclnnStatus aclnnAdvanceStepV2(
       <tr>
       <td>numSeqs（int64_t）</td>
       <td>输入</td>
-      <td>记录输入的seq数量，大小与seqLens的长度一致。</td>
+      <td>记录输入的seq数量；V2路径下与numQueries取值一致，回落V1路径时与seqLens的长度一致。</td>
       <td><ul><li>取值范围是大于0且小于200000000的正整数。</li><li>V2路径（specToken与acceptedNum同时传入）：numSeqs的值与输入numQueries的值一致。</li><li>可选输入未传入或仅传入其一时回落V1路径：此时要求numSeqs大于numQueries，inputTokens等1-D输入长度为numSeqs，sampledTokenIds为[numQueries, 1]，适用约束见aclnnAdvanceStep。</li></ul></td>
       <td>-</td>
       <td>-</td>

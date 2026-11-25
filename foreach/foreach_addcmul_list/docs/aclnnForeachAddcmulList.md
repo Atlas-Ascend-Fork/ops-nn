@@ -345,6 +345,7 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
   // 2. 构造输入与输出，需要根据API的接口自定义构造
+  // 示例中的input、other、another系列变量分别对应接口参数x1、x2、x3。
   std::vector<int64_t> selfShape1 = {2, 3};
   std::vector<int64_t> selfShape2 = {1, 3};
   std::vector<int64_t> scalarShape = {1, 2};

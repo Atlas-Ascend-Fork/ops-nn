@@ -34,7 +34,7 @@ dx_i=
 \begin{cases}
 NaN, & \text{if } x < \text{0} \text{ or } x > 1 ,eps <0 \\
 0, & \text{if } x < \text{eps} \text{ or } x > 1 - \text{eps},eps \geq 0 \\
-\frac{dy_i}{x_i \cdot (1 - x_i)}, & \text{if } \text{eps} \leq x_i \leq 1 - \text{eps} \\
+\frac{dy_i}{x_i \cdot (1 - x_i)}, & \text{if } (eps < 0 \text{ and } 0 \leq x_i \leq 1) \text{ or } (eps \geq 0 \text{ and } eps \leq x_i \leq 1 - eps) \\
 \end{cases}
 $$
 
@@ -109,7 +109,7 @@ aclnnStatus aclnnLogitGrad(
       <tr>
       <td>eps（double）</td>
       <td>输入</td>
-      <td>输入input的epsilon限制边界，防止除0错误，公式中的eps。</td>
+      <td>输入x的epsilon限制边界，防止除0错误，公式中的eps。</td>
       <td>建议值-1。</td>
       <td>-</td>
       <td>-</td>
@@ -231,12 +231,12 @@ aclnnStatus aclnnLogitGrad(
 - eps的取值对x和输出的影响：
   - eps小于0时，x取值范围不在[0, 1]，输出NaN。
   - eps大于等于0时，x取值范围不在[eps, 1 - eps]，输出0。
-  - eps大于1时，输出NaN，取值为1时为Inf。
+  - eps大于等于1时，输出0。
   - eps取值为Inf时，输出0。
   - eps取值为NaN时，输出NaN。
 - x取值对输出的影响：
-  - x取值0和1时，输出Inf。
-  - x为Inf或NaN时，输出为NaN。
+  - eps小于等于0时，x取值0和1时输出Inf；eps大于0时，x取值0和1时输出0。
+  - eps小于0且x为Inf时输出NaN；eps大于等于0且x为Inf时输出0；x为NaN时输出NaN。
 - dy为Inf或NaN时，输出为Inf或NaN。
 
 ## 调用示例
@@ -276,7 +276,7 @@ void PrintOutResult(std::vector<int64_t> &shape, void** deviceAddr) {
                          *deviceAddr, size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return);
   for (int64_t i = 0; i < size; i++) {
-    LOG_PRINT("mean result[%ld] is: %f\n", i, resultData[i]);
+    LOG_PRINT("logit grad result[%ld] is: %f\n", i, resultData[i]);
   }
 }
 

@@ -208,7 +208,7 @@ int main()
     out1.release();
     out2.release();
 
-    // 3. 调用CANN算子库API，需要修改为具体的API名称
+    // 3. 调用aclnnForeachLerpList两段式接口完成计算
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor = nullptr;
 

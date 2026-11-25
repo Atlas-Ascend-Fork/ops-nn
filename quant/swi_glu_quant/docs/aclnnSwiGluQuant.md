@@ -34,7 +34,7 @@
   $$
 
   $$
-    Y = Cast(Mul(Y_{tmp}, Scale))
+    Y = Cast(Mul(Y_{tmp}, scale))
   $$
      其中，A表示输入x的前半部分，B表示输入x的后半部分，g表示group_index，G为group_index的分组数量。int8量化时，$dstTypeScale = 127$（127是int8的最大值）；int4量化时，$dstTypeScale = 7$（7是int4的最大值）。INT4输出时每字节打包2个值，取值范围为[-8, 7]。
 
@@ -407,7 +407,7 @@ int main() {
   // 创建scale aclTensor
   ret = CreateAclTensor(scaleHostData, scaleShape, &scaleDeviceAddr, aclDataType::ACL_FLOAT, &scale);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
-  // 3. 调用CANN算子库API，需要修改为具体的API名称
+  // 3. 调用CANN算子库API
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
   // 调用aclnnSwiGluQuant第一段接口
@@ -435,7 +435,7 @@ int main() {
   for (int64_t i = 0; i < size; i++) {
     LOG_PRINT("result[%ld] is: %d\n", i, resultData[i]);
   }
-  // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
+  // 6. 释放aclTensor，需要根据具体API的接口定义修改
   aclDestroyTensor(x);
   aclDestroyTensor(smoothScales);
   aclDestroyTensor(groupIndex);

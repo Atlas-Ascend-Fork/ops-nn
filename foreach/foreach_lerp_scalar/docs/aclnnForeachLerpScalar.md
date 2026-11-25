@@ -188,7 +188,7 @@ aclnnStatus aclnnForeachLerpScalar(
       <td>x1、x2、weight、out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>x1、x2、weight、out的数据类型不一致。</td>
+      <td>x1、x2、out的数据类型不一致（weight支持FLOAT32、DOUBLE，可与x1不同）。</td>
     </tr>
     <tr>
       <td>x1、x2、out的shape不满足对应关系。</td>

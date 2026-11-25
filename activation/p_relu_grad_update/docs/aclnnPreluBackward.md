@@ -63,7 +63,7 @@ aclnnStatus aclnnPreluBackwardGetWorkspaceSize(
 ```Cpp
 aclnnStatus aclnnPreluBackward(
   void*            workspace,
-  uint64_t         workspace_size,
+  uint64_t         workspaceSize,
   aclOpExecutor*   executor,
   aclrtStream      stream)
 ```
@@ -207,7 +207,7 @@ aclnnStatus aclnnPreluBackward(
       <td>gradOutput、self、weight、gradInput、gradWeight大于8维。</td>
     </tr>
     <tr>
-      <td>weight的元素个数不等于self的通道数或者1。</td>
+      <td>self维度大于1时，weight的元素个数不等于self的通道数；self维度不大于1时，weight的元素个数不等于1。</td>
     </tr>
     <tr>
       <td>weight的元素个数为1时，gradWeight的shape与weight不相同。</td>

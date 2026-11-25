@@ -317,7 +317,7 @@ int main() {
 
   // 创建betaOptional aclScalar
   betaOptional = aclCreateScalar(&betaValue, aclDataType::ACL_FLOAT);
-  CHECK_RET(betaOptional != nullptr, return ret);
+  CHECK_RET(betaOptional != nullptr, return -1);
 
   // 创建out aclTensor
   ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT, &out);

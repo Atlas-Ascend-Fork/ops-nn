@@ -412,3 +412,5 @@ int main()
     return 0;
 }
 ```
+
+示例中deviceId可由命令行参数指定（如`./test_aclnn_shrink 6`），默认值为0；也可通过环境变量`ASCEND_RT_VISIBLE_DEVICES`将逻辑设备映射到物理设备。

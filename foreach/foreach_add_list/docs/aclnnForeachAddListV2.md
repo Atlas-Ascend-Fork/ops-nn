@@ -149,7 +149,7 @@ aclnnStatus aclnnForeachAddListV2(
   <!-- npu="A3,910b" id7 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
 
-    `scalar`的数据类型与入参`x1`的数据类型具有一定对应关系：
+    `alpha`的数据类型与入参`x1`的数据类型具有一定对应关系：
     - 当`x1`的数据类型为FLOAT32、BFLOAT16时，数据类型支持FLOAT32、DOUBLE。
     - 当`x1`的数据类型为FLOAT16时，数据类型支持FLOAT16、DOUBLE。
     - 当`x1`的数据类型为INT32、INT16、INT8、UINT8时，数据类型支持INT32、INT64。
@@ -157,7 +157,7 @@ aclnnStatus aclnnForeachAddListV2(
 
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-    - `scalar`数据类型与入参`x1`的数据类型具有一定对应关系：
+    - `alpha`数据类型与入参`x1`的数据类型具有一定对应关系：
       - 当`x1`的数据类型为BFLOAT16、FLOAT32时，数据类型支持FLOAT32、DOUBLE。
       - 当`x1`的数据类型为FLOAT16时，数据类型支持FLOAT16、FLOAT32、DOUBLE。
       - 当`x1`的数据类型为INT32、INT16、INT8、UINT8时，数据类型支持INT32、INT64。

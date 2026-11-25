@@ -228,7 +228,7 @@ aclnnStatus aclnnForeachTanh(
 
 ## 调用示例
 
-示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
+示例代码如下，仅供参考。执行后out1应输出输入{1,2,3,4,5,6}的逐元素双曲正切计算结果，out2应输出输入{7,8,9}的逐元素双曲正切计算结果；具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
 ```Cpp
 #include <iostream>

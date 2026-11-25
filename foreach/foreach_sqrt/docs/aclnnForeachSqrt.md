@@ -334,7 +334,7 @@ int main() {
   std::vector<aclTensor*> tempOutput{out1, out2};
   aclTensorList* tensorListOutput = aclCreateTensorList(tempOutput.data(), tempOutput.size());
 
-  // 3. 调用CANN算子库API，需要修改为具体的API名称
+  // 3. 调用aclnnForeachSqrt两段式接口完成输入张量列表的平方根运算，输入为输出张量列表与输入张量列表
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
   // 调用aclnnForeachSqrt第一段接口

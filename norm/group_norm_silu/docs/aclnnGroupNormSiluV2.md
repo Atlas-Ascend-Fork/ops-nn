@@ -71,7 +71,7 @@ aclnnStatus aclnnGroupNormSiluV2(
     void *         workspace,
     uint64_t       workspaceSize,
     aclOpExecutor *executor,
-    aclrtStream    stream)
+    aclrtStream    stream);
 ```
 
 ## aclnnGroupNormSiluV2GetWorkspaceSize
@@ -174,7 +174,7 @@ aclnnStatus aclnnGroupNormSiluV2(
         <td>meanOut（aclTensor*）</td>
         <td>输出</td>
         <td>公式中的meanOut。</td>
-        <td>数据类型与self保持一致，shape中N是self第1维的大小。</td>
+        <td>数据类型与self保持一致（Ascend 950PR&950DT系列产品当gamma或beta不为空时，要求与gamma或beta相同），shape中N是self第1维的大小。</td>
         <td>FLOAT16、FLOAT、BFLOAT16</td>
         <td>ND</td>
         <td>(N, group)</td>
@@ -184,7 +184,7 @@ aclnnStatus aclnnGroupNormSiluV2(
         <td>rstdOut（aclTensor*）</td>
         <td>输出</td>
         <td>公式中的rstdOut。</td>
-        <td>数据类型与self保持一致，shape中N是self第1维的大小。</td>
+        <td>数据类型与self保持一致（Ascend 950PR&950DT系列产品当gamma或beta不为空时，要求与gamma或beta相同），shape中N是self第1维的大小。</td>
         <td>FLOAT16、FLOAT、BFLOAT16</td>
         <td>ND</td>
         <td>(N, group)</td>

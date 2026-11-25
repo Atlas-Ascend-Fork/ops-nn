@@ -90,23 +90,23 @@ int main()
     void* out2DeviceAddr = nullptr;
     aclTensor* input1 = nullptr;
     aclTensor* input2 = nullptr;
-    aclScalar* alpha = nullptr;
+    aclScalar* scalar = nullptr;
     aclTensor* out1 = nullptr;
     aclTensor* out2 = nullptr;
     std::vector<float> input1HostData = {1, 2, 3, 4, 5, 6};
     std::vector<float> input2HostData = {7, 8, 9};
     std::vector<float> out1HostData(6, 0);
     std::vector<float> out2HostData(3, 0);
-    float alphaValue = 1.2f;
+    float scalarValue = 1.2f;
     // 创建input1 aclTensor
     ret = CreateAclTensor(input1HostData, selfShape1, &input1DeviceAddr, aclDataType::ACL_FLOAT, &input1);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建input2 aclTensor
     ret = CreateAclTensor(input2HostData, selfShape2, &input2DeviceAddr, aclDataType::ACL_FLOAT, &input2);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    // 创建alpha aclScalar
-    alpha = aclCreateScalar(&alphaValue, aclDataType::ACL_FLOAT);
-    CHECK_RET(alpha != nullptr, return -1);
+    // 创建scalar aclScalar
+    scalar = aclCreateScalar(&scalarValue, aclDataType::ACL_FLOAT);
+    CHECK_RET(scalar != nullptr, return -1);
     // 创建out1 aclTensor
     ret = CreateAclTensor(out1HostData, outShape1, &out1DeviceAddr, aclDataType::ACL_FLOAT, &out1);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -122,7 +122,7 @@ int main()
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // 调用aclnnForeachAddScalarV2第一段接口
-    ret = aclnnForeachAddScalarV2GetWorkspaceSize(tensorListInput, alpha, tensorListOutput, &workspaceSize, &executor);
+    ret = aclnnForeachAddScalarV2GetWorkspaceSize(tensorListInput, scalar, tensorListOutput, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnForeachAddScalarV2GetWorkspaceSize failed. ERROR: %d\n", ret);
               return ret);
     // 根据第一段接口计算出的workspaceSize申请device内存
@@ -161,7 +161,7 @@ int main()
     // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
     aclDestroyTensorList(tensorListInput);
     aclDestroyTensorList(tensorListOutput);
-    aclDestroyScalar(alpha);
+    aclDestroyScalar(scalar);
 
     // 7.释放device资源，需要根据具体API的接口定义修改
     aclrtFree(input1DeviceAddr);

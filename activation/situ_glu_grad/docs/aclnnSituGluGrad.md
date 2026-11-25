@@ -175,7 +175,7 @@ aclnnStatus aclnnSituGluGrad(
       <td>beta（double）</td>
       <td>输入</td>
       <td>公式中的输入beta，SiTU门控部分的缩放系数。</td>
-      <td>建议为非零值。</td>
+      <td>必须为非零值（beta=0时公式中gate/beta无定义，会导致NaN或错误结果）。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

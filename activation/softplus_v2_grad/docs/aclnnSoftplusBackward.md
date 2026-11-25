@@ -344,7 +344,7 @@ int main()
     std::vector<float> resultData;
 
     // 创建 gradOutput, self, gradInput aclTensor
-    // DEMO.04: 各失败分支统一 goto CLEANUP 释放已申请资源，不再直接 return
+    // 各失败分支统一 goto CLEANUP 释放已申请资源，不再直接 return
     ret = CreateAclTensor(gradOutputHostData, gradOutputShape, &gradOutputDeviceAddr, aclDataType::ACL_FLOAT,
                           &gradOutput);
     if (ret != ACL_SUCCESS) {
@@ -411,7 +411,7 @@ int main()
     }
 
 CLEANUP:
-    // 6. 释放aclTensor，需要根据具体API的接口定义
+    // 6. 释放aclTensor，需要根据具体API的接口定义修改
     if (gradOutput != nullptr) {
         aclDestroyTensor(gradOutput);
     }
@@ -421,7 +421,7 @@ CLEANUP:
     if (gradInput != nullptr) {
         aclDestroyTensor(gradInput);
     }
-    // DEMO.04: 释放aclScalar，与aclCreateScalar成对
+    // 释放aclScalar，与aclCreateScalar成对
     if (beta != nullptr) {
         aclDestroyScalar(beta);
     }

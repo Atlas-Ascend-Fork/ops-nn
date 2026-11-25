@@ -226,7 +226,7 @@ aclnnStatus aclnnForeachCosh(
 - 空TensorList：`x`与`out`的成员数量为0时视为无操作，第一段接口返回成功且`workspaceSize=0`，不写入任何输出。
 - 维度：`x`与`out`中每个Tensor支持0-8维；超过8维返回161002。
 - TensorList成员上限为256。
-- 数据格式：支持ND、NCHW、NHWC、HWCN、NDHWC、NCDHW；私有格式返回161002。
+- 数据格式：支持ND；私有格式返回161002。
 
 ## 调用示例
 

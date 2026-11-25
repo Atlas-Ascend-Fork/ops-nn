@@ -337,7 +337,7 @@ int main() {
   std::vector<aclTensor*> tempOutput{out1, out2};
   aclTensorList* tensorListOutput = aclCreateTensorList(tempOutput.data(), tempOutput.size());
 
-  // 3. 调用CANN算子库API，需要修改为具体的API名称
+  // 3. 调用aclnnForeachSigmoid算子接口
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
   // 调用aclnnForeachSigmoid第一段接口

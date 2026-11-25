@@ -152,7 +152,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
           <td>gamma (aclTensor*)</td>
           <td>输入</td>
           <td>每个channel的缩放系数，公式中的<code>gamma</code>。</td>
-          <td><ul><li>不支持空tensor。</li><li>数据类型和维度与dy相同，元素个数需要等于C。</li></ul></td>
+          <td><ul><li>不支持空tensor。</li><li>数据类型与dy相同，维度为1，元素个数需要等于C。</li></ul></td>
           <td>FLOAT16、FLOAT、BFLOAT16</td>
           <td>ND</td>
           <td>1</td>
@@ -162,7 +162,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
           <td>beta (aclTensor*)</td>
           <td>输入</td>
           <td>每个channel的偏移系数，公式中的<code>beta</code>。</td>
-          <td><ul><li>不支持空tensor。</li><li>数据类型和维度与dy相同，元素个数需要等于C。</li></ul></td>
+          <td><ul><li>不支持空tensor。</li><li>数据类型与dy相同，维度为1，元素个数需要等于C。</li></ul></td>
           <td>FLOAT16、FLOAT、BFLOAT16</td>
           <td>ND</td>
           <td>1</td>
@@ -232,7 +232,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
           <td>dgammaOut (aclTensor*)</td>
           <td>输出</td>
           <td>公式中的<code>dGamma</code>。</td>
-          <td>数据类型和shape与gamma相同。</td>
+          <td>数据类型和shape与gamma相同，shape为[C]。</td>
           <td>FLOAT16、FLOAT、BFLOAT16</td>
           <td>ND</td>
           <td>2</td>
@@ -242,7 +242,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
           <td>dbetaOut (aclTensor*)</td>
           <td>输出</td>
           <td>beta的输出梯度，公式中的<code>dBeta</code>。</td>
-          <td>数据类型和shape与gamma相同。</td>
+          <td>数据类型和shape与gamma相同，shape为[C]。</td>
           <td>FLOAT16、FLOAT、BFLOAT16</td>
           <td>ND</td>
           <td>2</td>
@@ -447,8 +447,8 @@ int main() {
   std::vector<int64_t> gammaShape = {3};
   std::vector<int64_t> betaShape = {3};
   std::vector<int64_t> dxOutShape = {2, 3, 4};
-  std::vector<int64_t> dgammaOutShape = {3, 1};
-  std::vector<int64_t> dbetaOutShape = {3, 1};
+  std::vector<int64_t> dgammaOutShape = {3};
+  std::vector<int64_t> dbetaOutShape = {3};
   void* dyDeviceAddr = nullptr;
   void* meanDeviceAddr = nullptr;
   void* rstdDeviceAddr = nullptr;

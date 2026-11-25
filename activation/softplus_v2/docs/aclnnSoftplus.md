@@ -322,7 +322,7 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 创建beta aclScalar
   beta = aclCreateScalar(&betaValue, aclDataType::ACL_FLOAT);
-  CHECK_RET(beta != nullptr, return ret);
+  CHECK_RET(beta != nullptr, LOG_PRINT("aclCreateScalar failed. ERROR: nullptr\n"); return -1);
   // 创建threshold aclScalar
   threshold = aclCreateScalar(&thresholdValue, aclDataType::ACL_FLOAT);
   CHECK_RET(threshold != nullptr, return ret);

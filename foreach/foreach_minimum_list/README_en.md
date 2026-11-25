@@ -64,7 +64,7 @@ English | [简体中文](./README.md)
     <tr>
       <td>y</td>
       <td>Output</td>
-      <td>Represents the output tensor list of the minimum operation, corresponding to `y` in the formulas. The data type and data format are the same as those of the input `x1`, and the shape size is greater than or equal to the shape size of the input `x1`. The data types of all tensors in this parameter are consistent.</td>
+      <td>Represents the output tensor list of the minimum operation, corresponding to `y` in the formulas. The data type and data format are the same as those of the input `x1`, and the shape is the same as the shape of the input `x1`. The data types of all tensors in this parameter are consistent.</td>
       <td>FLOAT32, FLOAT16, INT32, BFLOAT16</td>
       <td>ND</td>
     </tr>

@@ -113,7 +113,7 @@ aclnnStatus aclnnBidirectionLSTMV2(
       <td>x（aclTensor*）</td>
       <td>输入</td>
       <td>LSTM单元的输入向量，公式中的x。</td>
-      <td><ul><li>支持空Tensor。</li><li>当参数packed为true时，shape支持三维（time_step, batch_size, input_size）</li><li>当参数packed为true时，shape支持二维（total_batch_size, input_size）。其中，`time_step`表示时间维度；`batch_size`表示每个时刻需要处理的batch数量；`input_size`表示输入的特征数量；`total_batch_size`表示每个时刻的batch数量不对齐时所有时刻的总batch数量。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>当参数packed为false时，shape支持三维（time_step, batch_size, input_size）</li><li>当参数packed为true时，shape支持二维（total_batch_size, input_size）。其中，`time_step`表示时间维度；`batch_size`表示每个时刻需要处理的batch数量；`input_size`表示输入的特征数量；`total_batch_size`表示每个时刻的batch数量不对齐时所有时刻的总batch数量。</li></ul></td>
       <td>FLOAT16</td>
       <td>ND</td>
       <td>3</td>
@@ -193,7 +193,7 @@ aclnnStatus aclnnBidirectionLSTMV2(
       <td>wHhReverseOptional（aclTensor*）</td>
       <td>输入</td>
       <td>逆向hidden-hidden权重，公式中的W。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape支持二维（4 * hidden_size, input_size）。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape支持二维（4 * hidden_size, hidden_size）。</li></ul></td>
       <td>FLOAT16</td>
       <td>ND</td>
       <td>2</td>
@@ -283,7 +283,7 @@ aclnnStatus aclnnBidirectionLSTMV2(
       <td>yOut（aclTensor*）</td>
       <td>输出</td>
       <td>LSTM单元的输出向量。</td>
-      <td><ul><li>bidirection为false时，当参数packed为false，shape支持三维（time_step, batch_size, input_size）；当参数packed为true，shape支持二维（total_batch_size, input_size）。</li><li>bidirection为true时，当参数packed为false，shape支持三维（time_step, batch_size, 2 * hidden_size）；当参数packed为true，shape支持二维（total_batch_size, 2 * input_size）。</li></ul></td>
+      <td><ul><li>bidirection为false时，当参数packed为false，shape支持三维（time_step, batch_size, hidden_size）；当参数packed为true，shape支持二维（total_batch_size, hidden_size）。</li><li>bidirection为true时，当参数packed为false，shape支持三维（time_step, batch_size, 2 * hidden_size）；当参数packed为true，shape支持二维（total_batch_size, 2 * hidden_size）。</li></ul></td>
       <td>FLOAT16</td>
       <td>ND</td>
       <td>3</td>

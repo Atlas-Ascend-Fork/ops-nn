@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：[aclnnSilu](../../swish/docs/aclnnSilu.md)的反向传播，根据silu反向传播梯度与正向输出计算silu的梯度输入。
+- 接口功能：[aclnnSilu](../../swish/docs/aclnnSilu.md)的反向传播，根据silu反向传播梯度与正向输入计算silu的梯度输入。
 - 计算公式：
 
   $$
@@ -95,7 +95,7 @@ aclnnStatus aclnnSiluBackward(
       <td>gradOutput（aclTensor*）</td>
       <td>输入</td>
       <td>表示输入梯度。公式中的gradOutput。</td>
-      <td><ul><li>支持空Tensor。</li><li>gradOutput、self与gradInput的数据类型和shape一致。</li><li>gradOutput、self与gradInput的shape一致且满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>gradOutput、self与gradInput的数据类型一致，shape满足broadcast关系（shape相同时视为满足broadcast的特例）。</li><li>gradOutput、self与gradInput的shape一致且满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
       <td>1-8</td>
@@ -105,7 +105,7 @@ aclnnStatus aclnnSiluBackward(
       <td>self（aclTensor*）</td>
       <td>输入</td>
       <td>表示输入数据。公式中的x，且对应正向的输入参数。</td>
-      <td><ul><li>支持空Tensor。</li><li>gradOutput、self与gradInput的数据类型和shape一致。</li><li>gradOutput、self与gradInput的shape一致且满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>gradOutput、self与gradInput的数据类型一致，shape满足broadcast关系（shape相同时视为满足broadcast的特例）。</li><li>gradOutput、self与gradInput的shape一致且满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
       <td>1-8</td>
@@ -115,7 +115,7 @@ aclnnStatus aclnnSiluBackward(
       <td>gradInput（aclTensor*）</td>
       <td>输出</td>
       <td>表示对输入数据self求的梯度。公式中的gradInput。</td>
-      <td><ul><li>gradOutput、self与gradInput的数据类型和shape一致。</li><li>gradOutput、self与gradInput的shape一致且满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。</li></ul></td>
+      <td><ul><li>gradOutput、self与gradInput的数据类型一致，shape满足broadcast关系（shape相同时视为满足broadcast的特例）。</li><li>gradOutput、self与gradInput的shape一致且满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
       <td>1-8</td>

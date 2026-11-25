@@ -115,7 +115,7 @@ aclnnStatus aclnnGeGlu(
       <td>out（aclTensor*）</td>
       <td>输出</td>
       <td>GeGlu计算的出参，公式中的out_i。</td>
-      <td><ul><li>out的shape跟self的shape除了dim指定的轴外需要保持一致，dim指定的轴为self的shape对应轴的一半。</li><li>数据类型与self一致。</li></ul></td>
+      <td><ul><li>outGelu的shape跟self的shape除了dim指定的轴外需要保持一致，dim指定的轴为self的shape对应轴的一半。</li><li>数据类型与self一致。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
@@ -125,7 +125,7 @@ aclnnStatus aclnnGeGlu(
       <td>outGelu（aclTensor*）</td>
       <td>输出</td>
       <td>GeGlu计算的出参。</td>
-      <td><ul><li>out的shape跟self的shape除了dim指定的轴外需要保持一致，dim指定的轴为self的shape对应轴的一半。</li><li>数据类型与self一致。</li></ul></td>
+      <td><ul><li>outGelu的shape跟self的shape除了dim指定的轴外需要保持一致，dim指定的轴为self的shape对应轴的一半。</li><li>数据类型与self一致。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>

@@ -641,7 +641,6 @@ int main() {
   std::vector<int64_t> activationScaleShape = {2};
   std::vector<int64_t> biasShape = {1, 64};
   std::vector<int64_t> scaleShape = {1, 32}; // quantscale
-  std::vector<int64_t> offsetShape = {1};
   std::vector<int64_t> groupIndexShape = {1};
   std::vector<int64_t> outShape = {2, 32};
   std::vector<int64_t> scaleOutShape = {2};
@@ -652,7 +651,6 @@ int main() {
   void* biasDeviceAddr = nullptr;
 
   void* scaleDeviceAddr = nullptr;
-  void* offsetDeviceAddr = nullptr;
   void* groupIndexDeviceAddr = nullptr;
   void* outDeviceAddr = nullptr;
   void* scaleOutDeviceAddr = nullptr;
@@ -663,7 +661,6 @@ int main() {
   aclTensor* bias = nullptr;
 
   aclTensor* scale = nullptr;
-  aclTensor* offset = nullptr;
   aclTensor* groupIndex = nullptr;
   aclTensor* out = nullptr;
   aclTensor* scaleOut = nullptr;
@@ -679,7 +676,6 @@ int main() {
   std::vector<float> biasData(64, 1.0);
   std::vector<int64_t> groupIndexData = {1};
   std::vector<float> scaleHostData(32, 1);
-  std::vector<float> offsetHostData = {1};
   std::vector<int8_t> outHostData(64, 0);
   std::vector<float> scaleOutHostData = {0, 0};
 
@@ -687,9 +683,9 @@ int main() {
   int64_t dstType = 2;
   int64_t activateDim = -1;
   int64_t swigluMode = 1;
-  float clampLimit = 7.0;
-  float gluAlpha = 1.702;
-  float gluBias = 1.0;
+  double clampLimit = 7.0;
+  double gluAlpha = 1.702;
+  double gluBias = 1.0;
 
   // 创建x aclTensor
   ret = CreateAclTensor(xHostData, xShape, &xDeviceAddr, aclDataType::ACL_INT32, &x);
@@ -705,9 +701,6 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 创建scale aclTensor
   ret = CreateAclTensor(scaleHostData, scaleShape, &scaleDeviceAddr, aclDataType::ACL_FLOAT, &scale);
-  CHECK_RET(ret == ACL_SUCCESS, return ret);
-  // 创建offset aclTensor
-  ret = CreateAclTensor(offsetHostData, offsetShape, &offsetDeviceAddr, aclDataType::ACL_FLOAT, &offset);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 创建groupIndex aclTensor
   ret = CreateAclTensor(groupIndexData, groupIndexShape, &groupIndexDeviceAddr, aclDataType::ACL_INT64, &groupIndex);
@@ -749,15 +742,21 @@ int main() {
   // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
   aclDestroyTensor(x);
   aclDestroyTensor(scale);
-  aclDestroyTensor(offset);
   aclDestroyTensor(out);
   aclDestroyTensor(scaleOut);
   // 7. 释放device资源，需要根据具体API的接口定义修改
   aclrtFree(xDeviceAddr);
   aclrtFree(scaleDeviceAddr);
-  aclrtFree(offsetDeviceAddr);
   aclrtFree(outDeviceAddr);
   aclrtFree(scaleOutDeviceAddr);
+  aclrtFree(weightScaleDeviceAddr);
+  aclrtFree(activationScaleDeviceAddr);
+  aclrtFree(biasDeviceAddr);
+  aclrtFree(groupIndexDeviceAddr);
+  aclDestroyTensor(weightScale);
+  aclDestroyTensor(activationScale);
+  aclDestroyTensor(bias);
+  aclDestroyTensor(groupIndex);
   if (workspaceSize > 0) {
     aclrtFree(workspaceAddr);
   }

@@ -195,16 +195,16 @@ aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/co
     <td>输入x、weightScale或输出out的Tensor是空指针。</td>
   </tr>
   <tr>
-    <td>ACLNN_ERR_PARAM_INVALID</td>
-    <td>161002</td>
+    <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
+    <td rowspan="2">161002</td>
     <td>输入x、weightScale或输出out的数据类型不在支持的范围内。</td>
   </tr>
   <tr>
-    <td rowspan="2">ACLNN_ERR_INNER_TILING_ERROR</td>
-    <td rowspan="2">561002</td>
     <td>输入activateScaleOptional、biasOptional的数据类型不在支持的范围内。</td>
   </tr>
   <tr>
+    <td>ACLNN_ERR_INNER_TILING_ERROR</td>
+    <td>561002</td>
     <td>输入和输出的shape中N和M的取值不满足参数要求和约束（例如M>25000）。</td>
   </tr>
 </tbody>
@@ -412,10 +412,16 @@ int main() {
 
   // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
   aclDestroyTensor(input);
+  aclDestroyTensor(weight);
+  aclDestroyTensor(activation);
+  aclDestroyTensor(bias);
   aclDestroyTensor(y);
 
   // 7. 释放device资源，需要根据具体API的接口定义修改
   aclrtFree(inputDeviceAddr);
+  aclrtFree(weightDeviceAddr);
+  aclrtFree(activationDeviceAddr);
+  aclrtFree(biasDeviceAddr);
   aclrtFree(yDeviceAddr);
   if (workspaceSize > 0) {
     aclrtFree(workspaceAddr);

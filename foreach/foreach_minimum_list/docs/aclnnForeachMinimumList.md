@@ -106,7 +106,7 @@ aclnnStatus aclnnForeachMinimumList(
       <td>out（aclTensorList*）</td>
       <td>输出</td>
       <td>表示取最小值运算的输出张量列表，对应公式中的`y`。</td>
-      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape size大于等于入参`x1`的shape size。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape与入参`x1`的shape一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、INT32、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
@@ -231,6 +231,8 @@ aclnnStatus aclnnForeachMinimumList(
 - 输入`x1`、`x2`、输出`out`支持非连续Tensor；非连续输入会先转换为连续Tensor参与计算，非连续输出通过连续结果回写。
 
 ## 调用示例
+
+示例打印输入列表对应元素的最小值：out1应为{1,2,3,3,2,1}，out2应为{7,8,7}。
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 

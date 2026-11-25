@@ -108,7 +108,7 @@ aclnnStatus aclnnLogSigmoidBackward(
     <tr>
        <td>buffer（aclTensor*）</td>
       <td>输入</td>
-      <td>正向计算的中间结果，暂不使用。</td>
+      <td>正向计算的中间结果，当前版本必须传入且不能为空；其shape和数据类型需与gradOutput、self、gradInput一致，内容暂不使用。</td>
       <td><ul><li>支持空Tensor。</li><li>gradOutput、self、buffer与gradInput的shape一致。</li><li>gradOutput、self、buffer与gradInput的数据类型一致。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>

@@ -57,7 +57,7 @@ English | [简体中文](./README.md)
     <tr>
       <td>y</td>
       <td>Output</td>
-      <td>Represents the output tensor list of the arctangent computation, corresponding to `y` in the formula. The data type and data format are the same as the data type and data format of input parameter `x`, and the shape size is greater than or equal to the shape size of input parameter `x`. All tensors in this parameter have the same data type.</td>
+      <td>Represents the output tensor list of the arctangent computation, corresponding to `y` in the formula. The data type and data format are the same as the data type and data format of input parameter `x`, and the shape is the same as that of the tensor at the corresponding position in input parameter `x`. All tensors in this parameter have the same data type.</td>
       <td>FLOAT32, FLOAT16, BFLOAT16</td>
       <td>ND</td>
     </tr>

@@ -65,7 +65,7 @@ English | [简体中文](./README.md)
     <tr>
       <td>y</td>
       <td>Output</td>
-      <td>Output tensor list of the power-of-x computation, corresponding to `y` in the formula. The data types of all tensors in this parameter stay consistent. The data type and data format are consistent with those of the input parameter `x`, and the shape size is greater than or equal to the shape size of the input parameter `x`.</td>
+      <td>Output tensor list of the power-of-x computation, corresponding to `y` in the formula. The data types of all tensors in this parameter stay consistent. The data type and data format are consistent with those of the input parameter `x`, and the shape is the same as that of the tensor at the corresponding position in input parameter `x`.</td>
       <td>FLOAT32, FLOAT16, INT32, BFLOAT16</td>
       <td>ND</td>
     </tr>

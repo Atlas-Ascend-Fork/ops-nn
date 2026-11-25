@@ -251,6 +251,8 @@ aclnnStatus aclnnForeachLerpList(
 
 ## 调用示例
 
+示例按插值公式逐元素计算out1、out2，运行后可对照打印结果校验。
+
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
 ```Cpp
@@ -464,7 +466,7 @@ int main()
     out1.release();
     out2.release();
 
-    // 3. 调用CANN算子库API，需要修改为具体的API名称
+    // 3. 调用aclnnForeachLerpList两段式接口完成计算
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor = nullptr;
 
