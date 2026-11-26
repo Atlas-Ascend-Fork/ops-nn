@@ -147,6 +147,6 @@ class ScatterMaxWithArgmaxSpec:
     third_party = {"torch": ThirdPartyImpl}
 
     tolerance = {
-        "float32": {"standard": "mix_tolerance"},
+        "float32": {"standard": "cross_check", "level": "L0"},
         "int32": {"standard": "binary_equal"},
     }
