@@ -23,7 +23,7 @@
  *
  * This gate independently rejects the documented contract violations that are
  * decidable from the input shapes alone (rank bounds, state-tensor shape identity,
- * 0-D / {1} scalar shapes, required inputs), matching the operator's
+ * scalar {1} shapes, required inputs), matching the operator's
  * INFER_AND_TILING_INDEPENDENT interception policy. Unresolved dynamic markers
  * (-1 unknown dim / -2 unknown rank) are NOT rejected here: the operator contract
  * delegates their rejection to Tiling. The dtype gate lives in
@@ -120,9 +120,7 @@ ge::graphStatus CheckStateTensors(gert::InferShapeContext* context, const gert::
     return ge::GRAPH_SUCCESS;
 }
 
-// lr / rho / momentum / epsilon are scalars: [] (0-D), {1}, or an unresolved dynamic marker
-// ([-1] unknown dim / [-2] unknown rank) all pass this gate. Only a concrete non-1 element
-// count is rejected; Tiling re-checks the resolved shape.
+// lr / rho / momentum / epsilon are 1-element rank-1 tensors.
 ge::graphStatus CheckScalarTensors(gert::InferShapeContext* context, const gert::Shape* const* scalarShapes)
 {
     for (size_t i = 0; i < kScalarInputCount; ++i) {
@@ -131,11 +129,12 @@ ge::graphStatus CheckScalarTensors(gert::InferShapeContext* context, const gert:
             continue;
         }
         const size_t rank = shape.GetDimNum();
-        const bool isScalarShape = (rank == 0) || ((rank == 1) && (shape.GetDim(0) == 1 || shape.GetDim(0) < 0));
+        const int64_t firstDim = rank == 0 ? -1 : shape.GetDim(0);
+        const bool isScalarShape = (rank == 1) && (firstDim == 1 || firstDim < 0);
         if (!isScalarShape) {
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), kScalarNames[i],
                                                   Ops::Base::ToString(shape).c_str(),
-                                                  "scalar parameter must be a 0-D tensor or a 1-element {1} tensor");
+                                                  "scalar parameter must have shape {1}");
             return ge::GRAPH_FAILED;
         }
     }

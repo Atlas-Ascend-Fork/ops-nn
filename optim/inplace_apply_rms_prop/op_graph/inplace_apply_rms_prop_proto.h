@@ -34,13 +34,12 @@ namespace ge {
  *   @li var:       A Tensor of type float / float16 / bfloat16. Weight to update.
  *   @li ms:        A Tensor with the same shape/dtype as "var". Mean-square accumulator (in-place updated).
  *   @li mom:       A Tensor with the same shape/dtype as "var". Momentum accumulator (in-place updated).
- *   @li lr:        Scalar Tensor (shape = [1]) learning rate. A 0-D tensor is also accepted;
- *                  GE normalizes it to the storage shape [1].
- *   @li rho:       Scalar Tensor (shape = [1], or 0-D normalized by GE). The recommended decay-rate range is [0, 1);
+ *   @li lr:        Scalar Tensor (shape = [1]) learning rate.
+ *   @li rho:       Scalar Tensor (shape = [1]). The recommended decay-rate range is [0, 1);
  *                  the implementation does not validate its value.
- *   @li momentum:  Scalar Tensor (shape = [1], or 0-D normalized by GE) momentum coefficient.
- *   @li epsilon:   Scalar Tensor (shape = [1], or 0-D normalized by GE) numerical-stability
- *                  constant. Values no greater than FLT_MIN (including NaN) are evaluated as FLT_MIN.
+ *   @li momentum:  Scalar Tensor (shape = [1]) momentum coefficient.
+ *   @li epsilon:   Scalar Tensor (shape = [1]) numerical-stability constant. Values no greater than FLT_MIN
+ *                  (including NaN) are evaluated as FLT_MIN.
  *   @li grad:      A Tensor, same shape/dtype as "var".
  *
  * @par Outputs:

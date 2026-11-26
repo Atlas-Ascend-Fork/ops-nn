@@ -26,7 +26,7 @@
  *   TilingKey 2:   schMode=2 (BF16) + BUFFER_MODE=0
  *   TilingKey 258: schMode=2 (BF16) + BUFFER_MODE=1
  *
- * Scalar parameters (lr / rho / momentum / epsilon) are 0-D or shape {1}
+ * Scalar parameters (lr / rho / momentum / epsilon) are shape {1}
  * Tensor inputs (index 3/4/5/6). They are read by Kernel from GM at runtime, NOT
  * passed via TilingData. Tiling here only handles shape splitting.
  */
@@ -203,25 +203,13 @@ static bool ShapeEqual(const gert::Shape& a, const gert::Shape& b)
 }
 
 // C3 constraint check: lr/rho/momentum/epsilon are 1-element scalars.
-// A TF rank-0 input reaches Tiling as origin shape {} with a GE-normalized storage shape {1},
-// so both forms are accepted; rank > 1 or a non-1 element count is rejected.
-static const gert::Shape g_vec_1_shape = {1};
-
-static inline const gert::Shape EnsureNotScalar(const gert::Shape& inShape)
-{
-    if (inShape.GetDimNum() == 0) {
-        return g_vec_1_shape;
-    }
-    return inShape;
-}
-
 static bool IsScalarShape(const gert::StorageShape& shape)
 {
-    const gert::Shape& storageShape = shape.GetStorageShape();
-    if (storageShape.GetDimNum() > 1) {
+    const gert::Shape& originShape = shape.GetOriginShape();
+    if (shape.GetStorageShape().GetShapeSize() != 1) {
         return false;
     }
-    return EnsureNotScalar(storageShape).GetShapeSize() == 1;
+    return originShape.GetDimNum() == 1 && originShape.GetDim(0) == 1;
 }
 
 // Input indices (canndev REG_OP(InplaceApplyRMSProp) order)
@@ -271,7 +259,7 @@ static ge::graphStatus CheckShapeC1(gert::TilingContext* context, const gert::St
     return ge::GRAPH_SUCCESS;
 }
 
-// C3: lr / rho / momentum / epsilon must be 0-D or 1-element {1} Tensors.
+// C3: lr / rho / momentum / epsilon must be 1-element Tensors.
 static ge::graphStatus CheckScalarsC3(gert::TilingContext* context)
 {
     auto lrShape = context->GetInputShape(kIdxLr);
@@ -288,7 +276,7 @@ static ge::graphStatus CheckScalarsC3(gert::TilingContext* context)
         if (!IsScalarShape(*scalarShapes[i])) {
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), scalarNames[i],
                                                   Ops::Base::ToString(scalarShapes[i]->GetOriginShape()).c_str(),
-                                                  "scalar parameter must be a 0-D tensor or a 1-element {1} tensor");
+                                                  "scalar parameter must have shape {1}");
             return ge::GRAPH_FAILED;
         }
     }
