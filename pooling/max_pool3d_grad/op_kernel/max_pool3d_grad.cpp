@@ -17,6 +17,7 @@
 #include "arch35/max_pool3d_grad_ndhwc_big_kernel.h"
 #include "arch35/max_pool3d_grad_ndhwc_impl_gather.h"
 #include "arch35/max_pool3d_grad_simt_kernel.h"
+#include "../pool_grad_common/arch35/pool3d_grad_ksize_one_kernel.h"
 
 constexpr int64_t NCDHW = 0;
 constexpr int64_t NDHWC = 1;
@@ -25,7 +26,7 @@ using namespace AscendC;
 using namespace MaxPool3DSmallKernelNameSpace;
 
 template <uint64_t INDEX_DTYPE = TPL_INT32, uint64_t IS_SIMT = 0, uint64_t IS_CHANNEL_LAST = 0,
-          uint64_t IS_CHECK_RANGE = 0, uint64_t USE_INT64_INDEX = 0>
+          uint64_t IS_CHECK_RANGE = 0, uint64_t USE_INT64_INDEX = 0, uint64_t IS_KSIZE_ONE = 0>
 __global__ __aicore__ void max_pool3d_grad(GM_ADDR orig_x, GM_ADDR orig_y, GM_ADDR grads, GM_ADDR y, GM_ADDR workspace,
                                            GM_ADDR tiling)
 {
@@ -35,7 +36,12 @@ __global__ __aicore__ void max_pool3d_grad(GM_ADDR orig_x, GM_ADDR orig_y, GM_AD
     TPipe pipe;
     REGISTER_TILING_DEFAULT(Pool3DGradNDHWCTilingData);
 
-    if constexpr (IS_SIMT == 0 && IS_CHANNEL_LAST == 0 && INDEX_DTYPE == TPL_INT32) {
+    if constexpr (IS_KSIZE_ONE == 1) {
+        GET_TILING_DATA_WITH_STRUCT(Pool3DGradNameSpace::Pool3DGradNCDHWTilingData, tilingData, tiling);
+        Pool3DGradKsizeOneNameSpace::Pool3DGradKsizeOne<DTYPE_ORIG_X> op(pipe, tilingData);
+        op.Init(grads, y);
+        op.Process();
+    } else if constexpr (IS_SIMT == 0 && IS_CHANNEL_LAST == 0 && INDEX_DTYPE == TPL_INT32) {
         GET_TILING_DATA_WITH_STRUCT(Pool3DGradNCDHWTilingData, tilingData, tiling);
         Pool3DGradSmallKernel<DTYPE_ORIG_X, int32_t, int32_t, IS_CHECK_RANGE> op(pipe, tilingData);
         op.Init(orig_x, orig_y, grads, y);

@@ -243,7 +243,8 @@ uint64_t MaxPool3DGradSimtTiling::GetTilingKey() const
     uint32_t isChannelLast = (inputData.data_format == "ncdhw") ? 0 : 1;
     uint32_t isSimt = 1;
     uint32_t isCheckRange = 0;
-    return GET_TPL_TILING_KEY(idxDtype, isSimt, isChannelLast, isCheckRange, useINT64Index);
+    uint32_t isKsizeOne = 0;
+    return GET_TPL_TILING_KEY(idxDtype, isSimt, isChannelLast, isCheckRange, useINT64Index, isKsizeOne);
 }
 
 ge::graphStatus MaxPool3DGradSimtTiling::GetWorkspaceSize()

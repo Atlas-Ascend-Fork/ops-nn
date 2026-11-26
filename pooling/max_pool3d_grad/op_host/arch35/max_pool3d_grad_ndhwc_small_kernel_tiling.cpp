@@ -189,7 +189,9 @@ uint64_t MaxPool3DGradNDHWCSmallKernelTiling::GetTilingKey() const
     uint32_t isSimt = 0;
     uint32_t isChannelLast = 1;
     uint32_t useINT64Index = 0;
-    return GET_TPL_TILING_KEY(idxDtype, isSimt, isChannelLast, static_cast<uint32_t>(isCheckRange_), useINT64Index);
+    uint32_t isKsizeOne = 0;
+    return GET_TPL_TILING_KEY(idxDtype, isSimt, isChannelLast, static_cast<uint32_t>(isCheckRange_), useINT64Index,
+                              isKsizeOne);
 }
 
 ge::graphStatus MaxPool3DGradNDHWCSmallKernelTiling::DoOpTiling()

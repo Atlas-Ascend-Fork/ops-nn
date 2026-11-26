@@ -482,17 +482,17 @@ TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_014_ncdhw_simt_ub_not_enough)
     EXPECT_EQ(ctx->GetBlockDim(), 40U);
 }
 
-// NCDHW 大 shape(1300^3 > INT32_MAX): isInt32Meet=1, SmallKernel inputDataCount 超限 -> Simt,
-// Simt GetTilingKey 走 TPL_INT64 + useInt64Index
+// NCDHW 大 shape(1300^3 > INT32_MAX, ksize=2 避开 ksize_one 路径): isInt32Meet=1,
+// SmallKernel inputDataCount 超限 -> Simt, Simt GetTilingKey 走 TPL_INT64 + useInt64Index
 TEST_F(MaxPool3DGradTiling, max_pool3d_grad_tiling_015_ncdhw_simt_int64_big_shape)
 {
     Mp3dgCase c;
     c.xShape = {1, 1, 1300, 1300, 1300};
-    c.origYShape = {1, 1, 1300, 1300, 1300};
-    c.gradsShape = {1, 1, 1300, 1300, 1300};
+    c.origYShape = {1, 1, 650, 650, 650};
+    c.gradsShape = {1, 1, 650, 650, 650};
     c.yShape = {1, 1, 1300, 1300, 1300};
-    c.ksize = {1, 1, 1, 1, 1};
-    c.strides = {1, 1, 1, 1, 1};
+    c.ksize = {1, 1, 2, 2, 2};
+    c.strides = {1, 1, 2, 2, 2};
     auto* ctx = RunTilingFunc(c, ge::GRAPH_SUCCESS);
     ASSERT_NE(ctx, nullptr);
     EXPECT_EQ(ctx->GetTilingKey(), TILING_KEY_SIMT_INT64_IDX64);

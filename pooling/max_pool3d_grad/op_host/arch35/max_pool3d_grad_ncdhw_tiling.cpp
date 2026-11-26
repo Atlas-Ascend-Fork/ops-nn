@@ -149,7 +149,8 @@ uint64_t MaxPool3DGradNCDHWTiling::GetTilingKey() const
     uint32_t isSimt = 0;
     uint32_t isChannelLast = 0;
     uint32_t useINT64Index = 0;
-    return GET_TPL_TILING_KEY(idxDtype, isSimt, isChannelLast, isCheckRange_, useINT64Index);
+    uint32_t isKsizeOne = 0;
+    return GET_TPL_TILING_KEY(idxDtype, isSimt, isChannelLast, isCheckRange_, useINT64Index, isKsizeOne);
 }
 
 ge::graphStatus MaxPool3DGradNCDHWTiling::DoOpTiling()
@@ -161,6 +162,6 @@ ge::graphStatus MaxPool3DGradNCDHWTiling::DoOpTiling()
 
 ge::graphStatus MaxPool3DGradNCDHWTiling::PostTiling() { return base->PostTiling(context_, GetTilingKey()); }
 
-REGISTER_TILING_TEMPLATE("MaxPool3DGrad", MaxPool3DGradNCDHWTiling, 0);
+REGISTER_TILING_TEMPLATE("MaxPool3DGrad", MaxPool3DGradNCDHWTiling, 1);
 
 } // namespace optiling
