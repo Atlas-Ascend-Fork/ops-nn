@@ -326,12 +326,12 @@ aclnnStatus aclnnWeightQuantBatchMatmulNz(
       - The shape of x is (m, k), the shape of y is (m, n), and the shape of biasOptional is null/(1, n)/(n,).
       - When the data type of weight is INT32 or FLOAT, it indicates tightly packed INT4 or FLOAT4_E2M1, and the following constraints must be met:
         - The last dimension of the original ND matrix is 8-aligned.
-        - Before calling this API, use the `aclnnConvertWeightToINT4Pack` API to convert data from sparse-layout INT32/FLOAT to tightly packed INT4/FLOAT4_E2M1 and from ND to FRACTAL_NZ. For details, see [a sample](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md).
+        - Before calling this API, use the `aclnnConvertWeightToINT4Pack` API to convert data from sparse-layout INT32/FLOAT to tightly packed INT4/FLOAT4_E2M1 and from ND to FRACTAL_NZ. For details, see [a sample](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack_en.md).
         - The shape of the FRACTAL_NZ matrix passed to this API is (ceil(n/16), ceil(k/16), 16, 2).
         - weight only supports non-transposed mode, and the shape of the original ND matrix is (k, n).
       - When the data type of weight is INT4 or FLOAT4_E2M1, the following constraints must be met:
         - The last dimension of the original ND matrix must be 2-aligned.
-        - Before calling this API, use the `aclnnConvertWeightToINT4Pack` API to convert data from ND to FRACTAL_NZ. For details, see [a sample](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md).
+        - Before calling this API, use the `aclnnConvertWeightToINT4Pack` API to convert data from ND to FRACTAL_NZ. For details, see [a sample](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack_en.md).
         - The shape of the FRACTAL_NZ matrix passed to this API is (ceil(n/16), ceil(k/16), 16, 16).
         - weight only supports non-transposed mode, and the shape of the original ND matrix is (k, n).
       - When the data type of weight is INT8, the following constraints must be met:
