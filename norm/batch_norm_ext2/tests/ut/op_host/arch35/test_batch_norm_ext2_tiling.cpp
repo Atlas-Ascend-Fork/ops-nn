@@ -728,17 +728,16 @@ TEST_F(BatchNormExt2TilingTest, batch_norm_ext2_tiling_large_reduce_still_welfor
 }
 
 // a 小到满足 RARBlockSplitR 的 a * 2 < blockDim、且 r1 * r0 大到 FullReduce 的 UB 判据过不去时，
-// RAR 优先级 40000(置于 Welford 30000 之后)使该 shape 由 Welford 接管(300000)。
-// 该模板只消费基类折算出的 (r1, a, r0)，因此不同 H*W 拆分的 NCHW 必须落到同一模板。
-// 原 batch_norm 用例为 ND 3D 且期望 RAR(250000)——RAR 模板优先级下调后此场景已不再由 RAR 接管。
-TEST_F(BatchNormExt2TilingTest, batch_norm_ext2_tiling_small_a_large_reduce_welford_arch35)
+// RAR 以优先级 25000(先于 Welford 30000)接管该 shape(250000)。
+// 该模板只消费基类折算出的 (r1, a, r0)，因此不同 H*W 拆分的 NCHW 必须落到同一模板、同一 tiling。
+TEST_F(BatchNormExt2TilingTest, batch_norm_ext2_tiling_small_a_large_reduce_rar_arch35)
 {
     gert::StorageShape nchwShape = {{4096, 16, 4, 2}, {4096, 16, 4, 2}};
     gert::StorageShape nchwShape2 = {{4096, 16, 8, 1}, {4096, 16, 8, 1}};
     std::string nchwTilingData;
     std::string nchwTilingData2;
-    RunBatchNormExt2TrainingTilingForTest(nchwShape, ge::FORMAT_NCHW, 16, 300000, &nchwTilingData);
-    RunBatchNormExt2TrainingTilingForTest(nchwShape2, ge::FORMAT_NCHW, 16, 300000, &nchwTilingData2);
+    RunBatchNormExt2TrainingTilingForTest(nchwShape, ge::FORMAT_NCHW, 16, 250000, &nchwTilingData);
+    RunBatchNormExt2TrainingTilingForTest(nchwShape2, ge::FORMAT_NCHW, 16, 250000, &nchwTilingData2);
     ASSERT_EQ(nchwTilingData, nchwTilingData2);
 }
 

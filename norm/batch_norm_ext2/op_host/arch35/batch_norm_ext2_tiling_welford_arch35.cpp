@@ -21,7 +21,7 @@ constexpr int64_t TILINGKEY_WELFORD_REDUCE = 300000;
 
 constexpr int64_t SMALL_BUFFER_NUM = 9;
 constexpr int64_t LARGE_BUFFER_NUM_QUEUE = 2;
-constexpr int64_t LARGE_BUFFER_NUM_TMP = 2;
+constexpr int64_t LARGE_BUFFER_NUM_TMP = 3; // tMean/tVar/tVarLow（B 方案逐 lane 补偿残差）
 constexpr int64_t BINARY_ADD_COEF = 2;
 constexpr int64_t MAX_COMMON_PARELLEL = 256;
 // 6 for large case, 1 for extra

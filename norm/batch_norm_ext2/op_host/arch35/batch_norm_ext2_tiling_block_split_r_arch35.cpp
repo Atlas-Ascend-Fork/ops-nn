@@ -24,8 +24,16 @@ constexpr int64_t GAMMA_BETA_NODE_NUM = 2;
 constexpr int64_t RUNNING_MEAN_VAR_NODE_NUM = 4;
 constexpr int64_t BATCH_MEAN_VAR_NODE_NUM = 2;
 constexpr int64_t X_IN_OUT_NODE_NUM = 2;
-constexpr int64_t TBUF_NODE_NUM = 3;
-constexpr int64_t MEAN_AND_VAR_NODE_NUM = 2;
+// tMean / tM2 / tM2Low / tBufAdd（暂存，热循环期间复用为 tMeanLow）
+// 与 welford 模板一致：为 per-lane 补偿残差让出第三个常驻 buffer（3 -> 4），
+// 两侧（InitBuffer 与 UB 预算）必须一致。
+constexpr int64_t TBUF_NODE_NUM = 4;
+// workspace 每核占的 patternAAlign 行数：mean / var / **mean 低位肢** / **var 低位肢**
+// （末级跨核加权合并需要每核 mean、var 的双肢；d_b_323 的近零方差通道靠它逼近真均值/真方差）
+constexpr int64_t MEAN_AND_VAR_NODE_NUM = 4;
+// 新增的常驻 UB：两块 all-core 低位肢（各 usedCoreNum×aUbFactor）+ 三个每通道小 buffer
+// （batchMeanLow/batchVarLow 队列 + 末级 var 低位肢）
+constexpr int64_t MEAN_LOW_EXTRA_NODE_NUM = 3;
 
 constexpr int64_t RUNNING_MEAN_INPUT_IDX = 3;
 
@@ -35,6 +43,12 @@ constexpr int64_t RA_BINARY_ADD_THRESHOLD = 4;
 constexpr int64_t WSP_RESERVED_SIZE = 16L * 1024L * 1024L;
 constexpr int64_t CACHE_LINE_SIZE = 256;
 constexpr int64_t SPLIT_R_TEMPLATE_A_THRESHOLD = 512;
+// UB 预算的安全余量：上式按 buffer 的"名义字节数"求和，而 InitBuffer 每块 buffer 还会
+// 按 32B 对齐向上取整（最多 15 块，最坏多出 ~480B），AscendC 自身也可能预留少量 UBUF。
+// 原来 TBUF_NODE_NUM=3 时有整整一个 tbuf（40KB 级）的富余，这些差异被掩盖；补上逐 lane
+// 残差后名义余量只剩 ~200B（fp16 小 C 场景实测 253744B / 253952B），不够覆盖对齐开销，
+// 故显式留出余量，避免踩到 UB 上限后内核行为未定义。
+constexpr int64_t UB_RESERVE_SIZE = 32L * 1024L;
 
 } // namespace
 static int64_t FindBinaryQuotient(int64_t len)
@@ -146,8 +160,14 @@ ge::graphStatus BatchNormExt2BlockSplitRTiling::DoOpTiling()
                                   FLOAT32_BYTES;
     int64_t blockDimAlignSize = Ops::Base::CeilAlign(static_cast<int64_t>(aicoreParams_.blockDim), fp32EleNumPerBlock) *
                                 FLOAT32_BYTES;
-    int64_t ubSizeCanUse = aicoreParams_.ubSize - blockDimAlignSize - rFactorMaxAlignSize -
-                           aAlignSize * (runningMeanVarNodeNum + gammaBetaNodeNum + BATCH_MEAN_VAR_NODE_NUM);
+    // 第二阶段额外常驻：所有核的 mean/var 低位肢（各 blockDim × aUbFactor 上界）
+    int64_t allCoreLowAlignSize = 2 *
+                                  Ops::Base::CeilAlign(static_cast<int64_t>(aicoreParams_.blockDim),
+                                                       fp32EleNumPerBlock) *
+                                  aAlignSize;
+    int64_t ubSizeCanUse = aicoreParams_.ubSize - blockDimAlignSize - rFactorMaxAlignSize - allCoreLowAlignSize -
+                           aAlignSize * (runningMeanVarNodeNum + gammaBetaNodeNum + BATCH_MEAN_VAR_NODE_NUM) -
+                           aAlignSize * MEAN_LOW_EXTRA_NODE_NUM - UB_RESERVE_SIZE;
     int64_t rUbFactor = Ops::Base::FloorDiv(ubSizeCanUse, aAlignSize * (inOutNodeNum + TBUF_NODE_NUM));
     rUbFactor = std::min(rUbFactor, batchNormTilingData.get_patternR());
     rUbFactor = Ops::Base::FloorAlign(rUbFactor, RA_BINARY_ADD_THRESHOLD);

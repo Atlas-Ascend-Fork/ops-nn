@@ -121,6 +121,57 @@ __simd_callee__ inline void WelfordCompensatedLaneReduce(RegTensor<float>& dst, 
     Add(dst, sums, low, pregOne);
 }
 
+// ===================== 单个 VL 横向求和的补偿版本（finalize 的中间一级） =====================
+// finalize 的归约链其实是三级：
+//   ① 每个 VL(64 lane) 横向求和成一个标量 —— 原实现是 Reduce<ReduceType::SUM>，64 个数一棵
+//      朴素 6 层加法树，每层一次 fp32 舍入，误差全部原样留在这一级的标量上；
+//   ② binaryAddQuotient 个标量两两折半 —— WelfordDichotomyAddCompensated 里的树形折半；
+//   ③ 最后 ≤64 个标量的横向求和 —— 已换成 WelfordCompensatedLaneReduce（补偿）。
+// ② 只是两两相加、层数少，③ 已经补偿，唯独 ① 一直是裸的：本用例 parallelN ≈ 1.5e4 个 lane
+// 也就是 ~240 次 ①，每次丢掉 ~6 次舍入。实测主导误差就在这条跨 lane 归约上（逐 lane 串行
+// 累加链只贡献 0.07 ULP，跨 lane 归约贡献约 0.9 ULP）。
+//
+// 本函数把 ① 换成「TwoSum 折半树 + 低位残差」：6 级折半里每一级的加法误差都被 TwoSum 精确
+// 取出、留在 low 里继续参与后续各级，最终 lane0 上是 hi（各级舍入后的和）与 low（精确误差）。
+// 落点与原 ReduceSum 一致：hi 落 lane0 供调用方 StoreAlign；low 不回揉进 hi（那样等于又舍入
+// 一次），而是累加进调用方跨 VL 块维护的 lowAcc（同样只取 lane0），等末级
+// WelfordDichotomyAddCompensated 得到标量后一次性加回 —— 只多这一次舍入。
+// 数据源在寄存器里（各 finalize 分支已把该 VL 算好），故不像 WelfordCompensatedLaneReduce
+// 那样需要从 UB 读入：UB 零增量，每通道只在 finalize 里跑 parallelN/64 次，不在元素热循环。
+__simd_callee__ inline void WelfordCompensatedRegReduce(RegTensor<float>& hi, RegTensor<float>& lowAcc,
+                                                        RegTensor<float>& src, MaskReg& pregMain, MaskReg& pregLane0)
+{
+    RegTensor<float> low;
+    RegTensor<float> rhsSums;
+    RegTensor<float> rhsLow;
+    RegTensor<uint32_t> evenIdx;
+    RegTensor<uint32_t> oddIdx;
+
+    AscendC::Reg::Move(hi, src, pregMain);
+    Duplicate(low, 0.0f, pregMain);
+    // 奇偶 gather 索引：第 i 个 lane 取原向量的第 2i / 2i+1 个，做相邻成对归约。
+    AscendC::Reg::Arange((RegTensor<int32_t>&)evenIdx, static_cast<int32_t>(0));
+    ShiftLefts(evenIdx, evenIdx, static_cast<int16_t>(1), pregMain);
+    Duplicate(oddIdx, static_cast<uint32_t>(VL_FP32 - 1), pregMain);
+    AscendC::Reg::And(evenIdx, evenIdx, oddIdx, pregMain);
+    Adds(oddIdx, evenIdx, static_cast<uint32_t>(1), pregMain);
+
+#pragma unroll
+    for (uint16_t level = 0; level < WELFORD_VL_LOG2; ++level) {
+        uint32_t activeNum = VL_FP32 >> (level + 1);
+        MaskReg pregActive = UpdateMask<float>(activeNum);
+        AscendC::Reg::Gather(rhsSums, hi, oddIdx);
+        AscendC::Reg::Gather(rhsLow, low, oddIdx);
+        AscendC::Reg::Gather(hi, hi, evenIdx);
+        AscendC::Reg::Gather(low, low, evenIdx);
+        Add(low, low, rhsLow, pregActive);
+        WelfordAccumulateLaneWithError(hi, low, rhsSums, pregActive);
+    }
+    // 非有限残差置 0，让主值按 IEEE 自然传播（与末级归约同口径）。
+    WelfordClampLaneResidual(low, pregMain);
+    Add(lowAcc, lowAcc, low, pregLane0);
+}
+
 // 与 NormCommon::DichotomyAdd 逐位等价的二分归约，只把末级的横向 ReduceSum 换成补偿版本。
 // 参数含义与原实现完全一致（outerLoop 次折半、innerLoop 个 VL 块、末级 lastNum 个 lane）。
 // 读缓冲改用 DataCopy（与原实现一致，不强依赖 VL 对齐），故调用点无需任何额外 UB。
@@ -255,6 +306,9 @@ public:
         pipe->InitBuffer(yQueue, DOUBLE_BUFFER, ubSize * sizeof(T1));
         pipe->InitBuffer(tMeanBuff, ubSize * sizeof(float));
         pipe->InitBuffer(tVarBuff, ubSize * sizeof(float));
+        // B 方案：逐 lane 的 M2 补偿残差（TwoSum 的 low 部分），与 tVarBuff 同尺寸。
+        // UB 预算由 tiling 侧的 LARGE_BUFFER_NUM_TMP(2->3) 同步让出，两侧必须一致。
+        pipe->InitBuffer(tVarLowBuff, ubSize * sizeof(float));
         // rstd 暂存(只参与归一化，不进 GM)；原 batchVarBuff 改作此用，UB 预算不变。
         pipe->InitBuffer(rstdBuff, aGatherLimitAlign * sizeof(float));
         // 无偏方差 M2/(n-1) 暂存(只给 running var 用，不进 GM)。
@@ -305,8 +359,40 @@ public:
         }
     }
 
+    // ===================== B 方案：逐 lane M2 补偿残差的收尾合并 =====================
+    // 更新主循环用 Knuth TwoSum（WelfordAccumulateLaneWithError）把每次加法的精确误差项
+    // 累进 tmpVarLowLocal[lane]，使 (M2_hi + M2_lo) 精确等于 Σ fl(delta1*delta3)。
+    // 这里在 finalize 之前把它并回主值：M2 ← fl(M2_hi + M2_lo)，只多这一次舍入。
+    // 选择「先并入 M2，再走原有 finalize」而不是「与 M2 并列再归约」：并入后 M2 已是
+    // 正确舍入的逐 lane Σ，finalize 的 +cnt·δ²、×reduceScale0（2 的幂，精确）和末级补偿
+    // 归约都无需再改；若并列归约，三个非对齐分支里每处折叠/回刷都要各带一份残差。
+    // 代价：每通道一次 O(parallelN) 向量循环，在元素热循环之外。
+    __aicore__ inline void VFMergeVarResidual(__ubuf__ float* tmpVarLocal, __ubuf__ float* tmpVarLowLocal,
+                                              uint32_t laneCount)
+    {
+        __VEC_SCOPE__
+        {
+            RegTensor<float> varHi;
+            RegTensor<float> varLo;
+            MaskReg pregLoop;
+            uint32_t sreg0 = laneCount;
+            uint16_t loopCount = ops::CeilDiv(laneCount, static_cast<uint32_t>(VL_FP32));
+            for (uint16_t i = 0; i < loopCount; i++) {
+                pregLoop = AscendC::MicroAPI::UpdateMask<float>(sreg0);
+                LoadAlign(varHi, tmpVarLocal + i * VL_FP32);
+                LoadAlign(varLo, tmpVarLowLocal + i * VL_FP32);
+                // hi 溢出/NaN 时 lo 会退化成 inf-inf = NaN，先按非有限置 0，
+                // 让主值按 IEEE 自然传播（与末级归约 WelfordClampLaneResidual 同口径）。
+                WelfordClampLaneResidual(varLo, pregLoop);
+                Add(varHi, varHi, varLo, pregLoop);
+                StoreAlign(tmpVarLocal + i * VL_FP32, varHi, pregLoop);
+            }
+        }
+    }
+
     __aicore__ inline void ProcessCutR0(__ubuf__ float* tmpMeanLocal, __ubuf__ float* tmpVarLocal,
-                                        __ubuf__ float* meanLocal, __ubuf__ float* rstdLocal, __ubuf__ float* varLocal,
+                                        __ubuf__ float* tmpVarLowLocal, __ubuf__ float* meanLocal,
+                                        __ubuf__ float* rstdLocal, __ubuf__ float* varLocal,
                                         __ubuf__ float* unbiasedVarLocal, __ubuf__ float* dichotomyAddLocal,
                                         int32_t aParallelIndex, int32_t aParallelLength)
     {
@@ -327,7 +413,8 @@ public:
 
                     bool isFirstStep = count == 0;
                     count = count + 1;
-                    ProcessSplitWelfordUpdate(tmpMeanLocal, tmpVarLocal, index, nBurst, burstLen, count, isFirstStep);
+                    ProcessSplitWelfordUpdate(tmpMeanLocal, tmpVarLocal, tmpVarLowLocal, index, nBurst, burstLen, count,
+                                              isFirstStep);
                 }
             }
 
@@ -342,9 +429,12 @@ public:
                     bool isFirstStep = count == 0;
                     count = count + 1;
                     countTail = countTail + 1;
-                    ProcessSplitWelfordUpdate(tmpMeanLocal, tmpVarLocal, index, nBurst, burstLen, count, isFirstStep);
+                    ProcessSplitWelfordUpdate(tmpMeanLocal, tmpVarLocal, tmpVarLowLocal, index, nBurst, burstLen, count,
+                                              isFirstStep);
                 }
             }
+            // 逐 lane 的 M2 补偿残差并入主值（B 方案，见 VFMergeVarResidual 说明）。
+            VFMergeVarResidual(tmpVarLocal, tmpVarLowLocal, parallelN);
             if (countTail == 0) {
                 VFWelfordParallelFinalizeAlign(meanLocal, rstdLocal, varLocal, unbiasedVarLocal, tmpMeanLocal,
                                                tmpVarLocal, dichotomyAddLocal, parallelN, binaryAddQuotient, binaryAddK,
@@ -360,7 +450,8 @@ public:
     }
 
     __aicore__ inline void ProcessCutR1(__ubuf__ float* tmpMeanLocal, __ubuf__ float* tmpVarLocal,
-                                        __ubuf__ float* meanLocal, __ubuf__ float* rstdLocal, __ubuf__ float* varLocal,
+                                        __ubuf__ float* tmpVarLowLocal, __ubuf__ float* meanLocal,
+                                        __ubuf__ float* rstdLocal, __ubuf__ float* varLocal,
                                         __ubuf__ float* unbiasedVarLocal, __ubuf__ float* dichotomyAddLocal,
                                         int32_t aParallelIndex, int32_t aParallelLength)
     {
@@ -380,8 +471,11 @@ public:
 
                 bool isFirstStep = count == 0;
                 count = count + 1;
-                ProcessSplitWelfordUpdate(tmpMeanLocal, tmpVarLocal, index, nBurst, burstLen, count, isFirstStep);
+                ProcessSplitWelfordUpdate(tmpMeanLocal, tmpVarLocal, tmpVarLowLocal, index, nBurst, burstLen, count,
+                                          isFirstStep);
             }
+            // 逐 lane 的 M2 补偿残差并入主值（B 方案，见 VFMergeVarResidual 说明）。
+            VFMergeVarResidual(tmpVarLocal, tmpVarLowLocal, parallelN);
             if (countTail == 0) {
                 VFWelfordParallelFinalizeAlign(meanLocal, rstdLocal, varLocal, unbiasedVarLocal, tmpMeanLocal,
                                                tmpVarLocal, dichotomyAddLocal, parallelN, binaryAddQuotient, binaryAddK,
@@ -402,6 +496,7 @@ public:
         // process core
         LocalTensor<float> tMeanTensor = tMeanBuff.Get<float>();
         LocalTensor<float> tVarTensor = tVarBuff.Get<float>();
+        LocalTensor<float> tVarLowTensor = tVarLowBuff.Get<float>();
         LocalTensor<float> rstdTensor = rstdBuff.Get<float>();
         LocalTensor<float> unbiasedVarTensor = unbiasedVarBuff.Get<float>();
         LocalTensor<float> dichotomyAddTensor = dichotomyAddBuf.Get<float>();
@@ -415,6 +510,7 @@ public:
         __ubuf__ float* rstdLocal = (__ubuf__ float*)rstdTensor.GetPhyAddr();
         __ubuf__ float* tmpMeanLocal = (__ubuf__ float*)tMeanTensor.GetPhyAddr();
         __ubuf__ float* tmpVarLocal = (__ubuf__ float*)tVarTensor.GetPhyAddr();
+        __ubuf__ float* tmpVarLowLocal = (__ubuf__ float*)tVarLowTensor.GetPhyAddr();
         __ubuf__ float* dichotomyAddLocal = (__ubuf__ float*)dichotomyAddTensor.GetPhyAddr();
 
         // copy small tensor to ub
@@ -427,11 +523,11 @@ public:
         //           unbiasedVarLocal <- 无偏方差(只供 running var 计算)，
         //           rstdLocal <- rstd(仅归一化用)
         if (cutR1OrR0 == 0) {
-            ProcessCutR0(tmpMeanLocal, tmpVarLocal, batchMeanLocal, rstdLocal, batchVarLocal, unbiasedVarLocal,
-                         dichotomyAddLocal, aParallelIndex, aParallelLength);
+            ProcessCutR0(tmpMeanLocal, tmpVarLocal, tmpVarLowLocal, batchMeanLocal, rstdLocal, batchVarLocal,
+                         unbiasedVarLocal, dichotomyAddLocal, aParallelIndex, aParallelLength);
         } else if (cutR1OrR0 == 1) {
-            ProcessCutR1(tmpMeanLocal, tmpVarLocal, batchMeanLocal, rstdLocal, batchVarLocal, unbiasedVarLocal,
-                         dichotomyAddLocal, aParallelIndex, aParallelLength);
+            ProcessCutR1(tmpMeanLocal, tmpVarLocal, tmpVarLowLocal, batchMeanLocal, rstdLocal, batchVarLocal,
+                         unbiasedVarLocal, dichotomyAddLocal, aParallelIndex, aParallelLength);
         }
 
         LocalTensor<T2> meanTensor;
@@ -476,8 +572,8 @@ public:
 
 private:
     __aicore__ inline void ProcessSplitWelfordUpdate(__ubuf__ float* tmpMeanLocal, __ubuf__ float* tmpVarLocal,
-                                                     int64_t index, int64_t nBurst, int64_t burstLen, int64_t count,
-                                                     bool isFirstStep)
+                                                     __ubuf__ float* tmpVarLowLocal, int64_t index, int64_t nBurst,
+                                                     int64_t burstLen, int64_t count, bool isFirstStep)
     {
         // copy large data into ub
         CopyInX(index, nBurst, burstLen);
@@ -490,9 +586,11 @@ private:
         uint16_t updateLoopCount = ops::CeilDiv(processNum, static_cast<uint64_t>(VL_FP32));
         if (isFirstStep) {
             // 第一次更新时，需要将tmp mean和tmp var清0
-            VFWelfordParallelUpdateWithInit(xLocal, tmpMeanLocal, tmpVarLocal, processNum, updateLoopCount, scale);
+            VFWelfordParallelUpdateWithInit(xLocal, tmpMeanLocal, tmpVarLocal, tmpVarLowLocal, processNum,
+                                            updateLoopCount, scale);
         } else {
-            VFWelfordParallelUpdate(xLocal, tmpMeanLocal, tmpVarLocal, processNum, updateLoopCount, scale);
+            VFWelfordParallelUpdate(xLocal, tmpMeanLocal, tmpVarLocal, tmpVarLowLocal, processNum, updateLoopCount,
+                                    scale);
         }
         xQueue.FreeTensor(xInUb);
     }
@@ -647,19 +745,20 @@ private:
     }
 
     __aicore__ inline void VFWelfordParallelUpdateWithInit(__ubuf__ T1* x1Local, __ubuf__ float* tmpMeanLocal,
-                                                           __ubuf__ float* tmpVarLocal, uint64_t calLen,
-                                                           uint16_t loopCount, float scale)
+                                                           __ubuf__ float* tmpVarLocal, __ubuf__ float* tmpVarLowLocal,
+                                                           uint64_t calLen, uint16_t loopCount, float scale)
     {
         __VEC_SCOPE__
         {
             RegTensor<float> x1;
             RegTensor<float> tmpMean;
             RegTensor<float> tmpVar;
+            RegTensor<float> tmpVarLow;
             RegTensor<float> delta1;
-            RegTensor<float> delta2;
             RegTensor<float> delta3;
-            RegTensor<float> delat4;
+            RegTensor<float> delta4;
             RegTensor<float> zero;
+            RegTensor<float> scaleReg;
             RegTensor<float> absMean;
             RegTensor<float> sumX1Mean;
             MaskReg infMeanMask;
@@ -669,6 +768,8 @@ private:
             vector_bool pregMain = pset_b8(PAT_ALL);
             vector_bool pregLoop;
             Duplicate(zero, 0.0f, pregMain);
+            // scale 广播到寄存器，供融合乘加 Mula 使用（Mula 无标量重载）
+            Duplicate(scaleReg, scale, pregMain);
             uint32_t sreg0 = calLen;
             for (uint16_t i = 0; i < loopCount; i++) {
                 pregLoop = plt_b32(sreg0, POST_UPDATE);
@@ -687,38 +788,38 @@ private:
                 AscendC::Reg::Not(notNanSumMask, nanSumMask, pregLoop);
                 AscendC::Reg::And(zeroDeltaMask, infMeanMask, notNanSumMask, pregLoop);
                 Select(delta1, zero, delta1, zeroDeltaMask);
-                // delta2 = delta1 * scale
-                Muls(delta2, delta1, scale, pregLoop);
-                // mean = mean + delta2
-                Add(tmpMean, tmpMean, delta2, pregLoop);
+                // mean = mean + delta1 * scale（融合乘加 Mula，单次舍入）
+                Mula(tmpMean, delta1, scaleReg, pregLoop);
                 StoreAlign(tmpMeanLocal + i * VL_FP32, tmpMean, pregLoop);
 
                 Duplicate(tmpVar, 0.0, pregLoop);
+                Duplicate(tmpVarLow, 0.0, pregLoop);
                 // delta3 = x1 - mean
                 Sub(delta3, x1, tmpMean, pregLoop);
-                // delta4 = delta1 * delta3
-                Mul(delat4, delta1, delta3, pregLoop);
-                // var = var + delta4
-                Add(tmpVar, tmpVar, delat4, pregLoop);
+                // var = var + delta1 * delta3（B 方案：TwoSum 补偿累加，残差进 tmpVarLow）
+                Mul(delta4, delta1, delta3, pregLoop);
+                WelfordAccumulateLaneWithError(tmpVar, tmpVarLow, delta4, pregLoop);
                 StoreAlign(tmpVarLocal + i * VL_FP32, tmpVar, pregLoop);
+                StoreAlign(tmpVarLowLocal + i * VL_FP32, tmpVarLow, pregLoop);
             }
         }
     }
 
     __aicore__ inline void VFWelfordParallelUpdate(__ubuf__ T1* x1Local, __ubuf__ float* tmpMeanLocal,
-                                                   __ubuf__ float* tmpVarLocal, uint64_t calLen, uint16_t loopCount,
-                                                   float scale)
+                                                   __ubuf__ float* tmpVarLocal, __ubuf__ float* tmpVarLowLocal,
+                                                   uint64_t calLen, uint16_t loopCount, float scale)
     {
         __VEC_SCOPE__
         {
             RegTensor<float> x1;
             RegTensor<float> tmpMean;
             RegTensor<float> tmpVar;
+            RegTensor<float> tmpVarLow;
             RegTensor<float> delta1;
-            RegTensor<float> delta2;
             RegTensor<float> delta3;
-            RegTensor<float> delat4;
+            RegTensor<float> delta4;
             RegTensor<float> zero;
+            RegTensor<float> scaleReg;
             RegTensor<float> absMean;
             RegTensor<float> sumX1Mean;
             MaskReg infMeanMask;
@@ -728,6 +829,8 @@ private:
             MaskReg pregLoop;
             MaskReg pregAll = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
             Duplicate(zero, 0.0f, pregAll);
+            // scale 广播到寄存器，供融合乘加 Mula 使用（Mula 无标量重载）
+            Duplicate(scaleReg, scale, pregAll);
             uint32_t sreg0 = calLen;
             for (uint16_t i = 0; i < loopCount; i++) {
                 pregLoop = AscendC::MicroAPI::UpdateMask<float>(sreg0);
@@ -747,20 +850,19 @@ private:
                 AscendC::Reg::Not(notNanSumMask, nanSumMask, pregLoop);
                 AscendC::Reg::And(zeroDeltaMask, infMeanMask, notNanSumMask, pregLoop);
                 Select(delta1, zero, delta1, zeroDeltaMask);
-                // delta2 = delta1 * scale
-                Muls(delta2, delta1, scale, pregLoop);
-                // mean = mean + delta2
-                Add(tmpMean, tmpMean, delta2, pregLoop);
+                // mean = mean + delta1 * scale（融合乘加 Mula，单次舍入）
+                Mula(tmpMean, delta1, scaleReg, pregLoop);
                 StoreAlign(tmpMeanLocal + i * VL_FP32, tmpMean, pregLoop);
 
                 LoadAlign(tmpVar, tmpVarLocal + i * VL_FP32);
+                LoadAlign(tmpVarLow, tmpVarLowLocal + i * VL_FP32);
                 // delta3 = x1 - mean
                 Sub(delta3, x1, tmpMean, pregLoop);
-                // delta4 = delta1 * delta3
-                Mul(delat4, delta1, delta3, pregLoop);
-                // var = var + delta4
-                Add(tmpVar, tmpVar, delat4, pregLoop);
+                // var = var + delta1 * delta3（B 方案：TwoSum 补偿累加，残差进 tmpVarLow）
+                Mul(delta4, delta1, delta3, pregLoop);
+                WelfordAccumulateLaneWithError(tmpVar, tmpVarLow, delta4, pregLoop);
                 StoreAlign(tmpVarLocal + i * VL_FP32, tmpVar, pregLoop);
+                StoreAlign(tmpVarLowLocal + i * VL_FP32, tmpVarLow, pregLoop);
             }
         }
     }
@@ -863,6 +965,8 @@ private:
             RegTensor<float> deltaR;
             RegTensor<float> one;
             RegTensor<float> rstd;
+            RegTensor<float> cntReg;
+            RegTensor<float> lowAcc; // 跨 VL 块的补偿低位累加器（只用 lane0）
             MaskReg pregLoop;
             MaskReg pregMain = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
             MaskReg pregMerge = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::VL1>();
@@ -870,6 +974,9 @@ private:
             uint32_t sreg0 = dichotomyAddReminder;
             // 计算mean
             // PART1: 整尾块合并
+            // 本段（mean）每个 VL 块的部分和改用补偿横向归约，低位残差攒在 lowAcc，
+            // 等末级补偿归约出标量后一次性加回（见 WelfordCompensatedRegReduce 说明）。
+            Duplicate(lowAcc, float(0.0), pregMain);
             for (uint16_t i = 0; i < dichotomyAddReminderLoopCount; i++) {
                 pregLoop = AscendC::MicroAPI::UpdateMask<float>(sreg0);
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32);
@@ -877,7 +984,7 @@ private:
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, scale0, pregMain);
                 Muls(dichotomyAddMeanR, dichotomyAddMeanR, scale0, pregLoop);
                 Add(sumMean, dichotomyAddMeanL, dichotomyAddMeanR, pregMain);
-                Reduce<ReduceType::SUM>(mean, sumMean, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, sumMean, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i, mean, pregMerge);
             }
 
@@ -886,7 +993,7 @@ private:
                  i++) {
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + (i + dichotomyAddReminderLoopCount) * VL_FP32);
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, scale0, pregMain);
-                Reduce<ReduceType::SUM>(mean, dichotomyAddMeanL, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, dichotomyAddMeanL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + dichotomyAddReminderLoopCount + i, mean, pregMerge);
             }
@@ -898,6 +1005,8 @@ private:
             // scale1 = cofFactor1/parallelN（其舍入是所有通道同向的常量偏置）。
             WelfordDichotomyAddCompensated(mean, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin,
                                            dichotomyAddLastNum);
+            // 中间级（每 VL 横向求和）的补偿残差在这里并入，只多这一次舍入。
+            Add(mean, mean, lowAcc, pregMerge);
             Duplicate(nReg, vfParallelN, pregMain);
             Div(mean, mean, nReg, pregMerge);
             Muls(mean, mean, vfCofFactor1, pregMerge);
@@ -908,28 +1017,31 @@ private:
 
             Duplicate(one, float(1.0), pregMain);
             Duplicate<float, AscendC::MicroAPI::HighLowPart::LOWEST, MaskMergeMode::ZEROING>(mean, mean, pregMain);
+            // cnt 广播到寄存器，供融合乘加 Mula 使用（Mula 无标量重载）
+            Duplicate(cntReg, cnt, pregMain);
             sreg0 = dichotomyAddReminder;
             // PART1: 整尾块合并
+            // 本段（var）每个 VL 块的部分和改用补偿横向归约，低位残差攒在 lowAcc，
+            // 等末级补偿归约出标量后一次性加回（见 WelfordCompensatedRegReduce 说明）。
+            Duplicate(lowAcc, float(0.0), pregMain);
             for (uint16_t i = 0; i < dichotomyAddReminderLoopCount; i++) {
                 pregLoop = AscendC::MicroAPI::UpdateMask<float>(sreg0);
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, cnt, pregMain);
                 LoadAlign(dichotomyAddVarL, tmpVarLocal + i * VL_FP32);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, cntReg, pregMain); // M2 += δ²*cnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
 
                 LoadAlign(dichotomyAddMeanR, tmpMeanLocal + i * VL_FP32 + dichotomyAddPower);
                 Sub(deltaR, dichotomyAddMeanR, mean, pregLoop);
                 Mul(deltaR, deltaR, deltaR, pregLoop);
-                Muls(deltaR, deltaR, cnt, pregLoop);
                 LoadAlign(dichotomyAddVarR, tmpVarLocal + i * VL_FP32 + dichotomyAddPower);
-                Add(dichotomyAddVarR, dichotomyAddVarR, deltaR, pregLoop);
+                Mula(dichotomyAddVarR, deltaR, cntReg, pregLoop); // M2 += δ²*cnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarR, dichotomyAddVarR, reduceScale0, pregLoop);
 
                 Add(sumVar, dichotomyAddVarL, dichotomyAddVarR, pregMain);
-                Reduce<ReduceType::SUM>(var, sumVar, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, sumVar, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i, var, pregMerge);
             }
 
@@ -939,11 +1051,10 @@ private:
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + (i + dichotomyAddReminderLoopCount) * VL_FP32);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, cnt, pregMain);
                 LoadAlign(dichotomyAddVarL, tmpVarLocal + (i + dichotomyAddReminderLoopCount) * VL_FP32);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, cntReg, pregMain); // M2 += δ²*cnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
-                Reduce<ReduceType::SUM>(var, dichotomyAddVarL, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, dichotomyAddVarL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + dichotomyAddReminderLoopCount + i, var, pregMerge);
             }
@@ -951,6 +1062,8 @@ private:
             // 末级归约换成补偿求和（M2 的末级横向求和与 mean 同口径，误差经 rsqrt 折算进 rstd）。
             WelfordDichotomyAddCompensated(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin,
                                            dichotomyAddLastNum);
+            // 中间级（每 VL 横向求和）的补偿残差在这里并入，只多这一次舍入。
+            Add(var, var, lowAcc, pregMerge);
             // 累加时每项已乘 reduceScale0 = 1/cofFactor0（cofFactor0 是 2 的幂，该缩放精确），
             // 故此时 var = M2/cofFactor0。有偏方差 M2/n 与无偏方差 M2/(n-1) 都用**真除法**：
             // n 与 n-1 均 < 2^24、在 fp32 中精确可表示，真除法只引入 ≤0.5 ULP 的随机舍入；
@@ -1046,7 +1159,10 @@ private:
             RegTensor<float> varUnbiased;
             RegTensor<float> nReg;
             RegTensor<float> nMinusOneReg;
+            RegTensor<float> cntReg;
+            RegTensor<float> tailCntReg;
 
+            RegTensor<float> lowAcc; // 跨 VL 块的补偿低位累加器（只用 lane0）
             MaskReg pregLoop;
             MaskReg pregLoop1;
             MaskReg pregMain = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
@@ -1055,13 +1171,16 @@ private:
             uint32_t sreg0;
 
             // 整块使用tailCountScale,尾块使用tailCountScale
+            // 本段（mean）每个 VL 块的部分和改用补偿横向归约，低位残差攒在 lowAcc，
+            // 等末级补偿归约出标量后一次性加回（见 WelfordCompensatedRegReduce 说明）。
+            Duplicate(lowAcc, float(0.0), pregMain);
             for (uint16_t i = 0; i < welfordDiffLoopCount; i++) {
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32);
                 LoadAlign(dichotomyAddMeanR, tmpMeanLocal + i * VL_FP32 + dichotomyAddPower);
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, tailCountScale, pregMain);
                 Muls(dichotomyAddMeanR, dichotomyAddMeanR, tailCountScale, pregMain);
                 Add(sumMean, dichotomyAddMeanL, dichotomyAddMeanR, pregMain);
-                Reduce<ReduceType::SUM>(mean, sumMean, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, sumMean, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i, mean, pregMerge);
             }
 
@@ -1078,7 +1197,7 @@ private:
                 Muls(tmp, dichotomyAddMeanR, coeff, pregLoop1);
                 Copy<float, MaskMergeMode::MERGING>(dichotomyAddMeanR, tmp, pregLoop1);
                 Add(sumMean, dichotomyAddMeanL, dichotomyAddMeanR, pregMain);
-                Reduce<ReduceType::SUM>(mean, sumMean, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, sumMean, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i + welfordDiffLoopCount, mean,
                                                                      pregMerge);
             }
@@ -1093,7 +1212,7 @@ private:
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, tailCountScale, pregMain);
                 Muls(dichotomyAddMeanR, dichotomyAddMeanR, countScale, pregLoop);
                 Add(sumMean, dichotomyAddMeanL, dichotomyAddMeanR, pregMain);
-                Reduce<ReduceType::SUM>(mean, sumMean, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, sumMean, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + i + welfordDiffLoopCount + welfordReminderLoopCount, mean, pregMerge);
             }
@@ -1102,7 +1221,7 @@ private:
                  i < static_cast<uint16_t>(dichotomyAddPowerLoopCount - dichotomyAddReminderRealLoopCount); i++) {
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + (i + dichotomyAddReminderRealLoopCount) * VL_FP32);
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, tailCountScale, pregMain);
-                Reduce<ReduceType::SUM>(mean, dichotomyAddMeanL, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, dichotomyAddMeanL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + dichotomyAddReminderRealLoopCount + i, mean, pregMerge);
             }
@@ -1113,6 +1232,8 @@ private:
             // 口径与同函数下方 var 收尾（÷n 再 ×cofFactor0）一致。
             WelfordDichotomyAddCompensated(mean, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin,
                                            dichotomyAddLastNum);
+            // 中间级（每 VL 横向求和）的补偿残差在这里并入，只多这一次舍入。
+            Add(mean, mean, lowAcc, pregMerge);
             Duplicate(nReg, vfN, pregMain);
             Div(mean, mean, nReg, pregMerge);
             Muls(mean, mean, vfCofFactor, pregMerge);
@@ -1124,25 +1245,29 @@ private:
             // 计算rstd
             Duplicate(one, float(1.0), pregMain);
             Duplicate<float, AscendC::MicroAPI::HighLowPart::LOWEST, MaskMergeMode::ZEROING>(mean, mean, pregMain);
+            // cnt / tailCnt 广播到寄存器，供融合乘加 Mula 使用（Mula 无标量重载）
+            Duplicate(cntReg, cnt, pregMain);
+            Duplicate(tailCntReg, tailCnt, pregMain);
+            // 本段（var）每个 VL 块的部分和改用补偿横向归约，低位残差攒在 lowAcc，
+            // 等末级补偿归约出标量后一次性加回（见 WelfordCompensatedRegReduce 说明）。
+            Duplicate(lowAcc, float(0.0), pregMain);
             for (uint16_t i = 0; i < welfordDiffLoopCount; i++) {
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, tailCnt, pregMain);
                 LoadAlign(dichotomyAddMeanR, tmpMeanLocal + i * VL_FP32 + dichotomyAddPower);
                 Sub(deltaR, dichotomyAddMeanR, mean, pregMain);
                 Mul(deltaR, deltaR, deltaR, pregMain);
-                Muls(deltaR, deltaR, tailCnt, pregMain);
 
                 LoadAlign(dichotomyAddVarL, tmpVarLocal + i * VL_FP32);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, tailCntReg, pregMain); // M2 += δ²*tailCnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
                 LoadAlign(dichotomyAddVarR, tmpVarLocal + i * VL_FP32 + dichotomyAddPower);
-                Add(dichotomyAddVarR, dichotomyAddVarR, deltaR, pregMain);
+                Mula(dichotomyAddVarR, deltaR, tailCntReg, pregMain); // M2 += δ²*tailCnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarR, dichotomyAddVarR, reduceScale0, pregMain);
 
                 Add(sumVar, dichotomyAddVarL, dichotomyAddVarR, pregMain);
-                Reduce<ReduceType::SUM>(var, sumVar, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, sumVar, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i, var, pregMerge);
             }
             sreg0 = dichotomyAddReminder - welfordDiffLoopCount * VL_FP32;
@@ -1153,7 +1278,6 @@ private:
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + (i + welfordDiffLoopCount) * VL_FP32);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, tailCnt, pregMain);
                 LoadAlign(dichotomyAddMeanR, tmpMeanLocal + (i + welfordDiffLoopCount) * VL_FP32 + dichotomyAddPower);
                 Sub(deltaR, dichotomyAddMeanR, mean, pregLoop);
                 Mul(deltaR, deltaR, deltaR, pregLoop);
@@ -1162,14 +1286,14 @@ private:
                 Copy<float, MaskMergeMode::MERGING>(deltaR, tmp, pregLoop1);
 
                 LoadAlign(dichotomyAddVarL, tmpVarLocal + (i + welfordDiffLoopCount) * VL_FP32);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, tailCntReg, pregMain); // M2 += δ²*tailCnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
                 LoadAlign(dichotomyAddVarR, tmpVarLocal + (i + welfordDiffLoopCount) * VL_FP32 + dichotomyAddPower);
                 Add(dichotomyAddVarR, dichotomyAddVarR, deltaR, pregLoop);
                 Muls(dichotomyAddVarR, dichotomyAddVarR, reduceScale0, pregLoop);
 
                 Add(sumVar, dichotomyAddVarL, dichotomyAddVarR, pregMain);
-                Reduce<ReduceType::SUM>(var, sumVar, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, sumVar, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i + welfordDiffLoopCount, var,
                                                                      pregMerge);
             }
@@ -1180,23 +1304,21 @@ private:
                           tmpMeanLocal + (i + welfordDiffLoopCount) * VL_FP32 + welfordDiffReminderAlign);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, tailCnt, pregMain);
                 LoadAlign(dichotomyAddMeanR, tmpMeanLocal + (i + welfordDiffLoopCount) * VL_FP32 +
                                                  welfordDiffReminderAlign + dichotomyAddPower);
                 Sub(deltaR, dichotomyAddMeanR, mean, pregLoop);
                 Mul(deltaR, deltaR, deltaR, pregLoop);
-                Muls(deltaR, deltaR, cnt, pregLoop);
 
                 LoadAlign(dichotomyAddVarL,
                           tmpVarLocal + (i + welfordDiffLoopCount) * VL_FP32 + welfordDiffReminderAlign);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, tailCntReg, pregMain); // M2 += δ²*tailCnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
                 LoadAlign(dichotomyAddVarR, tmpVarLocal + (i + welfordDiffLoopCount) * VL_FP32 +
                                                 welfordDiffReminderAlign + dichotomyAddPower);
-                Add(dichotomyAddVarR, dichotomyAddVarR, deltaR, pregLoop);
+                Mula(dichotomyAddVarR, deltaR, cntReg, pregLoop); // M2 += δ²*cnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarR, dichotomyAddVarR, reduceScale0, pregLoop);
                 Add(sumVar, dichotomyAddVarL, dichotomyAddVarR, pregMain);
-                Reduce<ReduceType::SUM>(var, sumVar, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, sumVar, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + i + welfordDiffLoopCount + welfordReminderLoopCount, var, pregMerge);
             }
@@ -1205,17 +1327,18 @@ private:
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + (i + dichotomyAddReminderRealLoopCount) * VL_FP32);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, tailCnt, pregMain);
                 LoadAlign(dichotomyAddVarL, tmpVarLocal + (i + dichotomyAddReminderRealLoopCount) * VL_FP32);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, tailCntReg, pregMain); // M2 += δ²*tailCnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
-                Reduce<ReduceType::SUM>(var, dichotomyAddVarL, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, dichotomyAddVarL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + dichotomyAddReminderRealLoopCount + i, var, pregMerge);
             }
             // 末级归约换成补偿求和（M2 的末级横向求和与 mean 同口径，误差经 rsqrt 折算进 rstd）。
             WelfordDichotomyAddCompensated(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin,
                                            dichotomyAddLastNum);
+            // 中间级（每 VL 横向求和）的补偿残差在这里并入，只多这一次舍入。
+            Add(var, var, lowAcc, pregMerge);
             // 累加时每项已乘 reduceScale0 = 1/cofFactor0（cofFactor0 是 2 的幂，该缩放精确），
             // 故此时 var = M2/cofFactor0。有偏方差 M2/n 与无偏方差 M2/(n-1) 都用**真除法**：
             // n 与 n-1 均 < 2^24、在 fp32 中精确可表示，真除法只引入 ≤0.5 ULP 的随机舍入；
@@ -1288,7 +1411,10 @@ private:
             RegTensor<float> varUnbiased;
             RegTensor<float> nReg;
             RegTensor<float> nMinusOneReg;
+            RegTensor<float> cntReg;
+            RegTensor<float> tailCntReg;
 
+            RegTensor<float> lowAcc; // 跨 VL 块的补偿低位累加器（只用 lane0）
             MaskReg pregLoop;
             MaskReg pregLoop1;
             MaskReg pregMain = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
@@ -1298,13 +1424,16 @@ private:
             uint32_t sreg1;
 
             // 整块使用tailCountScale,尾块使用countScale
+            // 本段（mean）每个 VL 块的部分和改用补偿横向归约，低位残差攒在 lowAcc，
+            // 等末级补偿归约出标量后一次性加回（见 WelfordCompensatedRegReduce 说明）。
+            Duplicate(lowAcc, float(0.0), pregMain);
             for (uint16_t i = 0; i < welfordDiffLoopCount; i++) {
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32);
                 LoadAlign(dichotomyAddMeanR, tmpMeanLocal + i * VL_FP32 + dichotomyAddPower);
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, tailCountScale, pregMain);
                 Muls(dichotomyAddMeanR, dichotomyAddMeanR, countScale, pregMain);
                 Add(sumMean, dichotomyAddMeanL, dichotomyAddMeanR, pregMain);
-                Reduce<ReduceType::SUM>(mean, sumMean, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, sumMean, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i, mean, pregMerge);
             }
 
@@ -1321,7 +1450,7 @@ private:
                 Muls(tmp, dichotomyAddMeanL, coeff, pregLoop1);
                 Copy<float, MaskMergeMode::MERGING>(dichotomyAddMeanL, tmp, pregLoop1);
                 Add(sumMean, dichotomyAddMeanL, dichotomyAddMeanR, pregMain);
-                Reduce<ReduceType::SUM>(mean, sumMean, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, sumMean, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i + welfordDiffLoopCount, mean,
                                                                      pregMerge);
             }
@@ -1336,7 +1465,7 @@ private:
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, countScale, pregMain);
                 Muls(dichotomyAddMeanR, dichotomyAddMeanR, countScale, pregLoop);
                 Add(sumMean, dichotomyAddMeanL, dichotomyAddMeanR, pregMain);
-                Reduce<ReduceType::SUM>(mean, sumMean, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, sumMean, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + i + welfordDiffLoopCount + welfordReminderLoopCount, mean, pregMerge);
             }
@@ -1345,7 +1474,7 @@ private:
                  i < static_cast<uint16_t>(dichotomyAddPowerLoopCount - dichotomyAddReminderRealLoopCount); i++) {
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + (i + dichotomyAddReminderRealLoopCount) * VL_FP32);
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, countScale, pregMain);
-                Reduce<ReduceType::SUM>(mean, dichotomyAddMeanL, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, dichotomyAddMeanL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + dichotomyAddReminderRealLoopCount + i, mean, pregMerge);
             }
@@ -1356,6 +1485,8 @@ private:
             // 口径与同函数下方 var 收尾（÷n 再 ×cofFactor0）一致。
             WelfordDichotomyAddCompensated(mean, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin,
                                            dichotomyAddLastNum);
+            // 中间级（每 VL 横向求和）的补偿残差在这里并入，只多这一次舍入。
+            Add(mean, mean, lowAcc, pregMerge);
             Duplicate(nReg, vfN, pregMain);
             Div(mean, mean, nReg, pregMerge);
             Muls(mean, mean, vfCofFactor, pregMerge);
@@ -1367,25 +1498,29 @@ private:
             // 计算rstd
             Duplicate(one, float(1.0), pregMain);
             Duplicate<float, AscendC::MicroAPI::HighLowPart::LOWEST, MaskMergeMode::ZEROING>(mean, mean, pregMain);
+            // cnt / tailCnt 广播到寄存器，供融合乘加 Mula 使用（Mula 无标量重载）
+            Duplicate(cntReg, cnt, pregMain);
+            Duplicate(tailCntReg, tailCnt, pregMain);
+            // 本段（var）每个 VL 块的部分和改用补偿横向归约，低位残差攒在 lowAcc，
+            // 等末级补偿归约出标量后一次性加回（见 WelfordCompensatedRegReduce 说明）。
+            Duplicate(lowAcc, float(0.0), pregMain);
             for (uint16_t i = 0; i < welfordDiffLoopCount; i++) {
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, tailCnt, pregMain);
                 LoadAlign(dichotomyAddMeanR, tmpMeanLocal + i * VL_FP32 + dichotomyAddPower);
                 Sub(deltaR, dichotomyAddMeanR, mean, pregMain);
                 Mul(deltaR, deltaR, deltaR, pregMain);
-                Muls(deltaR, deltaR, cnt, pregMain);
 
                 LoadAlign(dichotomyAddVarL, tmpVarLocal + i * VL_FP32);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, tailCntReg, pregMain); // M2 += δ²*tailCnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
                 LoadAlign(dichotomyAddVarR, tmpVarLocal + i * VL_FP32 + dichotomyAddPower);
-                Add(dichotomyAddVarR, dichotomyAddVarR, deltaR, pregMain);
+                Mula(dichotomyAddVarR, deltaR, cntReg, pregMain); // M2 += δ²*cnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarR, dichotomyAddVarR, reduceScale0, pregMain);
 
                 Add(sumVar, dichotomyAddVarL, dichotomyAddVarR, pregMain);
-                Reduce<ReduceType::SUM>(var, sumVar, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, sumVar, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i, var, pregMerge);
             }
             sreg0 = dichotomyAddReminder - welfordDiffLoopCount * VL_FP32;
@@ -1400,7 +1535,6 @@ private:
                 LoadAlign(dichotomyAddMeanR, tmpMeanLocal + (i + welfordDiffLoopCount) * VL_FP32 + dichotomyAddPower);
                 Sub(deltaR, dichotomyAddMeanR, mean, pregLoop);
                 Mul(deltaR, deltaR, deltaR, pregLoop);
-                Muls(deltaR, deltaR, cnt, pregLoop);
                 Muls(tmp, deltaL, coeff, pregLoop1);
                 Copy<float, MaskMergeMode::MERGING>(deltaL, tmp, pregLoop1);
 
@@ -1408,11 +1542,11 @@ private:
                 Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
                 LoadAlign(dichotomyAddVarR, tmpVarLocal + (i + welfordDiffLoopCount) * VL_FP32 + dichotomyAddPower);
-                Add(dichotomyAddVarR, dichotomyAddVarR, deltaR, pregLoop);
+                Mula(dichotomyAddVarR, deltaR, cntReg, pregLoop); // M2 += δ²*cnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarR, dichotomyAddVarR, reduceScale0, pregLoop);
 
                 Add(sumVar, dichotomyAddVarL, dichotomyAddVarR, pregMain);
-                Reduce<ReduceType::SUM>(var, sumVar, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, sumVar, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i + welfordDiffLoopCount, var,
                                                                      pregMerge);
             }
@@ -1423,23 +1557,21 @@ private:
                           tmpMeanLocal + (i + welfordDiffLoopCount) * VL_FP32 + welfordDiffReminderAlign);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, cnt, pregMain);
                 LoadAlign(dichotomyAddMeanR, tmpMeanLocal + (i + welfordDiffLoopCount) * VL_FP32 +
                                                  welfordDiffReminderAlign + dichotomyAddPower);
                 Sub(deltaR, dichotomyAddMeanR, mean, pregLoop);
                 Mul(deltaR, deltaR, deltaR, pregLoop);
-                Muls(deltaR, deltaR, cnt, pregLoop);
 
                 LoadAlign(dichotomyAddVarL,
                           tmpVarLocal + (i + welfordDiffLoopCount) * VL_FP32 + welfordDiffReminderAlign);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, cntReg, pregMain); // M2 += δ²*cnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
                 LoadAlign(dichotomyAddVarR, tmpVarLocal + (i + welfordDiffLoopCount) * VL_FP32 +
                                                 welfordDiffReminderAlign + dichotomyAddPower);
-                Add(dichotomyAddVarR, dichotomyAddVarR, deltaR, pregLoop);
+                Mula(dichotomyAddVarR, deltaR, cntReg, pregLoop); // M2 += δ²*cnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarR, dichotomyAddVarR, reduceScale0, pregLoop);
                 Add(sumVar, dichotomyAddVarL, dichotomyAddVarR, pregMain);
-                Reduce<ReduceType::SUM>(var, sumVar, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, sumVar, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + i + welfordDiffLoopCount + welfordReminderLoopCount, var, pregMerge);
             }
@@ -1449,17 +1581,18 @@ private:
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + (i + dichotomyAddReminderRealLoopCount) * VL_FP32);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, cnt, pregMain);
                 LoadAlign(dichotomyAddVarL, tmpVarLocal + (i + dichotomyAddReminderRealLoopCount) * VL_FP32);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, cntReg, pregMain); // M2 += δ²*cnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
-                Reduce<ReduceType::SUM>(var, dichotomyAddVarL, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, dichotomyAddVarL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + dichotomyAddReminderRealLoopCount + i, var, pregMerge);
             }
             // 末级归约换成补偿求和（M2 的末级横向求和与 mean 同口径，误差经 rsqrt 折算进 rstd）。
             WelfordDichotomyAddCompensated(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin,
                                            dichotomyAddLastNum);
+            // 中间级（每 VL 横向求和）的补偿残差在这里并入，只多这一次舍入。
+            Add(var, var, lowAcc, pregMerge);
             // 累加时每项已乘 reduceScale0 = 1/cofFactor0（cofFactor0 是 2 的幂，该缩放精确），
             // 故此时 var = M2/cofFactor0。有偏方差 M2/n 与无偏方差 M2/(n-1) 都用**真除法**：
             // n 与 n-1 均 < 2^24、在 fp32 中精确可表示，真除法只引入 ≤0.5 ULP 的随机舍入；
@@ -1535,13 +1668,19 @@ private:
             RegTensor<float> varUnbiased;
             RegTensor<float> nReg;
             RegTensor<float> nMinusOneReg;
+            RegTensor<float> cntReg;
+            RegTensor<float> tailCntReg;
 
+            RegTensor<float> lowAcc; // 跨 VL 块的补偿低位累加器（只用 lane0）
             MaskReg pregLoop;
             MaskReg pregMain = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::ALL>();
             MaskReg pregMerge = AscendC::MicroAPI::CreateMask<float, AscendC::MicroAPI::MaskPattern::VL1>();
             MaskReg zeroVarMask;
             uint32_t sreg0 = dichotomyAddReminder;
             // 整块使用tailCountScale, 尾块使用CountScale
+            // 本段（mean）每个 VL 块的部分和改用补偿横向归约，低位残差攒在 lowAcc，
+            // 等末级补偿归约出标量后一次性加回（见 WelfordCompensatedRegReduce 说明）。
+            Duplicate(lowAcc, float(0.0), pregMain);
             for (uint16_t i = 0; i < dichotomyAddReminderLoopCount; i++) {
                 pregLoop = AscendC::MicroAPI::UpdateMask<float>(sreg0);
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32);
@@ -1549,7 +1688,7 @@ private:
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, tailCountScale, pregMain);
                 Muls(dichotomyAddMeanR, dichotomyAddMeanR, countScale, pregLoop);
                 Add(sumMean, dichotomyAddMeanL, dichotomyAddMeanR, pregMain);
-                Reduce<ReduceType::SUM>(mean, sumMean, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, sumMean, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i, mean, pregMerge);
             }
 
@@ -1558,7 +1697,7 @@ private:
             for (uint16_t i = 0; i < welfordDiffLoopCount; i++) {
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32 + dichotomyAddReminderRoundUp);
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, tailCountScale, pregMain);
-                Reduce<ReduceType::SUM>(mean, dichotomyAddMeanL, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, dichotomyAddMeanL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + dichotomyAddReminderLoopCount + i, mean, pregMerge);
             }
@@ -1571,7 +1710,7 @@ private:
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, countScale, pregMain);
                 Muls(tmp, dichotomyAddMeanL, coeff, pregLoop);
                 Copy<float, MaskMergeMode::MERGING>(dichotomyAddMeanL, tmp, pregLoop);
-                Reduce<ReduceType::SUM>(mean, dichotomyAddMeanL, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, dichotomyAddMeanL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + dichotomyAddReminderLoopCount + welfordDiffLoopCount + i, mean, pregMerge);
             }
@@ -1579,7 +1718,7 @@ private:
             for (uint16_t i = 0; i < dichotomyAddPowerRemainLoopCount; i++) {
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32 + dichotomyAddPowerOffset);
                 Muls(dichotomyAddMeanL, dichotomyAddMeanL, countScale, pregMain);
-                Reduce<ReduceType::SUM>(mean, dichotomyAddMeanL, pregMain);
+                WelfordCompensatedRegReduce(mean, lowAcc, dichotomyAddMeanL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + dichotomyAddReminderLoopCount +
                                                                          welfordDiffLoopCount +
                                                                          welfordReminderLoopCount + i,
@@ -1593,6 +1732,8 @@ private:
             // 口径与同函数下方 var 收尾（÷n 再 ×cofFactor0）一致。
             WelfordDichotomyAddCompensated(mean, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin,
                                            dichotomyAddLastNum);
+            // 中间级（每 VL 横向求和）的补偿残差在这里并入，只多这一次舍入。
+            Add(mean, mean, lowAcc, pregMerge);
             Duplicate(nReg, vfN, pregMain);
             Div(mean, mean, nReg, pregMerge);
             Muls(mean, mean, vfCofFactor, pregMerge);
@@ -1604,28 +1745,32 @@ private:
             // 计算rstd
             Duplicate(one, float(1.0), pregMain);
             Duplicate<float, AscendC::MicroAPI::HighLowPart::LOWEST, MaskMergeMode::ZEROING>(mean, mean, pregMain);
+            // cnt / tailCnt 广播到寄存器，供融合乘加 Mula 使用（Mula 无标量重载）
+            Duplicate(cntReg, cnt, pregMain);
+            Duplicate(tailCntReg, tailCnt, pregMain);
             // 整块使用tailCountScale, 尾块使用CountScale
             sreg0 = dichotomyAddReminder;
+            // 本段（var）每个 VL 块的部分和改用补偿横向归约，低位残差攒在 lowAcc，
+            // 等末级补偿归约出标量后一次性加回（见 WelfordCompensatedRegReduce 说明）。
+            Duplicate(lowAcc, float(0.0), pregMain);
             for (uint16_t i = 0; i < dichotomyAddReminderLoopCount; i++) {
                 pregLoop = AscendC::MicroAPI::UpdateMask<float>(sreg0);
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, tailCnt, pregMain);
                 LoadAlign(dichotomyAddVarL, tmpVarLocal + i * VL_FP32);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, tailCntReg, pregMain); // M2 += δ²*tailCnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
 
                 LoadAlign(dichotomyAddMeanR, tmpMeanLocal + i * VL_FP32 + dichotomyAddPower);
                 Sub(deltaR, dichotomyAddMeanR, mean, pregLoop);
                 Mul(deltaR, deltaR, deltaR, pregLoop);
-                Muls(deltaR, deltaR, cnt, pregLoop);
                 LoadAlign(dichotomyAddVarR, tmpVarLocal + i * VL_FP32 + dichotomyAddPower);
-                Add(dichotomyAddVarR, dichotomyAddVarR, deltaR, pregLoop);
+                Mula(dichotomyAddVarR, deltaR, cntReg, pregLoop); // M2 += δ²*cnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarR, dichotomyAddVarR, reduceScale0, pregLoop);
 
                 Add(sumVar, dichotomyAddVarL, dichotomyAddVarR, pregMain);
-                Reduce<ReduceType::SUM>(var, sumVar, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, sumVar, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + i, var, pregMerge);
             }
 
@@ -1634,11 +1779,10 @@ private:
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32 + dichotomyAddReminderRoundUp);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, tailCnt, pregMain);
                 LoadAlign(dichotomyAddVarL, tmpVarLocal + i * VL_FP32 + dichotomyAddReminderRoundUp);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, tailCntReg, pregMain); // M2 += δ²*tailCnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
-                Reduce<ReduceType::SUM>(var, dichotomyAddVarL, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, dichotomyAddVarL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + dichotomyAddReminderLoopCount + i, var, pregMerge);
             }
@@ -1657,7 +1801,7 @@ private:
                           tmpVarLocal + (i + welfordDiffLoopCount) * VL_FP32 + dichotomyAddReminderRoundUp);
                 Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
-                Reduce<ReduceType::SUM>(var, dichotomyAddVarL, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, dichotomyAddVarL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(
                     dichotomyAddLocal + dichotomyAddReminderLoopCount + welfordDiffLoopCount + i, var, pregMerge);
             }
@@ -1666,11 +1810,10 @@ private:
                 LoadAlign(dichotomyAddMeanL, tmpMeanLocal + i * VL_FP32 + dichotomyAddPowerOffset);
                 Sub(deltaL, dichotomyAddMeanL, mean, pregMain);
                 Mul(deltaL, deltaL, deltaL, pregMain);
-                Muls(deltaL, deltaL, cnt, pregMain);
                 LoadAlign(dichotomyAddVarL, tmpVarLocal + i * VL_FP32 + dichotomyAddPowerOffset);
-                Add(dichotomyAddVarL, dichotomyAddVarL, deltaL, pregMain);
+                Mula(dichotomyAddVarL, deltaL, cntReg, pregMain); // M2 += δ²*cnt（融合乘加，单次舍入）
                 Muls(dichotomyAddVarL, dichotomyAddVarL, reduceScale0, pregMain);
-                Reduce<ReduceType::SUM>(var, dichotomyAddVarL, pregMain);
+                WelfordCompensatedRegReduce(var, lowAcc, dichotomyAddVarL, pregMain, pregMerge);
                 StoreAlign<float, StoreDist::DIST_FIRST_ELEMENT_B32>(dichotomyAddLocal + dichotomyAddReminderLoopCount +
                                                                          welfordDiffLoopCount +
                                                                          welfordReminderLoopCount + i,
@@ -1680,6 +1823,8 @@ private:
             // 末级归约换成补偿求和（M2 的末级横向求和与 mean 同口径，误差经 rsqrt 折算进 rstd）。
             WelfordDichotomyAddCompensated(var, dichotomyAddLocal, dichotomyAddK, innerLoopCountOrigin,
                                            dichotomyAddLastNum);
+            // 中间级（每 VL 横向求和）的补偿残差在这里并入，只多这一次舍入。
+            Add(var, var, lowAcc, pregMerge);
             // 累加时每项已乘 reduceScale0 = 1/cofFactor0（cofFactor0 是 2 的幂，该缩放精确），
             // 故此时 var = M2/cofFactor0。有偏方差 M2/n 与无偏方差 M2/(n-1) 都用**真除法**：
             // n 与 n-1 均 < 2^24、在 fp32 中精确可表示，真除法只引入 ≤0.5 ULP 的随机舍入；
@@ -1907,6 +2052,7 @@ private:
 
     TBuf<TPosition::VECCALC> tMeanBuff;
     TBuf<TPosition::VECCALC> tVarBuff;
+    TBuf<TPosition::VECCALC> tVarLowBuff; // tVarBuff 的逐 lane 补偿残差
     TBuf<TPosition::VECCALC> rstdBuff;
     TBuf<TPosition::VECCALC> unbiasedVarBuff;
     TBuf<TPosition::VECCALC> dichotomyAddBuf;

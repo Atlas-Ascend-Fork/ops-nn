@@ -29,14 +29,30 @@ constexpr int64_t UP_SPLIT_R0_INDEX = 2;
 constexpr int64_t WEIGHT_INPUT_IDX = 1;
 
 constexpr int64_t DOUBLE_BUFFER_NUM = 2;
-constexpr int64_t MEAN_VAR_BUFFER_NUM = 2;
+// 逐通道 fp32 小缓冲个数（batchMean / batchMeanLow / batchVar / batchVarLow 四个队列各一份）
+constexpr int64_t MEAN_VAR_BUFFER_NUM = 4;
+// 双肢（y 合成 + rstd）额外需要的逐通道 fp32 缓冲：
+// 全局均值低位肢 / 有偏方差低位肢 / 无偏方差(out2) / rstd 高位肢 / rstd 低位肢
+constexpr int64_t DD_FP32_BUFFER_NUM = 5;
+// ubFactor 每元素需要的 fp32 逐 lane 缓冲个数：mean / M2 / mean 的 TwoSum 补偿残差 / count。
+// mean 的残差缓冲（kernel 侧 meanLowTbuf）是缺陷 2 的 mean 精度修复引入的，2→3 同步让出
+// 4 B/元素的 UB，kernel 与 tiling 的 ubFactor 口径必须一致，否则会 UB 越界。
+constexpr int64_t TMP_MEAN_VAR_BUFFER_NUM = 3;
+constexpr int64_t COUNT_BUFFER_NUM = 1;
 constexpr int64_t RUNNING_MEAN_VAR_BUFFER_DEFAULT_NUM = 2;
 constexpr int64_t BETA_GAMMA_BUFFER_NUM = 2;
+// UB 预算的安全余量：下面的 ubSizeCanUse 按 buffer 的「名义字节数」求和，而 InitBuffer 每块
+// 缓冲还会按 32B 对齐向上取整，AscendC 自身也可能预留少量 UBUF。本模板的逐通道缓冲已增至
+// 4 个队列 + 9 个 TBuf（见 saveMeanVarSize），名义余量只剩百字节量级，不足以覆盖这些对齐
+// 开销——按名义值把 UB 占满会让内核落到「算得下但可能越界写」的风险区。这里显式扣除余量，
+// 与 block_split_r 模板的 UB_RESERVE_SIZE 同口径，保证 ubFactor 计算前仍留有对齐空间。
+constexpr int64_t UB_RESERVE_SIZE = 32L * 1024L;
 
 constexpr int64_t BINARY_ADD_COEF = 2;
 constexpr int64_t BINARY_ADD_COEF_FOUR = 4;
 constexpr int64_t WSP_RESERVED_SIZE = 16L * 1024L * 1024L;
-constexpr int64_t MEAN_AND_VAR_NODE_NUM = 2;
+// 每个核在 workspace 里占的 patternAAlign 行数：mean / var / mean-low / var-low
+constexpr int64_t MEAN_AND_VAR_NODE_NUM = 4;
 constexpr int64_t FIRST_VCADD_RESULT_MAX_NUM = 128;
 } // namespace
 
@@ -239,7 +255,8 @@ ge::graphStatus BatchNormExt2RARBlockSplitRTiling::DoOpTiling()
     if (useRunningMeanVar_) {
         runningMeanVarSize *= NUM_TWO;
     }
-    int64_t saveMeanVarSize = patternAAlign * static_cast<int64_t>(sizeof(float)) * MEAN_VAR_BUFFER_NUM;
+    int64_t saveMeanVarSize = patternAAlign * static_cast<int64_t>(sizeof(float)) *
+                              (MEAN_VAR_BUFFER_NUM + DD_FP32_BUFFER_NUM);
     int64_t betaGammaSize = Ops::Base::CeilAlign(a_, blockSize_ / T2ElemSize) * T2ElemSize * BETA_GAMMA_BUFFER_NUM;
 
     int64_t blockDimAlignSize = Ops::Base::CeilAlign(static_cast<int64_t>(aicoreParams_.blockDim), fp32EleNumPerBlock) *
@@ -262,8 +279,8 @@ ge::graphStatus BatchNormExt2RARBlockSplitRTiling::DoOpTiling()
 
     int64_t xSizePerUbFactor = elemSize * DOUBLE_BUFFER_NUM;
     int64_t ySizePerUbFactor = elemSize * DOUBLE_BUFFER_NUM;
-    int64_t tmpMeanVarPerUbFactor = static_cast<int64_t>(sizeof(float)) * MEAN_VAR_BUFFER_NUM;
-    int64_t countBuffer1PerUbFactor = static_cast<int64_t>(sizeof(float));
+    int64_t tmpMeanVarPerUbFactor = static_cast<int64_t>(sizeof(float)) * TMP_MEAN_VAR_BUFFER_NUM;
+    int64_t countBuffer1PerUbFactor = static_cast<int64_t>(sizeof(float)) * COUNT_BUFFER_NUM;
 
     OP_LOGI(context_->GetNodeName(), "BatchNormExt2RARBlockSplitRTiling DoOpTiling: xSizePerUbFactor is %lu !",
             xSizePerUbFactor);
@@ -275,7 +292,7 @@ ge::graphStatus BatchNormExt2RARBlockSplitRTiling::DoOpTiling()
             countBuffer1PerUbFactor);
 
     int64_t ubSizeCanUse = static_cast<int64_t>(aicoreParams_.ubSize) - runningMeanVarSize - saveMeanVarSize -
-                           betaGammaSize - blockDimAlignSize - tmpbuffer3AlignSize;
+                           betaGammaSize - blockDimAlignSize - tmpbuffer3AlignSize - UB_RESERVE_SIZE;
     OP_LOGI(context_->GetNodeName(), "BatchNormExt2RARBlockSplitRTiling DoOpTiling: ubSizeCanUse is %lu !",
             ubSizeCanUse);
     OP_CHECK_IF(ubSizeCanUse <= 0, OP_LOGI(context_->GetNodeName(), "ubSizeCanUse is not a positive number."),
@@ -360,6 +377,21 @@ ge::graphStatus BatchNormExt2RARBlockSplitRTiling::DoOpTiling()
                 OP_LOGI(context_->GetNodeName(), "BatchNormExt2RARBlockSplitRTiling BinaryAddTiling param invalid"),
                 return ge::GRAPH_PARAM_INVALID);
 
+    // 全局除数 R（及 R-1）的双肢：host 侧用 double 算 R，再取 fl32(R) 与精确余量。
+    // |R - fl32(R)| ≤ 1（R < 2^25 时），落 fp32 精确。
+    double rTotalD = static_cast<double>(r1_) * static_cast<double>(r0_);
+    float nHi = static_cast<float>(rTotalD);
+    float nLo = static_cast<float>(rTotalD - static_cast<double>(nHi));
+    double rMinusOneD = rTotalD - 1.0;
+    float nMinusOneHi = static_cast<float>(rMinusOneD);
+    float nMinusOneLo = static_cast<float>(rMinusOneD - static_cast<double>(nMinusOneHi));
+    batchNormTilingData.set_nHi(nHi);
+    batchNormTilingData.set_nLo(nLo);
+    batchNormTilingData.set_nMinusOneHi(nMinusOneHi);
+    batchNormTilingData.set_nMinusOneLo(nMinusOneLo);
+    OP_LOGI(context_->GetNodeName(), "RAR tiling divisor R=%.0f -> (%.9g, %.9g) ; R-1 -> (%.9g, %.9g)", rTotalD, nHi,
+            nLo, nMinusOneHi, nMinusOneLo);
+
     batchNormTilingData.set_patternAAlign(patternAAlign);
     batchNormTilingData.set_blockSplitAxis(blockSplitAxis);
     batchNormTilingData.set_formerBlockOuter(formerBlockOuter);
@@ -409,5 +441,5 @@ ge::graphStatus BatchNormExt2RARBlockSplitRTiling::PostTiling()
     return ret;
 }
 
-REGISTER_TILING_TEMPLATE("BatchNormExt2", BatchNormExt2RARBlockSplitRTiling, 40000);
+REGISTER_TILING_TEMPLATE("BatchNormExt2", BatchNormExt2RARBlockSplitRTiling, 25000);
 } // namespace optiling

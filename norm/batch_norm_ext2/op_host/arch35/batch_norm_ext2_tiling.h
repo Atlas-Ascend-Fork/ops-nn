@@ -96,6 +96,14 @@ TILING_DATA_FIELD_DEF(float, epsilon);
 TILING_DATA_FIELD_DEF(float, momentum);
 TILING_DATA_FIELD_DEF(float, momentumReverse);
 TILING_DATA_FIELD_DEF(int32_t, useRunningMeanVar);
+// 全局除数 R = patternR1*patternR0（及 R-1）的**双肢**：R 可能 > 2^24（实测 35 个用例最大
+// 1.88*2^24），此时 fl32(R) 带 ≤0.5 ULP 的系统性偏差，会让 M2/R、M2/(R-1) 带上约 0.7 ULP 的
+// 同向误差（c_s_032 seed7 的 cst#2 rmse=2.07 即由此而来）。拆成 hi+lo 两肢后末级补偿除法只多
+// 一项 q0·nLo 修正。R ≤ 2^24 时 nLo 恒为 0，修正项恒为 0，结果与改动前逐位相同。
+TILING_DATA_FIELD_DEF(float, nHi);
+TILING_DATA_FIELD_DEF(float, nLo);
+TILING_DATA_FIELD_DEF(float, nMinusOneHi);
+TILING_DATA_FIELD_DEF(float, nMinusOneLo);
 END_TILING_DATA_DEF;
 
 REGISTER_TILING_DATA_CLASS(BatchNormExt2_250000, BatchNormExt2RARBlockSplitRTilingData)
