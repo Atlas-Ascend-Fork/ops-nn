@@ -290,3 +290,21 @@ TEST_F(l2_add_rms_norm_test, legacy_soc_optional_output_modes_success)
         EXPECT_EQ(postMode.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
     }
 }
+
+// A2 上 x1 非空而 gamma 为空违反资料组合表约束（gamma 须与 x1 后几维一致，「支持空Tensor」
+// 的合法形态是空进空出 no-op）：修复前空早退判据含 gamma 空即静默成功、输出全部未写
+// （issue #8743），现首段按 161002 拒绝。显式切换 ASCEND910B：本 fixture 缺省注入 950，
+// 950 下 CheckGammaAndRstdShape 的形状校验会先行以 161002 拒绝，无法归因到新增的空 gamma 校验
+TEST_F(l2_add_rms_norm_test, ascend910b_gamma_empty_with_nonempty_x_rejected)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    CommonTest({8, 64}, {0}, {8, 1}, ACL_FLOAT16, ACLNN_ERR_PARAM_INVALID);
+}
+
+// 对照：空进空出 no-op（x1 与 gamma 同为空）是「支持空Tensor」的合法形态，保持放行。
+// 显式切换 ASCEND910B 的理由同上：950 下 gamma={0} 与 x1 尾维 {64} 不符会先被形状校验拒绝
+TEST_F(l2_add_rms_norm_test, ascend910b_all_empty_no_op_success)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND910B);
+    CommonTest({0, 64}, {0}, {0, 1}, ACL_FLOAT16, ACLNN_SUCCESS);
+}

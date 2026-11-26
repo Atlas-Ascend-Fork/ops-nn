@@ -295,6 +295,12 @@ aclnnStatus aclnnAddRmsNormGetWorkspaceSize(const aclTensor* x1, const aclTensor
     // 950 归约轴为空时 rstd 仍有 A 个元素，必须进入 L0/kernel 由空归约兜底模板写出 NaN。
     bool isRegbaseReduceEmpty = mode == AddRmsNormACLNN::ADD_RMS_NORM_MODE && Ops::NN::AclnnUtil::IsRegbase() &&
                                 gamma->IsEmpty() && !outputTensor.rstdOut->IsEmpty();
+    // x1 非空而 gamma 为空违反资料组合表约束（gamma 须与 x1 后几维一致，空进空出才是
+    // 「支持空Tensor」的合法形态）：gamma numel=0 使 numCol=0，kernel 无写出任务，
+    // 修复前两段静默成功、输出全部未写（issue #8743）。950 空归约场景豁免。
+    OP_CHECK(x1->IsEmpty() || !(gamma->IsEmpty()) || isRegbaseReduceEmpty,
+             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "gamma cannot be an empty tensor when x1 is not empty."),
+             return ACLNN_ERR_PARAM_INVALID);
     if (anyEmptyTensor && !isRegbaseReduceEmpty) {
         OP_LOGW("Got empty tensor in aclnnAddRmsNorm!");
         *workspaceSize = 0;
