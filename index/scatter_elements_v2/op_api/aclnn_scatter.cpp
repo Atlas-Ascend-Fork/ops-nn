@@ -352,12 +352,24 @@ static const aclTensor* InitializeTensor(const aclTensor* x, aclOpExecutor* exec
     return xContiguous;
 }
 
+static bool IsArch22BoolOverwrite(const aclTensor* self, int64_t reduce)
+{
+    return self->GetDataType() == op::DataType::DT_BOOL && reduce == REDUCE_NONE &&
+           GetCurrentPlatformInfo().GetCurNpuArch() == NpuArch::DAV_2201;
+}
+
 static aclnnStatus ExecScatterNoTranspose(const aclTensor* self, int64_t dim, const aclTensor* index,
                                           const aclTensor* src, int64_t reduce, aclTensor* out, aclOpExecutor* executor,
                                           bool includeSelf = true)
 {
     auto ret = CheckParams(self, index, src, out);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
+
+    const bool boolOverwrite = IsArch22BoolOverwrite(self, reduce);
+    if (boolOverwrite) {
+        ret = CheckParams2(self, index, src, out, dim);
+        CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    }
 
     auto selfContiguous = l0op::Contiguous(self, executor);
     CHECK_RET(selfContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -366,7 +378,7 @@ static aclnnStatus ExecScatterNoTranspose(const aclTensor* self, int64_t dim, co
     auto srcContiguous = l0op::Contiguous(src, executor);
     CHECK_RET(srcContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
     auto reduction = GetReduceStr(reduce);
-    auto isCopy = self->GetData() != out->GetData();
+    auto isCopy = boolOverwrite ? self != out : self->GetData() != out->GetData();
     if (isCopy) {
         auto selfCopy = executor->AllocTensor(self->GetViewShape(), self->GetDataType());
         CHECK_RET(selfCopy != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -1117,7 +1129,8 @@ static aclnnStatus ExecScatterValueGetWorkspaceSize(const aclTensor* self, int64
         CHECK_RET(res == ACLNN_SUCCESS, res);
     } else {
         bool supportNoTranspose = l0op::SupportNoTranspose(self, index, src, dim, GetReduceStr(reduce));
-        if (self->GetViewShape().GetDimNum() != 0 && !supportNoTranspose) {
+        // Arch22 BOOL overwrite uses the tensor-update kernel, which reads one update per index.
+        if (self->GetViewShape().GetDimNum() != 0 && (!supportNoTranspose || IsArch22BoolOverwrite(self, reduce))) {
             auto indexShape = GetTensorShape(index, uniqueExecutor.get());
             OP_CHECK(indexShape != nullptr, OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "get indexShape failed!"),
                      return ACLNN_ERR_INNER_NULLPTR);

@@ -665,8 +665,10 @@ static bool BaseCheck(const aclTensor* data, const aclTensor* indices, const acl
         OP_LOGD("ScatterElementsV2 No Transpose only support for DAV_2201");
         return false;
     }
-    if (ShouldPreferScatterElementsV2OnArch22(reduction)) {
-        OP_LOGD("ScatterElementsV2 No Transpose disabled on arch22 to keep deterministic decisions in tiling");
+    // BOOL overwrite uses the original per-axis dispatch rules below. The general
+    // arch22 V2 path does not support BOOL when those rules reject the request.
+    if (ShouldPreferScatterElementsV2OnArch22(reduction) &&
+        !(data->GetDataType() == op::DataType::DT_BOOL && reduction == "none")) {
         return false;
     }
     // 仅支持none和add模式
@@ -704,6 +706,9 @@ bool SupportNoTranspose(const aclTensor* data, const aclTensor* indices, const a
     auto dataShape = data->GetViewShape();
     int64_t dataDimNum = static_cast<int64_t>(dataShape.GetDimNum());
     axis = axis >= 0 ? axis : axis + dataDimNum;
+    if (axis < 0 || axis >= dataDimNum) {
+        return false;
+    }
     if (!NoTransposeShapeCheck(data, indices, updates, static_cast<uint64_t>(axis))) {
         return false;
     }

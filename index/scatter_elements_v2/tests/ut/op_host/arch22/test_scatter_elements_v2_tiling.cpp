@@ -99,7 +99,7 @@ static Arch22TilingResult ExecuteArch22DeterministicCase(
     map<string, string> soc_infos;
     map<string, string> aicore_spec;
     map<string, string> intrinsics;
-    map<string, string> soc_version_infos = {{"Short_SoC_version", "Ascend910B"}, {"NpuArch", "220"}};
+    map<string, string> soc_version_infos = {{"Short_SoC_version", "Ascend910B"}, {"NpuArch", "2201"}};
     GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
 
     fe::PlatFormInfos platform_info;
@@ -1048,4 +1048,21 @@ TEST_F(ScatterElementsV2Tiling, MaxWorkspaceUnavailable)
             EXPECT_EQ(r.status, ge::GRAPH_FAILED);
         }
     }
+}
+
+TEST_F(ScatterElementsV2Tiling, arch22_bool_broadcast_uses_existing_keys_for_wide_suffix)
+{
+    gert::StorageShape self = {{64, 262144}, {64, 262144}};
+    gert::StorageShape index = {{32, 262144}, {32, 262144}};
+    for (auto indexType : {ge::DT_INT32, ge::DT_INT64}) {
+        auto result = ExecuteArch22DeterministicCase(ge::DT_BOOL, indexType, ge::DT_BOOL, self, index, index, 0, "none",
+                                                     0);
+        ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+        EXPECT_EQ(result.tilingKey, indexType == ge::DT_INT32 ? 410U : 420U);
+    }
+
+    gert::StorageShape partialIndex = {{32, 131072}, {32, 131072}};
+    auto partial = ExecuteArch22DeterministicCase(ge::DT_BOOL, ge::DT_INT64, ge::DT_BOOL, self, partialIndex,
+                                                  partialIndex, 0, "none", 0);
+    EXPECT_FALSE(partial.status == ge::GRAPH_SUCCESS && partial.tilingKey == 420U);
 }

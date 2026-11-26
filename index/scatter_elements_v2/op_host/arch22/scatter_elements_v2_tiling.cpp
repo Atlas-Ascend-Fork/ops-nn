@@ -801,6 +801,24 @@ bool ScatterElementsV2Tiling::CheckLastAxisCacheOp(size_t inputDimNum, ge::DataT
     return true;
 }
 
+// The non-last-axis kernel treats each suffix as one dense column range.
+// Only the leading batch and scatter axis can have different extents.
+static bool CanTransposeBoolRows(const gert::Shape& input, const gert::Shape& indices, const gert::Shape& updates,
+                                 size_t axis)
+{
+    const size_t rank = input.GetDimNum();
+    if (rank < TWO_DIM || axis >= rank - 1 || indices.GetDimNum() != rank || updates.GetDimNum() != rank) {
+        return false;
+    }
+    for (size_t i = 0; i < rank; ++i) {
+        if (indices[i] > updates[i] || (i != axis && indices[i] > input[i]) ||
+            (i != 0 && i != axis && (indices[i] != input[i] || indices[i] != updates[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ScatterElementsV2Tiling::CheckCacheOpXDim1Limit(const gert::Shape& inputShape, const gert::Shape& indicesShape,
                                                      const gert::Shape& updatesShape, size_t inputDimNum,
                                                      ge::DataType inputDtype, const char* reduce)
@@ -832,8 +850,7 @@ bool ScatterElementsV2Tiling::CheckCacheOpXDim1Limit(const gert::Shape& inputSha
     uint64_t maxXDim1 = GetCacheOpMaxXDim1(inputDtype, reduce);
     // First-axis low-memory execution transposes [rows, columns] into
     // [tileColumns, rows] before ScatterElementsCacheOp consumes one row.
-    // Check that *post-transpose* row, rather than rejecting the total columns.
-    // Restrict the correction to the bounded FP32/int64 sum specialization.
+    // Both first- and middle-axis BOOL overwrite use the post-transpose row.
     auto platform = platform_ascendc::PlatformAscendC(tilingContext->GetPlatformInfo());
     const auto includeSelfAttr = tilingContext->GetAttrs()->GetAttrPointer<bool>(2);
     bool boundedFirstAxis = ScatterElementsV2LowMemory::IsSupportedSoc(platform.GetSocVersion()) &&
@@ -843,10 +860,14 @@ bool ScatterElementsV2Tiling::CheckCacheOpXDim1Limit(const gert::Shape& inputSha
                             strcmp(reduce, "add") == 0 && (includeSelfAttr == nullptr || *includeSelfAttr) &&
                             ScatterElementsV2LowMemory::IsBoundedFirstAxisShape(inputShape, indicesShape, updatesShape,
                                                                                 savedRealDim, platform.GetCoreNumAiv());
-    const uint64_t scatterRowLength = boundedFirstAxis ? xDim0 : xDim1;
+    const bool transposedBool = platform.GetCurNpuArch() == NpuArch::DAV_2201 && inputDtype == ge::DT_BOOL &&
+                                strcmp(reduce, "none") == 0 &&
+                                CanTransposeBoolRows(inputShape, indicesShape, updatesShape, savedRealDim);
+    const uint64_t scatterRowLength = (boundedFirstAxis || transposedBool) ? xDim0 : xDim1;
     bool supported = scatterRowLength <= maxXDim1;
     if (!supported) {
-        OP_LOGD(tilingContext, "cache-op disabled because xDim1(%lu) exceeds row UB capacity(%lu).", xDim1, maxXDim1);
+        OP_LOGD(tilingContext, "cache-op disabled because scatter row(%lu) exceeds UB capacity(%lu).", scatterRowLength,
+                maxXDim1);
     }
 
     batchSize = savedBatchSize;

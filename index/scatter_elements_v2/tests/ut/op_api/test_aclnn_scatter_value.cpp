@@ -22,6 +22,7 @@
 #include "op_api_ut_common/tensor_desc.h"
 #include "op_api_ut_common/scalar_desc.h"
 #include "op_api_ut_common/op_api_ut.h"
+#include "opdev/platform.h"
 
 using namespace std;
 
@@ -134,4 +135,20 @@ TEST_F(l2_scatter_value_test, l2_scatter_value_test_16)
     auto ut4 = OP_API_UT(aclnnScatterValue, INPUT(self, 0, index, src, reduction), OUTPUT(nullptr));
     getWorkspaceResult = ut4.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_NULLPTR);
+}
+
+TEST_F(l2_scatter_value_test, arch22_bool_scalar_broadcast_and_tensor_rank_check)
+{
+    op::SocVersionManager soc(op::SocVersion::ASCEND910B);
+    auto self = TensorDesc({128, 67}, ACL_BOOL, ACL_FORMAT_ND);
+    auto index = TensorDesc({128, 23}, ACL_INT64, ACL_FORMAT_ND).ValueRange(0, 66);
+    auto out = TensorDesc({128, 67}, ACL_BOOL, ACL_FORMAT_ND);
+    auto value = ScalarDesc(true);
+    uint64_t workspaceSize = 0;
+    auto scalar = OP_API_UT(aclnnScatterValue, INPUT(self, int64_t{1}, index, value, int64_t{0}), OUTPUT(out));
+    EXPECT_EQ(scalar.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
+
+    auto zeroDim = TensorDesc({}, ACL_BOOL, ACL_FORMAT_ND);
+    auto tensor = OP_API_UT(aclnnScatter, INPUT(self, int64_t{1}, index, zeroDim, int64_t{0}), OUTPUT(out));
+    EXPECT_EQ(tensor.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
 }
