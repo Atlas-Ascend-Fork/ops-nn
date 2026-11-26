@@ -390,7 +390,7 @@ aclnnStatus aclnnFusedQuantMatmul(
       - This API supports only the 2D ND format.
       - The inner axis of x2 must be an even number.
     - When the data type is INT32, each INT32 value stores eight INT4 values:
-    - Use the aclnnConvertWeightToINT4Pack API to convert the data format of x2 from INT32 (one int4 stored in bits 0-3 of one int32) to INT32 (eight int4 values stored in one int32) or INT4 (one int4 represented by one int4). For details, see [aclnnConvertWeightToINT4Pack API](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md).
+    - Use the aclnnConvertWeightToINT4Pack API to convert the data format of x2 from INT32 (one int4 stored in bits 0-3 of one int32) to INT32 (eight int4 values stored in one int32) or INT4 (one int4 represented by one int4). For details, see [aclnnConvertWeightToINT4Pack API](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack_en.md).
   - x1Scale constraints are as follows:
     - The shape supports 1D with a shape of (m,). The data type supports FLOAT32.
   - x2Scale constraints are as follows:

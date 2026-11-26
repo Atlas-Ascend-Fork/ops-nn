@@ -388,7 +388,7 @@ aclnnStatus aclnnFusedQuantMatmulWeightNz(
   - x2 supports INT8, INT32, and INT4 data types.
     - This API supports only the NZ format for x2, in which case k and n cannot be 1.
     - When the data type is INT32, each INT32 value stores 8 INT4 values.
-    - You can use the aclnnConvertWeightToINT4Pack API to convert the data format of x2 from INT32 (1 int4 stored in bits 0-3 of an int32) to INT32 (8 int4 values stored in one int32) or INT4 (1 int4 representing 1 int4). For details, see [aclnnConvertWeightToINT4Pack API](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md).
+    - You can use the aclnnConvertWeightToINT4Pack API to convert the data format of x2 from INT32 (1 int4 stored in bits 0-3 of an int32) to INT32 (8 int4 values stored in one int32) or INT4 (1 int4 representing 1 int4). For details, see [aclnnConvertWeightToINT4Pack API](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack_en.md).
     - For the AI processor-affine data layout format, the shape supports 4 to 8 dimensions.
       - When transposed, the dimensions are (batch, k1, n1, n0, k0), where batch is optional, k0 = 32, and n0 = 16. The k in the x1 shape and the k1 in the x2 shape must satisfy the following relationship: ceil(k / 32) = k1.
       - When not transposed, the dimensions are (batch, n1, k1, k0, n0), where batch is optional, k0 = 16, and n0 = 32. The k in the x1 shape and the k1 in the x2 shape must satisfy the following relationship: ceil(k / 16) = k1.
