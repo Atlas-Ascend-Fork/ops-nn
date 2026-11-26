@@ -24,12 +24,6 @@ namespace Conv3dFunc {
 using namespace ConvFunc;
 using namespace conv;
 
-constexpr uint16_t WEIGHT_5HD_SYNC_MODE = 2;
-constexpr uint16_t WEIGHT_5HD_SYNC_ID_BASE = 9;
-constexpr uint16_t WEIGHT_5HD_BARRIER_ID = 8;
-constexpr uint64_t WEIGHT_5HD_TRANS_CHN = 16;
-constexpr uint64_t WEIGHT_5HD_DB_BYTES = 32;
-
 __aicore__ inline uint64_t CalcTailSize(uint64_t step, uint64_t total, uint64_t offset)
 {
     if (offset >= total) {
@@ -43,6 +37,11 @@ class Weight5HDConvertTools {
 public:
     __aicore__ inline Weight5HDConvertTools() {}
 
+    using WeightT = typename Intf::WeightT;
+    static constexpr bool IS_FP32 = AscendC::IsSameType<WeightT, float>::value;
+    static constexpr bool IS_HIF8 = AscendC::IsSameType<WeightT, hifloat8_t>::value;
+    using Weight5HDT = typename Conditional<IS_HIF8, uint8_t, WeightT>::type;
+
     __aicore__ inline void SetParams(Intf* self, uint64_t chunk)
     {
         self_ = self;
@@ -51,7 +50,7 @@ public:
         kdTotal_ = td->kd;
         const uint64_t k0 = Intf::k0;
         const uint64_t dtype = Intf::sizeOfWeight;
-        const uint64_t alignHwByte = AlignB(hw * dtype, 32U);
+        const uint64_t alignHwByte = AlignB(hw * dtype, C0_SIZE);
         rowElems_ = alignHwByte / dtype;
 
         const uint64_t cinAlign = AlignB(static_cast<uint64_t>(td->cin), static_cast<uint64_t>(k0));
@@ -93,7 +92,7 @@ public:
         padParams_.paddingValue = 0;
 
         copyOutParams_.blockLen = static_cast<uint32_t>(hw * k0 * dtype);
-        copyOutParams_.srcStride = static_cast<int64_t>((rowElems_ - hw) * k0 * dtype / WEIGHT_5HD_DB_BYTES);
+        copyOutParams_.srcStride = static_cast<int64_t>((rowElems_ - hw) * k0 * dtype / C0_SIZE);
         copyOutParams_.dstStride = 0;
 
         evVToMte2_ = static_cast<event_t>(self_->ctx.pipe.FetchEventID(HardEvent::V_MTE2));
@@ -120,19 +119,14 @@ public:
     __aicore__ inline void ZeroUbChunk(uint64_t curCoutChunk, uint64_t cinCoverAligned, uint64_t curDkChunk)
     {
         const uint64_t elems = curCoutChunk * curDkChunk * cinCoverAligned * rowElems_;
-        if constexpr (Intf::sizeOfWeight == 1) {
-            LocalTensor<uint8_t> inBytes = self_->ctx.ndUbBuf.template Get<uint8_t>();
-            Duplicate<uint8_t>(inBytes, 0, elems);
-        } else {
-            Duplicate<typename Intf::WeightT>(inTensor_, 0, elems);
-        }
+        Duplicate<Weight5HDT>(self_->ctx.ndUbBuf.template Get<Weight5HDT>(), 0, elems);
     }
 
     __aicore__ inline void TransTo5HD(uint64_t curCoutChunk, uint64_t cinCoverAligned, uint64_t curDkChunk)
     {
         const uint64_t k0 = Intf::k0;
-        const uint64_t repeatTimes = rowElems_ / (32U / Intf::sizeOfWeight); // m = 每行 DB 数
-        const uint64_t transCntPerNd = cinCoverAligned / WEIGHT_5HD_TRANS_CHN;
+        const uint64_t repeatTimes = rowElems_ / (C0_SIZE / Intf::sizeOfWeight); // m = 每行 DB 数
+        const uint64_t transCntPerNd = cinCoverAligned / WEIGHT_5HD_ADDR_LIST_SIZE;
         const bool singleRepeat = (repeatTimes == 1U);
         const uint32_t srcStride = singleRepeat ? 0U : 1U;
         TransDataTo5HDParams transParams;
@@ -140,45 +134,46 @@ public:
         transParams.srcRepStride = srcStride;
         transParams.srcHighHalf = false;
         transParams.dstHighHalf = false;
-        uint64_t srcList[WEIGHT_5HD_TRANS_CHN];
-        uint64_t dstList[WEIGHT_5HD_TRANS_CHN];
+        uint64_t srcList[WEIGHT_5HD_ADDR_LIST_SIZE];
+        uint64_t dstList[WEIGHT_5HD_ADDR_LIST_SIZE];
         for (uint64_t nLocal = 0; nLocal < curCoutChunk; ++nLocal) {
             for (uint64_t dkLocal = 0; dkLocal < curDkChunk; ++dkLocal) {
                 const uint64_t ndBase = (nLocal * curDkChunk + dkLocal) * cinCoverAligned * rowElems_;
                 for (uint64_t g = 0; g < transCntPerNd; ++g) {
                     const uint64_t srcBase = ndBase +
-                                             g * WEIGHT_5HD_TRANS_CHN * rowElems_; // 本组 16 通道行首（in-half）
-                    for (uint64_t i = 0; i < WEIGHT_5HD_TRANS_CHN; ++i) {
+                                             g * WEIGHT_5HD_ADDR_LIST_SIZE * rowElems_; // 本组 16 通道行首（in-half）
+                    for (uint64_t i = 0; i < WEIGHT_5HD_ADDR_LIST_SIZE; ++i) {
                         srcList[i] = static_cast<uint64_t>(inTensor_[srcBase + i * rowElems_].GetPhyAddr());
                     }
-                    if constexpr (Intf::sizeOfWeight == 4) {
-                        transParams.dstRepStride = singleRepeat ? 0 : 8;
-                        const uint64_t c1aBase = ndBase + g * 2U * rowElems_ * k0;
+                    if constexpr (IS_HIF8) {
+                        transParams.dstRepStride = singleRepeat ? 0 : WEIGHT_5HD_DST_REP_STRIDE_32;
+                        transParams.dstHighHalf = ((g & 1U) == 1U);
+                        const uint64_t c1Base = ndBase +
+                                                (g / 2) * rowElems_ * k0; // 2 = 高/低 dst 半区共 2 组，共用 c1 基址
+                        for (uint64_t posHalf = 0; posHalf < 2; ++posHalf) { // 2 = src 高/低半区数
+                            transParams.srcHighHalf = (posHalf == 1U);
+                            for (uint64_t i = 0; i < WEIGHT_5HD_ADDR_LIST_SIZE; ++i) {
+                                dstList[i] = static_cast<uint64_t>(
+                                    outTensor_[c1Base + (posHalf * WEIGHT_5HD_ADDR_LIST_SIZE + i) * k0].GetPhyAddr());
+                            }
+                            TransDataTo5HD<Weight5HDT>(dstList, srcList, transParams);
+                        }
+                    } else if constexpr (IS_FP32) {
+                        transParams.dstRepStride = singleRepeat ? 0 : WEIGHT_5HD_DST_REP_STRIDE_8;
+                        const uint64_t c1aBase = ndBase + g * 2 * rowElems_ * k0; // 2 = fp32 每组占 2 个 c1
                         const uint64_t c1bBase = c1aBase + rowElems_ * k0;
-                        for (uint64_t i = 0; i < 8U; ++i) {
+                        for (uint64_t i = 0; i < WEIGHT_5HD_ADDR_HALF_LIST_SIZE; ++i) { // 16 项地址 = 8 对
                             dstList[i * 2] = static_cast<uint64_t>(outTensor_[c1aBase + i * k0].GetPhyAddr());
                             dstList[i * 2 + 1] = static_cast<uint64_t>(outTensor_[c1bBase + i * k0].GetPhyAddr());
                         }
-                        TransDataTo5HD<typename Intf::WeightT>(dstList, srcList, transParams);
-                    } else if constexpr (Intf::sizeOfWeight == 1) {
-                        transParams.dstRepStride = singleRepeat ? 0 : 32;
-                        transParams.dstHighHalf = ((g & 1U) == 1U);
-                        const uint64_t c1Base = ndBase + (g / 2U) * rowElems_ * k0;
-                        for (uint64_t posHalf = 0; posHalf < 2U; ++posHalf) {
-                            transParams.srcHighHalf = (posHalf == 1U);
-                            for (uint64_t i = 0; i < WEIGHT_5HD_TRANS_CHN; ++i) {
-                                dstList[i] = static_cast<uint64_t>(
-                                    outTensor_[c1Base + (posHalf * WEIGHT_5HD_TRANS_CHN + i) * k0].GetPhyAddr());
-                            }
-                            TransDataTo5HD<uint8_t>(dstList, srcList, transParams);
-                        }
+                        TransDataTo5HD<Weight5HDT>(dstList, srcList, transParams);
                     } else {
-                        transParams.dstRepStride = singleRepeat ? 0 : 16;
+                        transParams.dstRepStride = singleRepeat ? 0 : WEIGHT_5HD_DST_REP_STRIDE_16;
                         const uint64_t c1Base = ndBase + g * rowElems_ * k0;
-                        for (uint64_t i = 0; i < WEIGHT_5HD_TRANS_CHN; ++i) {
+                        for (uint64_t i = 0; i < WEIGHT_5HD_ADDR_LIST_SIZE; ++i) {
                             dstList[i] = static_cast<uint64_t>(outTensor_[c1Base + i * k0].GetPhyAddr());
                         }
-                        TransDataTo5HD<typename Intf::WeightT>(dstList, srcList, transParams);
+                        TransDataTo5HD<Weight5HDT>(dstList, srcList, transParams);
                     }
                 }
             }
@@ -246,10 +241,11 @@ public:
 
         const Ops::NN::Conv3dV2::Conv3DV2TilingDataV2* td = self->ctx.convTilingData;
         const uint64_t hw = td->kh * td->kw;
-        const uint64_t alignHwByte = AlignB(hw * Intf::sizeOfWeight, 32U);
+        const uint64_t alignHwByte = AlignB(hw * Intf::sizeOfWeight, C0_SIZE);
         const uint64_t rowElems = alignHwByte / Intf::sizeOfWeight;
-        convertTools_.transdata5hdCinAlign_ = AlignB(static_cast<uint64_t>(td->cin),
-                                                     Intf::k0 > WEIGHT_5HD_TRANS_CHN ? Intf::k0 : WEIGHT_5HD_TRANS_CHN);
+        convertTools_.transdata5hdCinAlign_ = AlignB(
+            static_cast<uint64_t>(td->cin),
+            Intf::k0 > WEIGHT_5HD_ADDR_LIST_SIZE ? Intf::k0 : WEIGHT_5HD_ADDR_LIST_SIZE);
         convertTools_.dkPerUbChunk_ = CeilDiv(static_cast<uint64_t>(td->bUbKStep), convertTools_.transdata5hdCinAlign_);
         convertTools_.cinPerUbChunk_ = static_cast<uint64_t>(td->bUbKStep) / convertTools_.dkPerUbChunk_;
         const uint64_t ubElems = td->bUbNStep * convertTools_.cinPerUbChunk_ * convertTools_.dkPerUbChunk_ * rowElems;
@@ -257,23 +253,10 @@ public:
         self->ctx.pipe.InitBuffer(self->ctx.nzUbBuf, ubElems * Intf::sizeOfWeight);
     }
 
-    __aicore__ inline void BindGm(const GlobalTensor<typename Intf::WeightT>& srcGm,
-                                  const GlobalTensor<typename Intf::WeightT>& dstGm)
+    __aicore__ inline bool Weight5HDVecRun(Intf* self, bool isRealCore)
     {
-        (void)srcGm;
-        (void)dstGm;
-        return;
-    }
-
-    __aicore__ inline bool Weight5HDVecImpl(Intf* self)
-    {
-        const Ops::NN::Conv3dV2::Conv3DV2TilingDataV2* td = self->ctx.convTilingData;
-        const uint64_t numBlocks = static_cast<uint64_t>(td->batchDim) * td->doDim * td->hoDim * td->nDim *
-                                   td->groupDim;
-        uint64_t aivBlock = static_cast<uint64_t>(GetBlockIdx());
-        const bool isRealCore = aivBlock < numBlocks;
         for (uint64_t chunk = 0; chunk < self->ctx.weight5hdChunkNum; ++chunk) {
-            if (chunk >= 2U && isRealCore) {
+            if (chunk >= WEIGHT_5HD_EVENT_ID_NUM && isRealCore) {
                 CrossCoreWaitFlag<WEIGHT_5HD_SYNC_MODE>(WEIGHT_5HD_SYNC_ID_BASE + (chunk & 1U));
             }
             Weight5HDConvertChunk(self, chunk);
@@ -286,15 +269,6 @@ public:
         return false;
     }
 
-    __aicore__ inline void Weight5HDVecImplExited(Intf* self)
-    {
-        for (uint64_t chunk = 0; chunk < self->ctx.weight5hdChunkNum; ++chunk) {
-            Weight5HDConvertChunk(self, chunk);
-            CrossCoreSetFlag<0, PIPE_MTE3>(WEIGHT_5HD_BARRIER_ID);
-            CrossCoreWaitFlag<0>(WEIGHT_5HD_BARRIER_ID);
-        }
-    }
-
     __aicore__ inline void BL1WaitReady(Intf* self)
     {
         if (self->ctx.weight5hdLoadCount < self->ctx.weight5hdChunkNum) {
@@ -305,7 +279,7 @@ public:
 
     __aicore__ inline void BL1ReadDone(Intf* self)
     {
-        if (self->ctx.weight5hdLoadCount + 2U < self->ctx.weight5hdChunkNum) {
+        if (self->ctx.weight5hdLoadCount + WEIGHT_5HD_EVENT_ID_NUM < self->ctx.weight5hdChunkNum) {
             CrossCoreSetFlag<WEIGHT_5HD_SYNC_MODE, PIPE_MTE2>(WEIGHT_5HD_SYNC_ID_BASE +
                                                               (self->ctx.weight5hdLoadCount & 1U));
         }
@@ -355,8 +329,8 @@ private:
                     const uint64_t cinCover = CalcTailSize(convertTools_.cinPerUbChunk_, convertTools_.cinSpan_,
                                                            cinLocal * convertTools_.cinPerUbChunk_);
                     const uint64_t cinRead = CalcTailSize(convertTools_.cinPerUbChunk_, cin, cinBase);
-                    const uint64_t cinCoverAligned = (cinCover + 15U) / 16U * 16U;
-                    const uint64_t curC1Cnt = cinCover / k0; // 真实 c1 数（cinCover 是 k0 倍数）
+                    const uint64_t cinCoverAligned = AlignB(cinCover, WEIGHT_5HD_ADDR_LIST_SIZE);
+                    const uint64_t curC1Cnt = cinCover / k0;
 
                     convertTools_.ZeroUbChunk(curCoutChunk, cinCoverAligned, curDkChunk);
                     PipeBarrier<PIPE_V>();
@@ -377,38 +351,38 @@ private:
     }
 };
 
-template <typename W, typename TilingData>
-struct Weight5HDExitedCtx {
-    const TilingData* convTilingData = nullptr;
-    TPipe pipe;
-    TBuf<TPosition::VECIN> ndUbBuf;
-    TBuf<TPosition::VECOUT> nzUbBuf;
-    GlobalTensor<W> bgm;
-    GlobalTensor<W> weight5HDGM;
-    uint64_t singleCoreCi = 0;
-    uint64_t singleCoreCo = 0;
-    uint64_t weight5hdChunkNum = 0;
-    uint64_t weight5hdLoadCount = 0;
-};
-
-template <typename W, typename TilingData>
-struct Weight5HDExitedIntf {
+template <typename W>
+struct Weight5HDVecIntf {
     using WeightT = W;
     static constexpr uint64_t k0 = C0_SIZE / sizeof(W);
     static constexpr uint8_t sizeOfWeight = sizeof(W);
-    Weight5HDExitedCtx<W, TilingData> ctx;
+
+    struct Ctx {
+        const Ops::NN::Conv3dV2::Conv3DV2TilingDataV2* convTilingData = nullptr;
+        uint64_t singleCoreCi = 0;
+        uint64_t singleCoreCo = 0;
+        uint64_t weight5hdChunkNum = 0;
+        TPipe pipe;
+        TBuf<TPosition::VECIN> ndUbBuf;
+        TBuf<TPosition::VECOUT> nzUbBuf;
+        GlobalTensor<W> bgm;
+        GlobalTensor<W> weight5HDGM;
+    };
+    Ctx ctx;
 };
 
-template <typename W, typename TilingData>
-__aicore__ inline void RunWeight5HDVecExited(const TilingData& tiling, GM_ADDR filter, GM_ADDR workspace)
+template <typename WeightT>
+__aicore__ inline void RunWeight5HDVec(const Ops::NN::Conv3dV2::Conv3DV2TilingDataV2& td, GM_ADDR filter,
+                                       GM_ADDR workspace, bool isRealCore)
 {
-    Weight5HDExitedIntf<W, TilingData> exited;
-    exited.ctx.convTilingData = &tiling;
-    exited.ctx.bgm.SetGlobalBuffer(reinterpret_cast<__gm__ W*>(filter));
-    exited.ctx.weight5HDGM.SetGlobalBuffer(reinterpret_cast<__gm__ W*>(workspace));
-    Weight5HDProcessTools<Weight5HDExitedIntf<W, TilingData>> tools;
-    tools.Weight5HDVecInit(&exited);
-    tools.Weight5HDVecImplExited(&exited);
+    Weight5HDVecIntf<WeightT> self;
+    self.ctx.convTilingData = &td;
+    self.ctx.bgm.SetGlobalBuffer(reinterpret_cast<__gm__ WeightT*>(filter));
+    self.ctx.weight5HDGM.SetGlobalBuffer(reinterpret_cast<__gm__ WeightT*>(workspace));
+
+    Weight5HDProcessTools<Weight5HDVecIntf<WeightT>> tools;
+    tools.Weight5HDVecInit(&self);
+    tools.Weight5HDVecRun(&self, isRealCore);
 }
 
 } // namespace Conv3dFunc

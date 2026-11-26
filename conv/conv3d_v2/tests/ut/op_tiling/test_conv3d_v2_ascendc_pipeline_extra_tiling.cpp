@@ -26,6 +26,7 @@
 #include "exe_graph/runtime/storage_shape.h"
 #include "exe_graph/runtime/tiling_parse_context.h"
 #include "tests/ut/common/kernel_run_context_facker.h"
+#include <tiling/platform/platform_ascendc.h>
 #include "test_cube_util.h"
 #include "conv/conv3d_v2/op_host/op_tiling/conv3d_base_tiling.h"
 #include "conv/common/op_host/op_tiling/arch35/conv_base_utils.h"
@@ -492,4 +493,95 @@ TEST_F(Conv3dStaticHelperExtra, common_utils_edge_cases)
 
     EXPECT_TRUE(Conv3dCommon::IsArrayEqual(std::vector<uint32_t>({1, 2, 3}), std::vector<uint32_t>({1, 2, 3}), 3));
     EXPECT_FALSE(Conv3dCommon::IsArrayEqual(std::vector<uint32_t>({1, 2}), std::vector<uint32_t>({1, 2, 3}), 3));
+}
+
+/*
+ * 覆盖 Conv3dBaseTilingV2::GetWorkspaceSize 的 weight5HD 分支
+ * （9201/9202 + weightUbTrans=OPEN）：
+ * workspaces[0] = LibApiWorkSpaceSize + N × AlignB(C, k0) × D × H × W × dtypeSize
+ * 用例：weight [512, 512, 3, 3, 3] fp16（k0=16，C 已 16 对齐），
+ *       weight5HDSize = 512 × 512 × 3 × 3 × 3 × 2 = 14155776 字节
+ */
+TEST_F(Conv3dStaticHelperExtra, workspace_size_weight5hd)
+{
+    Conv3dBaseTilingV2 sut(nullptr);
+    ConvTilingParseInfo opInfo;
+    opInfo.npuArch = NpuArch::DAV_9201;
+    sut.opInfo_ = &opInfo;
+    sut.descInfo_.weightDtype = ge::DT_FLOAT16;
+    sut.descInfo_.weightFormat = ge::FORMAT_NCDHW;
+    sut.tilingKeyPara_.weightUbTrans = WEIGHT_UB_TRANS_OPEN;
+
+    gert::StorageShape fmap = {{1, 512, 19, 38, 42}, {1, 512, 19, 38, 42}};
+    gert::StorageShape weight = {{512, 512, 3, 3, 3}, {512, 512, 3, 3, 3}};
+    gert::StorageShape output = {{1, 512, 17, 36, 40}, {1, 512, 17, 36, 40}};
+    std::vector<void*> inputs = {&fmap, &weight, nullptr};
+    std::vector<void*> outputs = {&output};
+    std::vector<int64_t> strides = {1, 1, 1, 1, 1};
+    std::vector<int64_t> pads = {0, 0, 0, 0, 0, 0};
+    std::vector<int64_t> dilations = {1, 1, 1, 1, 1};
+
+    uint32_t aicoreNum = 64;
+    string compile_info_string = R"({"hardware_info":
+      {"BT_SIZE": 4096, "load3d_constraints": "1", "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub":
+      true,
+       "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false, "UB_SIZE": 393216,
+       "L2_SIZE": 134217728, "L1_SIZE": 524288, "L0A_SIZE": 65536, "L0B_SIZE": 65536, "FB_SIZE": 4096,
+       "L0C_SIZE": 262144, "CORE_NUM": 64, "cube_core_cnt": 64, "vector_core_cnt": 64,
+       "core_type_list": "CubeCore,VectorCore"}})";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+    map<string, string> soc_version_infos = {{"NpuArch", "9201"}};
+    aicore_spec.insert({"fb0_size", "4096"});
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    optiling::conv_ops_tiling::ConvTilingParseInfo compile_info;
+    compile_info.tilingType = "Conv3DV2";
+    compile_info.aicoreNum = aicoreNum;
+    auto tilingDataPtr = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    ASSERT_NE(tilingDataPtr, nullptr);
+
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("Conv3DV2")
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes(inputs)
+                      .OutputShapes(outputs)
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW)
+                      .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW)
+                      .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCDHW, ge::FORMAT_NCDHW)
+                      .NodeAttrs({{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(strides)},
+                                  {"pads", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(pads)},
+                                  {"dilations", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>(dilations)},
+                                  {"groups", Ops::NN::AnyValue::CreateFrom<int64_t>(1)},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("NCHW")},
+                                  {"offset_x", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                                  {"pad_mode", Ops::NN::AnyValue::CreateFrom<std::string>("SPECIFIC")},
+                                  {"enable_hf32", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .TilingData(tilingDataPtr.get())
+                      .Workspace(ws_size)
+                      .Build();
+    gert::TilingContext* ctx = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(ctx, nullptr);
+    ctx->GetPlatformInfo()->SetPlatformRes("version", soc_version_infos);
+    ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+    sut.Reset(ctx);
+
+    ASSERT_EQ(sut.GetWorkspaceSize(), ge::GRAPH_SUCCESS);
+
+    auto ascendcPlatform = platform_ascendc::PlatformAscendC(ctx->GetPlatformInfo());
+    const size_t libApiWs = ascendcPlatform.GetLibApiWorkSpaceSize();
+    const size_t expectWeight5HDSize = 512ULL * 512 * 3 * 3 * 3 * 2;
+    ASSERT_EQ(ctx->GetWorkspaceSizes(1)[0], libApiWs + expectWeight5HDSize);
 }

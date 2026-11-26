@@ -69,9 +69,6 @@ struct SetWeight5HD {
     static __aicore__ inline void call(Intf* self, const GlobalTensor<typename Intf::WeightT>& weight5HD)
     {
         self->ctx.weight5HDGM.SetGlobalBuffer(weight5HD.GetPhyAddr(0), weight5HD.GetSize());
-        if ASCEND_IS_AIV_CONV {
-            self->ctx.weight5HDProcessTools.BindGm(self->ctx.bgm, self->ctx.weight5HDGM);
-        }
     }
 };
 

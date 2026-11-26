@@ -57,6 +57,11 @@ protected:
 
     __aicore__ inline bool InitSingleCoreData(uint32_t blockPerNDim, uint32_t blockPerHoDim, uint32_t blockPerMDim);
 
+    __aicore__ inline bool InitSingleCoreDataForCurFormat();
+
+    __aicore__ inline bool IsRealWeight5HDCore(const Ops::NN::Conv3dV2::Conv3DV2TilingDataV2& tilingData,
+                                               bool hasScaleFlag);
+
     __aicore__ inline void InitBuffer(GM_ADDR x, GM_ADDR filter, GM_ADDR bias, GM_ADDR y, GM_ADDR workspace,
                                       const ExtendParams* extendParams);
 
@@ -135,22 +140,19 @@ Conv3dV2Base<FMAP_TYPE, WEIGHT_TYPE, OUTPUT_TYPE, BIAS_TYPE, SCALE_TYPE, CONV_CF
     const ExtendParams* extendParams, GM_ADDR workspace)
 {
     if constexpr (IS_WEIGHT_5HD) {
-        if ASCEND_IS_AIC {
-            const uint64_t numBlocks = static_cast<uint64_t>(convTilingData.batchDim) * convTilingData.doDim *
-                                       convTilingData.hoDim * convTilingData.nDim * convTilingData.groupDim;
-            if (numBlocks > 0 && static_cast<uint64_t>(GetBlockIdx()) >= numBlocks) {
+        const bool isRealCore = IsRealWeight5HDCore(convTilingData, extendParams != nullptr);
+        if ASCEND_IS_AIC_CONV {
+            if (!isRealCore) {
                 return;
             }
+        }
+        if ASCEND_IS_AIV_CONV {
+            Conv3dFunc::RunWeight5HDVec<WEIGHT_T>(convTilingData, filter, workspace, isRealCore);
+            return;
         }
     }
     if (Conv3dV2KernelInit(x, filter, bias, y, workspace, extendParams, convTilingData)) {
         Conv3dV2KernelImpl();
-    } else {
-        if constexpr (IS_WEIGHT_5HD) {
-            if ASCEND_IS_AIV {
-                Conv3dFunc::RunWeight5HDVecExited<WEIGHT_T>(convTilingData, filter, workspace);
-            }
-        }
     }
 }
 
@@ -166,31 +168,47 @@ Conv3dV2Base<FMAP_TYPE, WEIGHT_TYPE, OUTPUT_TYPE, BIAS_TYPE, SCALE_TYPE, CONV_CF
 
     conv.Init(convTilingData);
 
-    if constexpr (C_FORMAT == ConvFormat::NCDHW) {
-        if constexpr (isMMode) {
-            if (!InitSingleCoreData(convTilingData->mDim, 1, 0)) {
-                return false;
-            }
-        } else {
-            if (!InitSingleCoreData(convTilingData->hoDim, 0, 1)) {
-                return false;
-            }
-        }
-    } else {
-        if constexpr (isMMode) {
-            if (!InitSingleCoreData(1, convTilingData->nDim, 0)) {
-                return false;
-            }
-        } else {
-            if (!InitSingleCoreData(1, 0, convTilingData->nDim)) {
-                return false;
-            }
-        }
+    if (!InitSingleCoreDataForCurFormat()) {
+        return false;
     }
 
     InitBuffer(x, filter, bias, y, workspace, extendParams);
 
     return true;
+}
+
+template <class FMAP_TYPE, class WEIGHT_TYPE, class OUTPUT_TYPE, class BIAS_TYPE, class SCALE_TYPE, class CONV_CFG>
+__aicore__ inline bool
+Conv3dV2Base<FMAP_TYPE, WEIGHT_TYPE, OUTPUT_TYPE, BIAS_TYPE, SCALE_TYPE, CONV_CFG>::InitSingleCoreDataForCurFormat()
+{
+    if constexpr (C_FORMAT == ConvFormat::NCDHW) {
+        if constexpr (isMMode) {
+            return InitSingleCoreData(convTilingData->mDim, 1, 0);
+        } else {
+            return InitSingleCoreData(convTilingData->hoDim, 0, 1);
+        }
+    } else {
+        if constexpr (isMMode) {
+            return InitSingleCoreData(1, convTilingData->nDim, 0);
+        } else {
+            return InitSingleCoreData(1, 0, convTilingData->nDim);
+        }
+    }
+}
+
+template <class FMAP_TYPE, class WEIGHT_TYPE, class OUTPUT_TYPE, class BIAS_TYPE, class SCALE_TYPE, class CONV_CFG>
+__aicore__ inline bool
+Conv3dV2Base<FMAP_TYPE, WEIGHT_TYPE, OUTPUT_TYPE, BIAS_TYPE, SCALE_TYPE, CONV_CFG>::IsRealWeight5HDCore(
+    const Ops::NN::Conv3dV2::Conv3DV2TilingDataV2& tilingData, bool hasScaleFlag)
+{
+    const uint64_t numBlocks = static_cast<uint64_t>(tilingData.batchDim) * tilingData.doDim * tilingData.hoDim *
+                               tilingData.nDim * tilingData.groupDim;
+    if (numBlocks > 0 && static_cast<uint64_t>(GetBlockIdx()) >= numBlocks) {
+        return false;
+    }
+    convTilingData = &tilingData;
+    convCommon.Init(this, convTilingData, hasScaleFlag);
+    return InitSingleCoreDataForCurFormat();
 }
 
 template <class FMAP_TYPE, class WEIGHT_TYPE, class OUTPUT_TYPE, class BIAS_TYPE, class SCALE_TYPE, class CONV_CFG>

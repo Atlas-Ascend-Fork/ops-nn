@@ -146,6 +146,7 @@ const static uint16_t B8_CO0_LOOP_TIMES = 4;
 const static uint8_t VEC_NUM = 1;
 const static uint8_t VEC_ID_MAX = 2;
 const static uint8_t VEC_ID_BUFFER_OFFSET = 2;
+
 #else
 const static uint8_t VEC_NUM = 2;
 const static uint8_t VEC_ID_MAX = 16;
@@ -170,6 +171,17 @@ const static uint32_t VSELR_KERNEL_SIZE = 3;
 const static uint32_t VSCATTER_OFFSET = 17;
 const static uint32_t VSELR_COUT_OPT_SIZE = 511;
 const static uint16_t VSELR_CI0_DIV_NUM = 2;
+
+// weight5HD
+constexpr static uint16_t WEIGHT_5HD_SYNC_MODE = 2;
+constexpr static uint16_t WEIGHT_5HD_SYNC_ID_BASE = 9;
+constexpr static uint16_t WEIGHT_5HD_BARRIER_ID = 8;
+constexpr static uint16_t WEIGHT_5HD_EVENT_ID_NUM = 2;
+constexpr static uint64_t WEIGHT_5HD_ADDR_HALF_LIST_SIZE = 8;
+constexpr static uint64_t WEIGHT_5HD_ADDR_LIST_SIZE = 16;
+constexpr static uint16_t WEIGHT_5HD_DST_REP_STRIDE_8 = 8;
+constexpr static uint16_t WEIGHT_5HD_DST_REP_STRIDE_16 = 16;
+constexpr static uint16_t WEIGHT_5HD_DST_REP_STRIDE_32 = 32;
 
 // Load3d parameters offset
 const static uint8_t MSTEP_OFFSET = 16;

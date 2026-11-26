@@ -129,8 +129,6 @@ struct Init {
                 OptGroupVecInit<Intf>(self);
             } else if constexpr (Intf::isDeQuantFlag) {
                 DeQuantVecInit<Intf>(self);
-            } else if constexpr (Intf::weight5HDFlag) {
-                self->ctx.weight5HDProcessTools.Weight5HDVecInit(self);
             }
         }
     }

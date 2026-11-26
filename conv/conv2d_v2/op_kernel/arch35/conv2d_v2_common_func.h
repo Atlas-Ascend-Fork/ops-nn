@@ -175,8 +175,6 @@ struct Init {
                 OptGroupVecInit<Intf>(self);
             } else if constexpr (Intf::c04NDFlag) {
                 self->ctx.c04ProcessTools.C04VecInit(self);
-            } else if constexpr (Intf::weight5HDFlag) {
-                self->ctx.weight5HDProcessTools.Weight5HDVecInit(self);
             } else if constexpr (Intf::weightUbTrans) {
                 self->ctx.weightUbProcessTools.WeightUbTransVecInit(self);
             } else if constexpr (Intf::isDmaFlag) {

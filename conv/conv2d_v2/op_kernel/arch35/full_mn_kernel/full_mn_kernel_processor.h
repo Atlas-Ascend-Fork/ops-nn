@@ -128,9 +128,6 @@ struct FullMNKernelProcessor {
         LocalTensor<WeightT> bl1Buf0(TPosition::B1, bl1Offset, bl1ElemCount);
         LocalTensor<WeightT> bl1Buf1(TPosition::B1, bl1Offset + bl1BufBytes, bl1ElemCount);
 
-        // batch 边界屏障：上一 batch 的 MTE1 段内 L1 读（loadAl0_/loadBl0_）全部完成后，
-        // 本 batch 的 MTE2 写（覆写同一 al1/bl1 缓冲）才允许执行——防跨 batch L1 读写竞争。
-        // 首 batch 由该 Set 立即放行（MTE1 队列为空）；每 batch 末尾配套 Set 维持配对。
         SetFlag<HardEvent::MTE1_MTE2>(EVT_BATCH_BARRIER);
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_BATCH_BARRIER);
 
@@ -138,12 +135,12 @@ struct FullMNKernelProcessor {
         const uint32_t kBL1Segs0 = Bl1SegCount(tiling);
         const bool isFstVisit = loadedChunkCnt_ == 0U;
         if (isFstVisit) {
-            CrossCoreWaitFlag<Conv2dFunc::WEIGHT_5HD_SYNC_MODE_2, PIPE_MTE2>(Conv2dFunc::WEIGHT_5HD_SYNC_ID_BASE);
+            CrossCoreWaitFlag<conv::WEIGHT_5HD_SYNC_MODE, PIPE_MTE2>(conv::WEIGHT_5HD_SYNC_ID_BASE);
             loadedChunkCnt_ = 1U;
         }
         loadBl1Seg5HD_(bc, tiling, weight5HDGm, 0, bl1Buf0);
-        if (isFstVisit && kBL1Segs0 > Conv2dFunc::WEIGHT_5HD_EVENT_ID_NUM) {
-            CrossCoreSetFlag<Conv2dFunc::WEIGHT_5HD_SYNC_MODE_2, PIPE_MTE2>(Conv2dFunc::WEIGHT_5HD_SYNC_ID_BASE);
+        if (isFstVisit && kBL1Segs0 > conv::WEIGHT_5HD_EVENT_ID_NUM) {
+            CrossCoreSetFlag<conv::WEIGHT_5HD_SYNC_MODE, PIPE_MTE2>(conv::WEIGHT_5HD_SYNC_ID_BASE);
         }
 
         uint32_t biasL1Offset = AlignB(bl1Offset + DOUBLE_BUFFER_NUM * bl1BufBytes, ADDR_ALIGN_SIZE);
@@ -248,14 +245,14 @@ private:
                 WaitFlag<HardEvent::MTE1_MTE2>(static_cast<event_t>(EVT_BL1_BASE + (bl1PingPongFlag ^ 1)));
                 const bool isFstVisit = kBL1Iter >= loadedChunkCnt_;
                 if (isFstVisit) {
-                    CrossCoreWaitFlag<Conv2dFunc::WEIGHT_5HD_SYNC_MODE_2, PIPE_MTE2>(
-                        Conv2dFunc::WEIGHT_5HD_SYNC_ID_BASE + (kBL1Iter & 1));
+                    CrossCoreWaitFlag<conv::WEIGHT_5HD_SYNC_MODE, PIPE_MTE2>(conv::WEIGHT_5HD_SYNC_ID_BASE +
+                                                                             (kBL1Iter & 1));
                     loadedChunkCnt_++;
                 }
                 loadBl1Seg5HD_(bc, tiling, weight5HDGm, kBL1Iter, bl1Next);
-                if (isFstVisit && kBL1Iter + Conv2dFunc::WEIGHT_5HD_EVENT_ID_NUM < kBL1Segs) {
-                    CrossCoreSetFlag<Conv2dFunc::WEIGHT_5HD_SYNC_MODE_2, PIPE_MTE2>(
-                        Conv2dFunc::WEIGHT_5HD_SYNC_ID_BASE + (kBL1Iter & 1));
+                if (isFstVisit && kBL1Iter + conv::WEIGHT_5HD_EVENT_ID_NUM < kBL1Segs) {
+                    CrossCoreSetFlag<conv::WEIGHT_5HD_SYNC_MODE, PIPE_MTE2>(conv::WEIGHT_5HD_SYNC_ID_BASE +
+                                                                            (kBL1Iter & 1));
                 }
                 SetFlag<HardEvent::MTE2_MTE1>(static_cast<event_t>(EVT_BL1_BASE + (bl1PingPongFlag ^ 1)));
             }

@@ -30,6 +30,11 @@ constexpr uint32_t FORMAT_NDC1HWC0_H_INDEX = 3;
 constexpr uint32_t FORMAT_NDC1HWC0_W_INDEX = 4;
 constexpr uint32_t FORMAT_NDC1HWC0_C0_INDEX = 5;
 constexpr uint32_t FORMAT_NDC1HWC0_DIM = 6;
+constexpr uint32_t FORMAT_NCDHW_N_INDEX = 0;
+constexpr uint32_t FORMAT_NCDHW_C_INDEX = 1;
+constexpr uint32_t FORMAT_NCDHW_D_INDEX = 2;
+constexpr uint32_t FORMAT_NCDHW_H_INDEX = 3;
+constexpr uint32_t FORMAT_NCDHW_W_INDEX = 4;
 
 constexpr uint32_t FORMAT_ND_DIM = 1;
 

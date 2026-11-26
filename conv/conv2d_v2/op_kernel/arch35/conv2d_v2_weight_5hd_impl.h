@@ -24,17 +24,6 @@ namespace Conv2dFunc {
 using namespace AscendC;
 using namespace conv;
 
-constexpr uint16_t WEIGHT_5HD_SYNC_ID_BASE = 9;
-constexpr uint16_t WEIGHT_5HD_BARRIER_ID = 8;
-constexpr uint16_t WEIGHT_5HD_SYNC_MODE_0 = 0;
-constexpr uint16_t WEIGHT_5HD_SYNC_MODE_2 = 2;
-constexpr uint16_t WEIGHT_5HD_EVENT_ID_NUM = 2;
-constexpr uint16_t WEIGHT_5HD_NUM_2 = 2;
-constexpr uint64_t WEIGHT_5HD_ADDR_LIST_SIZE = 16;
-constexpr uint16_t WEIGHT_5HD_DST_REP_STRIDE_8 = 8;
-constexpr uint16_t WEIGHT_5HD_DST_REP_STRIDE_16 = 16;
-constexpr uint16_t WEIGHT_5HD_DST_REP_STRIDE_32 = 32;
-
 template <typename WeightT>
 struct Weight5HDCfg {
     uint64_t cin = 0;
@@ -49,6 +38,24 @@ struct Weight5HDCfg {
     uint64_t isRealCore = 1;
 };
 
+template <typename WeightT, typename TilingData>
+__aicore__ inline Weight5HDCfg<WeightT> MakeWeight5HDCfg(const TilingData& td, uint64_t aivNum, uint64_t blockDim,
+                                                         bool isRealCore)
+{
+    Weight5HDCfg<WeightT> cfg;
+    cfg.cin = td.cin;
+    cfg.coutTotal = td.orgCo;
+    cfg.hw = static_cast<uint64_t>(td.kernelHxkernelW);
+    cfg.kBL1 = td.kBL1;
+    cfg.singleCoreCi = td.singleCoreCi;
+    cfg.bUbNStep = td.bUbNStep;
+    cfg.bUbKStep = td.bUbKStep;
+    cfg.aivNum = aivNum;
+    cfg.blockDim = blockDim;
+    cfg.isRealCore = isRealCore ? 1UL : 0UL;
+    return cfg;
+}
+
 template <typename WeightT>
 class Weight5HDVecTools {
 public:
@@ -59,7 +66,7 @@ public:
 
     __aicore__ inline Weight5HDVecTools() {}
 
-    static __aicore__ inline uint64_t CalcKB(const Weight5HDCfg<WeightT>& cfg)
+    static __aicore__ inline uint64_t CalcChunkNum(const Weight5HDCfg<WeightT>& cfg)
     {
         const uint64_t totalK = AlignB(cfg.singleCoreCi, static_cast<uint64_t>(K0)) * cfg.hw;
         return CeilDiv(totalK, cfg.kBL1);
@@ -69,29 +76,29 @@ public:
                                 TBuf<TPosition::VECOUT>& nzUbBuf)
     {
         cfg_ = cfg;
-        kb_ = CalcKB(cfg);
-        hw_ = cfg.hw;
+        chunkNum_ = CalcChunkNum(cfg);
+        kernelHw_ = cfg.hw;
         alignedHW_ = AlignB(cfg.hw, static_cast<uint64_t>(K0));
-        segTileNum_ = CeilDiv(static_cast<uint64_t>(cfg.bUbKStep), static_cast<uint64_t>(K0));
-        ndSlotSize_ = static_cast<uint64_t>(cfg.bUbKStep) * alignedHW_;
+        tilesPerSlot_ = CeilDiv(static_cast<uint64_t>(cfg.bUbKStep), static_cast<uint64_t>(K0));
+        ndSlotElems_ = static_cast<uint64_t>(cfg.bUbKStep) * alignedHW_;
         nzTileElems_ = alignedHW_ * K0;
-        nzSlotSize_ = segTileNum_ * nzTileElems_;
+        nzSlotElems_ = tilesPerSlot_ * nzTileElems_;
 
         aivIdx_ = static_cast<uint64_t>(GetBlockIdx());
         const uint64_t coutTotal = cfg.coutTotal;
-        singleN_ = CeilDiv(coutTotal, cfg.aivNum);
-        nBegin_ = aivIdx_ * singleN_;
-        nOwn_ = (nBegin_ >= coutTotal) ? 0 : (singleN_ < (coutTotal - nBegin_) ? singleN_ : (coutTotal - nBegin_));
+        nStep_ = CeilDiv(coutTotal, cfg.aivNum);
+        nStart_ = aivIdx_ * nStep_;
+        nCnt_ = (nStart_ >= coutTotal) ? 0 : (nStep_ < (coutTotal - nStart_) ? nStep_ : (coutTotal - nStart_));
 
-        pipe.InitBuffer(ndUbBuf, static_cast<uint32_t>(cfg.bUbNStep * ndSlotSize_ * sizeof(WeightT)));
-        pipe.InitBuffer(nzUbBuf, static_cast<uint32_t>(cfg.bUbNStep * nzSlotSize_ * sizeof(WeightT)));
+        pipe.InitBuffer(ndUbBuf, static_cast<uint32_t>(cfg.bUbNStep * ndSlotElems_ * sizeof(WeightT)));
+        pipe.InitBuffer(nzUbBuf, static_cast<uint32_t>(cfg.bUbNStep * nzSlotElems_ * sizeof(WeightT)));
         ndUbBuf_ = &ndUbBuf;
         nzUbBuf_ = &nzUbBuf;
 
-        evV2M_ = static_cast<event_t>(pipe.FetchEventID(HardEvent::V_MTE2));
-        evM2V_ = static_cast<event_t>(pipe.FetchEventID(HardEvent::MTE2_V));
-        evV2M3_ = static_cast<event_t>(pipe.FetchEventID(HardEvent::V_MTE3));
-        evM32M_ = static_cast<event_t>(pipe.FetchEventID(HardEvent::MTE3_MTE2));
+        evVToMte2_ = static_cast<event_t>(pipe.FetchEventID(HardEvent::V_MTE2));
+        evMte2ToV_ = static_cast<event_t>(pipe.FetchEventID(HardEvent::MTE2_V));
+        evVToMte3_ = static_cast<event_t>(pipe.FetchEventID(HardEvent::V_MTE3));
+        evMte3ToMte2_ = static_cast<event_t>(pipe.FetchEventID(HardEvent::MTE3_MTE2));
     }
 
     __aicore__ inline void BindGm(const GlobalTensor<WeightT>& srcGm, const GlobalTensor<WeightT>& dstGm)
@@ -102,18 +109,18 @@ public:
 
     __aicore__ inline void RunVec()
     {
-        const bool isRealCore = cfg_.isRealCore != 0U && aivIdx_ < cfg_.blockDim;
-        for (uint64_t c = 0; c < kb_; c++) {
-            if (c >= WEIGHT_5HD_EVENT_ID_NUM && isRealCore) {
-                CrossCoreWaitFlag<WEIGHT_5HD_SYNC_MODE_2>(WEIGHT_5HD_SYNC_ID_BASE + (c & 1));
+        const bool isRealCore = cfg_.isRealCore != 0U;
+        for (uint64_t chunk = 0; chunk < chunkNum_; ++chunk) {
+            if (chunk >= WEIGHT_5HD_EVENT_ID_NUM && isRealCore) {
+                CrossCoreWaitFlag<WEIGHT_5HD_SYNC_MODE>(WEIGHT_5HD_SYNC_ID_BASE + (chunk & 1U));
             }
-            if (nOwn_ > 0U) {
-                ConvertChunk(c);
+            if (nCnt_ > 0U) {
+                ConvertChunk(chunk);
             }
-            CrossCoreSetFlag<WEIGHT_5HD_SYNC_MODE_0, PIPE_MTE3>(WEIGHT_5HD_BARRIER_ID);
-            CrossCoreWaitFlag<WEIGHT_5HD_SYNC_MODE_0, PIPE_MTE3>(WEIGHT_5HD_BARRIER_ID);
+            CrossCoreSetFlag<0, PIPE_MTE3>(WEIGHT_5HD_BARRIER_ID);
+            CrossCoreWaitFlag<0, PIPE_MTE3>(WEIGHT_5HD_BARRIER_ID);
             if (isRealCore) {
-                CrossCoreSetFlag<WEIGHT_5HD_SYNC_MODE_2, PIPE_MTE3>(WEIGHT_5HD_SYNC_ID_BASE + (c & 1));
+                CrossCoreSetFlag<WEIGHT_5HD_SYNC_MODE, PIPE_MTE3>(WEIGHT_5HD_SYNC_ID_BASE + (chunk & 1U));
             }
         }
     }
@@ -121,23 +128,23 @@ public:
 private:
     __aicore__ inline void ConvertChunk(uint64_t chunk)
     {
-        const uint64_t cinPerChunk = cfg_.kBL1 / hw_;
+        const uint64_t cinPerChunk = cfg_.kBL1 / kernelHw_;
         const uint64_t c1PerChunk = cinPerChunk / K0;
         const uint64_t alignCin = AlignB(cfg_.singleCoreCi, static_cast<uint64_t>(K0));
         const uint64_t chunkCin = cinPerChunk < (alignCin - chunk * cinPerChunk) ? cinPerChunk :
                                                                                    (alignCin - chunk * cinPerChunk);
         const uint64_t c1Base = chunk * c1PerChunk;
         const uint64_t ciLoops = CeilDiv(chunkCin, static_cast<uint64_t>(cfg_.bUbKStep));
-        const uint64_t nLoops = CeilDiv(nOwn_, static_cast<uint64_t>(cfg_.bUbNStep));
+        const uint64_t nLoops = CeilDiv(nCnt_, static_cast<uint64_t>(cfg_.bUbNStep));
         for (uint64_t nl = 0; nl < nLoops; nl++) {
-            const uint64_t curN = (cfg_.bUbNStep < (nOwn_ - nl * cfg_.bUbNStep)) ? cfg_.bUbNStep :
-                                                                                   (nOwn_ - nl * cfg_.bUbNStep);
-            const uint64_t nBase = nBegin_ + nl * cfg_.bUbNStep;
+            const uint64_t curN = (cfg_.bUbNStep < (nCnt_ - nl * cfg_.bUbNStep)) ? cfg_.bUbNStep :
+                                                                                   (nCnt_ - nl * cfg_.bUbNStep);
+            const uint64_t nBase = nStart_ + nl * cfg_.bUbNStep;
             for (uint64_t ci = 0; ci < ciLoops; ci++) {
                 const uint64_t curCin = (cfg_.bUbKStep < (chunkCin - ci * cfg_.bUbKStep)) ?
                                             cfg_.bUbKStep :
                                             (chunkCin - ci * cfg_.bUbKStep);
-                const uint64_t kLocal = (c1Base + ci * (static_cast<uint64_t>(cfg_.bUbKStep) / K0)) * hw_ * K0;
+                const uint64_t kLocal = (c1Base + ci * (static_cast<uint64_t>(cfg_.bUbKStep) / K0)) * kernelHw_ * K0;
                 ConvertBatch(nBase, curN, kLocal, curCin);
             }
         }
@@ -150,39 +157,40 @@ private:
         uint64_t tileCnt = CeilDiv(cinCnt, static_cast<uint64_t>(K0));
 
         PipeBarrier<PIPE_V>();
-        Duplicate(nd, static_cast<Weight5HDT>(0), static_cast<int32_t>(cfg_.bUbNStep * ndSlotSize_));
-        SetFlag<HardEvent::V_MTE2>(evV2M_);
-        WaitFlag<HardEvent::V_MTE2>(evV2M_);
+        Duplicate(nd, static_cast<Weight5HDT>(0), static_cast<int32_t>(cfg_.bUbNStep * ndSlotElems_));
+        SetFlag<HardEvent::V_MTE2>(evVToMte2_);
+        WaitFlag<HardEvent::V_MTE2>(evVToMte2_);
         DataCopyExtParams copyInParams;
         copyInParams.blockCount = static_cast<uint16_t>(cinCnt);
-        copyInParams.blockLen = static_cast<uint32_t>(hw_ * sizeof(Weight5HDT));
+        copyInParams.blockLen = static_cast<uint32_t>(kernelHw_ * sizeof(Weight5HDT));
         copyInParams.srcStride = 0;
         copyInParams.dstStride = 0;
         DataCopyPadExtParams<Weight5HDT> padParams{false, 0, 0, 0};
         for (uint64_t i = 0; i < nCnt; i++) {
-            uint64_t srcBase = (nBase + i) * cfg_.cin * hw_ + kLocal;
-            DataCopyPad(nd[i * ndSlotSize_], srcGm_[srcBase], copyInParams, padParams);
+            uint64_t srcBase = (nBase + i) * cfg_.cin * kernelHw_ + kLocal;
+            DataCopyPad(nd[i * ndSlotElems_], srcGm_[srcBase], copyInParams, padParams);
         }
 
-        SetFlag<HardEvent::MTE2_V>(evM2V_);
-        WaitFlag<HardEvent::MTE2_V>(evM2V_);
+        SetFlag<HardEvent::MTE2_V>(evMte2ToV_);
+        WaitFlag<HardEvent::MTE2_V>(evMte2ToV_);
         for (uint64_t i = 0; i < nCnt; i++) {
-            TransTile(nd[i * ndSlotSize_], nz[i * nzSlotSize_], tileCnt);
+            TransTile(nd[i * ndSlotElems_], nz[i * nzSlotElems_], tileCnt);
         }
 
-        SetFlag<HardEvent::V_MTE3>(evV2M3_);
-        WaitFlag<HardEvent::V_MTE3>(evV2M3_);
+        SetFlag<HardEvent::V_MTE3>(evVToMte3_);
+        WaitFlag<HardEvent::V_MTE3>(evVToMte3_);
         DataCopyExtParams copyOutParams;
         copyOutParams.blockCount = static_cast<uint16_t>(tileCnt);
-        copyOutParams.blockLen = static_cast<uint32_t>(hw_ * K0 * sizeof(Weight5HDT));
-        copyOutParams.srcStride = (alignedHW_ - hw_) * K0 * sizeof(Weight5HDT) / C0_SIZE;
+        copyOutParams.blockLen = static_cast<uint32_t>(kernelHw_ * K0 * sizeof(Weight5HDT));
+        copyOutParams.srcStride = (alignedHW_ - kernelHw_) * K0 * sizeof(Weight5HDT) / C0_SIZE;
         copyOutParams.dstStride = 0;
         for (uint64_t i = 0; i < nCnt; i++) {
-            const uint64_t dstBase = (nBase + i) * CeilDiv(cfg_.cin, static_cast<uint64_t>(K0)) * hw_ * K0 + kLocal;
-            DataCopyPad(dstGm_[dstBase], nz[i * nzSlotSize_], copyOutParams);
+            const uint64_t dstBase = (nBase + i) * CeilDiv(cfg_.cin, static_cast<uint64_t>(K0)) * kernelHw_ * K0 +
+                                     kLocal;
+            DataCopyPad(dstGm_[dstBase], nz[i * nzSlotElems_], copyOutParams);
         }
-        SetFlag<HardEvent::MTE3_MTE2>(evM32M_);
-        WaitFlag<HardEvent::MTE3_MTE2>(evM32M_);
+        SetFlag<HardEvent::MTE3_MTE2>(evMte3ToMte2_);
+        WaitFlag<HardEvent::MTE3_MTE2>(evMte3ToMte2_);
     }
 
     __aicore__ inline void TransTile(LocalTensor<Weight5HDT> nd, LocalTensor<Weight5HDT> nz, uint64_t tileCnt)
@@ -200,12 +208,12 @@ private:
             transParams.dstRepStride = singleRepeat ? 0U : WEIGHT_5HD_DST_REP_STRIDE_32;
             for (uint64_t c1 = 0; c1 < tileCnt; c1++) {
                 const uint64_t dstTile = c1 * nzTileElems_;
-                for (uint64_t chHalf = 0; chHalf < WEIGHT_5HD_NUM_2; chHalf++) {
+                for (uint64_t chHalf = 0; chHalf < 2; chHalf++) { // 2 = dst 高/低半区数，hif8 单次 trans 搬一个半区
                     for (uint64_t i = 0; i < WEIGHT_5HD_ADDR_LIST_SIZE; i++) {
                         srcList[i] = static_cast<uint64_t>(
                             nd[(c1 * K0 + chHalf * WEIGHT_5HD_ADDR_LIST_SIZE + i) * alignedHW_].GetPhyAddr());
                     }
-                    for (uint64_t posHalf = 0; posHalf < WEIGHT_5HD_NUM_2; posHalf++) {
+                    for (uint64_t posHalf = 0; posHalf < 2; posHalf++) { // 2 = src 高/低半区数
                         transParams.srcHighHalf = (posHalf == 1);
                         transParams.dstHighHalf = (chHalf == 1);
                         for (uint64_t i = 0; i < WEIGHT_5HD_ADDR_LIST_SIZE; i++) {
@@ -218,13 +226,14 @@ private:
             }
         } else if constexpr (IS_FP32) {
             transParams.dstRepStride = singleRepeat ? 0U : WEIGHT_5HD_DST_REP_STRIDE_8;
-            const uint64_t c1Pairs = CeilDiv(tileCnt, WEIGHT_5HD_NUM_2);
+            const uint64_t c1Pairs = CeilDiv(tileCnt, 2); // 2 = fp32 单次 trans 打包相邻 2 个 c1（k0=8，2×8=16 通道）
             for (uint64_t p = 0; p < c1Pairs; p++) {
-                const uint64_t c1A = p * WEIGHT_5HD_NUM_2;
+                const uint64_t c1A = p * 2; // 每对跨 2 个 c1
                 const uint64_t c1B = c1A + 1;
-                for (uint64_t j = 0; j < WEIGHT_5HD_ADDR_LIST_SIZE / WEIGHT_5HD_NUM_2; j++) {
-                    dstList[WEIGHT_5HD_NUM_2 * j] = static_cast<uint64_t>(nz[c1A * nzTileElems_ + j * K0].GetPhyAddr());
-                    dstList[WEIGHT_5HD_NUM_2 * j + 1] = static_cast<uint64_t>(
+                for (uint64_t j = 0; j < WEIGHT_5HD_ADDR_HALF_LIST_SIZE; j++) { // 16 项地址 = 8 对
+                    dstList[2 * j] = static_cast<uint64_t>(
+                        nz[c1A * nzTileElems_ + j * K0].GetPhyAddr()); // 偶数项取 c1A
+                    dstList[2 * j + 1] = static_cast<uint64_t>(        // 奇数项取 c1B
                         nz[c1B * nzTileElems_ + j * K0].GetPhyAddr());
                 }
                 for (uint64_t i = 0; i < WEIGHT_5HD_ADDR_LIST_SIZE; i++) {
@@ -253,21 +262,21 @@ private:
     GlobalTensor<Weight5HDT> dstGm_;
 
     uint64_t aivIdx_ = 0;
-    uint64_t singleN_ = 0;
-    uint64_t nBegin_ = 0;
-    uint64_t nOwn_ = 0;
-    uint64_t kb_ = 0;
-    uint64_t hw_ = 0;
+    uint64_t nStep_ = 0;
+    uint64_t nStart_ = 0;
+    uint64_t nCnt_ = 0;
+    uint64_t chunkNum_ = 0;
+    uint64_t kernelHw_ = 0;
     uint64_t alignedHW_ = 0;
-    uint64_t segTileNum_ = 0;
-    uint64_t ndSlotSize_ = 0;
+    uint64_t tilesPerSlot_ = 0;
+    uint64_t ndSlotElems_ = 0;
     uint64_t nzTileElems_ = 0;
-    uint64_t nzSlotSize_ = 0;
+    uint64_t nzSlotElems_ = 0;
 
-    event_t evV2M_ = static_cast<event_t>(0);  // V_MTE2
-    event_t evM2V_ = static_cast<event_t>(0);  // MTE2_V
-    event_t evV2M3_ = static_cast<event_t>(0); // V_MTE3
-    event_t evM32M_ = static_cast<event_t>(0); // MTE3_MTE2
+    event_t evVToMte2_ = static_cast<event_t>(0);    // V_MTE2
+    event_t evMte2ToV_ = static_cast<event_t>(0);    // MTE2_V
+    event_t evVToMte3_ = static_cast<event_t>(0);    // V_MTE3
+    event_t evMte3ToMte2_ = static_cast<event_t>(0); // MTE3_MTE2
 };
 
 template <class Intf>
@@ -277,35 +286,18 @@ public:
 
     __aicore__ inline void Weight5HDAicInit(Intf* self)
     {
-        kb_ = MakeCfg(self).kb_;
+        chunkNum_ = MakeCfg(self).chunkNum_;
         loadedChunkCnt_ = 0;
-    }
-
-    __aicore__ inline void BindGm(const GlobalTensor<typename Intf::WeightT>& srcGm,
-                                  const GlobalTensor<typename Intf::WeightT>& dstGm)
-    {
-        core_.BindGm(srcGm, dstGm);
-    }
-
-    __aicore__ inline void Weight5HDVecInit(Intf* self)
-    {
-        core_.Init(MakeCfg(self), self->ctx.pipe, self->ctx.ndUbBuf, self->ctx.nzUbBuf);
-    }
-
-    __aicore__ inline bool Weight5HDVecImpl(Intf* self)
-    {
-        core_.RunVec();
-        return false;
     }
 
     __aicore__ inline void BL1SyncLoad(Intf* self, uint64_t kBL1Iter, uint64_t nBL1Iter)
     {
         self->ctx.bl1 = self->ctx.queueBL1.template AllocTensor<typename Intf::WeightT>();
         if (kBL1Iter >= loadedChunkCnt_) {
-            CrossCoreWaitFlag<WEIGHT_5HD_SYNC_MODE_2, PIPE_MTE2>(WEIGHT_5HD_SYNC_ID_BASE + (kBL1Iter & 1));
+            CrossCoreWaitFlag<WEIGHT_5HD_SYNC_MODE, PIPE_MTE2>(WEIGHT_5HD_SYNC_ID_BASE + (kBL1Iter & 1));
             self->ctx.loadBL1Ins.LoadBL1From5HD(kBL1Iter, nBL1Iter);
-            if (kBL1Iter + WEIGHT_5HD_EVENT_ID_NUM < kb_) {
-                CrossCoreSetFlag<WEIGHT_5HD_SYNC_MODE_2, PIPE_MTE2>(WEIGHT_5HD_SYNC_ID_BASE + (kBL1Iter & 1));
+            if (kBL1Iter + WEIGHT_5HD_EVENT_ID_NUM < chunkNum_) {
+                CrossCoreSetFlag<WEIGHT_5HD_SYNC_MODE, PIPE_MTE2>(WEIGHT_5HD_SYNC_ID_BASE + (kBL1Iter & 1));
             }
             loadedChunkCnt_++;
         } else {
@@ -316,34 +308,26 @@ public:
 
 private:
     struct Weight5HDCfgWrapper : public Weight5HDCfg<typename Intf::WeightT> {
-        uint64_t kb_ = 0;
+        uint64_t chunkNum_ = 0;
     };
 
     __aicore__ inline Weight5HDCfgWrapper MakeCfg(const Intf* self)
     {
+        const auto* td = self->ctx.convTilingData;
+        const uint64_t numBlocks = static_cast<uint64_t>(td->batchDim) * td->hoDim * td->woDim * td->nDim;
         Weight5HDCfgWrapper cfg;
-        cfg.cin = self->ctx.convTilingData->cin;
-        cfg.coutTotal = self->ctx.convTilingData->orgCo;
-        cfg.hw = self->ctx.convTilingData->kernelHxkernelW;
-        cfg.kBL1 = self->ctx.convTilingData->kBL1;
-        cfg.singleCoreCi = self->ctx.convTilingData->singleCoreCi;
-        cfg.bUbNStep = self->ctx.convTilingData->bUbNStep;
-        cfg.bUbKStep = self->ctx.convTilingData->bUbKStep;
-        cfg.aivNum = static_cast<uint64_t>(GetBlockNum());
-        cfg.blockDim = static_cast<uint64_t>(self->ctx.convTilingData->batchDim * self->ctx.convTilingData->hoDim *
-                                             self->ctx.convTilingData->woDim * self->ctx.convTilingData->nDim);
-        cfg.isRealCore = static_cast<uint64_t>(GetBlockIdx() < cfg.blockDim);
-        cfg.kb_ = Weight5HDVecTools<typename Intf::WeightT>::CalcKB(cfg);
+        static_cast<Weight5HDCfg<typename Intf::WeightT>&>(cfg) = MakeWeight5HDCfg<typename Intf::WeightT>(
+            *td, static_cast<uint64_t>(GetBlockNum()), numBlocks, static_cast<uint64_t>(GetBlockIdx()) < numBlocks);
+        cfg.chunkNum_ = Weight5HDVecTools<typename Intf::WeightT>::CalcChunkNum(cfg);
         return cfg;
     }
 
-    Weight5HDVecTools<typename Intf::WeightT> core_;
-    uint64_t kb_ = 0;
+    uint64_t chunkNum_ = 0;
     uint64_t loadedChunkCnt_ = 0;
 };
 
-template <typename WeightT, typename TilingData>
-__aicore__ inline void RunWeight5HDVec(const TilingData& tiling, GM_ADDR filter, GM_ADDR workspace)
+template <typename WeightT>
+__aicore__ inline void RunWeight5HDVecCore(const Weight5HDCfg<WeightT>& cfg, GM_ADDR filter, GM_ADDR workspace)
 {
     TPipe pipe;
     TBuf<TPosition::VECIN> ndUbBuf;
@@ -352,25 +336,6 @@ __aicore__ inline void RunWeight5HDVec(const TilingData& tiling, GM_ADDR filter,
     srcGm.SetGlobalBuffer(reinterpret_cast<__gm__ WeightT*>(filter));
     GlobalTensor<WeightT> dstGm;
     dstGm.SetGlobalBuffer(reinterpret_cast<__gm__ WeightT*>(workspace));
-
-    Weight5HDCfg<WeightT> cfg;
-    cfg.cin = tiling.cin;
-    cfg.coutTotal = tiling.cout;
-    cfg.hw = static_cast<uint64_t>(tiling.kh) * tiling.kw;
-    cfg.kBL1 = tiling.kBL1;
-    cfg.singleCoreCi = tiling.singleCoreCi;
-    cfg.bUbNStep = tiling.bUbNStep;
-    cfg.bUbKStep = tiling.bUbKStep;
-    cfg.aivNum = static_cast<uint64_t>(GetBlockNum());
-    cfg.blockDim = static_cast<uint64_t>(tiling.batchDim * tiling.nDim * tiling.hoDim);
-    const uint64_t aivIdx = static_cast<uint64_t>(GetBlockIdx());
-    const uint64_t nxm = static_cast<uint64_t>(tiling.nDim) * tiling.hoDim;
-    const uint64_t nIdx = (aivIdx % nxm) / static_cast<uint64_t>(tiling.hoDim);
-    const uint64_t mIdx = (aivIdx % nxm) % static_cast<uint64_t>(tiling.hoDim);
-    const bool isRealCore = (nIdx * static_cast<uint64_t>(tiling.singleCoreCo) < static_cast<uint64_t>(tiling.cout)) &&
-                            (mIdx * static_cast<uint64_t>(tiling.singleCoreHo) <
-                             static_cast<uint64_t>(tiling.hout) * tiling.wout);
-    cfg.isRealCore = isRealCore ? 1UL : 0UL;
 
     Weight5HDVecTools<WeightT> tools;
     tools.Init(cfg, pipe, ndUbBuf, nzUbBuf);
@@ -379,32 +344,37 @@ __aicore__ inline void RunWeight5HDVec(const TilingData& tiling, GM_ADDR filter,
 }
 
 template <typename WeightT, typename TilingData>
-__aicore__ inline void RunWeight5HDVecExited(const TilingData& tiling, GM_ADDR filter, GM_ADDR workspace)
+__aicore__ inline void RunWeight5HDVec(const TilingData& td, GM_ADDR filter, GM_ADDR workspace, bool isRealCore)
 {
-    TPipe pipe;
-    TBuf<TPosition::VECIN> ndUbBuf;
-    TBuf<TPosition::VECOUT> nzUbBuf;
-    GlobalTensor<WeightT> srcGm;
-    srcGm.SetGlobalBuffer(reinterpret_cast<__gm__ WeightT*>(filter));
-    GlobalTensor<WeightT> dstGm;
-    dstGm.SetGlobalBuffer(reinterpret_cast<__gm__ WeightT*>(workspace));
+    const uint64_t numBlocks = static_cast<uint64_t>(td.batchDim) * td.hoDim * td.woDim * td.nDim;
+    const Weight5HDCfg<WeightT> cfg = MakeWeight5HDCfg<WeightT>(td, static_cast<uint64_t>(GetBlockNum()), numBlocks,
+                                                                isRealCore);
+    RunWeight5HDVecCore(cfg, filter, workspace);
+}
 
+template <typename WeightT, typename TilingData>
+__aicore__ inline void RunWeight5HDVec(const TilingData& td, GM_ADDR filter, GM_ADDR workspace)
+{
     Weight5HDCfg<WeightT> cfg;
-    cfg.cin = tiling.cin;
-    cfg.coutTotal = tiling.orgCo;
-    cfg.hw = static_cast<uint64_t>(tiling.kernelHxkernelW);
-    cfg.kBL1 = tiling.kBL1;
-    cfg.singleCoreCi = tiling.singleCoreCi;
-    cfg.bUbNStep = tiling.bUbNStep;
-    cfg.bUbKStep = tiling.bUbKStep;
+    cfg.cin = td.cin;
+    cfg.coutTotal = td.cout;
+    cfg.hw = static_cast<uint64_t>(td.kh) * td.kw;
+    cfg.kBL1 = td.kBL1;
+    cfg.singleCoreCi = td.singleCoreCi;
+    cfg.bUbNStep = td.bUbNStep;
+    cfg.bUbKStep = td.bUbKStep;
     cfg.aivNum = static_cast<uint64_t>(GetBlockNum());
-    cfg.blockDim = static_cast<uint64_t>(tiling.batchDim * tiling.hoDim * tiling.woDim * tiling.nDim);
-    cfg.isRealCore = 0UL; // 无配对 AIC，禁用 mode-2 交互，仅保留转换与 barrier
-
-    Weight5HDVecTools<WeightT> tools;
-    tools.Init(cfg, pipe, ndUbBuf, nzUbBuf);
-    tools.BindGm(srcGm, dstGm);
-    tools.RunVec();
+    cfg.blockDim = static_cast<uint64_t>(td.batchDim * td.nDim * td.hoDim);
+    const uint64_t aivIdx = static_cast<uint64_t>(GetBlockIdx());
+    const uint64_t nxm = static_cast<uint64_t>(td.nDim) * td.hoDim;
+    const uint64_t nIdx = (aivIdx % nxm) / static_cast<uint64_t>(td.hoDim);
+    const uint64_t mIdx = (aivIdx % nxm) % static_cast<uint64_t>(td.hoDim);
+    const bool isRealCore = (nIdx * static_cast<uint64_t>(td.singleCoreCo) < static_cast<uint64_t>(td.cout)) &&
+                            (mIdx * static_cast<uint64_t>(td.singleCoreHo) <
+                             static_cast<uint64_t>(td.hout) * td.wout) &&
+                            (aivIdx < cfg.blockDim);
+    cfg.isRealCore = isRealCore ? 1UL : 0UL;
+    RunWeight5HDVecCore(cfg, filter, workspace);
 }
 
 } // namespace Conv2dFunc

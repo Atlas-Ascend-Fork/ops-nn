@@ -365,16 +365,13 @@ ge::graphStatus Conv3dBaseTilingV2::GetWorkspaceSize()
         const gert::StorageShape* weightShapePtr = context_->GetInputShape(INPUT_WEIGHT_INDEX);
         if (weightShapePtr != nullptr) {
             gert::Shape weightShape = GetWeightShape(weightShapePtr);
-            if (weightShape.GetDimNum() == 5U && weightShape.GetDim(0) > 0 && weightShape.GetDim(1) > 0 &&
-                weightShape.GetDim(2) > 0 && weightShape.GetDim(3) > 0 && weightShape.GetDim(4) > 0) {
-                auto k0 = CUBE_MKN_MAP.GetMKN(dtypeMap.at(descInfo_.weightDtype), MKN_K_IDX);
-                size_t cinAlign = static_cast<size_t>(
-                    ConvAlignB(static_cast<uint32_t>(weightShape.GetDim(1)), static_cast<uint32_t>(k0)));
-                size_t weight5HDSize = static_cast<size_t>(weightShape.GetDim(0)) * cinAlign * weightShape.GetDim(2) *
-                                       weightShape.GetDim(3) * weightShape.GetDim(4) *
-                                       dtypeSizeTab.at(descInfo_.weightDtype);
-                workspaces[0] += weight5HDSize;
-            }
+            auto k0 = CUBE_MKN_MAP.GetMKN(dtypeMap.at(descInfo_.weightDtype), MKN_K_IDX);
+            size_t cinAlign = static_cast<size_t>(
+                ConvAlignB(static_cast<uint32_t>(weightShape.GetDim(FORMAT_NCDHW_C_INDEX)), static_cast<uint32_t>(k0)));
+            size_t weight5HDSize = static_cast<size_t>(weightShape.GetDim(FORMAT_NCDHW_N_INDEX)) * cinAlign *
+                                   weightShape.GetDim(FORMAT_NCDHW_D_INDEX) * weightShape.GetDim(FORMAT_NCDHW_H_INDEX) *
+                                   weightShape.GetDim(FORMAT_NCDHW_W_INDEX) * dtypeSizeTab.at(descInfo_.weightDtype);
+            workspaces[0] += weight5HDSize;
         }
     }
 
