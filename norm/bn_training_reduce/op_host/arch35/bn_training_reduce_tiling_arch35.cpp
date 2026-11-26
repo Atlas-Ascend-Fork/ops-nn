@@ -197,8 +197,10 @@ static bool PopulateInputTensorInfo(gert::TilingContext* context, BNTrainingRedu
     }
     inputs.rank = static_cast<int32_t>(inputRank);
     if (inputRank > inputs.shape.size()) {
-        OP_LOGE(context, "BNTrainingReduce input rank must not exceed %zu, but got %zu.", inputs.shape.size(),
-                inputRank);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            context->GetNodeName(), "x", std::to_string(inputRank).c_str(),
+            ("Input rank must not exceed " + std::to_string(inputs.shape.size()) + " for this tiling implementation.")
+                .c_str());
         return false;
     }
     for (size_t i = 0; i < inputRank; ++i) {
@@ -212,8 +214,9 @@ static bool PopulateInputTensorInfo(gert::TilingContext* context, BNTrainingRedu
     } else if (storageFormat == ge::FORMAT_NCDHW) {
         inputs.format = BNTrainingReducePublicFormat::NCDHW;
     } else {
-        OP_LOGE(context, "BNTrainingReduce on Ascend 950 only supports NCHW, NHWC and NCDHW, but got format %d.",
-                static_cast<int32_t>(storageFormat));
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "x",
+                                               std::to_string(static_cast<int32_t>(storageFormat)).c_str(),
+                                               "Supported formats are NCHW, NHWC, and NCDHW.");
         return false;
     }
     inputs.inputDtype = ConvertDType(inputDesc->GetDataType());

@@ -8,6 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include <string>
+
 #include "util/shape_util.h"
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "op_common/log/log.h"
@@ -42,17 +44,31 @@ static ge::graphStatus InferShape4BNTrainingReduce(gert::InferShapeContext* cont
     const size_t rank = xShape->GetDimNum();
     const ge::Format format = xDesc->GetOriginFormat();
     size_t channelIndex = 0;
-    if (format == FORMAT_NCHW && rank >= 2U && rank <= 4U) {
+    if (format == FORMAT_NCHW) {
+        if (rank < 2U || rank > 4U) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(rank).c_str(),
+                                                     "NCHW input rank must be in [2, 4].");
+            return GRAPH_FAILED;
+        }
         channelIndex = 1U;
-    } else if (format == FORMAT_NHWC && rank == 4U) {
+    } else if (format == FORMAT_NHWC) {
+        if (rank != 4U) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(rank).c_str(),
+                                                     "NHWC input rank must be 4.");
+            return GRAPH_FAILED;
+        }
         channelIndex = 3U;
-    } else if (format == FORMAT_NCDHW && rank == 5U) {
+    } else if (format == FORMAT_NCDHW) {
+        if (rank != 5U) {
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x", std::to_string(rank).c_str(),
+                                                     "NCDHW input rank must be 5.");
+            return GRAPH_FAILED;
+        }
         channelIndex = 1U;
     } else {
-        OP_LOGE(context,
-                "BNTrainingReduce on Ascend 950 only supports NCHW rank 2-4, NHWC rank 4 and NCDHW rank 5, "
-                "but got format %d and rank %zu.",
-                static_cast<int32_t>(format), rank);
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "x",
+                                               std::to_string(static_cast<int32_t>(format)).c_str(),
+                                               "Supported formats are NCHW, NHWC, and NCDHW.");
         return GRAPH_FAILED;
     }
 

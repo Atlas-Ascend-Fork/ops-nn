@@ -8,6 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include <string>
+
 #include "op_common/log/log.h"
 #include "register/op_impl_registry.h"
 
@@ -21,7 +23,9 @@ static ge::graphStatus InferDataType4BNTrainingReduce(gert::InferDataTypeContext
     }
     const DataType xDataType = context->GetInputDataType(0);
     if (xDataType != DT_FLOAT16 && xDataType != DT_BF16 && xDataType != DT_FLOAT) {
-        OP_LOGE(context, "BNTrainingReduce input x dtype is not supported: %d.", static_cast<int32_t>(xDataType));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x",
+                                              std::to_string(static_cast<int32_t>(xDataType)).c_str(),
+                                              "Supported dtypes are FLOAT16, BF16, and FLOAT32.");
         return GRAPH_FAILED;
     }
     if (context->SetOutputDataType(0, DT_FLOAT) != GRAPH_SUCCESS) {
