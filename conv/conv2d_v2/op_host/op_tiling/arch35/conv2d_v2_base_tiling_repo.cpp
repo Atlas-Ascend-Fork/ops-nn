@@ -23,7 +23,9 @@ bool Conv2dBaseTiling::GetTilingFromRepo()
     OP_LOGD(paramInfo_.nodeType.c_str(), "Entering GetTilingFromRepo.");
     string nodeType = context_->GetNodeType();
     auto compileInfoPtr = static_cast<const ConvTilingParseInfo*>(context_->GetCompileInfo());
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, compileInfoPtr);
+    OP_CHECK_IF(compileInfoPtr == nullptr,
+                OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: GetCompileInfo return nullptr, skip repo tiling."),
+                return false);
     auto convOpInfoTmp = *compileInfoPtr;
     string tmpSocVer = convOpInfoTmp.socVersion;
     return QueryTilingBank(tmpSocVer, opInfo_->aicoreNum);

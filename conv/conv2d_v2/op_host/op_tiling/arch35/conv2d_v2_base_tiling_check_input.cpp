@@ -606,7 +606,8 @@ bool Conv2dBaseTiling::CheckScaleLegal(uint32_t scaleIndex, uint8_t& quantMode, 
         return false;
     }
     auto scaleShapePtr = context_->GetOptionalInputShape(scaleIndex);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, scaleShapePtr);
+    OP_CHECK_IF(scaleShapePtr == nullptr, OP_LOGE(context_->GetNodeType(), "AscendC: optional scale shape is nullptr."),
+                return false);
     if (scaleShapePtr->GetStorageShape().GetDimNum() != FORMAT_ND_DIM) {
         OP_LOGE_FOR_INVALID_SHAPEDIM(context_->GetNodeType(), scaleType.c_str(),
                                      std::to_string(scaleShapePtr->GetStorageShape().GetDimNum()).c_str(),

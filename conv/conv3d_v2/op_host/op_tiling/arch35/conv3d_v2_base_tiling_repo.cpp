@@ -25,7 +25,9 @@ bool Conv3dBaseTilingV2::GetTilingFromRepo()
     std::size_t inputArgsSize = 0;
     GetTilingInputArgs(inputArgs, inputArgsSize);
     auto compileInfoPtr = static_cast<const ConvTilingParseInfo*>(context_->GetCompileInfo());
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, compileInfoPtr);
+    OP_CHECK_IF(compileInfoPtr == nullptr,
+                OP_LOGE(context_->GetNodeType(), "AscendC: GetCompileInfo return nullptr, skip repo tiling."),
+                return false);
     uint32_t ret = Ops::NN::QueryBank(inputArgs.get(), inputArgsSize, "Conv3DV2", compileInfoPtr->socVersion,
                                       opInfo_->aicoreNum, tuningTiling);
     if (ret != 0 || tuningTiling == nullptr) {
