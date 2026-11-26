@@ -9,6 +9,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstring>
 #include <string>
 #include <vector>
 #include "tiling_context_faker.h"
@@ -20,6 +21,20 @@
 #include "../../../op_host/situ_glu_tiling.h"
 
 namespace {
+// Mirror of the serialized kernel ABI layout written by SaveToBuffer().
+// The host-side SituGluTilingData struct carries per-field reserve buffers, so its
+// sizeof() is much larger than the bytes actually serialized into the tiling buffer.
+struct SituGluTilingDataMirror {
+    int64_t coreNumAll;
+    int64_t dimBatchSize;
+    int64_t dim2H;
+    int64_t isLongH;
+    int64_t ubMaxPair;
+    float beta;
+    float linearBeta;
+    int64_t activateLeft;
+};
+
 struct TilingCase {
     const char* name;
     int64_t rows;
@@ -30,6 +45,9 @@ struct TilingCase {
     ge::DataType dtype;
     ge::DataType otherDtype;
     bool success;
+    const char* shortSocVersion;
+    const char* npuArch;
+    int64_t expectedIsLongH;
 };
 class SituGluTilingTest : public testing::TestWithParam<TilingCase> {};
 
@@ -48,7 +66,8 @@ TEST_P(SituGluTilingTest, ValidatesInputsAndWritesTilingData)
     GetPlatFormInfos(hardware, socInfos, coreSpec, intrinsics);
     fe::PlatFormInfos platform;
     ASSERT_TRUE(platform.Init());
-    std::map<std::string, std::string> version = {{"Short_SoC_version", "Ascend910B"}, {"NpuArch", "2201"}};
+    std::map<std::string, std::string> version = {{"Short_SoC_version", test.shortSocVersion},
+                                                  {"NpuArch", test.npuArch}};
     platform.SetPlatformRes("version", version);
     platform.SetPlatformRes("SoCInfo", socInfos);
     platform.SetPlatformRes("AICoreSpec", coreSpec);
@@ -88,26 +107,38 @@ TEST_P(SituGluTilingTest, ValidatesInputsAndWritesTilingData)
     if (test.success) {
         ASSERT_NE(context->GetRawTilingData(), nullptr);
         EXPECT_GT(context->GetRawTilingData()->GetDataSize(), 0U);
+        ASSERT_GE(context->GetRawTilingData()->GetDataSize(), sizeof(SituGluTilingDataMirror));
+        SituGluTilingDataMirror rawTiling{};
+        std::memcpy(&rawTiling, context->GetRawTilingData()->GetData(), sizeof(rawTiling));
+        EXPECT_EQ(rawTiling.isLongH, test.expectedIsLongH);
     }
 }
 
 INSTANTIATE_TEST_SUITE_P(
     InputValidation, SituGluTilingTest,
-    testing::Values(TilingCase{"Valid", 4, 8, 4, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true},
-                    TilingCase{"ValidDimZero", 4, 8, 2, 8, 0, ge::DT_FLOAT16, ge::DT_FLOAT16, true},
-                    TilingCase{"EmptyXEmptyOut", 0, 8, 0, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true},
-                    TilingCase{"DimOutOfRange", 4, 8, 4, 4, 2, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
-                    TilingCase{"OddSplit", 4, 7, 4, 3, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
-                    TilingCase{"UnsupportedInputDtype", 4, 8, 4, 4, -1, ge::DT_INT32, ge::DT_INT32, false},
-                    TilingCase{"OutputDtypeMismatch", 4, 8, 4, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT, false},
-                    TilingCase{"OutputSplitMismatch", 4, 8, 4, 3, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
-                    // issue #8984：非切分维小于x（out[0]=3 < x[0]=4），此前放行导致内核留脏
-                    TilingCase{"NonSplitDimMismatchSmaller", 4, 8, 3, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
-                    // issue #8984：非切分维大于x（out[0]=5 > x[0]=4），此前放行导致内核越界写
-                    TilingCase{"NonSplitDimMismatchBigger", 4, 8, 5, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
-                    // issue #8984：dim=0时非切分维（第1维）不符，切分维校验通过但其余维不符
-                    TilingCase{"NonSplitDimMismatchDimZero", 4, 8, 2, 7, 0, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
-                    // issue #8984：空x必须空out——out在切分维及非切分维均与x不一致
-                    TilingCase{"EmptyXNonEmptyOut", 0, 8, 1, 8, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false}),
+    testing::Values(
+        TilingCase{"Valid", 4, 8, 4, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true, "Ascend910B", "2201", 1},
+        TilingCase{"ValidDimZero", 4, 8, 2, 8, 0, ge::DT_FLOAT16, ge::DT_FLOAT16, true, "Ascend910B", "2201", 0},
+        TilingCase{"EmptyXEmptyOut", 0, 8, 0, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true, "Ascend910B", "2201", 1},
+        TilingCase{"DimOutOfRange", 4, 8, 4, 4, 2, ge::DT_FLOAT16, ge::DT_FLOAT16, false, "Ascend910B", "2201", 0},
+        TilingCase{"OddSplit", 4, 7, 4, 3, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false, "Ascend910B", "2201", 0},
+        TilingCase{"UnsupportedInputDtype", 4, 8, 4, 4, -1, ge::DT_INT32, ge::DT_INT32, false, "Ascend910B", "2201", 0},
+        TilingCase{"OutputDtypeMismatch", 4, 8, 4, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT, false, "Ascend910B", "2201", 0},
+        TilingCase{"OutputSplitMismatch", 4, 8, 4, 3, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false, "Ascend910B", "2201",
+                   0},
+        TilingCase{"NonSplitDimMismatchSmaller", 4, 8, 3, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false, "Ascend910B",
+                   "2201", 0},
+        TilingCase{"NonSplitDimMismatchBigger", 4, 8, 5, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false, "Ascend910B",
+                   "2201", 0},
+        TilingCase{"NonSplitDimMismatchDimZero", 4, 8, 2, 7, 0, ge::DT_FLOAT16, ge::DT_FLOAT16, false, "Ascend910B",
+                   "2201", 0},
+        TilingCase{"EmptyXNonEmptyOut", 0, 8, 1, 8, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false, "Ascend910B", "2201", 0},
+
+        TilingCase{"Valid960DT", 4, 8, 4, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true, "Ascend960DT", "9201", 1},
+        TilingCase{"Valid960DTBf16", 4, 8, 4, 4, -1, ge::DT_BF16, ge::DT_BF16, true, "Ascend960DT", "9201", 1},
+        TilingCase{"Valid960DTLongHUnaligned", 2, 250, 2, 125, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true, "Ascend960DT",
+                   "9201", 1},
+        TilingCase{"Valid960DTLongHUbLimit", 2, 20000, 2, 10000, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true,
+                   "Ascend960DT", "9201", 1}),
     [](const testing::TestParamInfo<TilingCase>& info) { return info.param.name; });
 } // namespace

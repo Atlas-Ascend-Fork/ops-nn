@@ -48,11 +48,12 @@ def situ_glu_cpu(x, dim=-1, beta=1.0, linear_beta=0.0, activate_left=True):
 
 NETWORK_SHAPES = [
     (2, 32),
+    (2, 250),
     (1, 4624, 6144),
     (15908, 3072),
 ]
 
-DTYPES = [torch.float32, torch.float16]
+DTYPES = [torch.float32, torch.float16, torch.bfloat16]
 
 NET_DIM = -1
 NET_BETA = 4.0
