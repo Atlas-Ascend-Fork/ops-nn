@@ -11,7 +11,6 @@
 #ifndef CONV2D_TO_CONV2DV2_FUSION_PASS_H
 #define CONV2D_TO_CONV2DV2_FUSION_PASS_H
 
-#include <map>
 #include <memory>
 #include <set>
 

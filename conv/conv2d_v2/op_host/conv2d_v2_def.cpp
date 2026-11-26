@@ -107,7 +107,7 @@ public:
     }
 
 private:
-    void SetArchConfigInputs(OpAICoreConfig& aicoreConfig, const char* version)
+    void SetArchConfigInputs(OpAICoreConfig& aicoreConfig, const char* version) const
     {
         aicoreConfig.Input("x")
             .ParamType(REQUIRED)

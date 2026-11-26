@@ -37,7 +37,9 @@ using std::vector;
 
 #define ADD_INPUT(inputIndex, inputName, inputDtype, inputShape)                                                       \
     vector<int64_t> placeholder##inputIndex##_shape = inputShape;                                                      \
-    auto placeholder##inputIndex = op::Data("placeholder" + inputIndex).set_attr_index(0);                             \
+    static_assert((inputIndex) >= 1, "input index starts from 1");                                                     \
+    std::string placeholder##inputIndex##Name = "placeholder" + std::to_string(inputIndex);                            \
+    auto placeholder##inputIndex = op::Data(placeholder##inputIndex##Name.c_str()).set_attr_index(inputIndex - 1);     \
     TensorDesc placeholder##inputIndex##_desc = TensorDesc(ge::Shape(placeholder##inputIndex##_shape), FORMAT_NCHW,    \
                                                            inputDtype);                                                \
     placeholder##inputIndex##_desc.SetPlacement(ge::kPlacementHost);                                                   \
@@ -143,7 +145,7 @@ int CreateQuantConv2DInGraph(std::vector<ge::Tensor>& inputTensors, std::vector<
     std::vector<int64_t> scaleShape = {16};
     std::vector<int64_t> biasShape = {16};
     std::vector<int64_t> yShape = {1, 16, 1, 1};
-    tmpOp.set_attr_dtype(ge::DT_INT8);
+    tmpOp.set_attr_dtype(ge::DT_FLOAT16);
     tmpOp.set_attr_strides({1, 1, 1, 1});
     tmpOp.set_attr_pads({0, 0, 0, 0});
     tmpOp.set_attr_dilations({1, 1, 1, 1});

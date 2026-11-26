@@ -15,7 +15,6 @@
 #include "platform/platform_info.h"
 #include "runtime/runtime/base.h"
 #include "tensor_desc_origin_dtype_api.h"
-#include "version/ge-compiler_version.h"
 
 namespace Ops {
 namespace NN {
@@ -100,7 +99,7 @@ bool ConvFusionUtilsPass::CheckArchList(const std::set<NpuArch>& archList, NpuAr
     }
     const NpuArch curArch = static_cast<NpuArch>(std::atoi(npuArchStr));
 
-    if (archList.count(curArch) != 0U) {
+    if (archList.count(curArch) != 0) {
         npuArch = curArch;
         OP_LOGD(UTIL_NAME, "Current NpuArch is DAV_%s.", npuArchStr);
         return true;
