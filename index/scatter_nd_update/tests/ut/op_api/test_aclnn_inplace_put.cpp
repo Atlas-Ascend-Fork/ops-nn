@@ -7,6 +7,7 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+#include "opdev/platform.h"
 #include <array>
 #include <vector>
 #include "gtest/gtest.h"
@@ -596,4 +597,29 @@ TEST_F(l2_inplace_put_test, aclnnInplacePut_self_empty_tensor_and_index_not_empt
     uint64_t workspaceSize = 0;
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// Regression coverage: inplace-put-bf16-docs
+TEST_F(l2_inplace_put_test, ascend910B2_documented_bfloat16_accumulate_restriction)
+{
+    SocVersionManager soc(SocVersion::ASCEND910B);
+    auto self = TensorDesc({2}, ACL_BF16, ACL_FORMAT_ND);
+    auto index = TensorDesc({1}, ACL_INT64, ACL_FORMAT_ND).Value(vector<int64_t>{0});
+    auto source = TensorDesc({1}, ACL_BF16, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnInplacePut, INPUT(self, index, source, true), OUTPUT());
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_inplace_put_test, ascend910B2_bfloat16_update_and_float_accumulate_controls)
+{
+    SocVersionManager soc(SocVersion::ASCEND910B);
+    for (aclDataType dtype : {ACL_BF16, ACL_FLOAT}) {
+        auto self = TensorDesc({2}, dtype, ACL_FORMAT_ND);
+        auto index = TensorDesc({1}, ACL_INT64, ACL_FORMAT_ND).Value(vector<int64_t>{0});
+        auto source = TensorDesc({1}, dtype, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnInplacePut, INPUT(self, index, source, dtype == ACL_FLOAT), OUTPUT());
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_SUCCESS);
+    }
 }

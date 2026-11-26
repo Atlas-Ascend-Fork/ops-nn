@@ -120,7 +120,7 @@ aclnnStatus aclnnInplacePut(
         <td>accumulate（bool）</td>
         <td>输入</td>
         <td>累加或更新的操作类型标志位。</td>
-        <td><ul><li>accumulate为True时为累加；</li><li>accumulate为False时为更新。</li></ul></td>
+        <td><ul><li>accumulate为True时为累加，不支持BFLOAT16类型的selfRef和source；</li><li>accumulate为False时为更新，BFLOAT16支持情况见下方各产品的数据类型说明。</li></ul></td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -183,7 +183,7 @@ aclnnStatus aclnnInplacePut(
       <tr>
       <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="4">161002</td>
-      <td>selfRef和index的数据类型不在支持的范围之内。</td>
+      <td>selfRef和index的数据类型不在支持的范围之内，或accumulate为True时selfRef为BFLOAT16。</td>
       </tr>
       <tr>
       <td>selfRef和source的数据类型不同。</td>
