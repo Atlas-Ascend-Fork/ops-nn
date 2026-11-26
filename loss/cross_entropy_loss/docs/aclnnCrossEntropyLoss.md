@@ -33,7 +33,7 @@
   $$
 
   $$
-  loss=\begin{cases}\sum_{n=1}^N\frac{1}{\sum_{n=1}^Nweight_{y_n}*1\{y_n\ !=\ ignoreIndex \}}l_n,&\text{if reductionOptional = ‘mean’} \\\sum_{n=1}^Nl_n,&\text {if reductionOptional = ‘sum’}\\\{l_0,l_1,...,l_n\},&\text{if reductionOptional = ‘None’}\end{cases}
+  loss=\begin{cases}\sum_{n=1}^N\frac{1}{\sum_{n=1}^Nweight_{y_n}*1\{y_n\ !=\ ignoreIndex \}}l_n,&\text{if reductionOptional = 'mean'} \\\sum_{n=1}^Nl_n,&\text {if reductionOptional = 'sum'}\\\{l_0,l_1,...,l_n\},&\text{if reductionOptional = 'none'}\end{cases}
   $$
 
   log\_prob计算公式为：
@@ -172,7 +172,7 @@ aclnnStatus aclnnCrossEntropyLoss(
     <tr>
     <td>lseSquareScaleForZloss（double）</td>
     <td>输入</td>
-    <td>表示zloss计算所需的scale。公式中的lse_square_scale_for_zloss。</td>
+    <td>表示zloss计算所需的scale。公式中的lseSquareScaleForZloss。</td>
     <td>数值在[0, 1)之间。当前暂不支持。</td>
     <td>DOUBLE</td>
     <td>-</td>
@@ -354,7 +354,7 @@ aclnnStatus aclnnCrossEntropyLoss(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```c++
+```C++
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"
@@ -452,6 +452,7 @@ int main() {
     std::vector<float> inputHostData = {5, 0, 3, 3, 7,
                                             9, 3, 5, 2, 4};
     std::vector<int64_t> targetHostData = {0, 0};
+    std::vector<float> weightHostData = {1.0, 2.0, 3.0, 3.0, 7.0};
     std::vector<float> lossOutHostData = {1.0937543};
     std::vector<float> logProbOutHostData = {
         -2.159461, -7.159461, -4.159461, -4.159461, -0.159461,
@@ -462,8 +463,8 @@ int main() {
     // attr
     char* reduction = "mean";
     int64_t ignoreIndex = -100;
-    float labelSmoothing = 0.0;
-    float lseSquareScaleForZloss = 0.0;
+    double labelSmoothing = 0.0;
+    double lseSquareScaleForZloss = 0.0;
     bool returnZloss = 0;
 
     // 创建input aclTensor
@@ -472,7 +473,9 @@ int main() {
     // 创建target aclTensor
     ret = CreateAclTensor(targetHostData, targetShape, &targetDeviceAddr, aclDataType::ACL_INT64, &target);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-
+    // 创建weight aclTensor
+    ret = CreateAclTensor(weightHostData, weightShape, &weightDeviceAddr, aclDataType::ACL_FLOAT, &weight);
+    CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建lossOut aclTensor
     ret = CreateAclTensor(lossOutHostData, lossOutShape, &lossOutDeviceAddr, aclDataType::ACL_FLOAT, &lossOut);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -482,7 +485,7 @@ int main() {
     // 创建zloss aclTensor
     ret = CreateAclTensor(zlossOutHostData, zlossOutShape, &zlossDeviceAddr, aclDataType::ACL_FLOAT, &zloss);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    // lseForZloss aclTensor
+    // 创建lseForZloss aclTensor
     ret = CreateAclTensor(lseForZlossOutHostData, lseForZlossOutShape, &lseForZlossDeviceAddr, aclDataType::ACL_FLOAT, &lseForZloss);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
@@ -547,14 +550,20 @@ int main() {
     // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
     aclDestroyTensor(input);
     aclDestroyTensor(target);
+    aclDestroyTensor(weight);
     aclDestroyTensor(lossOut);
     aclDestroyTensor(logProbOut);
+    aclDestroyTensor(zloss);
+    aclDestroyTensor(lseForZloss);
 
     // 7. 释放device资源
     aclrtFree(inputDeviceAddr);
     aclrtFree(targetDeviceAddr);
+    aclrtFree(weightDeviceAddr);
     aclrtFree(lossOutDeviceAddr);
     aclrtFree(logProbOutDeviceAddr);
+    aclrtFree(zlossDeviceAddr);
+    aclrtFree(lseForZlossDeviceAddr);
     if (workspaceSize > 0) {
         aclrtFree(workspaceAddr);
     }
