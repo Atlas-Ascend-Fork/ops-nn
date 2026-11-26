@@ -196,7 +196,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
         <td>target（aclTensor*）</td>
         <td>输入</td>
         <td>类索引，要求为一个维度为1D的Tensor。</td>
-        <td>N与input第零维相等。数值范围为[0, C)，当指定了ignoreIndex时，target的值也可以等于ignoreIndex。</td>
+        <td>N与logProb第零维相等。数值范围为[0, C)，当指定了ignoreIndex时，target的值也可以等于ignoreIndex。</td>
         <td>INT64</td>
         <td>ND</td>
         <td>(N,)</td>
@@ -389,7 +389,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
   <!-- npu="950" id7 -->
   - <term>Ascend 950PR&950DT系列产品</term>：当target为int32类型时，ignoreIndex取值不能大于2147483647，超出时返回参数校验失败。
   <!-- end id7 -->
-  - gradLoss、logProb、gradZlossOptional、lseForZlossOptional、xGradOut数据类型需保持一致。
+  - gradLoss、logProb、gradZlossOptional、lseForZlossOptional、out数据类型需保持一致。
   - 当前暂不支持zloss功能，传入相关输入，即gradZlossOptional、lseForZlossOptional、lseSquareScaleForZloss，不会生效。
 
   - 确定性计算：
@@ -399,7 +399,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```c++
+```C++
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

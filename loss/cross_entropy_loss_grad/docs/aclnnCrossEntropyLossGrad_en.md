@@ -198,7 +198,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
         <td>target (aclTensor*)</td>
         <td>Input</td>
         <td>Class index. Must be a 1D tensor.</td>
-        <td>N equals the 0th dimension of input. The value range is [0, C). If ignoreIndex is specified, the value of target can also be equal to ignoreIndex.</td>
+        <td>N equals the 0th dimension of logProb. The value range is [0, C). If ignoreIndex is specified, the value of target can also be equal to ignoreIndex.</td>
         <td>INT64</td>
         <td>ND</td>
         <td>(N,)</td>
@@ -391,7 +391,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
   <!-- npu="950" id7 -->
   - <term>Ascend 950PR&950DT products</term>: When target is of the int32 type, the value of ignoreIndex must not be greater than 2147483647. Otherwise, parameter validation fails.
   <!-- end id7 -->
-  - gradLoss, logProb, gradZlossOptional, lseForZlossOptional, and xGradOut must have the same data type.
+  - gradLoss, logProb, gradZlossOptional, lseForZlossOptional, and out must have the same data type.
   - The zloss function is currently not supported. Passing related inputs, i.e., gradZlossOptional, lseForZlossOptional, and lseSquareScaleForZloss, will not take effect.
 
   - Deterministic computation:
@@ -401,7 +401,7 @@ aclnnStatus aclnnCrossEntropyLossGrad(
 
 The following sample code is for reference only. For details about compilation and execution, see [Compile and Run Samples](../../../docs/en/context/compile_and_run_sample.md).
 
-```c++
+```C++
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"
