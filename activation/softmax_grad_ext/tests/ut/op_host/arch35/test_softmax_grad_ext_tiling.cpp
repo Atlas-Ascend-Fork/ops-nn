@@ -47,9 +47,35 @@ protected:
     }
 };
 
+// EZ0010/EZ0012/EZ0020/EZ0021 由 third_party/opbase 的格式注册对象提供；单算子 UT 构建时该对象
+// 可能因静态库未被引用而未链入，导致语义宏上报被静默丢弃（同 gru_grad/where 的场景），此处显式注册兜底。
+static constexpr const char kSoftmaxGradExtEzCodes[] = R"json({"error_info_list":[
+    {"errClass":"Operator Errors","errTitle":"Invalid_Argument_Tensor_Shape",
+     "ErrCode":"EZ0010",
+     "ErrMessage":"Parameters %s of %s have incorrect shapes %s. Reason: %s.",
+     "Arglist":"param_names, op_name, incorrect_shapes, reason",
+     "suggestion":{"Possible Cause":"N/A","Solution":"Check whether the shapes of input/output tensors meet the relationship."}},
+    {"errClass":"Operator Errors","errTitle":"Invalid_Argument_Tensor_Shape_Dim",
+     "ErrCode":"EZ0012",
+     "ErrMessage":"Parameter %s of %s has incorrect shape dim %s. Reason: %s.",
+     "Arglist":"param_name, op_name, incorrect_dim, reason",
+     "suggestion":{"Possible Cause":"N/A","Solution":"Check whether the shape dimension of input/output tensor is correct."}},
+    {"errClass":"Operator Errors","errTitle":"Invalid_Argument_Tensor_Dtype",
+     "ErrCode":"EZ0020",
+     "ErrMessage":"Parameter %s of %s has incorrect dtype %s. Reason: %s.",
+     "Arglist":"param_name, op_name, incorrect_dtype, reason",
+     "suggestion":{"Possible Cause":"N/A","Solution":"Check whether the dtype of input/output tensor meets the condition."}},
+    {"errClass":"Operator Errors","errTitle":"Invalid_Argument_Tensor_Dtype",
+     "ErrCode":"EZ0021",
+     "ErrMessage":"Parameters %s of %s have incorrect dtypes %s. Reason: %s.",
+     "Arglist":"param_names, op_name, incorrect_dtypes, reason",
+     "suggestion":{"Possible Cause":"N/A","Solution":"Check whether the dtypes of input/output tensors meet the condition."}}
+]})json";
+
 static void ResetErrMgr()
 {
     (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::RegisterFormatErrorMessage(kSoftmaxGradExtEzCodes, sizeof(kSoftmaxGradExtEzCodes) - 1);
     (void)error_message::GetErrMgrErrorMessage();
 }
 

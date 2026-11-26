@@ -108,7 +108,7 @@ ge::graphStatus SoftmaxGradExtTilingARARecompute::DoOpTiling()
         if (w > a0_ || w % a0TileBase_ != 0 || vlFp32_ % w != 0) {
             continue;
         }
-        if (w * xDtypeSize_ < 2 * blockSize_) {
+        if (w * xDtypeSize_ < CONST_TWO * blockSize_) {
             continue;
         }
         if (w / a0TileBase_ > factorMax) {

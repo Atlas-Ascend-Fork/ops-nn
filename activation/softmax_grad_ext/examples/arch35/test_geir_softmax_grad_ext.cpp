@@ -66,11 +66,11 @@ using std::vector;
     input.push_back(tensor_placeholder##intputIndex);                                                               \
     graph.AddOp(placeholder##intputIndex);                                                                          \
     add1.set_input_##intputName(placeholder##intputIndex);                                                          \
-    inputs.push_back(placeholder##intputIndex);
+    inputs.push_back(placeholder##intputIndex)
 
 #define ADD_OUTPUT(outputIndex, outputName, outputDtype, outputShape)                                       \
     TensorDesc outputName##outputIndex##_desc = TensorDesc(ge::Shape(outputShape), FORMAT_ND, outputDtype); \
-    add1.update_output_desc_##outputName(outputName##outputIndex##_desc);
+    add1.update_output_desc_##outputName(outputName##outputIndex##_desc)
 
 namespace {
 string GetTime()
