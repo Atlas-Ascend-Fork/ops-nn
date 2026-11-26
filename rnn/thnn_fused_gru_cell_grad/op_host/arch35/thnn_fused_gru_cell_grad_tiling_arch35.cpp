@@ -13,7 +13,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <securec.h>
+#include <string>
 
+#include "graph/utils/type_utils.h"
 #include "ascendc/host_api/tiling/template_argument.h" // GET_TPL_TILING_KEY（读 struct.h 的 g_tilingDeclareParams）
 #include "exe_graph/runtime/tiling_context.h"
 #include "graph/types.h"                          // ge::UNKNOWN_DIM
@@ -174,36 +176,63 @@ ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, ThnnFusedGruCell
                                (gradHyDtype == ge::DT_BF16);
     const bool storageDtypeOk = (storageDtype == ge::DT_FLOAT) || (storageDtype == ge::DT_FLOAT16) ||
                                 (storageDtype == ge::DT_BF16);
-    OP_CHECK_IF(!gradHyDtypeOk || !storageDtypeOk || (gradHyDtype != storageDtype),
-                OP_LOGE(context,
-                        "dtype not supported: grad_hy dtype=%d, storage dtype=%d, only fp32/fp16/bf16"
-                        " with identical dtypes are supported",
-                        static_cast<int>(gradHyDtype), static_cast<int>(storageDtype)),
-                return ge::GRAPH_FAILED);
+    if (!gradHyDtypeOk) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "grad_hy",
+                                              ge::TypeUtils::DataTypeToSerialString(gradHyDtype),
+                                              "supported dtypes are FLOAT, FLOAT16, and BFLOAT16");
+        return ge::GRAPH_FAILED;
+    }
+    if (!storageDtypeOk) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "storage",
+                                              ge::TypeUtils::DataTypeToSerialString(storageDtype),
+                                              "supported dtypes are FLOAT, FLOAT16, and BFLOAT16");
+        return ge::GRAPH_FAILED;
+    }
+    if (gradHyDtype != storageDtype) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "grad_hy, storage",
+                                               ge::TypeUtils::DataTypeToSerialString(gradHyDtype) + ", " +
+                                                   ge::TypeUtils::DataTypeToSerialString(storageDtype),
+                                               "grad_hy and storage must have the same dtype");
+        return ge::GRAPH_FAILED;
+    }
     tiling.dtype = gradHyDtype;
     tiling.dtypeSize = (gradHyDtype == ge::DT_FLOAT) ? static_cast<int64_t>(FP32_BYTES) : FP16_BYTES;
 
     // 校验 3：rank==2 强约束（rank=0 / rank=3 一律拒绝，shape_mismatch）
     const gert::Shape& gradHyDims = gradHyShape->GetStorageShape();
     const gert::Shape& storageDims = storageShape->GetStorageShape();
-    OP_CHECK_IF((gradHyDims.GetDimNum() != 2U) || (storageDims.GetDimNum() != 2U),
-                OP_LOGE(context, "shape mismatch: grad_hy rank=%zu, storage rank=%zu, rank 2 required",
-                        gradHyDims.GetDimNum(), storageDims.GetDimNum()),
-                return ge::GRAPH_FAILED);
+    if (gradHyDims.GetDimNum() != 2U) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "grad_hy",
+                                                 std::to_string(gradHyDims.GetDimNum()), "rank must be 2");
+        return ge::GRAPH_FAILED;
+    }
+    if (storageDims.GetDimNum() != 2U) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "storage",
+                                                 std::to_string(storageDims.GetDimNum()), "rank must be 2");
+        return ge::GRAPH_FAILED;
+    }
 
     // 校验 5：CheckShapeConsistency 型（非 broadcast）——storage.shape == (B, 5H)
     tiling.B = gradHyDims.GetDim(0);
     tiling.H = gradHyDims.GetDim(1);
-    OP_CHECK_IF((storageDims.GetDim(0) != tiling.B) || (storageDims.GetDim(1) != STORAGE_CNT_PER_HIDDEN * tiling.H),
-                OP_LOGE(context, "shape mismatch: storage (%ld, %ld) != (B, 5H) = (%ld, %ld)", storageDims.GetDim(0),
-                        storageDims.GetDim(1), tiling.B, STORAGE_CNT_PER_HIDDEN * tiling.H),
-                return ge::GRAPH_FAILED);
+    if ((storageDims.GetDim(0) != tiling.B) || (storageDims.GetDim(1) != STORAGE_CNT_PER_HIDDEN * tiling.H)) {
+        const std::string gradHyShape = "(" + std::to_string(tiling.B) + ", " + std::to_string(tiling.H) + ")";
+        const std::string storageShapeText = "(" + std::to_string(storageDims.GetDim(0)) + ", " +
+                                             std::to_string(storageDims.GetDim(1)) + ")";
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "grad_hy, storage",
+                                               gradHyShape + ", " + storageShapeText,
+                                               "storage must have shape (B, 5H) when grad_hy has shape (B, H)");
+        return ge::GRAPH_FAILED;
+    }
 
     // 校验 6：动态 shape 未解析拒绝（tiling 阶段要求全维具体；-1 一律拒绝，
     // 否则切分计算静默产出垃圾值）
-    OP_CHECK_IF((tiling.B == ge::UNKNOWN_DIM) || (tiling.H == ge::UNKNOWN_DIM),
-                OP_LOGE(context, "Dynamic shape not fully resolved: grad_hy (%ld, %ld)", tiling.B, tiling.H),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (tiling.B == ge::UNKNOWN_DIM) || (tiling.H == ge::UNKNOWN_DIM),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "grad_hy",
+                                              "(" + std::to_string(tiling.B) + ", " + std::to_string(tiling.H) + ")",
+                                              "dimensions must be fully resolved before tiling"),
+        return ge::GRAPH_FAILED);
 
     OP_LOGI(context, "ThnnFusedGruCellGrad shapes: grad_hy (%ld, %ld), storage (%ld, %ld)", tiling.B, tiling.H,
             tiling.B, STORAGE_CNT_PER_HIDDEN * tiling.H);
@@ -227,8 +256,10 @@ ge::graphStatus ValidateOutputs(gert::TilingContext* context, const ThnnFusedGru
         OP_CHECK_NULL_WITH_CONTEXT(context, outDesc);
         const ge::DataType outDtype = outDesc->GetDataType();
         OP_CHECK_IF(outDtype != tiling.dtype,
-                    OP_LOGE(context, "dtype mismatch: output[%zu] dtype=%d != grad_hy dtype=%d", i,
-                            static_cast<int>(outDtype), static_cast<int>(tiling.dtype)),
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "grad_hy, output",
+                                                           std::to_string(static_cast<int32_t>(tiling.dtype)) + ", " +
+                                                               std::to_string(static_cast<int32_t>(outDtype)),
+                                                           "all outputs must have the same dtype as grad_hy"),
                     return ge::GRAPH_FAILED);
         const gert::StorageShape* outShape = context->GetOutputShape(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, outShape);
@@ -244,13 +275,22 @@ ge::graphStatus ValidateOutputs(gert::TilingContext* context, const ThnnFusedGru
             dimsOk = (outDims.GetDim(j) == expDims[i][j]);
         }
         if (!dimsOk) {
-            if (OUTPUT_RANKS[i] == 1) {
-                OP_LOGE(context, "shape mismatch: output[%zu] rank=%zu, expect rank=1 dim0=%ld", i, outDims.GetDimNum(),
-                        expDims[i][0]);
-            } else {
-                OP_LOGE(context, "shape mismatch: output[%zu] rank=%zu, expect rank=2 dim0=%ld dim1=%ld", i,
-                        outDims.GetDimNum(), expDims[i][0], expDims[i][1]);
+            std::string actualShape = "[";
+            for (size_t j = 0; j < outDims.GetDimNum(); ++j) {
+                if (j > 0) {
+                    actualShape += ", ";
+                }
+                actualShape += std::to_string(outDims.GetDim(j));
             }
+            actualShape += "]";
+            std::string expectedShape = "[" + std::to_string(expDims[i][0]);
+            if (OUTPUT_RANKS[i] == 2) {
+                expectedShape += ", " + std::to_string(expDims[i][1]);
+            }
+            expectedShape += "]";
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), "output, expected shape", actualShape + ", " + expectedShape,
+                "output shape must match the dimensions derived from grad_hy and has_bias");
             return ge::GRAPH_FAILED;
         }
     }

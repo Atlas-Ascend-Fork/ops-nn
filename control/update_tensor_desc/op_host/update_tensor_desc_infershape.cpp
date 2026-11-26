@@ -20,6 +20,8 @@
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "exe_graph/runtime/infer_datatype_context.h"
 #include "op_common/log/log.h"
+
+#include <string>
 #include "../op_kernel/arch35/update_tensor_desc_tiling_data.h"
 
 using namespace ge;
@@ -37,20 +39,23 @@ static ge::graphStatus InferShape4UpdateTensorDesc(gert::InferShapeContext* cont
 
     const int64_t rank = static_cast<int64_t>(shapeVec->GetSize());
     if (rank < 1 || rank > kMaxRank) {
-        OP_LOGE(nodeName, "rank(attr shape)=%ld out of range [1, %ld]", rank, kMaxRank);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName, "shape", std::to_string(rank).c_str(),
+                                                 "rank must be within [1, kMaxRank].");
         return ge::GRAPH_FAILED;
     }
     const int64_t* dims = shapeVec->GetData();
     int64_t numel = 1;
     for (int64_t i = 0; i < rank; i++) {
         if (dims[i] < 0) {
-            OP_LOGE(nodeName, "attr shape[%ld]=%ld is negative", i, dims[i]);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName, "shape", std::to_string(dims[i]).c_str(),
+                                                     "all dimensions must be non-negative.");
             return ge::GRAPH_FAILED;
         }
         numel *= dims[i];
     }
     if (numel < kDescSize) {
-        OP_LOGE(nodeName, "numel(attr shape)=%ld below %ld", numel, kDescSize);
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(nodeName, "shape", std::to_string(numel).c_str(),
+                                                  "element count must be at least kDescSize.");
         return ge::GRAPH_FAILED;
     }
 

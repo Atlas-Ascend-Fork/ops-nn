@@ -53,7 +53,7 @@ static uint64_t GetDtypeIdx(ge::DataType dtype)
         case ge::DT_BF16:
             return 3;
         default:
-            return 0;
+            return DTYPE_NUM;
     }
 }
 
@@ -99,7 +99,9 @@ static ge::graphStatus GetOpCode(gert::TilingContext* context, int64_t& opCode)
     OP_CHECK_NULL_WITH_CONTEXT(context, opCodePtr);
     opCode = *opCodePtr;
     OP_CHECK_IF((opCode < 0 || opCode >= OP_CODE_NUM),
-                OP_LOGE(context, "op_code %ld out of range [0, %ld)", opCode, OP_CODE_NUM), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "op_code", std::to_string(opCode),
+                                                      "Expected 0 (add), 1 (sub), 2 (mul), or 3 (div)"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -113,8 +115,9 @@ static ge::graphStatus GetTensorNum(gert::TilingContext* context, uint64_t& tens
     tensorNum = x1InstanceInfoPtr->GetInstanceNum();
 
     OP_CHECK_IF(
-        (static_cast<int32_t>(tensorNum) > MAX_TENSOR_NUM_FOREACH_BINARY_OP),
-        OP_LOGE(context, "tensorNum %lu exceeds MAX_TENSOR_NUM %d", tensorNum, MAX_TENSOR_NUM_FOREACH_BINARY_OP),
+        tensorNum > static_cast<uint64_t>(MAX_TENSOR_NUM_FOREACH_BINARY_OP),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "x1 tensor count", std::to_string(tensorNum),
+                                              "Expected at most " + std::to_string(MAX_TENSOR_NUM_FOREACH_BINARY_OP)),
         return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -188,10 +191,16 @@ static ge::graphStatus ForeachBinaryOpTilingFunc(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
 
+    const uint64_t dtypeIdx = GetDtypeIdx(dataType);
+    OP_CHECK_IF(dtypeIdx == DTYPE_NUM,
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "x1[0]", Ops::Base::ToString(dataType),
+                                          "float16, float32, int32, or bfloat16"),
+                return ge::GRAPH_FAILED);
+
     tilingData->tensorCount = static_cast<int32_t>(tensorNum);
     tilingData->totalElements = totalElements;
 
-    uint64_t tilingKey = static_cast<uint64_t>(opCode) * DTYPE_NUM + GetDtypeIdx(dataType);
+    uint64_t tilingKey = static_cast<uint64_t>(opCode) * DTYPE_NUM + dtypeIdx;
 
     if (totalElements == 0) {
         tilingData->needCoreNum = 0;

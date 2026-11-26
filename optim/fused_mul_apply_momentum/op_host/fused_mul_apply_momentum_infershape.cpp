@@ -102,7 +102,10 @@ static ge::graphStatus InferShapeForFusedMulApplyMomentum(gert::InferShapeContex
     }
     const gert::Shape inferredShape = InferVarShape(*inShape, *accumShape);
     bool scalarShapeIsDynamic = false;
-    for (size_t inputIndex : {size_t{2}, size_t{4}, size_t{5}}) {
+    constexpr size_t scalarIndices[] = {2, 4, 5};
+    constexpr const char* scalarNames[] = {"lr", "momentum", "x2"};
+    for (size_t i = 0; i < 3; ++i) {
+        const size_t inputIndex = scalarIndices[i];
         const auto* scalarShape = context->GetInputShape(inputIndex);
         if (scalarShape == nullptr) {
             OP_LOGE_WITH_INVALID_INPUT("FusedMulApplyMomentum", "scalar input shape");
@@ -112,7 +115,9 @@ static ge::graphStatus InferShapeForFusedMulApplyMomentum(gert::InferShapeContex
             scalarShapeIsDynamic |= scalarShape->GetDim(dim) < 0;
         }
         if (!ScalarShapeCanHaveOneElement(*scalarShape)) {
-            OP_LOGE(context->GetNodeName(), "lr, momentum and x2 must each contain exactly one element");
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), scalarNames[i],
+                                                  Ops::Base::ToString(*scalarShape),
+                                                  "The tensor must contain exactly one element");
             return ge::GRAPH_FAILED;
         }
     }
@@ -127,7 +132,10 @@ static ge::graphStatus InferShapeForFusedMulApplyMomentum(gert::InferShapeContex
     }
     if (mainShapeIsEmpty &&
         (!KnownShapesCompatible(*inShape, *accumShape) || !KnownShapesCompatible(*inShape, *x1Shape))) {
-        OP_LOGE(context->GetNodeName(), "Empty main tensors must have identical shapes");
+        const std::string shapes = Ops::Base::ToString(*inShape) + ", " + Ops::Base::ToString(*accumShape) + ", " +
+                                   Ops::Base::ToString(*x1Shape);
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "var, accum, x1", shapes,
+                                               "Empty main tensors must have identical shapes");
         return ge::GRAPH_FAILED;
     }
     static const std::vector<int64_t> outIdxs{0, 1};

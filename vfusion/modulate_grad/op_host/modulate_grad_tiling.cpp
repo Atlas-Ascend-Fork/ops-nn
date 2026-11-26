@@ -13,10 +13,7 @@
  * \brief
  */
 #include "modulate_grad_tiling.h"
-#include <cassert>
 #include <string>
-#include <vector>
-#include "error_util.h"
 #include "log/log.h"
 #include "op_host/tiling_util.h"
 #include "platform/platform_infos_def.h"
@@ -53,13 +50,10 @@ constexpr uint32_t BUFFER_NUM = 2;
 constexpr uint32_t UB_BLOCK_NUM = 384;
 constexpr uint32_t MAX_AVAILABLE_UB_BLOCK_NUM = UB_BLOCK_NUM / BUFFER_NUM * BUFFER_NUM;
 
-// 合法输入下 tiling 内部/环境失败统一上报正式码 EZ1008（Execution_Error），携带 opName 与 reason。
+// 合法输入下平台信息异常属于内部错误，保留 EZ9999。
 static ge::graphStatus ReportTilingFailure(const char* opName, const std::string& reason)
 {
-    const std::vector<const char*> keys = {"opName", "reason"};
-    const std::vector<const char*> values = {opName, reason.c_str()};
-    REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
-    OP_LOGE_WITHOUT_REPORT(opName, "%s", reason.c_str());
+    OP_LOGE(opName, "%s", reason.c_str());
     return ge::GRAPH_FAILED;
 }
 
@@ -144,20 +138,27 @@ static ge::graphStatus ValidateModulateGradTilingInputs(gert::TilingContext* con
     const gert::Shape gradOutputStorage = gradOutputShape->GetStorageShape();
     const gert::Shape inputStorage = inputShape->GetStorageShape();
     if (gradOutputStorage.GetDimNum() != 3 || inputStorage.GetDimNum() != 3) {
-        OP_LOGE(context, "modulate_grad requires grad_output and input rank 3, got %zu and %zu.",
-                gradOutputStorage.GetDimNum(), inputStorage.GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context->GetNodeName(), "grad_output and input",
+            std::to_string(gradOutputStorage.GetDimNum()) + " and " + std::to_string(inputStorage.GetDimNum()),
+            "both input tensors must have rank 3");
         return ge::GRAPH_FAILED;
     }
     for (size_t i = 0; i < 3; ++i) {
         // Tiling runs on concrete runtime shapes; negative dims are unresolved or invalid.
         if (gradOutputStorage.GetDim(i) < 0 || inputStorage.GetDim(i) < 0) {
-            OP_LOGE(context, "modulate_grad requires non-negative dims at tiling, grad_output dim %ld, input dim %ld.",
-                    gradOutputStorage.GetDim(i), inputStorage.GetDim(i));
+            const gert::Shape& badShape = gradOutputStorage.GetDim(i) < 0 ? gradOutputStorage : inputStorage;
+            const char* name = gradOutputStorage.GetDim(i) < 0 ? "grad_output" : "input";
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                context->GetNodeName(), name, std::to_string(badShape.GetDim(i)).c_str(),
+                ("dimension " + std::to_string(i) + " must be non-negative at tiling").c_str());
             return ge::GRAPH_FAILED;
         }
         if (gradOutputStorage.GetDim(i) != inputStorage.GetDim(i)) {
-            OP_LOGE(context, "modulate_grad requires grad_output shape equal to input shape, dim %zu: %ld vs %ld.", i,
-                    gradOutputStorage.GetDim(i), inputStorage.GetDim(i));
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), "grad_output and input",
+                Ops::Base::ToString(gradOutputStorage) + " and " + Ops::Base::ToString(inputStorage),
+                ("dimension " + std::to_string(i) + " must match; broadcasting is not supported").c_str());
             return ge::GRAPH_FAILED;
         }
     }
@@ -178,20 +179,26 @@ static ge::graphStatus ValidateModulateGradTilingInputs(gert::TilingContext* con
             return ge::GRAPH_SUCCESS;
         }
         if (inputEmpty) {
-            OP_LOGE(context, "modulate_grad requires %s empty or absent when grad_output/input is empty.", name);
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), name, "non-empty",
+                                                   "optional input must be empty when input is empty");
             return ge::GRAPH_FAILED;
         }
         if (s.GetDimNum() != 2) {
-            OP_LOGE(context, "modulate_grad requires %s rank 2, got %zu.", name, s.GetDimNum());
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                context->GetNodeName(), name, std::to_string(s.GetDimNum()).c_str(), "optional input rank must be 2");
             return ge::GRAPH_FAILED;
         }
         if (s.GetDim(0) < 0 || s.GetDim(1) < 0) {
-            OP_LOGE(context, "modulate_grad requires non-negative %s dims at tiling.", name);
+            const size_t badDim = (s.GetDim(0) < 0) ? 0 : 1;
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                context->GetNodeName(), name, std::to_string(s.GetDim(badDim)).c_str(),
+                ("dimension " + std::to_string(badDim) + " must be non-negative at tiling").c_str());
             return ge::GRAPH_FAILED;
         }
         if (static_cast<int64_t>(s.GetDim(0)) != B || static_cast<int64_t>(s.GetDim(1)) != D) {
-            OP_LOGE(context, "modulate_grad requires %s shape [%ld, %ld], got [%ld, %ld].", name, B, D, s.GetDim(0),
-                    s.GetDim(1));
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), name, Ops::Base::ToString(s).c_str(),
+                ("shape must be [" + std::to_string(B) + ", " + std::to_string(D) + "]").c_str());
             return ge::GRAPH_FAILED;
         }
         return ge::GRAPH_SUCCESS;
@@ -204,21 +211,26 @@ static ge::graphStatus ValidateModulateGradTilingInputs(gert::TilingContext* con
     }
     const ge::DataType inputDtype = context->GetInputDesc(INPUT_INDEX)->GetDataType();
     if (inputDtype != ge::DT_FLOAT16 && inputDtype != ge::DT_BF16 && inputDtype != ge::DT_FLOAT) {
-        OP_LOGE(context, "modulate_grad unsupported input dtype %d.", static_cast<int32_t>(inputDtype));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "input", Ops::Base::ToString(inputDtype).c_str(),
+                                              "only FLOAT16, BF16 and FLOAT are supported");
         return ge::GRAPH_FAILED;
     }
     const ge::DataType gradOutputDtype = context->GetInputDesc(GRAD_OUTPUT_INDEX)->GetDataType();
     if (gradOutputDtype != inputDtype) {
-        OP_LOGE(context, "modulate_grad requires grad_output dtype %d equal to input dtype %d.",
-                static_cast<int32_t>(gradOutputDtype), static_cast<int32_t>(inputDtype));
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context->GetNodeName(), "grad_output and input",
+            Ops::Base::ToString(gradOutputDtype) + " and " + Ops::Base::ToString(inputDtype),
+            "both tensors must have the same dtype");
         return ge::GRAPH_FAILED;
     }
     // 输入 format 校验（仅必选输入，其 IR 索引不受可选输入压缩影响）。
     const ge::Format gradOutputFormat = context->GetInputDesc(GRAD_OUTPUT_INDEX)->GetFormat().GetStorageFormat();
     const ge::Format inputFormat = context->GetInputDesc(INPUT_INDEX)->GetFormat().GetStorageFormat();
     if (gradOutputFormat != ge::FORMAT_ND || inputFormat != ge::FORMAT_ND) {
-        OP_LOGE(context, "modulate_grad requires ND format, got grad_output format %d, input format %d.",
-                static_cast<int32_t>(gradOutputFormat), static_cast<int32_t>(inputFormat));
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+            context->GetNodeName(), "grad_output and input",
+            Ops::Base::ToString(gradOutputFormat) + " and " + Ops::Base::ToString(inputFormat),
+            "both tensors must use ND format");
         return ge::GRAPH_FAILED;
     }
     // 可选输入 dtype/format 校验：仅校验在场（非零尺寸）的 scale/shift，缺席或零尺寸占位
@@ -234,13 +246,16 @@ static ge::graphStatus ValidateModulateGradTilingInputs(gert::TilingContext* con
         }
         const ge::DataType dtype = desc->GetDataType();
         if (dtype != inputDtype) {
-            OP_LOGE(context, "modulate_grad requires %s dtype %d equal to input dtype %d.", name,
-                    static_cast<int32_t>(dtype), static_cast<int32_t>(inputDtype));
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context->GetNodeName(), (std::string(name) + " and input").c_str(),
+                Ops::Base::ToString(dtype) + " and " + Ops::Base::ToString(inputDtype),
+                "optional input dtype must match input dtype");
             return ge::GRAPH_FAILED;
         }
         const ge::Format format = desc->GetFormat().GetStorageFormat();
         if (format != ge::FORMAT_ND) {
-            OP_LOGE(context, "modulate_grad requires %s ND format, got format %d.", name, static_cast<int32_t>(format));
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), name, Ops::Base::ToString(format).c_str(),
+                                                   "optional input must use ND format");
             return ge::GRAPH_FAILED;
         }
         return ge::GRAPH_SUCCESS;
@@ -271,22 +286,28 @@ static ge::graphStatus ValidateModulateGradTilingInputs(gert::TilingContext* con
         }
         const ge::DataType dtype = desc->GetDataType();
         if (dtype != ge::DT_UNDEFINED && dtype != inputDtype) {
-            OP_LOGE(context, "modulate_grad requires %s dtype %d equal to input dtype %d.", name,
-                    static_cast<int32_t>(dtype), static_cast<int32_t>(inputDtype));
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context->GetNodeName(), (std::string(name) + " and input").c_str(),
+                Ops::Base::ToString(dtype) + " and " + Ops::Base::ToString(inputDtype),
+                "output dtype must match input dtype");
             return ge::GRAPH_FAILED;
         }
         if (expect != nullptr) {
             const gert::Shape outShape = out->GetStorageShape();
             const gert::Shape expectShape = expect->GetStorageShape();
             if (outShape.GetDimNum() != expectShape.GetDimNum()) {
-                OP_LOGE(context, "modulate_grad requires %s rank %zu, got %zu.", name, expectShape.GetDimNum(),
-                        outShape.GetDimNum());
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), (std::string(name) + " and input").c_str(),
+                    std::to_string(outShape.GetDimNum()) + " and " + std::to_string(expectShape.GetDimNum()),
+                    "output rank must match its corresponding input rank");
                 return ge::GRAPH_FAILED;
             }
             for (size_t i = 0; i < outShape.GetDimNum(); ++i) {
                 if (outShape.GetDim(i) != expectShape.GetDim(i)) {
-                    OP_LOGE(context, "modulate_grad requires %s dim %zu equal to %ld, got %ld.", name, i,
-                            expectShape.GetDim(i), outShape.GetDim(i));
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), (std::string(name) + " and input").c_str(),
+                        Ops::Base::ToString(outShape) + " and " + Ops::Base::ToString(expectShape),
+                        ("output dimension " + std::to_string(i) + " must match its input").c_str());
                     return ge::GRAPH_FAILED;
                 }
             }
@@ -325,7 +346,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, input_shape);
     const gert::Shape inputStorageShape = input_shape->GetStorageShape();
     if (inputStorageShape.GetDimNum() != 3) {
-        OP_LOGE(context, "modulate_grad input rank must be 3, got %zu.", inputStorageShape.GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            context->GetNodeName(), "input", std::to_string(inputStorageShape.GetDimNum()).c_str(), "rank must be 3");
         return ge::GRAPH_FAILED;
     }
     const uint64_t B = inputStorageShape.GetDim(0);
@@ -346,7 +368,9 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
             tiling.dataTypeSize = 4;
             break;
         default:
-            OP_LOGE(context, "modulate_grad unsupported input dtype %d.", static_cast<int32_t>(inputDtype));
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "input",
+                                                  Ops::Base::ToString(inputDtype).c_str(),
+                                                  "only FLOAT16, BF16 and FLOAT are supported");
             return ge::GRAPH_FAILED;
     }
     tiling.B = B;

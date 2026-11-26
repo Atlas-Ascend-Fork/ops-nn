@@ -16,6 +16,7 @@
  */
 
 #include "register/op_impl_registry.h"
+#include "graph/utils/type_utils.h"
 #include "log/log.h"
 
 using namespace ge;
@@ -30,11 +31,13 @@ static ge::graphStatus InferDataType4SoftplusV2Grad(gert::InferDataTypeContext* 
 
     ge::DataType gradDtype = context->GetInputDataType(IDX_0);
     ge::DataType featDtype = context->GetInputDataType(IDX_1);
-    OP_CHECK_IF(
-        gradDtype != featDtype,
-        OP_LOGE(context, "SoftplusV2Grad: input_features dtype must be the same as input_gradients, got %d vs %d",
-                static_cast<int>(featDtype), static_cast<int>(gradDtype)),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(gradDtype != featDtype,
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context->GetNodeName(), "input_gradients, input_features",
+                    (TypeUtils::DataTypeToSerialString(gradDtype) + ", " + TypeUtils::DataTypeToSerialString(featDtype))
+                        .c_str(),
+                    "input_gradients and input_features must have the same dtype"),
+                return ge::GRAPH_FAILED);
 
     context->SetOutputDataType(IDX_0, gradDtype);
     OP_LOGD(context->GetNodeName(), "End to do InferDataType4SoftplusV2Grad");

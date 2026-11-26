@@ -53,9 +53,14 @@ static ge::graphStatus InferShape4ThnnFusedGruCellGrad(gert::InferShapeContext* 
     }
 
     // ── rank==2 强校验（2D ND 张量）──
-    if (gradHyShape->GetDimNum() != RANK_2D || storageShape->GetDimNum() != RANK_2D) {
-        OP_LOGE(context, "[InferShape] rank must be 2: grad_hy rank=%zu, storage rank=%zu.", gradHyShape->GetDimNum(),
-                storageShape->GetDimNum());
+    if (gradHyShape->GetDimNum() != RANK_2D) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "grad_hy",
+                                                 std::to_string(gradHyShape->GetDimNum()), "rank must be 2");
+        return GRAPH_FAILED;
+    }
+    if (storageShape->GetDimNum() != RANK_2D) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "storage",
+                                                 std::to_string(storageShape->GetDimNum()), "rank must be 2");
         return GRAPH_FAILED;
     }
 
@@ -67,13 +72,18 @@ static ge::graphStatus InferShape4ThnnFusedGruCellGrad(gert::InferShapeContext* 
     // ── shape 约束：storage.shape == (B, 5H)
     //    未知维（UNKNOWN_DIM=-1）跳过对应维的校验，支持动态 shape。──
     if (batchSize != UNKNOWN_DIM && storageB != UNKNOWN_DIM && storageB != batchSize) {
-        OP_LOGE(context, "[InferShape] storage dim0 [%ld] != batch size [%ld].", static_cast<long>(storageB),
-                static_cast<long>(batchSize));
+        const std::string gradHyDims = "(" + std::to_string(batchSize) + ", " + std::to_string(hiddenSize) + ")";
+        const std::string storageDims = "(" + std::to_string(storageB) + ", " + std::to_string(storageH) + ")";
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "grad_hy, storage",
+                                               gradHyDims + ", " + storageDims, "the batch dimensions must match");
         return GRAPH_FAILED;
     }
     if (hiddenSize != UNKNOWN_DIM && storageH != UNKNOWN_DIM && storageH != STORAGE_CNT_PER_HIDDEN * hiddenSize) {
-        OP_LOGE(context, "[InferShape] storage dim1 [%ld] != 5 * hidden size [%ld].", static_cast<long>(storageH),
-                static_cast<long>(STORAGE_CNT_PER_HIDDEN * hiddenSize));
+        const std::string gradHyDims = "(" + std::to_string(batchSize) + ", " + std::to_string(hiddenSize) + ")";
+        const std::string storageDims = "(" + std::to_string(storageB) + ", " + std::to_string(storageH) + ")";
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "grad_hy, storage",
+                                               gradHyDims + ", " + storageDims,
+                                               "storage second dimension must equal 5 times grad_hy second dimension");
         return GRAPH_FAILED;
     }
 

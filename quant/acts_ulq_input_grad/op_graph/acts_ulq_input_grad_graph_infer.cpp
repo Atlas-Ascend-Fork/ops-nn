@@ -29,6 +29,8 @@
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/infer_datatype_context.h"
 
+#include <string>
+
 using namespace ge;
 
 namespace ops {
@@ -43,16 +45,13 @@ static constexpr int64_t X_GRAD_INDEX = 0;
 // （abnormal_scenario_analysis 9.3 修改项：错误信息补充实际 dtype 值）。
 static ge::graphStatus Verify4ActsULQInputGrad(gert::InferDataTypeContext* context)
 {
-    const ge::DataType yGradType = context->GetInputDataType(Y_GRAD_INDEX);
     const ge::DataType clampMinMaskType = context->GetInputDataType(CLAMP_MIN_MASK_INDEX);
     const ge::DataType clampMaxMaskType = context->GetInputDataType(CLAMP_MAX_MASK_INDEX);
     OP_CHECK_IF(clampMinMaskType != clampMaxMaskType,
-                OP_LOGE(context->GetNodeName(),
-                        "The type of clamp_min_mask must be same as clamp_max_mask, but got y_grad.dtype=%s, "
-                        "clamp_min_mask.dtype=%s, clamp_max_mask.dtype=%s. Supported: clamp_min_mask and "
-                        "clamp_max_mask must be the same dtype, one of BOOL, FLOAT16 or FLOAT.",
-                        Ops::Base::ToString(yGradType).c_str(), Ops::Base::ToString(clampMinMaskType).c_str(),
-                        Ops::Base::ToString(clampMaxMaskType).c_str()),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context->GetNodeName(), "clamp_min_mask and clamp_max_mask",
+                    (Ops::Base::ToString(clampMinMaskType) + " and " + Ops::Base::ToString(clampMaxMaskType)).c_str(),
+                    "the mask dtypes must be equal; each mask must be BOOL, FLOAT16 or FLOAT"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }

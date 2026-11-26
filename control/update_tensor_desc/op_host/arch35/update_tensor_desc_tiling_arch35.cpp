@@ -72,32 +72,41 @@ static ge::graphStatus TilingFuncUpdateTensorDesc(gert::TilingContext* context)
         OP_LOGE(nodeName, "y dtype(%d) must be DT_INT64", static_cast<int>(yDesc->GetDataType()));
         return ge::GRAPH_FAILED;
     }
-    if (xDesc->GetStorageFormat() != ge::FORMAT_ND || yDesc->GetStorageFormat() != ge::FORMAT_ND) {
-        OP_LOGE(nodeName, "format must be ND, x(%d) y(%d)", static_cast<int>(xDesc->GetStorageFormat()),
-                static_cast<int>(yDesc->GetStorageFormat()));
+    if (xDesc->GetStorageFormat() != ge::FORMAT_ND) {
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+            nodeName, "x", std::to_string(static_cast<int>(xDesc->GetStorageFormat())).c_str(), "must be ND.");
+        return ge::GRAPH_FAILED;
+    }
+    if (yDesc->GetStorageFormat() != ge::FORMAT_ND) {
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+            nodeName, "y", std::to_string(static_cast<int>(yDesc->GetStorageFormat())).c_str(), "must be ND.");
         return ge::GRAPH_FAILED;
     }
     const int64_t xRank = static_cast<int64_t>(xShape->GetStorageShape().GetDimNum());
     if (xRank > MAX_RANK_X) {
-        OP_LOGE(nodeName, "rank(x)=%ld exceeds max supported dim 8", xRank);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName, "x", std::to_string(xRank).c_str(),
+                                                 "rank must not exceed 8.");
         return ge::GRAPH_FAILED;
     }
     const int64_t shapeNum = static_cast<int64_t>(shapeAttr->GetSize());
     if (shapeNum < 1 || shapeNum > kMaxRank) {
-        OP_LOGE(nodeName, "rank(attr shape)=%ld out of range [1, %ld]", shapeNum, kMaxRank);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName, "shape", std::to_string(shapeNum).c_str(),
+                                                 "rank must be within [1, kMaxRank].");
         return ge::GRAPH_FAILED;
     }
     const int64_t* shapeVals = shapeAttr->GetData();
     int64_t numel = 1;
     for (int64_t i = 0; i < shapeNum; i++) {
         if (shapeVals[i] < 0) {
-            OP_LOGE(nodeName, "attr shape[%ld]=%ld is negative", i, shapeVals[i]);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName, "shape", std::to_string(shapeVals[i]).c_str(),
+                                                     "all dimensions must be non-negative.");
             return ge::GRAPH_FAILED;
         }
         numel *= shapeVals[i];
     }
     if (numel < kDescSize) {
-        OP_LOGE(nodeName, "numel(attr shape)=%ld below %ld", numel, kDescSize);
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(nodeName, "shape", std::to_string(numel).c_str(),
+                                                  "element count must be at least kDescSize.");
         return ge::GRAPH_FAILED;
     }
     const int64_t yNumel = yShape->GetStorageShape().GetShapeSize();

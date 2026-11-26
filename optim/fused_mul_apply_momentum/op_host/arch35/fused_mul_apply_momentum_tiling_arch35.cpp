@@ -381,7 +381,10 @@ ge::graphStatus FusedMulApplyMomentumTiling::GetShapeInfo()
     for (size_t i = 0; i < rawInputShapes_.size(); ++i) {
         const bool emptyMainTensor = isEmpty_ && (i == 0 || i == 1 || i == 3);
         if (!emptyMainTensor && !ShapeProductsFitInt64(rawInputShapes_[i])) {
-            OP_LOGE(opName, "Input shape or stride product exceeds int64 range");
+            const std::string inputName = "input[" + std::to_string(i) + "]";
+            const auto& shape = rawInputShapes_[i];
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(opName, inputName, Arr2String(shape.data(), shape.size()),
+                                                  "Shape or stride product exceeds the int64 range");
             return ge::GRAPH_FAILED;
         }
     }
@@ -476,8 +479,6 @@ ge::graphStatus FusedMulApplyMomentumTiling::GetShapeInfo()
             static_cast<unsigned long long>(ubSize_), static_cast<unsigned long>(coreNum_));
 
     if (!CheckBroadcastShape(normalInputShapes_, normalOutputShapes_, rank_)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "broadcast_shape", "incompatible",
-                                              "input and output shapes are not broadcast compatible");
         return ge::GRAPH_FAILED;
     }
 

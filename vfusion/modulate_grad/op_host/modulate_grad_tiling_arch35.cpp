@@ -24,6 +24,8 @@
 #include "../op_kernel/arch35/modulate_grad_struct.h"
 #include "../op_kernel/arch35/modulate_grad_regbase_tiling_key.h"
 
+#include <string>
+
 namespace optiling {
 ge::graphStatus ModulateGradTilingArch35(gert::TilingContext* context, bool isScale, bool isShift)
 {
@@ -34,7 +36,8 @@ ge::graphStatus ModulateGradTilingArch35(gert::TilingContext* context, bool isSc
 
     const gert::Shape inputStorageShape = input_shape->GetStorageShape();
     if (inputStorageShape.GetDimNum() != 3) {
-        OP_LOGE(context, "modulate_grad input rank must be 3, got %zu.", inputStorageShape.GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            context->GetNodeName(), "input", std::to_string(inputStorageShape.GetDimNum()).c_str(), "rank must be 3");
         return ge::GRAPH_FAILED;
     }
     const uint64_t B = inputStorageShape.GetDim(0);

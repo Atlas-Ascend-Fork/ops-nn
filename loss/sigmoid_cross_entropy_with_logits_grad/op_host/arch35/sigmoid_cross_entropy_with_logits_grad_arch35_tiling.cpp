@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <limits>
 #include <set>
+#include <string>
 
 using namespace ge;
 
@@ -32,10 +33,10 @@ static constexpr size_t MAX_DIM_NUM = 8;
 
 static ge::graphStatus TilingForSigmoidCrossEntropyWithLogitsGrad(gert::TilingContext* context)
 {
-    OP_LOGD(context->GetNodeName(), "Begin the tiling process for Arch35 architecture");
     if (context == nullptr) {
         return ge::GRAPH_FAILED;
     }
+    OP_LOGD(context->GetNodeName(), "Begin the tiling process for Arch35 architecture");
     auto nodeName = context->GetNodeName();
     if (nodeName != nullptr) {
         OP_LOGI(nodeName, "Enter SigmoidCrossEntropyWithLogitsGradTilingFunc");
@@ -47,16 +48,20 @@ static ge::graphStatus TilingForSigmoidCrossEntropyWithLogitsGrad(gert::TilingCo
     auto predictShape = predictShapePtr->GetStorageShape();
 
     OP_CHECK_IF(predictShape.GetDimNum() > MAX_DIM_NUM,
-                OP_LOGE(nodeName, "predict dim num must be <= 8, got %zu", predictShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    nodeName, "predict", std::to_string(predictShape.GetDimNum()).c_str(), "rank must be <= 8"),
                 return ge::GRAPH_FAILED);
 
     int64_t totalElements = 1;
     for (size_t i = 0; i < predictShape.GetDimNum(); ++i) {
         int64_t dim = predictShape.GetDim(i);
-        OP_CHECK_IF(dim < 0, OP_LOGE(nodeName, "predict dim must be non-negative, dim[%zu]=%ld", i, dim),
+        OP_CHECK_IF(dim < 0,
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(nodeName, "predict", std::to_string(dim).c_str(),
+                                                             "dimensions must be non-negative at tiling time"),
                     return ge::GRAPH_FAILED);
         if (dim != 0 && totalElements > std::numeric_limits<int64_t>::max() / dim) {
-            OP_LOGE(nodeName, "predict total elements overflow int64");
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(nodeName, "predict", Ops::Base::ToString(predictShape).c_str(),
+                                                  "the total element count exceeds the supported int64 range");
             return ge::GRAPH_FAILED;
         }
         totalElements *= dim;
@@ -70,7 +75,8 @@ static ge::graphStatus TilingForSigmoidCrossEntropyWithLogitsGrad(gert::TilingCo
 
     const std::set<ge::DataType> supportedDtypes = {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16};
     OP_CHECK_IF(supportedDtypes.count(inputDtype) == 0,
-                OP_LOGE(nodeName, "predict only support FP16/FP32/BF16, got %d", static_cast<int32_t>(inputDtype)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(nodeName, "predict", Ops::Base::ToString(inputDtype).c_str(),
+                                                      "supported dtypes are FLOAT16, FLOAT, and BFLOAT16"),
                 return ge::GRAPH_FAILED);
 
     auto targetDesc = context->GetInputDesc(IDX_TARGET);
@@ -79,7 +85,8 @@ static ge::graphStatus TilingForSigmoidCrossEntropyWithLogitsGrad(gert::TilingCo
     }
     ge::DataType targetDtype = targetDesc->GetDataType();
     OP_CHECK_IF(supportedDtypes.count(targetDtype) == 0,
-                OP_LOGE(nodeName, "target only support FP16/FP32/BF16, got %d", static_cast<int32_t>(targetDtype)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(nodeName, "target", Ops::Base::ToString(targetDtype).c_str(),
+                                                      "supported dtypes are FLOAT16, FLOAT, and BFLOAT16"),
                 return ge::GRAPH_FAILED);
 
     auto doutDesc = context->GetInputDesc(IDX_DOUT);
@@ -88,30 +95,37 @@ static ge::graphStatus TilingForSigmoidCrossEntropyWithLogitsGrad(gert::TilingCo
     }
     ge::DataType doutDtype = doutDesc->GetDataType();
     OP_CHECK_IF(supportedDtypes.count(doutDtype) == 0,
-                OP_LOGE(nodeName, "dout only support FP16/FP32/BF16, got %d", static_cast<int32_t>(doutDtype)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(nodeName, "dout", Ops::Base::ToString(doutDtype).c_str(),
+                                                      "supported dtypes are FLOAT16, FLOAT, and BFLOAT16"),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(inputDtype != targetDtype,
-                OP_LOGE(nodeName, "predict and target dtype must be the same, predict=%d, target=%d",
-                        static_cast<int32_t>(inputDtype), static_cast<int32_t>(targetDtype)),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    nodeName, "predict and target",
+                    (Ops::Base::ToString(inputDtype) + ", " + Ops::Base::ToString(targetDtype)).c_str(),
+                    "their dtypes must be identical"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(inputDtype != doutDtype,
-                OP_LOGE(nodeName, "predict and dout dtype must be the same, predict=%d, dout=%d",
-                        static_cast<int32_t>(inputDtype), static_cast<int32_t>(doutDtype)),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    nodeName, "predict and dout",
+                    (Ops::Base::ToString(inputDtype) + ", " + Ops::Base::ToString(doutDtype)).c_str(),
+                    "their dtypes must be identical"),
                 return ge::GRAPH_FAILED);
 
     auto targetShapePtr = context->GetInputShape(IDX_TARGET);
     OP_CHECK_NULL_WITH_CONTEXT(context, targetShapePtr);
     auto targetShape = targetShapePtr->GetStorageShape();
     OP_CHECK_IF(targetShape.GetDimNum() > MAX_DIM_NUM,
-                OP_LOGE(nodeName, "target dim num must be <= 8, got %zu", targetShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    nodeName, "target", std::to_string(targetShape.GetDimNum()).c_str(), "rank must be <= 8"),
                 return ge::GRAPH_FAILED);
 
     auto doutShapePtr = context->GetInputShape(IDX_DOUT);
     OP_CHECK_NULL_WITH_CONTEXT(context, doutShapePtr);
     auto doutShape = doutShapePtr->GetStorageShape();
     OP_CHECK_IF(doutShape.GetDimNum() > MAX_DIM_NUM,
-                OP_LOGE(nodeName, "dout dim num must be <= 8, got %zu", doutShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    nodeName, "dout", std::to_string(doutShape.GetDimNum()).c_str(), "rank must be <= 8"),
                 return ge::GRAPH_FAILED);
 
     bool targetShapeEqual = (predictShape.GetDimNum() == targetShape.GetDimNum());
@@ -120,10 +134,19 @@ static ge::graphStatus TilingForSigmoidCrossEntropyWithLogitsGrad(gert::TilingCo
             targetShapeEqual = false;
         }
     }
-    OP_CHECK_IF(!targetShapeEqual, OP_LOGE(nodeName, "target shape must be equal to predict shape"),
+    const std::string targetShapeReason = "must exactly match predict shape " + Ops::Base::ToString(predictShape);
+    OP_CHECK_IF(!targetShapeEqual,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(nodeName, "target", Ops::Base::ToString(targetShape).c_str(),
+                                                      targetShapeReason.c_str()),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(predictShape.GetShapeSize() != doutShape.GetShapeSize(),
-                OP_LOGE(nodeName, "predict and dout shape size must be equal"), return ge::GRAPH_FAILED);
+    const auto predictElements = predictShape.GetShapeSize();
+    const auto doutElements = doutShape.GetShapeSize();
+    const std::string doutSizeReason = "element count must equal predict element count " +
+                                       std::to_string(predictElements);
+    OP_CHECK_IF(predictElements != doutElements,
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(nodeName, "dout", std::to_string(doutElements).c_str(),
+                                                          doutSizeReason.c_str()),
+                return ge::GRAPH_FAILED);
 
     SigmoidCrossEntropyWithLogitsGradTilingData*
         tilingData = context->GetTilingData<SigmoidCrossEntropyWithLogitsGradTilingData>();

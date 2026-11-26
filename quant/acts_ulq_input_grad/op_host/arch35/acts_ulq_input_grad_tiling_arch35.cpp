@@ -32,6 +32,8 @@
 #include "../../op_kernel/arch35/acts_ulq_input_grad_tiling_data.h"
 #include "../../op_kernel/arch35/acts_ulq_input_grad_tiling_key.h"
 
+#include <string>
+
 namespace optiling {
 
 using Ops::Base::CeilAlign;
@@ -103,14 +105,12 @@ static ge::graphStatus GetShapeAndCheck(gert::TilingContext* context, int64_t* t
         return ge::GRAPH_SUCCESS;
     }
 
-    OP_CHECK_IF(shapeYGrad.GetShapeSize() != shapeMinMask.GetShapeSize() ||
-                    shapeYGrad.GetShapeSize() != shapeMaxMask.GetShapeSize() ||
-                    shapeYGrad.GetShapeSize() != shapeXGrad.GetShapeSize(),
-                OP_LOGE(context,
-                        "ActsULQInputGrad: input/output shape size mismatch: y_grad=%ld, min_mask=%ld, "
-                        "max_mask=%ld, x_grad=%ld",
-                        shapeYGrad.GetShapeSize(), shapeMinMask.GetShapeSize(), shapeMaxMask.GetShapeSize(),
-                        shapeXGrad.GetShapeSize()),
+    OP_CHECK_IF(shapeYGrad != shapeMinMask || shapeYGrad != shapeMaxMask || shapeYGrad != shapeXGrad,
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "y_grad, clamp_min_mask, clamp_max_mask and x_grad",
+                    Ops::Base::ToString(shapeYGrad) + ", " + Ops::Base::ToString(shapeMinMask) + ", " +
+                        Ops::Base::ToString(shapeMaxMask) + ", " + Ops::Base::ToString(shapeXGrad),
+                    "all input and output shapes must match exactly; broadcasting is not supported"),
                 return ge::GRAPH_FAILED);
 
     *totalIdx = shapeYGrad.GetShapeSize();
@@ -132,37 +132,44 @@ static ge::graphStatus CheckDtypeCombination(gert::TilingContext* context, ge::D
 
     // 两掩码 dtype 必须一致
     OP_CHECK_IF(minMaskDesc->GetDataType() != maxMaskDesc->GetDataType(),
-                OP_LOGE(context, "ActsULQInputGrad: two masks dtype mismatch: min=%d, max=%d",
-                        static_cast<int>(minMaskDesc->GetDataType()), static_cast<int>(maxMaskDesc->GetDataType())),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "clamp_min_mask and clamp_max_mask",
+                                                       (Ops::Base::ToString(minMaskDesc->GetDataType()) + " and " +
+                                                        Ops::Base::ToString(maxMaskDesc->GetDataType()))
+                                                           .c_str(),
+                                                       "both mask tensors must have the same dtype"),
                 return ge::GRAPH_FAILED);
 
     // y_grad dtype 支持集：fp16 / fp32
     OP_CHECK_IF(*yGradDtype != ge::DT_FLOAT16 && *yGradDtype != ge::DT_FLOAT,
-                OP_LOGE(context, "ActsULQInputGrad: y_grad dtype not supported: %d (need fp16/fp32)",
-                        static_cast<int>(*yGradDtype)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "y_grad",
+                                                      Ops::Base::ToString(*yGradDtype).c_str(),
+                                                      "only FLOAT16 and FLOAT are supported"),
                 return ge::GRAPH_FAILED);
 
     // mask dtype 支持集：bool / fp16 / fp32
     OP_CHECK_IF(*maskDtype != ge::DT_BOOL && *maskDtype != ge::DT_FLOAT16 && *maskDtype != ge::DT_FLOAT,
-                OP_LOGE(context, "ActsULQInputGrad: mask dtype not supported: %d (need bool/fp16/fp32)",
-                        static_cast<int>(*maskDtype)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "clamp_min_mask",
+                                                      Ops::Base::ToString(*maskDtype).c_str(),
+                                                      "only BOOL, FLOAT16 and FLOAT are supported"),
                 return ge::GRAPH_FAILED);
 
     // v2.0：mask 浮点须与 y_grad 同 dtype（混合浮点组合已移除）；mask 为 bool 时豁免。
     // 合法组合仅 4 组：(fp16,bool)(fp16,fp16)(fp32,bool)(fp32,fp32)。
     OP_CHECK_IF(*maskDtype != ge::DT_BOOL && *maskDtype != *yGradDtype,
-                OP_LOGE(context,
-                        "ActsULQInputGrad: float mask dtype (%d) must match y_grad dtype (%d) or be bool "
-                        "(mixed float combos removed in v2.0)",
-                        static_cast<int>(*maskDtype), static_cast<int>(*yGradDtype)),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context->GetNodeName(), "clamp_min_mask and y_grad",
+                    Ops::Base::ToString(*maskDtype) + " and " + Ops::Base::ToString(*yGradDtype),
+                    "a floating-point mask must match y_grad dtype; BOOL masks are also supported"),
                 return ge::GRAPH_FAILED);
 
     // x_grad dtype 必须与 y_grad 一致（same_as_first_input）
     auto xGradDesc = context->GetOutputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, xGradDesc);
     OP_CHECK_IF(xGradDesc->GetDataType() != *yGradDtype,
-                OP_LOGE(context, "ActsULQInputGrad: x_grad dtype (%d) must match y_grad dtype (%d)",
-                        static_cast<int>(xGradDesc->GetDataType()), static_cast<int>(*yGradDtype)),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context->GetNodeName(), "x_grad and y_grad",
+                    Ops::Base::ToString(xGradDesc->GetDataType()) + " and " + Ops::Base::ToString(*yGradDtype),
+                    "output x_grad dtype must match y_grad dtype"),
                 return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -174,10 +181,12 @@ static ge::graphStatus CheckDtypeCombination(gert::TilingContext* context, ge::D
 static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* totalIdx, ge::DataType* yGradDtype,
                                          ge::DataType* maskDtype, bool* isDynamicShape)
 {
-    OP_CHECK_IF(GetShapeAndCheck(context, totalIdx, isDynamicShape) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAndCheck error"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckDtypeCombination(context, yGradDtype, maskDtype) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "CheckDtypeCombination error"), return ge::GRAPH_FAILED);
+    if (GetShapeAndCheck(context, totalIdx, isDynamicShape) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    if (CheckDtypeCombination(context, yGradDtype, maskDtype) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
@@ -230,24 +239,31 @@ static ge::graphStatus CalcTilingData(gert::TilingContext* context, ActsULQInput
 
 static ge::graphStatus ActsULQInputGradTilingFunc(gert::TilingContext* context)
 {
+    if (context == nullptr) {
+        OP_LOGE("ActsULQInputGrad", "tiling context is nullptr");
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGD(context->GetNodeName(), "Begin the tiling process for Arch35 architecture");
     // 1、平台信息
     uint64_t ubSize = 0;
     int64_t availableCoreNum = 0;
-    OP_CHECK_IF(GetPlatformInfo(context, &ubSize, &availableCoreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+    if (GetPlatformInfo(context, &ubSize, &availableCoreNum) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     // 2、shape / dtype
     int64_t totalIdx;
     ge::DataType yGradDtype;
     ge::DataType maskDtype;
     bool isDynamicShape = false;
-    OP_CHECK_IF(GetShapeAttrsInfo(context, &totalIdx, &yGradDtype, &maskDtype, &isDynamicShape) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+    if (GetShapeAttrsInfo(context, &totalIdx, &yGradDtype, &maskDtype, &isDynamicShape) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     // 3、workspace
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
+    if (GetWorkspaceSize(context) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     // 4、TilingData 清零
     ActsULQInputGradTilingData* tiling = context->GetTilingData<ActsULQInputGradTilingData>();
@@ -274,9 +290,10 @@ static ge::graphStatus ActsULQInputGradTilingFunc(gert::TilingContext* context)
     // dtype 字节宽（bool 以 1B 计；fp16=2B、fp32=4B）
     int64_t yGradBytes = static_cast<int64_t>(ge::GetSizeByDataType(yGradDtype));
     int64_t maskBytes = static_cast<int64_t>(ge::GetSizeByDataType(maskDtype));
-    OP_CHECK_IF(
-        CalcTilingData(context, tiling, totalIdx, ubSize, availableCoreNum, yGradBytes, maskBytes) != ge::GRAPH_SUCCESS,
-        OP_LOGE(context, "CalcTilingData error"), return ge::GRAPH_FAILED);
+    if (CalcTilingData(context, tiling, totalIdx, ubSize, availableCoreNum, yGradBytes, maskBytes) !=
+        ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     // 6、TilingKey（模板参数选择，禁止 TILING_KEY_IS 宏）
     // 参数顺序与 tiling_key.h ASCENDC_TPL_ARGS_DECL 一致：仅 BUFFER_MODE

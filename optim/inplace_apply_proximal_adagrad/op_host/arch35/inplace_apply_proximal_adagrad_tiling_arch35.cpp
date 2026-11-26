@@ -30,6 +30,8 @@
 #include "atvoss/broadcast/broadcast_tiling.h"
 #include "optim/inplace_apply_proximal_adagrad/op_kernel/arch35/inplace_apply_proximal_adagrad_tiling_data.h"
 
+#include <string>
+
 namespace optiling {
 
 using Ops::Base::CeilAlign;
@@ -87,7 +89,9 @@ static ge::graphStatus GetShapeInfo(gert::TilingContext* context, int64_t& total
     OP_CHECK_NULL_WITH_CONTEXT(context, inputGrad);
     auto gradShape = EnsureNotScalar(inputGrad->GetStorageShape());
     if (varShape != accumShape || varShape != gradShape) {
-        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(opName, "var, accum, grad", "var, accum, grad",
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(opName, "var, accum, grad",
+                                               Ops::Base::ToString(varShape) + ", " + Ops::Base::ToString(accumShape) +
+                                                   ", " + Ops::Base::ToString(gradShape),
                                                "var, accum, grad shapes must be identical");
         return ge::GRAPH_FAILED;
     }
@@ -98,26 +102,31 @@ static ge::graphStatus GetShapeInfo(gert::TilingContext* context, int64_t& total
 
     auto varFormat = inputDesc->GetFormat().GetStorageFormat();
     OP_CHECK_IF(varFormat != ge::FORMAT_ND,
-                OP_LOGE(opName, "var format must be ND, got %d", static_cast<int32_t>(varFormat)),
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(opName, "var", Ops::Base::ToString(varFormat).c_str(),
+                                                       "only ND format is supported"),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(dataType != ge::DT_FLOAT && dataType != ge::DT_FLOAT16 && dataType != ge::DT_BF16,
-                OP_LOGE(context,
-                        "InplaceApplyProximalAdagrad: only float32 / float16 / "
-                        "bfloat16 are supported, got %d",
-                        static_cast<int>(dataType)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(opName, "var", Ops::Base::ToString(dataType).c_str(),
+                                                      "only FLOAT, FLOAT16 and BF16 are supported"),
                 return ge::GRAPH_FAILED);
 
     auto accumDesc = context->GetInputDesc(IDX_ACCUM);
     OP_CHECK_NULL_WITH_CONTEXT(context, accumDesc);
     if (accumDesc->GetDataType() != dataType) {
-        OP_LOGE(opName, "accum dtype must match var");
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            opName, "accum and var",
+            Ops::Base::ToString(accumDesc->GetDataType()) + " and " + Ops::Base::ToString(dataType),
+            "both tensors must have the same dtype");
         return ge::GRAPH_FAILED;
     }
     auto gradDesc = context->GetInputDesc(IDX_GRAD);
     OP_CHECK_NULL_WITH_CONTEXT(context, gradDesc);
     if (gradDesc->GetDataType() != dataType) {
-        OP_LOGE(opName, "grad dtype must match var");
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            opName, "grad and var",
+            Ops::Base::ToString(gradDesc->GetDataType()) + " and " + Ops::Base::ToString(dataType),
+            "both tensors must have the same dtype");
         return ge::GRAPH_FAILED;
     }
 
@@ -125,7 +134,11 @@ static ge::graphStatus GetShapeInfo(gert::TilingContext* context, int64_t& total
         auto scalarDesc = context->GetInputDesc(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, scalarDesc);
         if (scalarDesc->GetDataType() != dataType) {
-            OP_LOGE(opName, "lr/l1/l2 dtype must match var");
+            const char* names[] = {nullptr, nullptr, "lr", "l1", "l2"};
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                opName, (std::string(names[i]) + " and var").c_str(),
+                Ops::Base::ToString(scalarDesc->GetDataType()) + " and " + Ops::Base::ToString(dataType),
+                "the scalar tensor dtype must match var dtype");
             return ge::GRAPH_FAILED;
         }
         auto scalarShape = context->GetInputShape(i);
@@ -133,7 +146,8 @@ static ge::graphStatus GetShapeInfo(gert::TilingContext* context, int64_t& total
         auto scalarStorageShape = scalarShape->GetStorageShape();
         if (!scalarStorageShape.IsScalar() && scalarStorageShape.GetShapeSize() != SCALAR_ELEM_SIZE) {
             const char* names[] = {nullptr, nullptr, "lr", "l1", "l2"};
-            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(opName, names[i], "not scalar", "lr/l1/l2 must be scalar or size=1");
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(opName, names[i], Ops::Base::ToString(scalarStorageShape).c_str(),
+                                                  "the tensor must be scalar or contain exactly one element");
             return ge::GRAPH_FAILED;
         }
     }
@@ -188,13 +202,15 @@ static ge::graphStatus FillTilingForNonEmpty(gert::TilingContext* context, int64
     int64_t blockFactor = 0;
     int64_t usedCoreNum = 0;
     int64_t ubBlockSize = 0;
-    OP_CHECK_IF(ComputeMultiCoreSplit(context, totalElements, coreNum, blockFactor, usedCoreNum, ubBlockSize) !=
-                    ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "ComputeMultiCoreSplit error"), return ge::GRAPH_FAILED);
+    if (ComputeMultiCoreSplit(context, totalElements, coreNum, blockFactor, usedCoreNum, ubBlockSize) !=
+        ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     int64_t ubFactor = 0;
-    OP_CHECK_IF(ComputeUbSplit(context, ubSize, dataType, blockFactor, ubBlockSize, ubFactor) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "ComputeUbSplit error"), return ge::GRAPH_FAILED);
+    if (ComputeUbSplit(context, ubSize, dataType, blockFactor, ubBlockSize, ubFactor) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     tiling->blockFactor = blockFactor;
     tiling->ubFactor = ubFactor;
@@ -205,19 +221,26 @@ static ge::graphStatus FillTilingForNonEmpty(gert::TilingContext* context, int64
 
 static ge::graphStatus InplaceApplyProximalAdagradTilingFunc(gert::TilingContext* context)
 {
+    if (context == nullptr) {
+        OP_LOGE("InplaceApplyProximalAdagrad", "tiling context is nullptr");
+        return ge::GRAPH_FAILED;
+    }
     OP_LOGI(context->GetNodeName(), "Enter InplaceApplyProximalAdagradTilingFunc");
     uint64_t ubSize = 0;
     int64_t coreNum = 0;
-    OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+    if (GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     int64_t totalElements = 0;
     ge::DataType dataType = ge::DT_FLOAT;
-    OP_CHECK_IF(GetShapeInfo(context, totalElements, dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeInfo error"), return ge::GRAPH_FAILED);
+    if (GetShapeInfo(context, totalElements, dataType) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
+    if (GetWorkspaceSize(context) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
     InplaceApplyProximalAdagradTilingData* tiling = context->GetTilingData<InplaceApplyProximalAdagradTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);

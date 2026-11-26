@@ -33,6 +33,8 @@
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "op_common/log/log.h"
 
+#include <string>
+
 using namespace ge;
 
 namespace ops {
@@ -85,17 +87,18 @@ static ge::graphStatus InferShape4ActsULQInputGrad(gert::InferShapeContext* cont
 
     // 分支 2：rank 范围校验（spec rank_range [0,8]，对应 error_codes.shape_mismatch 的「rank 越界」）
     const size_t yDimNum = yGradShape->GetDimNum();
-    OP_CHECK_IF(
-        yDimNum > MAX_RANK,
-        OP_LOGE(context->GetNodeName(), "The rank of y_grad should be in [0, %zu], but got %zu.", MAX_RANK, yDimNum),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(yDimNum > MAX_RANK,
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "y_grad",
+                                                         std::to_string(yDimNum).c_str(), "rank must be in [0, 8]"),
+                return ge::GRAPH_FAILED);
 
     // 分支 3：维数必须一致（对齐 A2 dim num 校验）
     OP_CHECK_IF(yDimNum != clampMinMaskShape->GetDimNum() || yDimNum != clampMaxMaskShape->GetDimNum(),
-                OP_LOGE(context->GetNodeName(),
-                        "The dimension of clamp_min_mask and clamp_max_mask must be same as y_grad, "
-                        "but got y_grad=%zu, clamp_min_mask=%zu, clamp_max_mask=%zu.",
-                        yDimNum, clampMinMaskShape->GetDimNum(), clampMaxMaskShape->GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), "y_grad, clamp_min_mask and clamp_max_mask",
+                    std::to_string(yDimNum) + ", " + std::to_string(clampMinMaskShape->GetDimNum()) + ", " +
+                        std::to_string(clampMaxMaskShape->GetDimNum()),
+                    "all three input ranks must match"),
                 return ge::GRAPH_FAILED);
 
     // 分支 4：含动态维（-1）时跳过逐维值校验，留待运行期 Tiling 兜底（对齐 A2 is_dynamic）
@@ -103,10 +106,14 @@ static ge::graphStatus InferShape4ActsULQInputGrad(gert::InferShapeContext* cont
                            HasUnknownDim(clampMaxMaskShape);
     if (!isDynamic) {
         OP_CHECK_IF(*yGradShape != *clampMinMaskShape,
-                    OP_LOGE(context->GetNodeName(), "The shape of clamp_min_mask must be same as y_grad."),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "clamp_min_mask",
+                                                          Ops::Base::ToString(*clampMinMaskShape).c_str(),
+                                                          "shape must match y_grad; broadcasting is not supported"),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(*yGradShape != *clampMaxMaskShape,
-                    OP_LOGE(context->GetNodeName(), "The shape of clamp_max_mask must be same as y_grad."),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "clamp_max_mask",
+                                                          Ops::Base::ToString(*clampMaxMaskShape).c_str(),
+                                                          "shape must match y_grad; broadcasting is not supported"),
                     return ge::GRAPH_FAILED);
     }
 
