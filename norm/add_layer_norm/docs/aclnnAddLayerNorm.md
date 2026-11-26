@@ -275,7 +275,7 @@ aclnnStatus aclnnAddLayerNorm(
       <td>（x1、x2、yOut、meanOut、rstdOut、xOut）的维数不一致。</td>
     </tr>
     <tr>
-      <td>x1的维数小于gamma。</td>
+      <td>x1的维数小于gamma的维数。</td>
     </tr>
     <tr>
       <td>tiling阶段遇到当前产品不支持的空Tensor场景。</td>
@@ -342,7 +342,7 @@ aclnnStatus aclnnAddLayerNorm(
 - 空Tensor支持：支持空进空出；<term>Ascend 950PR&950DT系列产品</term>支持空入非空出。
 
 - **功能维度**
-  - 数据类型支持
+  - 数据类型支持。
 
     <!-- npu="310p" id8 -->
     - <term>Atlas推理系列产品</term>：x1、x2、beta、gamma、biasOptional支持FLOAT32、FLOAT16。

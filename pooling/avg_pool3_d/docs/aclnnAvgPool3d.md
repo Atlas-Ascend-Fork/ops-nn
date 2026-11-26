@@ -45,7 +45,7 @@
   (D_{out} - 1) * stride[0] >= D_{in} + padding[0]
   $$
 
-  则D_{out}的shape需减1。H_{out},W_{out}同理。
+  则D_{out}的shape需减1。H_{out}、W_{out}同理。
 
   $$
   out(N_i,C_i,d,h,w)=\frac{1}{kD*kH*kW}\sum_{k=0}^{kD-1}\sum_{m=0}^{kH-1}\sum_{n=0}^{kW-1}input(N_i,C_i,stride[0]*d+k,stride[1]*h+m,stride[2]*w+n)

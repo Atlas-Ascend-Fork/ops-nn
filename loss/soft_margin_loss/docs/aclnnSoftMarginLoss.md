@@ -124,7 +124,7 @@ aclnnStatus aclnnSoftMarginLoss(
       <td class="tg-0lax">out（aclTensor*）</td>
       <td class="tg-0lax">输出</td>
       <td class="tg-0lax">公式中输出的损失函数out。</td>
-      <td class="tg-0lax">若reduction取值为'none'，则shape需要与self和target进行<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape一致，否则out为0维标量（shape=[]）。</td>
+      <td class="tg-0lax">若reduction取值为'none'，则shape需要为self和target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>后的shape，否则out为0维标量（shape=[]）。</td>
       <td class="tg-0lax">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0lax">ND</td>
       <td class="tg-0lax">reduction='none'时为0-8（与broadcast后的shape一致）；reduction='mean'或'sum'时为0维标量</td>
@@ -234,7 +234,7 @@ aclnnStatus aclnnSoftMarginLoss(
 
 - **返回值**：
 
-  **aclnnStatus**：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 

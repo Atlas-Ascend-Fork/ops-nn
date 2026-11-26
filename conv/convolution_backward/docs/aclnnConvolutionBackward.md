@@ -23,11 +23,11 @@
 
 ## 功能说明
 
-- 接口功能：卷积的反向传播。根据输出掩码设置计算输入、权重和偏差的梯度。此函数支持1D、2D和3D卷积。
+- 接口功能：卷积的反向传播，根据输出掩码设置计算输入、权重和偏置的梯度。此函数支持1D、2D和3D卷积。
 
 - 计算公式：
 
-  输入input($N,C_{in},D_{in},H_{in},W_{in}$)、输出out($N,C_{out},D_{out},H_{out},W_{out}$)和卷积步长($stride$)、卷积核大小($kernelSize，kD,kH,kW$)、膨胀参数($dilation$)的关系是：
+  输入input($N,C_{in},D_{in},H_{in},W_{in}$)、输出out($N,C_{out},D_{out},H_{out},W_{out}$)和卷积步长($stride$)、卷积核大小($kernelSize,kD,kH,kW$)、膨胀参数($dilation$)的关系是：
 
   $$
     D_{out}=\lfloor \frac{D_{in}+2*padding[0]-dilation[0] * (kernelSize[0] - 1) - 1}{stride[0]}+1 \rfloor
@@ -41,7 +41,7 @@
     W_{out}=\lfloor \frac{W_{in}+2*padding[2]-dilation[2] * (kernelSize[2] -1) -1}{stride[2]}+1 \rfloor
   $$
 
-  卷积反向传播需要计算对卷积正向的输入张量 $x$（对应函数原型中的input）、卷积核权重张量 $w$ （对应函数原型中的weight）和偏置 $b$ 的梯度。
+  卷积反向传播需要计算对卷积正向的输入张量 $x$（对应函数原型中的input）、卷积核权重张量 $w$（对应函数原型中的weight）和偏置 $b$ 的梯度。
 
   - 对于 $x$ 的梯度 $\frac{\partial L}{\partial x}$（对应函数原型中的gradInput参数）：
 
@@ -134,7 +134,7 @@ aclnnStatus aclnnConvolutionBackward(
       </td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>NCL、NCHW、NCDHW</td>
-      <td>参见<a href="#约束说明" target="_blank">约束说明。</a></td>
+      <td>参见<a href="#约束说明" target="_blank">约束说明</a></td>
       <td>√</td>
     </tr>
     <tr>
@@ -149,7 +149,7 @@ aclnnStatus aclnnConvolutionBackward(
       </td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>NCL、NCHW、NCDHW</td>
-      <td>参见<a href="#约束说明" target="_blank">约束说明。</a></td>
+      <td>参见<a href="#约束说明" target="_blank">约束说明</a></td>
       <td>√</td>
     </tr>
     <tr>
@@ -158,19 +158,19 @@ aclnnStatus aclnnConvolutionBackward(
       <td>公式中的w。</td>
       <td>
        <ul><li>支持空Tensor。</li>
-       <li>数据类型与gradOutput、input满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推关系</a>和<a href="#约束说明" target="_blank">约束说明</a>）。</li>
+       <li>数据类型与gradOutput、input满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>和<a href="#约束说明" target="_blank">约束说明</a>）。</li>
        <li>shape不支持broadcast，要求和gradOutput、input满足卷积输入输出shape的推导关系。</li>
        <li>数据格式需要与gradWeight一致。</li></ul>
       </td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>NCL、NCHW、NCDHW</td>
-      <td>参见<a href="#约束说明" target="_blank">约束说明。</a></td>
+      <td>参见<a href="#约束说明" target="_blank">约束说明</a></td>
       <td>√</td>
     </tr>
     <tr>
       <td>biasSizes</td>
       <td>输入</td>
-      <td>卷积正向过程中偏差(bias)的shape。</td>
+      <td>卷积正向过程中偏置(bias)的shape。</td>
       <td>
        <ul><li>数组长度是1。</li>
        <li>在普通卷积中等于[weight.shape[0]]，在转置卷积中等于[weight.shape[1] * groups]。</li>
@@ -191,7 +191,7 @@ aclnnStatus aclnnConvolutionBackward(
       </td>
       <td>INT64</td>
       <td>-</td>
-      <td>参见<a href="#约束说明" target="_blank">约束说明。</a></td>
+      <td>参见<a href="#约束说明" target="_blank">约束说明</a></td>
       <td>×</td>
     </tr>
     <tr>
@@ -205,7 +205,7 @@ aclnnStatus aclnnConvolutionBackward(
       </td>
       <td>INT64</td>
       <td>-</td>
-      <td>参见<a href="#约束说明" target="_blank">约束说明。</a></td>
+      <td>参见<a href="#约束说明" target="_blank">约束说明</a></td>
       <td>×</td>
     </tr>
     <tr>
@@ -219,7 +219,7 @@ aclnnStatus aclnnConvolutionBackward(
       </td>
       <td>INT64</td>
       <td>-</td>
-      <td>参见<a href="#约束说明" target="_blank">约束说明。</a></td>
+      <td>参见<a href="#约束说明" target="_blank">约束说明</a></td>
       <td>×</td>
     </tr>
     <tr>
@@ -498,7 +498,7 @@ aclnnStatus aclnnConvolutionBackward(
      <th scope="row">gradOutput约束</th>
      <td>-</td>
      <td>
-        1d、2d和3d transposed=false场景，各个维度的大小应该大于等于1,当input为空Tensor时，支持N、C、D、H、W维度为0。
+        1d、2d和3d transposed=false场景，各个维度的大小应该大于等于1，当input为空Tensor时，支持N、C、D、H、W维度为0。
      </td>
      <td>
         不支持空Tensor。
@@ -525,7 +525,7 @@ aclnnStatus aclnnConvolutionBackward(
      </td>
      <td>
         2d和3d transposed=false场景，H、W的大小应该在[1,255]的范围内，其他维度的大小应该大于等于1。1d transposed=false场景，L的大小应该在[1,255]的范围内，其他维度的大小应该大于等于1。
-           <ul><li>transposed=true: 当input为空Tensor且满足空Tensor约束时，此时支持C、D、H、W轴为0。</li>
+           <ul><li>transposed=true：当input为空Tensor且满足空Tensor约束时，此时支持C、D、H、W轴为0。</li>
            <li>transposed=false：支持C维度等于0（C为0时要求input C维度也为0），当input为空Tensor且满足空Tensor约束时，此时支持D、H、W轴为0。</li></ul>
      </td>
      <td>
@@ -609,13 +609,13 @@ aclnnStatus aclnnConvolutionBackward(
         (input_{dim} + pad_{dim} \times 2) \ge ((weight_{dim}  - 1) \times dilation_{dim} + 1)
     $$
 
-由于硬件资源限制，算子在部分参数取值组合场景下会执行失败，请根据日志信息提示分析并排查问题。若无法解决，请单击[on the website](https://www.hiascend.com/support)获取技术支持。
+由于硬件资源限制，算子在部分参数取值组合场景下会执行失败，请根据日志信息提示分析并排查问题。若无法解决，请单击[昇腾社区技术支持页面](https://www.hiascend.com/support)获取技术支持。
 
 ## 调用示例
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <memory>
 #include <vector>

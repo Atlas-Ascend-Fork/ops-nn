@@ -27,7 +27,7 @@
 
 - 计算公式：
   - 场景1，当scaleAlg为0时：
-    - 将输入x在axis维度上按k = blocksize个数分组，一组k个数$\{\{V_i\}_{i=1}^{k}\}$动态量化为$\{mxscale1, \{P_i\}_{i=1}^{k}\}$, k = blocksize
+    - 将输入x在axis维度上按k = blocksize个数分组，一组k个数$\{\{V_i\}_{i=1}^{k}\}$动态量化为$\{mxscale1, \{P_i\}_{i=1}^{k}\}$, k = blocksize。
 
     $$
     shared\_exp = floor(log_2(max_i(|V_i|))) - emax \\
@@ -48,11 +48,11 @@
 
   - 场景2，当scaleAlg为1时，只涉及FP8类型：
     - 将长向量按块分，每块长度为k，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型FP8。如果最后一块不足k个元素，把缺失值视为0，按照完整块处理。
-    - 找到该块中数值的最大绝对值:
+    - 找到该块中数值的最大绝对值：
       $$
       Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
       $$
-    - 将FP32映射到目标数据类型FP8可表示的范围内，其中$Amax(DType)$是目标精度能表示的最大值
+    - 将FP32映射到目标数据类型FP8可表示的范围内，其中$Amax(DType)$是目标精度能表示的最大值。
       $$
       S_{fp32}^b = \frac{Amax(D_{fp32}^b)}{Amax(DType)}
       $$
@@ -67,7 +67,7 @@
     - 应用到量化的最终步骤，对于每个块内元素，$d^i = DType(d_{fp32}^i \cdot R_{fp32}^n)$，最终输出的量化结果是$\left(S^b, [d^i]_{i=1}^k\right)$，其中$S^b$代表块的缩放因子，这里指$S_{ue8m0}^b$，$[d^i]_{i=1}^k$代表块内量化后的数据。
   - 场景3，当scaleAlg为2时，只涉及FLOAT4_E2M1类型：
     - 当dstTypeMax = 0.0/6.0/7.0时：
-      - 将输入x在axis维度上按k = blocksize个数分组，一组k个数  $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\}$, k = blocksize：
+      - 将输入x在axis维度上按k = blocksize个数分组，一组k个数 $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale1, \{P_i\}_{i=1}^{k}\}$, k = blocksize：
       $$
       shared\_exp = \begin{cases} ceil(log_2(max_i(|V_i|))) - emax, & \text{如果} 尾数位的高比特前一/两位 \text{为1，且尾数不全为0} \\ floor(log_2(max_i(|V_i|))) - emax, & \text{其它} \end{cases} \\
       $$
@@ -77,11 +77,11 @@
       - 量化后的$P_{i}$按对应的$V_{i}$的位置组成输出yOut，mxscale按对应的axis维度上的分组组成输出mxscaleOut。
     - 当dstTypeMax != 0.0/6.0/7.0时：
       - 将长向量按块分，每块长度为k，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型。如果最后一块不足k个元素，把缺失值视为0，按照完整块处理。
-      - 找到该块中数值的最大绝对值:
+      - 找到该块中数值的最大绝对值：
       $$
       Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
       $$
-      - 将FP32映射到目标数据类型可表示的范围内，其中当dstTypeMax=0时，$Amax(DType)$是目标精度能表示的最大值；当dstTypeMax!=0时，$Amax(DType)$是dst_max_value传入值。
+      - 将FP32映射到目标数据类型可表示的范围内，其中当dstTypeMax = 0时，$Amax(DType)$是目标精度能表示的最大值；当dstTypeMax != 0时，$Amax(DType)$是dst_max_value传入值。
       $$
       S_{fp32}^b = \frac{Amax(D_{fp32}^b)}{Amax(DType)}
       $$
@@ -365,7 +365,7 @@ aclnnStatus aclnnDynamicMxQuantV2(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <memory>
 #include <vector>

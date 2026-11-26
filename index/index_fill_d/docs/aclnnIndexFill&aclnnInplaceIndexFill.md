@@ -339,7 +339,7 @@
         <td>value</td>
         <td>输入</td>
         <td>指定填充的数据值。</td>
-        <td>-</td>
+        <td>需要可转化为self的数据类型。</td>
         <td>与selfRef数据类型范围一致</td>
         <td>-</td>
         <td>-</td>
@@ -603,7 +603,7 @@ int main() {
 }
 ```
 
-**aclnnInplaceIndexFill调用示例：**
+### aclnnInplaceIndexFill调用示例
 
 ```Cpp
 #include <iostream>

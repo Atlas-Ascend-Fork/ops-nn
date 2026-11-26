@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- **接口功能：** 对优化器输入的m和v作为索引，取出各自qmap中的值，乘以每个blockSize对应的absmax进行反量化，而后实现AdamW优化器功能，更新后的m和v每blockSize中取一个最大值，每blockSize个m和v对应一个absmax，进行一次norm归一化，利用二分法找到m和v对应qmap中的索引作为输出，absmax也作为下一轮量化的输入。
+- **接口功能：** 将优化器输入的m和v作为索引，取出各自qmap中的值，乘以每个blockSize对应的absmax进行反量化，而后实现AdamW优化器功能，更新后的m和v每blockSize中取一个最大值，每blockSize个m和v对应一个absmax，进行一次norm归一化，利用二分法找到m和v对应qmap中的索引作为输出，absmax也作为下一轮量化的输入。
 
 - **优化器计算公式：**
 
@@ -201,7 +201,7 @@ aclnnStatus aclnnApplyAdamWQuant(
     <tr>
       <td class="tg-0pky">lr（double）</td>
       <td class="tg-0pky">输入</td>
-      <td class="tg-0pky">学习率，公式中的η，推荐1e-3，1e-5，1e-8，范围0~1。</td>
+      <td class="tg-0pky">学习率，公式中的η，推荐1e-3、1e-5、1e-8，范围0~1。</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">DOUBLE</td>
       <td class="tg-0pky">-</td>
@@ -261,7 +261,7 @@ aclnnStatus aclnnApplyAdamWQuant(
     <tr>
       <td class="tg-0pky">blockSize（int64_t）</td>
       <td class="tg-0pky">输入</td>
-      <td class="tg-0pky">每个block参与计算的size大小，固定为256。为上述absmax中所说，每blockSize选择一个最大值。</td>
+      <td class="tg-0pky">每个block参与计算的size大小，固定为256。如上述absmax中所说，每blockSize选择一个最大值。</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">INT64</td>
       <td class="tg-0pky">-</td>
@@ -386,7 +386,7 @@ aclnnStatus aclnnApplyAdamWQuant(
 
   确定性计算：
 
-  - aclnnApplyAdamWQuant默认确定性实现。
+  - aclnnApplyAdamWQuant默认确定性实现
 
 ## 调用示例
 

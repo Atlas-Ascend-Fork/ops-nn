@@ -55,7 +55,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnSwigluGroupGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnSwigluGroup”接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnSwigluGroupGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的op执行器，再调用“aclnnSwigluGroup”接口执行计算。
 
 ```Cpp
 aclnnStatus aclnnSwigluGroupGetWorkspaceSize(
@@ -116,7 +116,7 @@ aclnnStatus aclnnSwigluGroup(
       <td>weightOptional（aclTensor*）</td>
       <td>输入</td>
       <td>公式中的输入weightOptional，逐token权重。</td>
-      <td>支持空指针。支持空Tensor。不为空指针时，元素个数需等于x除最后一维外的维度乘积（bs）。</td>
+      <td>支持空指针，支持空Tensor。不为空指针时，元素个数需等于x除最后一维外的维度乘积（bs）。</td>
       <td>FLOAT32</td>
       <td>ND</td>
       <td>1-8</td>
@@ -136,7 +136,7 @@ aclnnStatus aclnnSwigluGroup(
       <td>clampLimit（double）</td>
       <td>输入</td>
       <td>公式中的输入clampLimit，表示激活前对A、B进行截断的上界。</td>
-      <td>在激活前对A、B进行截断，默认值-1.0，传入-1.0表示不进行截断，启用截断时必须传入大于0的值。</td>
+      <td>在激活前对A、B进行截断，默认值：-1.0，传入-1.0表示不进行截断，启用截断时必须传入大于0的值。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

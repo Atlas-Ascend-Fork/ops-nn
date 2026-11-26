@@ -107,7 +107,7 @@ aclnnStatus aclnnPreluBackward(
     <tr>
       <td>self（aclTensor*）</td>
       <td>输入</td>
-      <td>prelu的正向输入值。公式中的self。</td>
+      <td>prelu的正向输入值，公式中的self。</td>
       <td>不支持空Tensor，输入不支持包含±inf或nan。</td>
       <td>FLOAT16、FLOAT32、BFLOAT16</td>
       <td>ND</td>

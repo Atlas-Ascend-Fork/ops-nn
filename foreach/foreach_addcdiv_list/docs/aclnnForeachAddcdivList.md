@@ -32,7 +32,7 @@
   $$
 
   $$
-  y_i = {x1}_{i}+ \frac{{x2}_{i}}{{x3}_{i}}\times{scalars} \ \  (i=0,1,...n-1)
+  y_i = {x1}_{i}+ \frac{{x2}_{i}}{{x3}_{i}}\times{scalars} \ \ (i=0,1,...n-1)
   $$
 
 ## 函数原型
@@ -193,8 +193,8 @@ aclnnStatus aclnnForeachAddcdivList(
       <td>x1、x2、x3、out中存在空指针Tensor。</td>
     </tr>
     <tr>
-      <td rowspan="5">ACLNN_ERR_INNER_TILING_ERROR</td>
-      <td rowspan="5">561002</td>
+      <td rowspan="6">ACLNN_ERR_INNER_TILING_ERROR</td>
+      <td rowspan="6">561002</td>
       <td>x1、x2、x3、out的shape不满足约束。</td>
     </tr>
     <tr>
@@ -207,7 +207,7 @@ aclnnStatus aclnnForeachAddcdivList(
       <td>scalars的元素个数与x1的Tensor数量不一致。</td>
     </tr>
     <tr>
-      <td>out的与x1的Tensor数量不满足约束关系。</td>
+      <td>out与x1的Tensor数量不满足约束关系。</td>
     </tr>
     <tr>
       <td>scalars维度超过8维。</td>
@@ -217,14 +217,14 @@ aclnnStatus aclnnForeachAddcdivList(
   <!-- npu="950" id13 -->
   > 说明：
   >
-  > <term>Ascend 950PR&950DT系列产品</term>：x与out的tensorList长度（包含的Tensor个数）不一致，报错的返回码和错误码分别为：'ACLNN_ERR_INNER_TILING_ERROR 和 561002'。
+  > <term>Ascend 950PR&950DT系列产品</term>：x1与out的tensorList长度（包含的Tensor个数）不一致，报错的返回码和错误码分别为：'ACLNN_ERR_INNER_TILING_ERROR 和 561002'。
 
   <!-- end id13 -->
 
   <!-- npu="A3,910b" id14 -->
   > 说明：
   >
-  > <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：x的tensorList长度（包含的Tensor个数）大于out的tensorList长度（包含的Tensor个数），报错的返回码和错误码分别为：'ACLNN_ERR_INNER_TILING_ERROR 和 561002'。
+  > <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：x1的tensorList长度（包含的Tensor个数）大于out的tensorList长度（包含的Tensor个数），报错的返回码和错误码分别为：'ACLNN_ERR_INNER_TILING_ERROR 和 561002'。
   <!-- end id14 -->
 
 ## aclnnForeachAddcdivList
@@ -281,7 +281,7 @@ aclnnStatus aclnnForeachAddcdivList(
   <!-- end id10 -->
 
   <!-- npu="950" id11 -->
-  - <term>Ascend 950PR&950DT系列产品</term>
+  - <term>Ascend 950PR&950DT系列产品</term>：
     x1与out的tensorList长度（包含的Tensor个数）需一致。
   <!-- end id11 -->
 

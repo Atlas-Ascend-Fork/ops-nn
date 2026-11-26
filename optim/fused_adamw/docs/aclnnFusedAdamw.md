@@ -143,7 +143,7 @@ aclnnStatus aclnnFusedAdamw(
       <tr>
         <td>expAvgSqsRef（aclTensorList*）</td>
         <td>输入/输出</td>
-        <td><ul><li>不支持空Tensor。</li><li>二阶动量列表，公式中的v，不能为负数。</li></ul></td>
+        <td><ul><li>不支持空Tensor。</li><li>二阶矩列表，公式中的v，不能为负数。</li></ul></td>
         <td>-</td>
         <td>与“paramsRef”参数一致。</td>
         <td>ND</td>

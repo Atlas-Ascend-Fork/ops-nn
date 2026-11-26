@@ -161,7 +161,7 @@ aclnnStatus aclnnSwigluGroupQuantGrad(
     <tr>
       <td>gradY（aclTensor*）</td>
       <td>输入</td>
-      <td>梯度输出张量，来自下游层的梯度。</td>
+      <td>输出梯度张量，来自下游层的梯度。</td>
       <td><ul><li>shape=[..., H]，常用shape为[T, H]或[B, S, H]。</li><li>T为token数量，B为batch size，S为sequence length，H为hidden size。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
@@ -342,7 +342,7 @@ aclnnStatus aclnnSwigluGroupQuantGrad(
 ## 约束说明
 
 - 确定性计算：
-  - aclnnSwigluGroupQuantGrad默认确定性实现。
+  - aclnnSwigluGroupQuantGrad默认确定性实现
 
 - 输入shape约束：
   - x最后一维必须为偶数（$2H$）

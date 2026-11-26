@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- **接口功能**：将稀疏数据置换索引从表维度扩展到批次维度，适用于稀疏特征在不同rank中具有不同批次大小的情况。
+- **接口功能**：将稀疏数据置换索引从表级别扩展到批次级别，适用于稀疏特征在不同rank中具有不同批次大小的情况。
 - **计算公式**：
 
 $$
@@ -127,7 +127,7 @@ aclnnStatus aclnnExpandIntoJaggedPermute(
         <td>out</td>
         <td>输出</td>
         <td>公式中的输出。</td>
-        <td>shape为(outputSize)，仅支持连续tensor。</td>
+        <td>shape为(outputSize)，仅支持连续Tensor。</td>
         <td>与permute一致。</td>
         <td>ND</td>
         <td>-</td>
@@ -187,10 +187,10 @@ aclnnStatus aclnnExpandIntoJaggedPermute(
             <tr>
             <td rowspan="2"> ACLNN_ERR_INNER_TILING_ERROR </td>
             <td rowspan="2"> 561002 </td>
-            <td>多个输入tensor之间的shape信息不匹配。</td>
+            <td>多个输入Tensor之间的shape信息不匹配。</td>
             </tr>
             <tr>
-            <td>输入属性和输入tensor之间的shape信息不匹配。</td>
+            <td>输入属性和输入Tensor之间的shape信息不匹配。</td>
             </tr>
         </tbody></table>
 
@@ -246,8 +246,7 @@ aclnnStatus aclnnExpandIntoJaggedPermute(
 
 2. permute、inputOffsets、outputOffsets、out的数据类型需要相同。
 
-3. inputOffsets、outputOffsets首值为0；permute非空时严格单调递增；inputOffsets末值等于输入侧
-   总元素数，outputOffsets最后一个值等于outputSize。
+3. inputOffsets、outputOffsets首值为0；permute非空时严格单调递增；inputOffsets末值等于输入侧总元素数，outputOffsets最后一个值等于outputSize。
 
 4. 设P为permute的长度。P=0时outputSize必须为0；P>0时outputSize必须大于等于P。
 

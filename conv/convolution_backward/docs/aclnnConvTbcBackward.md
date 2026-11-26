@@ -138,7 +138,7 @@ aclnnStatus aclnnConvTbcBackward(
        <ul>
         <li>支持空Tensor。</li>
         <li>shape为(T<sub>in</sub>,B,C<sub>in</sub>)。</li>
-        <li>数据类型与weight的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>)。</li></ul>
+        <li>数据类型与weight的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li></ul>
      </td>
      <td>FLOAT、FLOAT16、BFLOAT16</td>
      <td>ND、NCL</td>
@@ -153,7 +153,7 @@ aclnnStatus aclnnConvTbcBackward(
        <ul>
         <li>支持空Tensor。</li>
         <li>shape为(K,C<sub>in</sub>,C<sub>out</sub>)。</li>
-        <li>数据类型与input、self的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>)。</li>
+        <li>数据类型与input、self的数据类型需满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>）。</li>
       </ul>
      </td>
      <td>FLOAT、FLOAT16、BFLOAT16</td>
@@ -303,30 +303,30 @@ aclnnStatus aclnnConvTbcBackward(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入指针类型入参是空指针。</td>
+      <td>传入的指针类型入参是空指针。</td>
     </tr>
     <tr>
       <td rowspan="9">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="9">161002</td>
-      <td>self，input，weight，bias，gradInput，gradWeight，gradBias的数据类型和数据格式不在支持的范围之内。</td>
+      <td>self、input、weight、bias、gradInput、gradWeight、gradBias的数据类型和数据格式不在支持的范围之内。</td>
     </tr>
     <tr>
       <td>非空Tensor场景下，gradInput或gradWeight与对应输入的数据类型不一致，或gradBias的数据类型不满足约束。</td>
     </tr>
     <tr>
-      <td>gradInput，gradWeight，gradBias的shape不满足infershape结果。</td>
+      <td>gradInput、gradWeight、gradBias的shape不满足infershape结果。</td>
     </tr>
     <tr>
-      <td>gradInput，gradWeight，gradBias的shape中存在小于0的值。</td>
+      <td>gradInput、gradWeight、gradBias的shape中存在小于0的值。</td>
     </tr>
     <tr>
-      <td>self，input，weight的dim不为3。</td>
+      <td>self、input、weight的dim不为3。</td>
     </tr>
     <tr>
       <td>bias的dim不为1。</td>
     </tr>
     <tr>
-      <td>input的第三个维度值不等于weight的第2个维度值。</td>
+      <td>input的第三个维度值不等于weight的第二个维度值。</td>
     </tr>
     <tr>
       <td>bias的维度值不等于weight的第三个维度值。</td>
@@ -520,7 +520,7 @@ aclnnStatus aclnnConvTbcBackward(
      <td>
         <ul><li>枚举值为0：当输入是FLOAT，Cube计算单元暂不支持，取0时会报错。</li>
         <li>枚举值为1：当输入是FLOAT，转换为FLOAT16计算。当输入为其他数据类型时不做处理。</li>
-        <li>枚举值为2：当输入是BFLOAT16不支持该选项。</li>
+        <li>枚举值为2：当输入是BFLOAT16时不支持该选项。</li>
         <li>枚举值为3：暂时不支持。</li>
         </ul>
      </td>

@@ -185,9 +185,9 @@ aclnnStatus aclnnInplaceQuantScatter(
   <!-- end id7 -->
   <!-- npu="A3,910b,310p" id8 -->
   - <term>Atlas推理系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
-    - selfRef、updates最后一维的大小必须32 Byte对齐。
+    - selfRef、updates最后一维的大小必须32字节对齐。
 
-    - `axis`、`quantAxis`或`reduction`超出文档支持范围时记录warning，不改变原有返回码和执行行为。无论`reduction`取值如何，均执行update操作。
+    - `axis`、`quantAxis`、`reduction`超出文档支持范围时记录warning，不改变原有返回码和执行行为。无论`reduction`取值如何，均执行update操作。
 
   <!-- end id8 -->
 
@@ -213,7 +213,7 @@ aclnnStatus aclnnInplaceQuantScatter(
         <tr>
         <td> ACLNN_ERR_PARAM_NULLPTR </td>
         <td> 161001 </td>
-        <td>如果传入参数是必选输入，输出或者必选属性，且是空指针，则返回161001。</td>
+        <td>如果传入参数是必选输入、输出或者必选属性，且是空指针，则返回161001。</td>
         </tr>
         <tr>
         <td rowspan="2"> ACLNN_ERR_PARAM_INVALID </td>
@@ -251,7 +251,7 @@ aclnnStatus aclnnInplaceQuantScatter(
   - aclnnInplaceQuantScatter默认确定性实现。
 
 - indices的维数只能是1维；不支持索引越界，索引越界不校验；indices映射的selfRef数据段不能重合，若重合则会因为多核并发原因导致多次执行结果不一样。
-- selfRef，indices，updates，quantScales，quantZeroPoints数据类型输入组合包括：
+- selfRef、indices、updates、quantScales、quantZeroPoints数据类型输入组合包括：
 
   <!-- npu="310p" id9 -->
   - <term>Atlas推理系列产品</term>：

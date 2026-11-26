@@ -152,7 +152,7 @@ aclnnStatus aclnnInplaceLeakyRelu(
   </table>
 
    <!-- npu="910" id7 -->
-   - <term>Atlas训练系列产品</term>：FLOAT、FLOAT16、DOUBLE。
+   - <term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16、DOUBLE。
    <!-- end id7 -->
 
 - **返回值：**

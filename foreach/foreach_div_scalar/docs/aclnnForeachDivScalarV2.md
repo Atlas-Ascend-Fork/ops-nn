@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：计算张量列表x除以标量scalar。本接口相较于[aclnnForeachDivScalar](aclnnForeachDivScalar.md)，修改入参scalar的结构类型aclTensor为aclScalar，请根据实际情况选择合适的接口
+- 接口功能：计算张量列表x除以标量scalar。本接口相较于[aclnnForeachDivScalar](aclnnForeachDivScalar.md)，修改入参scalar的结构类型aclTensor为aclScalar，请根据实际情况选择合适的接口。
 - 计算公式：
 
   $$
@@ -84,7 +84,7 @@ aclnnStatus aclnnForeachDivScalarV2(
     <tr>
       <td>x（aclTensorList*）</td>
       <td>输入</td>
-      <td>表示除法运算的第一个输入张量列表。对应公式中的`x`。</td>
+      <td>表示除法运算的第一个输入张量列表，对应公式中的`x`。</td>
       <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>

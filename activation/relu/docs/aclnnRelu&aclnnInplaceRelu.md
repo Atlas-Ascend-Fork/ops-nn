@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：激活函数，返回与输入tensor shape相同的tensor，tensor中value大于等于0时，取该value，小于0，取0。
+- 接口功能：激活函数，返回与输入Tensor shape相同的Tensor，Tensor中value大于等于0时，取该value，小于0时，取0。
 - 计算公式：
 
 $$
@@ -358,7 +358,7 @@ aclnnStatus aclnnInplaceRelu(
   </tbody>
   </table>
 
-- **返回值**
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 

@@ -27,7 +27,7 @@
 - 算子公式：
 
   $$
-  dx_i= (dy_i * g_i - \frac{1}{\operatorname{Rms}(\mathbf{x})} * x_i * \operatorname{Mean}(\mathbf{y})) * \frac{1} {\operatorname{Rms}(\mathbf{x})},  \quad \text { where } \operatorname{Mean}(\mathbf{y}) = \frac{1}{n}\sum_{i=1}^n (dy_i * g_i * x_i * \frac{1}{\operatorname{Rms}(\mathbf{x})})
+  dx_i= (dy_i * g_i - \frac{1}{\operatorname{Rms}(\mathbf{x})} * x_i * \operatorname{Mean}(\mathbf{y})) * \frac{1} {\operatorname{Rms}(\mathbf{x})}, \quad \text { where } \operatorname{Mean}(\mathbf{y}) = \frac{1}{n}\sum_{i=1}^n (dy_i * g_i * x_i * \frac{1}{\operatorname{Rms}(\mathbf{x})})
   $$
 
   对每个归一化位置 $i$，将各行 $r$ 对 gamma 梯度的贡献求和：
@@ -136,7 +136,7 @@ aclnnStatus aclnnRmsNormGradQuant(
       <td>gamma（aclTensor*）</td>
       <td>输入</td>
       <td>表示正向算子进行归一化计算的缩放因子（权重），对应公式中的gamma。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape需要满足gamma_shape = x_shape[n:], n < x_shape.dims()。</li><li>dtype与dy相同或为FLOAT32。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape需要满足gamma_shape = x_shape[n:]，n < x_shape.dims()。</li><li>dtype与dy相同或为FLOAT32。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-7</td>
@@ -247,7 +247,7 @@ aclnnStatus aclnnRmsNormGradQuant(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>如果传入参数是必选输入，输出或者必选属性，且是空指针，则返回161001。</td>
+      <td>如果传入参数是必选输入、输出或者必选属性，且是空指针，则返回161001。</td>
     </tr>
     <tr>
       <td>ACLNN_ERR_PARAM_INVALID</td>

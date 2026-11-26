@@ -23,14 +23,14 @@
 
 ## 功能说明
 
-- 接口功能：算子repeatInterleave的反向，将yGrad tensor的axis维度按repeats进行ReduceSum。
+- 接口功能：算子repeatInterleave的反向，将yGrad tensor的axis轴按repeats进行ReduceSum。
 
 - 示例：
     假设tensor yGrad是([[a<sub>1</sub>, b<sub>1</sub>, c<sub>1</sub>, d<sub>1</sub>, e<sub>1</sub>, f<sub>1</sub>], [a<sub>2</sub>, b<sub>2</sub>, c<sub>2</sub>, d<sub>2</sub>, e<sub>2</sub>, f<sub>2</sub>]]), repeats为([1, 2, 2, 1])，axis为1。
     那么最后生成的tensor为tensor([[a<sub>1</sub>, b<sub>1</sub> + c<sub>1</sub>, d<sub>1</sub> + e<sub>1</sub>, f<sub>1</sub>], [a<sub>2</sub>, b<sub>2</sub> + c<sub>2</sub>, d<sub>2</sub> + e<sub>2</sub>, f<sub>2</sub>]])。将tensor yGrad的axis轴按照repeats做ReduceSum。
 
     假设tensor yGrad是([[a<sub>1</sub>, b<sub>1</sub>, c<sub>1</sub>, d<sub>1</sub>, e<sub>1</sub>, f<sub>1</sub>], [a<sub>2</sub>, b<sub>2</sub>, c<sub>2</sub>, d<sub>2</sub>, e<sub>2</sub>, f<sub>2</sub>]]), repeats为([2])，axis为1。
-    那么最后生成的tensor为tensor([[a<sub>1</sub> + b<sub>1</sub>， c<sub>1</sub> + d<sub>1</sub>， e<sub>1</sub> + f<sub>1</sub>], [a<sub>2</sub> + b<sub>2</sub>, c<sub>2</sub> + d<sub>2</sub>, e<sub>2</sub> + f<sub>2</sub>]])。将tensor yGrad的axis轴按照repeats的值，每2个轴做ReduceSum。
+    那么最后生成的tensor为tensor([[a<sub>1</sub> + b<sub>1</sub>, c<sub>1</sub> + d<sub>1</sub>, e<sub>1</sub> + f<sub>1</sub>], [a<sub>2</sub> + b<sub>2</sub>, c<sub>2</sub> + d<sub>2</sub>, e<sub>2</sub> + f<sub>2</sub>]])。将tensor yGrad的axis轴按照repeats的值，每2个轴做ReduceSum。
     注意：该场景等效于repeats为(2)。
 
 ## 函数原型
@@ -84,7 +84,7 @@
     <tr>
       <td>yGrad</td>
       <td>输入</td>
-      <td>功能说明中待ReduceSum的输入tensor。</td>
+      <td>功能说明中待ReduceSum的输入Tensor。</td>
       <td>支持空tensor。</td>
       <td>FLOAT16、BFLOAT16、FLOAT</td>
       <td>ND</td>
@@ -134,7 +134,7 @@
     <tr>
       <td>executor</td>
       <td>输出</td>
-      <td>返回op执行器，包含了算子计算流程。</td>
+      <td>返回OP执行器，包含了算子计算流程。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -215,7 +215,7 @@
     <tr>
       <td>executor</td>
       <td>输入</td>
-      <td>op执行器，包含了算子计算流程。</td>
+      <td>OP执行器，包含了算子计算流程。</td>
     </tr>
     <tr>
       <td>stream</td>

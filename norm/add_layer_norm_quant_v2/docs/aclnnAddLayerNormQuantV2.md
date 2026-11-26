@@ -397,7 +397,7 @@ aclnnStatus aclnnAddLayerNormQuantV2(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>如果传入参数是必选输入，输出或者必选属性，且是空指针。</td>
+      <td>如果传入参数是必选输入、输出或者必选属性，且是空指针。</td>
     </tr>
     <tr>
       <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
@@ -415,7 +415,7 @@ aclnnStatus aclnnAddLayerNormQuantV2(
       <li>当量化模式为动态，即输入quantMode的值为"dynamic"时，outScales1Out的shape不为输入x1的shape剔除gamma所占尾维后的前缀（即维度数不等于x1维度数减gamma维度数，或前若干维与x1不一致）。</li></ol></td>
     </tr>
     <tr>
-      <td>全部输入tensor的shape满足以下任一等量关系：
+      <td>全部输入Tensor的shape满足以下任一等量关系：
       <ol>
       <li>x1、x2、xOut、layernormRes、y1的shape不相同；当scales2Optional可选输入存在时，该条件严格化为x1、x2、xOut、layernormRes、y1、y2的shape不相同。</li>
       <li>gamma、beta的shape不相同。</li>
@@ -479,14 +479,14 @@ aclnnStatus aclnnAddLayerNormQuantV2(
   - <term>Ascend 950PR&950DT系列产品</term>：
     - 支持`quantMode`取值"static"或"dynamic"；`quantMode="dynamic"`时`gamma`支持2-8维。
     - 支持perChannel与perTensor两种量化模式：perChannel时`scales1Optional`、`scales2Optional`、`zeroPoints1Optional`、`zeroPoints2Optional`的shape与`gamma`一致；perTensor时上述输入的shape为`[1]`，`gamma`为[1, x1的最后一维]。
-    - `scales1Optional`、`scales2Optional`、`zeroPoints1Optional`、`zeroPoints2Optional`的数据类型可为与`x1`一致，或为FLOAT32（`x1`为FLOAT16/BFLOAT16时）。
+    - `scales1Optional`、`scales2Optional`、`zeroPoints1Optional`、`zeroPoints2Optional`的数据类型可与`x1`一致，或为FLOAT32（`x1`为FLOAT16/BFLOAT16时）。
   <!-- end id7 -->
 
   <!-- npu="A3,910b" id8 -->
   - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：
     - 当前场景仅支持`quantMode`、`additionalOutput`、`divMode`分别取值为`static`、`false`、`false`。
     - 当前场景仅支持`scales2Optional`、`zeroPoints2Optional`为空。
-    - 当前场景仅支持perTensor量化模式，即`scales1Optional`、`zeroPoints1Optional`的shape为[1]，`gamma`、`beta`的shape为[1，x1的最后一维]。
+    - 当前场景仅支持perTensor量化模式，即`scales1Optional`、`zeroPoints1Optional`的shape为[1]，`gamma`、`beta`的shape为[1, x1的最后一维]。
     - 当前场景仅支持`scales1Optional`、`zeroPoints1Optional`数据类型与`x1`保持一致。
   <!-- end id8 -->
 
@@ -494,10 +494,10 @@ aclnnStatus aclnnAddLayerNormQuantV2(
   - <term>Atlas推理系列产品</term>：
     - 当前场景仅支持`quantMode`、`additionalOutput`、`divMode`分别取值为`static`、`false`、`false`。
     - 当前场景仅支持`scales2Optional`、`zeroPoints2Optional`为空。
-    - 当前场景仅支持perTensor量化模式，即`scales1Optional`、`zeroPoints1Optional`的shape为[1]，`gamma`、`beta`的shape为[1，x1的最后一维]。
+    - 当前场景仅支持perTensor量化模式，即`scales1Optional`、`zeroPoints1Optional`的shape为[1]，`gamma`、`beta`的shape为[1, x1的最后一维]。
     - 当前场景仅支持`scales1Optional`、`zeroPoints1Optional`数据类型与`x1`保持一致。
     - 当前场景不支持BFLOAT16类型。
-    - 入参`x1`、`x2`的norm轴长度必须大于等于32 Byte。
+    - 入参`x1`、`x2`的norm轴长度必须大于等于32字节。
   <!-- end id9 -->
 
 - 功能维度：

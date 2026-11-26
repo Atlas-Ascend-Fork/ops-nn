@@ -108,7 +108,7 @@ aclnnStatus aclnnQuantMatmulReduceSumWeightNz(
       <td>
         <ul><li>不支持空Tensor。</li>
         <li>入参按逻辑shape声明为3维(batch, k, n)，数据格式为NZ。不要把NZ内部块排布当作入参shape。</li>
-        <li>(batch，n1，k1，k0，n0)是NZ内部存储排布，其中k0 = 16，n0 = 32，ceil(k / 16) = k1，ceil(n / n0) = n1。</li>
+        <li>(batch, n1, k1, k0, n0)是NZ内部存储排布，其中k0 = 16，n0 = 32，ceil(k / 16) = k1，ceil(n / n0) = n1。</li>
         <li>可使用aclnnCalculateMatmulWeightSizeV2接口以及aclnnTransMatmulWeight接口，把原始ND格式的(batch, k, n)转换成上述内部排布后再按NZ声明。</li></ul>
       </td>
       <td>INT8</td>
@@ -122,11 +122,11 @@ aclnnStatus aclnnQuantMatmulReduceSumWeightNz(
       <td>公式中的x1Scale。</td>
       <td>
         <ul><li>不支持空Tensor。</li>
-        <li>在实际计算时，x1Scale会被广播为(batch，m，n)。</li></ul>
+        <li>在实际计算时，x1Scale会被广播为(batch, m, n)。</li></ul>
       </td>
       <td>FLOAT32</td>
       <td>ND</td>
-      <td>(batch，m)</td>
+      <td>(batch, m)</td>
       <td>√</td>
     </tr>
     <tr>
@@ -135,7 +135,7 @@ aclnnStatus aclnnQuantMatmulReduceSumWeightNz(
       <td>公式中的x2Scale。</td>
       <td>
         <ul><li>不支持空Tensor。</li>
-        <li>在实际计算时，x2Scale会被广播为(batch，m，n)。</li></ul>
+        <li>在实际计算时，x2Scale会被广播为(batch, m, n)。</li></ul>
       </td>
       <td>BFLOAT16</td>
       <td>ND</td>
@@ -265,7 +265,7 @@ aclnnStatus aclnnQuantMatmulReduceSumWeightNz(
     <tr>
       <td>executor（aclOpExecutor**）</td>
       <td>输出</td>
-      <td>返回op执行器，包含了算子计算流程</td>
+      <td>返回op执行器，包含了算子计算流程。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -306,7 +306,7 @@ aclnnStatus aclnnQuantMatmulReduceSumWeightNz(
         <td>x1、x2、x1Scale、x2Scale或out的shape不满足校验条件。</td>
     </tr>
     <tr>
-        <td>x1、x2、x1Scale、x2Scale或out是空tensor。</td>
+        <td>x1、x2、x1Scale、x2Scale或out是空Tensor。</td>
     </tr>
     </tbody>
     </table>

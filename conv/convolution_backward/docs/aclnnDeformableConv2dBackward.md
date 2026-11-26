@@ -27,7 +27,7 @@
 
 - 计算公式：
 
-  输入input($N,C_{in},H_{in},W_{in}$)、输出out($N,C_{out},H_{out},W_{out}$)和卷积步长($stride$)、卷积核大小($kernelSize,K_H,K_W$)、膨胀参数($dilation$)、填充($padding$)的关系是：
+  输入input($N,C_{in},H_{in},W_{in}$)、输出out($N,C_{out},H_{out},W_{out}$)和滑动窗口步长($stride$)、卷积核大小($kernelSize,K_H,K_W$)、膨胀系数($dilation$)、填充($padding$)的关系是：
 
   $$
     H_{out}=\lfloor \frac{H_{in}+padding[0]+padding[1]-((K_H - 1) * dilation[2] + 1)}{stride[2]}+1 \rfloor
@@ -184,7 +184,7 @@ aclnnStatus aclnnDeformableConv2dBackward(
     <tr>
       <td>kernelSize</td>
       <td>输入</td>
-      <td>表示卷积核大小，对应公式中的K<sub>H</sub>，K<sub>W</sub>。</td>
+      <td>表示卷积核大小，对应公式中的K<sub>H</sub>、K<sub>W</sub>。</td>
       <td>size为2(K<sub>H</sub>, K<sub>W</sub>)，各元素均大于零，K<sub>H</sub> * K<sub>W</sub>不能超过2048，K<sub>H</sub> * K<sub>W</sub> * inC/groups不能超过65535。</td>
       <td>INT64</td>
       <td>-</td>
@@ -225,7 +225,7 @@ aclnnStatus aclnnDeformableConv2dBackward(
       <td>groups</td>
       <td>输入</td>
       <td>表示分组卷积的分组数。</td>
-      <td>inC和outC需都可被groups数整除，groups数大于零。</td>
+      <td>C<sub>in</sub>和C<sub>out</sub>需都可被groups数整除，groups数大于零。</td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>

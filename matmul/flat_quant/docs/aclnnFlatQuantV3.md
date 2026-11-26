@@ -211,7 +211,7 @@ aclnnStatus aclnnFlatQuantV3(
       <td>kroneckerP2（aclTensor*）</td>
       <td>输入</td>
       <td>输入的计算矩阵2，对应公式中的`kroneckerP2`。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape为[N2, N2]，两维大小均与x的第三维大小N2一致。仅在perGroup场景下支持shape为[0,0]，表示算子不使用右矩阵计算，只进行左矩阵相乘。</li><li>数据类型与入参x的数据类型一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape为[N2, N2]，两维大小均与x的第三维大小N2一致。仅在pergroup场景下支持shape为[0,0]，表示算子不使用右矩阵计算，只进行左矩阵相乘。</li><li>数据类型与入参x的数据类型一致。</li></ul></td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2</td>

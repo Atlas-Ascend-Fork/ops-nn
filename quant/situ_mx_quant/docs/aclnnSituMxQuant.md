@@ -43,7 +43,7 @@ $$
 situOut = situ_a \times up
 $$
 
-    其中，当activate_left为true时，gate取x的前半部分，up取后半部分；当activate_left为false时，gate取x的后半部分，up取前半部分。
+其中，当activate_left为true时，gate取x的前半部分，up取后半部分；当activate_left为false时，gate取x的后半部分，up取前半部分。
 
 2. MX量化（OCP算法）
 
@@ -252,7 +252,7 @@ aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/co
   <tr>
     <td rowspan="10">ACLNN_ERR_PARAM_INVALID</td>
     <td rowspan="10">161002</td>
-    <td>x、yOut、yScaleOut为空tensor。</td>
+    <td>x、yOut、yScaleOut为空Tensor。</td>
   </tr>
   <tr>
     <td>x的数据类型不在支持的范围之内。</td>

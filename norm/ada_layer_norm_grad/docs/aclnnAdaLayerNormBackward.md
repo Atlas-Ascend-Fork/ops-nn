@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：[aclnnAdaLayerNormV2](../../ada_layer_norm_v2/docs/aclnnAdaLayerNormV2.md)的反向传播。用于计算输入张量的梯度，以便在反向传播过程中更新模型参数。
+- 接口功能：[aclnnAdaLayerNormV2](../../ada_layer_norm_v2/docs/aclnnAdaLayerNormV2.md)的反向传播，用于计算输入张量的梯度，以便在反向传播过程中更新模型参数。
 
 - 计算公式：
 
@@ -153,7 +153,7 @@ aclnnStatus aclnnAdaLayerNormBackward(
       <td>input（aclTensor*）</td>
       <td>输入</td>
       <td>表示正向计算的首个输入，对应计算公式中的`input`。</td>
-      <td><ul><li>不支持空Tensor。</li><li>与输入`gradOut`的数据类型相同。</li><li>shape与`gradOut`的shape相等，为[B…, S, H], 其中B支持0到6个维度。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>与输入`gradOut`的数据类型相同。</li><li>shape与`gradOut`的shape相等，为[B…, S, H]，其中B支持0到6个维度。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2-8</td>
@@ -162,8 +162,8 @@ aclnnStatus aclnnAdaLayerNormBackward(
     <tr>
       <td>normalizedShape（aclIntArray*）</td>
       <td>输入</td>
-      <td>表示需要进行norm计算的维度，对应计算公式中的`reduce_axis_2`。</td>
-      <td><ul><li>公式中的`reduce_axis_0`对应维度B，`reduce_axis_1`对应维度S，B和S维度不进行norm计算的维度。</li><li>在此处值固定为长度为1的数组，数组固定元素为[H]，不支持为空。</li></ul></td>
+      <td>表示需要进行归一化计算的维度，对应计算公式中的`reduce_axis_2`。</td>
+      <td><ul><li>公式中的`reduce_axis_0`对应维度B，`reduce_axis_1`对应维度S，B和S维度为不进行norm计算的维度。</li><li>在此处值固定为长度为1的数组，数组固定元素为[H]，不支持为空。</li></ul></td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
@@ -192,7 +192,7 @@ aclnnStatus aclnnAdaLayerNormBackward(
     <tr>
       <td>scale（aclTensor*）</td>
       <td>输入</td>
-      <td>表示自适应缩放参数。对应计算公式中的`scale`。</td>
+      <td>表示自适应缩放参数，对应计算公式中的`scale`。</td>
       <td><ul><li>不支持空Tensor。</li><li>数据类型与`gradOut`的数据类型一致。</li><li>shape为[B…, H]或[B…, 1, H]，其中B支持0到6个维度，维度数量和大小与`gradOut`中的B保持一致，H与`gradOut`中H维一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -203,7 +203,7 @@ aclnnStatus aclnnAdaLayerNormBackward(
       <td>shift（aclTensor*）</td>
       <td>输入</td>
       <td>表示自适应偏移参数。</td>
-      <td><ul><li>不支持空Tensor。</li><li>数据类型与入参`gradOut`的数据类型一致。</li><li>shape为[B…, H]或[B…, 1, H]，其中B支持0到6个维度，维度数量和大小与`gradOut`中的B保持一致，H与`gradOut`中H维一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>数据类型与输入`gradOut`的数据类型相同。</li><li>shape为[B…, H]或[B…, 1, H]，其中B支持0到6个维度，维度数量和大小与`gradOut`中的B保持一致，H与`gradOut`中H维一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>
@@ -212,7 +212,7 @@ aclnnStatus aclnnAdaLayerNormBackward(
     <tr>
       <td>weightOptional（aclTensor*）</td>
       <td>输入</td>
-      <td>可选输入参数，表示归一化缩放参数。对应计算公式中的`weightOptional`。</td>
+      <td>可选输入参数，表示归一化缩放参数，对应计算公式中的`weightOptional`。</td>
       <td><ul><li>不支持空Tensor。</li><li>当数据类型不为FLOAT32时，参数数据类型与`input`相同。</li><li>shape为[H]，H与`gradOut`中H维一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -222,7 +222,7 @@ aclnnStatus aclnnAdaLayerNormBackward(
     <tr>
       <td>biasOptional（aclTensor*）</td>
       <td>输入</td>
-      <td>可选输入参数，表示归一化偏移参数。对应计算公式中的`biasOptional`。</td>
+      <td>可选输入参数，表示归一化偏置参数，对应计算公式中的`biasOptional`。</td>
       <td><ul><li>不支持空Tensor。</li><li>数据类型与可选参数`weightOptional`一致。</li><li>shape为[H]，H与`gradOut`中H维一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -380,7 +380,7 @@ aclnnStatus aclnnAdaLayerNormBackward(
       <td>biasOptional非空且shape数组与normalizedShape数组不相等。</td>
     </tr>
     <tr>
-      <td> gradOut，input，mean，rstd，scale，shift，weightOptional（非空时），biasOptional（非空时），gradInputOut（非空时），gradScaleOut（非空时），gradShiftOut（非空时），gradWeightOut（非空时），gradBiasOut（非空时）的shape维度大于8维。</td>
+      <td> gradOut、input、mean、rstd、scale、shift、weightOptional（非空时）、biasOptional（非空时）、gradInputOut（非空时）、gradScaleOut（非空时）、gradShiftOut（非空时）、gradWeightOut（非空时）、gradBiasOut（非空时）的shape维度大于8维。</td>
     </tr>
   </tbody></table>
 

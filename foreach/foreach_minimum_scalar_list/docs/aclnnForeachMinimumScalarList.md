@@ -170,10 +170,10 @@ aclnnStatus aclnnForeachMinimumScalarList(
       <td>x和out的数据类型不一致。</td>
     </tr>
     <tr>
-      <td>out的Tensor个数小于入参`x`的Tensor个数。</td>
+      <td>out的Tensor个数小于入参x的Tensor个数。</td>
     </tr>
     <tr>
-      <td>scalars的元素个数与`x`中Tensor的个数不一致。</td>
+      <td>scalars的元素个数与x中Tensor的个数不一致。</td>
     </tr>
     <tr>
       <td rowspan="4">ACLNN_ERR_INNER_TILING_ERROR</td>

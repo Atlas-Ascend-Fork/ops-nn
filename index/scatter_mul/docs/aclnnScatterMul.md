@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 算子功能：实现兼容tf.compat.v1.scatter_mul的功能，将tensor updates中的值按指定的索引tensor indices逐切片乘到tensor varRef的切片上。若有多于一个updates值作用到varRef的同一个切片，那么这些值将会在这一切片上连乘。规则如下：
+- 算子功能：实现兼容tf.compat.v1.scatter_mul的功能，将Tensor updates中的值按指定的索引Tensor indices逐切片乘到Tensor varRef的切片上。若有多于一个updates值作用到varRef的同一个切片，那么这些值将会在这一切片上连乘。规则如下：
 
 $$
 varRef[indices[i],...] = varRef[indices[i],...] \times updates[i,...]
@@ -31,7 +31,7 @@ $$
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnScatterMulGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnScatterMul”接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnScatterMulGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的OP执行器，再调用“aclnnScatterMul”接口执行计算。
 
 ```cpp
 aclnnStatus aclnnScatterMulGetWorkspaceSize(

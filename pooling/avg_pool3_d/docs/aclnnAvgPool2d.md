@@ -25,7 +25,7 @@
 
 - 接口功能：对输入Tensor进行窗口为$kH * kW$、步长为$sH * sW$的二维平均池化操作，其中$k$为kernelSize，表示池化窗口的大小，$s$为stride，表示池化操作的步长。
 - 计算公式：
-  输入input（$N,C,H,W$）、输出out（$N,C,H_{out},W_{out}$）和池化步长（$strides$）、池化窗口大小($kH,kW$)的关系是
+  输入input（$N,C,H,W$）、输出out（$N,C,H_{out},W_{out}$）和池化步长（$strides$）、池化窗口大小（$kH,kW$）的关系是
 
   $$
   H_{out}=\lfloor \frac{H_{in}+2*paddings[0]-kH}{strides[0]}+1 \rfloor
@@ -113,7 +113,7 @@ aclnnStatus aclnnAvgPool2d(
       <td>kernelSize</td>
       <td>输入</td>
       <td>池化窗口大小，公式中的k。</td>
-      <td>长度为1(kH=kW)或2(kH, kW)，数值大于0。</td>
+      <td>长度为1（kH=kW）或2（kH, kW），数值大于0。</td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
@@ -172,7 +172,7 @@ aclnnStatus aclnnAvgPool2d(
     <tr>
       <td>cubeMathType</td>
       <td>输入</td>
-      <td>指定Cube单元的计算逻辑</td>
+      <td>指定Cube单元的计算逻辑。</td>
       <td>-</td>
       <td>INT8</td>
       <td>-</td>
@@ -182,7 +182,7 @@ aclnnStatus aclnnAvgPool2d(
     <tr>
       <td>out</td>
       <td>输出</td>
-      <td>输出的tensor，公式中的out。</td>
+      <td>输出的Tensor，公式中的out。</td>
       <td>-</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>NCHW、NCL</td>

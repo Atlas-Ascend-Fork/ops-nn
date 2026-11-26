@@ -29,7 +29,7 @@
 
     $$
     x\_grad_{target(t)} =\begin{cases}
-    (-gradOutput * w_{(target(t))}) / totalweight &, target(t)=1 \\
+    (-gradOutput * w_{(target(t))}) / totalWeight &, target(t)=1 \\
     0 &, target(t)=0
     \end{cases}
     $$
@@ -139,7 +139,7 @@ aclnnStatus aclnnNLLLossBackward(
         <td>输入</td>
         <td>表示每个类别的缩放权重。</td>
         <td>公式中的w，shape为(C,)。</td>
-        <td>数据类型和self保持一致。</td>
+        <td>数据类型与self一致。</td>
         <td>ND</td>
         <td>(C)</td>
         <td>√</td>
@@ -210,7 +210,7 @@ aclnnStatus aclnnNLLLossBackward(
 
 - **返回值：**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
   第一段接口完成入参校验，出现以下场景时报错：
 

@@ -39,7 +39,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用"aclnnQuantMaxGetWorkspaceSize"接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用"aclnnQuantMax"接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnQuantMaxGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnQuantMax”接口执行计算。
 
 ```cpp
 aclnnStatus aclnnQuantMaxGetWorkspaceSize(
@@ -111,7 +111,7 @@ aclnnStatus aclnnQuantMax(
       <td>roundMode（char*）</td>
       <td>输入</td>
       <td>指定舍入模式。</td>
-      <td><ul><li>当dstType取值为34，roundMode支持"round"、"hybrid"。</li></ul><ul><li>当dstType取值为35或者36时，roundMode支持"rint"。</li></ul></td>
+      <td><ul><li>当dstType取值为34，roundMode支持“round”、“hybrid”。</li></ul><ul><li>当dstType取值为35或者36时，roundMode支持“rint”。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

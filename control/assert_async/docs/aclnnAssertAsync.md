@@ -24,7 +24,7 @@
 ## 功能说明
 
 - 接口功能：断言输入张量 `inputCondition`（要求 `numel == 1`）的数值非 0。若其数值为 0（含 bool 的 `False`），
-  设备侧打印 `assertMsg` 指定的消息并触发算子失败；数值非 0 直接通过。本接口**无输出张量**，
+  Device侧打印 `assertMsg` 指定的消息并触发算子失败；数值非 0 直接通过。本接口**无输出张量**，
   语义对齐 PyTorch 的 `torch._assert_async`（含 `.msg` 重载语义），可用于在设备侧异步校验条件值。
 
 - 判定规则（bit-exact，无浮点计算）：
@@ -39,7 +39,7 @@
   - 复数类型（COMPLEX64、COMPLEX128）实部与虚部精确同时为 0（含 `-0.0` 分量）判失败；`NaN`/`±inf` 分量通过。
   - 整型与布尔类型判全字节零：`0`（含 bool 的 `False`）判失败，非 0（含 `True`）判通过。
 
-- 失败通路：kernel 内以 `AscendC::printf` 打印 `"<assertMsg>\n"` 后调用 `AscendC::Trap()`
+- 失败通路：Kernel内以 `AscendC::printf` 打印 `"<assertMsg>\n"` 后调用 `AscendC::Trap()`
   中断 AI Core，使算子执行失败；失败状态经 stream 同步回传给上层。
 
 ## 函数原型
@@ -218,7 +218,7 @@ aclnnStatus aclnnAssertAsync(
     <tr>
       <td>stream</td>
       <td>输入</td>
-      <td>指定执行任务的Stream。</td>
+      <td>指定执行任务的stream。</td>
     </tr>
   </tbody>
   </table>
@@ -233,7 +233,7 @@ aclnnStatus aclnnAssertAsync(
 ## 约束说明
 
 - 确定性说明：aclnnAssertAsync默认确定性实现。
-- 本接口无输出张量、无浮点计算，判定按行为 bit-exact 进行，不适用输出张量的浮点容差（atol/rtol）精度标准。
+- 本接口无输出张量、无浮点计算，判定按位bit-exact进行，不适用输出张量的浮点容差（atol/rtol）精度标准。
 - 断言失败发生在设备侧 kernel 内，需通过 stream 同步感知算子失败。
 - 本算子仅支持 aclnn 接口直调通路，不支持动态图（动态 shape）场景。
 

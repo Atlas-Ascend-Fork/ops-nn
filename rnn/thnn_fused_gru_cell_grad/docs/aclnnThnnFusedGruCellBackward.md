@@ -42,7 +42,7 @@
 
   $$\mathrm{ghx}_{b,j} = go_{b,j} \cdot z_{b,j}$$
 
-  输出拼接（$\big\|$ 表沿 dim=1 拼接）与归约：
+  输出拼接（$\big\|$ 表示沿dim=1拼接）与归约：
 
   $$\mathrm{grad\_input\_gates} = [\,\mathrm{grg} \;\big\|\; \mathrm{gig} \;\big\|\; \mathrm{gin}\,] \in \mathbb{R}^{B \times 3H}$$
 
@@ -249,7 +249,7 @@ aclnnStatus aclnnThnnFusedGruCellBackward(
     <tr>
       <td> ACLNN_ERR_INNER </td>
       <td> 561000 </td>
-      <td>当前芯片非 ascend950 系列（IsRegbase 门控拒绝：本算子仅支持 ascend950）。</td>
+      <td>当前芯片非Ascend 950PR&Ascend 950DT系列产品（IsRegbase 门控拒绝：本算子仅支持Ascend 950PR&Ascend 950DT系列产品）。</td>
     </tr>
     </tbody></table>
 

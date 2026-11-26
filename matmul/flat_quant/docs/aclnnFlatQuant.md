@@ -148,7 +148,7 @@ aclnnStatus aclnnFlatQuant(
       <td>kroneckerP2（aclTensor*）</td>
       <td>输入</td>
       <td>输入的计算矩阵2，对应公式中的`kroneckerP2`。</td>
-      <td><ul><li>不支持空Tensor。</li><li>shape为[N2, N2]，两维大小均与x的第三维大小N2一致。仅在perGroup场景下支持shape为[0,0]，表示算子不使用右矩阵计算，只进行左矩阵相乘。</li><li>数据类型与入参x的数据类型一致。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>shape为[N2, N2]，两维大小均与x的第三维大小N2一致。仅在pergroup场景下支持shape为[0,0]，表示算子不使用右矩阵计算，只进行左矩阵相乘。</li><li>数据类型与入参x的数据类型一致。</li></ul></td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2</td>
@@ -157,7 +157,7 @@ aclnnStatus aclnnFlatQuant(
     <tr>
       <td>clipRatio（double）</td>
       <td>输入</td>
-      <td>用于控制量化的裁剪比例对应公式中的`clipRatio`。</td>
+      <td>用于控制量化的裁剪比例，对应公式中的`clipRatio`。</td>
       <td><ul><li>输入数据范围为(0, 1]。</li></ul></td>
       <td>-</td>
       <td>-</td>
@@ -167,7 +167,7 @@ aclnnStatus aclnnFlatQuant(
     <tr>
       <td>out（aclTensor*）</td>
       <td>输出</td>
-      <td>输出张量，对应公式中的out。</td>
+      <td>输出张量，对应公式中的`out`。</td>
       <td><ul><li>不支持空Tensor。</li><li>数据类型为INT32时，shape的最后一维是入参x最后一维的1/8，其余维度和x一致。</li><li>数据类型为INT4时，shape与入参x一致。</li><li>数据类型为FLOAT4_E2M1时，shape为[M,N1*N2]。</li></ul></td>
       <td>INT4、INT32、FLOAT4_E2M1</td>
       <td>ND</td>
@@ -177,7 +177,7 @@ aclnnStatus aclnnFlatQuant(
     <tr>
       <td>quantScale（aclTensor*）</td>
       <td>输出</td>
-      <td>输出的量化因子，对应公式中的quantScale。</td>
+      <td>输出的量化因子，对应公式中的`quantScale`。</td>
       <td><ul><li>不支持空Tensor。</li><li>量化输出类型为INT4或INT32时，shape为[M],M与x中M维度一致，数据类型为FLOAT32。</li><li>量化输出类型为FLOAT4_E2M1时，shape为[M,ceildiv(N1*N2,64),2]，数据类型为FLOAT8_E8M0。</li></ul></td>
       <td>FLOAT32、FLOAT8_E8M0</td>
       <td>ND</td>

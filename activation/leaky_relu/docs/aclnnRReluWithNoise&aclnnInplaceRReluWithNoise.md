@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：实现了带噪声的随机修正线性单元激活函数，它在输入小于等于0时，斜率为a；输入大于0时斜率为1
+- 接口功能：实现了带噪声的随机修正线性单元激活函数，它在输入小于等于0时，斜率为a；输入大于0时斜率为1。
 
 - 计算公式：
 
@@ -194,7 +194,7 @@ aclnnStatus aclnnInplaceRReluWithNoise(
       <td>out（aclTensor*）</td>
       <td>输出</td>
       <td>均匀分布U中的upper。</td>
-      <td><ul><li>数据类型需要和self的数据类型保持一致。</li><li>shape需要和self的shape保持一致。</li><li>数据格式需要和self的数据格式类型保持一致。</li></ul></td>
+      <td><ul><li>数据类型需要和self的数据类型保持一致。</li><li>shape需要和self的shape保持一致。</li><li>数据格式需要和self的数据格式保持一致。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>-</td>
       <td>-</td>
@@ -310,7 +310,7 @@ aclnnStatus aclnnInplaceRReluWithNoise(
 
 - **返回值：**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## aclnnInplaceRReluWithNoiseGetWorkspaceSize
 
@@ -516,7 +516,7 @@ aclnnStatus aclnnInplaceRReluWithNoise(
 
 - **返回值：**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 

@@ -308,7 +308,7 @@ aclnnStatus aclnnQuantMatmulV5(
         <td>x1（const aclTensor*）</td>
         <td>输入</td>
         <td>公式中的输入x1。</td>
-        <td><ul> <li>空Tensor支持情况见<a href="#空tensor支持情况">空Tensor支持情况</a>。</li> <li>支持<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续Tensor</a>。</li> </ul></td>
+        <td><ul> <li>空Tensor支持情况见<a href="#空tensor支持情况">空Tensor支持情况</a>。</li> <li>支持<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续的Tensor</a>。</li> </ul></td>
         <td>INT4、INT8、INT32、FLOAT8_E4M3FN<sup>1</sup>、FLOAT8_E5M2<sup>1</sup>、HIFLOAT8<sup>1</sup>、FLOAT4_E2M1<sup>1</sup></td>
         <td>ND</td>
         <td>2-6</td>
@@ -318,7 +318,7 @@ aclnnStatus aclnnQuantMatmulV5(
         <td>x2（const aclTensor*）</td>
         <td>输入</td>
         <td>公式中的输入x2。</td>
-        <td><ul> <li>空Tensor支持情况见<a href="#空tensor支持情况">空Tensor支持情况</a>。</li> <li>NZ格式下，shape支持4-8维。</li> <li>ND格式支持<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续Tensor</a>；NZ格式的适用产品及限制见<a href="#约束说明">约束说明</a>。</li> </ul></td>
+        <td><ul> <li>空Tensor支持情况见<a href="#空tensor支持情况">空Tensor支持情况</a>。</li> <li>NZ格式下，shape支持4-8维。</li> <li>ND格式支持<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续的Tensor</a>；NZ格式的适用产品及限制见<a href="#约束说明">约束说明</a>。</li> </ul></td>
         <td>INT4、INT8、INT32、FLOAT8_E4M3FN<sup>1</sup>、FLOAT8_E5M2<sup>1</sup>、HIFLOAT8<sup>1</sup>、FLOAT4_E2M1<sup>1</sup></td>
         <td>ND、FRACTAL_NZ</td>
         <td>2-6（ND）<br/>4-8（NZ）</td>
@@ -431,7 +431,7 @@ aclnnStatus aclnnQuantMatmulV5(
         <td><ul> <li>空Tensor支持情况见<a href="#空tensor支持情况">空Tensor支持情况</a>。</li> </ul></td>
         <td>FLOAT16、INT8、BFLOAT16、INT32、FLOAT32<sup>1</sup></td>
         <td>ND</td>
-        <td>2～6，具体限制见<a href="#约束说明">约束说明</a>。</td>
+        <td>2-6，具体限制见<a href="#约束说明">约束说明</a>。</td>
         <td>√</td>
       </tr>
       <tr>
@@ -627,13 +627,13 @@ aclnnStatus aclnnQuantMatmulV5(
   - 当前版本不支持yScale，需要传入nullptr。
   - out的shape支持2~6维，(batch, m, n)，batch可不存在。数据类型支持FLOAT16、INT8、BFLOAT16、INT32。
   - x1，x2为INT8，out为INT32，bias为INT32或nullptr时，各scale实际不参与计算，计算公式如下：
-    - bias INT32
+    - bias INT32：
 
         $$
         out = x1@x2 + bias
         $$
 
-    - 无bias
+    - 无bias：
 
         $$
         out = x1@x2
@@ -693,11 +693,11 @@ aclnnStatus aclnnQuantMatmulV5(
       - 当前仅支持2维ND格式。
       - transposeX2为true时维度为：(n, k)，要求k为偶数。
       - transposeX2为false时维度为：(k, n)，要求n为偶数。
-    - 数据类型为INT32时，每个INT32数据存放8个INT4数据，
+    - 数据类型为INT32时，每个INT32数据存放8个INT4数据：
       - 当前仅支持2维ND格式。
       - transposeX2为true时维度为：(n, ceil(k / 8))，要求k为8的倍数。
       - transposeX2为false时维度为：(k, ceil(n / 8))，要求n为8的倍数。
-      - 可使用aclnnConvertWeightToINT4Pack接口完成x2从INT32（1个INT32在0~3bit位存储1个INT4）到INT32（1个INT32存储8个INT4）或INT4（1个INT4表示1个INT4）的数据格式转换，具体参见[aclnnConvertWeightToINT4Pack接口](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)。
+      - 可使用aclnnConvertWeightToINT4Pack接口完成x2从INT32（1个INT32在0~3bit存储1个INT4）到INT32（1个INT32存储8个INT4）或INT4（1个INT4表示1个INT4）的数据格式转换，具体参见[aclnnConvertWeightToINT4Pack接口](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)。
   - x1Scale的约束：数据格式支持ND，shape是1维(t,)，t = m，其中m与x1的m一致。
   - x2Scale的约束：数据格式支持ND，shape是1维(t,)，t = 1或n，其中n与x2的n一致，当x1数据类型为INT8，x2数据类型为INT32时，t只支持为n。
   - x2Offset的约束：数据格式支持ND，shape是1维(t,)，t = 1或n，其中n与x2的n一致。
@@ -752,7 +752,7 @@ aclnnStatus aclnnQuantMatmulV5(
   <a id="公共约束2"></a>
 
   - 本接口的x2和x2Scale仅支持ND格式。需要NZ权重或ScaleNZ时，请调用[aclnnQuantMatmulWeightNz](../../quant_batch_matmul_v3/docs/aclnnQuantMatmulWeightNz.md)，并满足该接口对应的量化模式及格式约束。
-  - int4输入只支持transposeX1为false。
+  - INT4输入只支持transposeX1为false。
   - transposeX1为false时x1的shape：(batch, m, k)。transposeX1为true时x1的shape：(batch, k, m)。其中batch代表前0~4维，0维表示batch不存在。
   - transposeX2为false时x2的shape：(batch, k, n)。transposeX2为true时x2的shape：(batch, n, k)。其中batch代表前0~4维，0维表示batch不存在。k与x1的shape中的k一致。
   - 当x2Scale的原始输入类型不满足量化场景约束中组合时，需提前调用aclnnTransQuantParamV2接口来将scale转成INT64、UINT64数据类型。
@@ -774,13 +774,13 @@ aclnnStatus aclnnQuantMatmulV5(
 
   - out的shape支持2~6维，(batch, m, n)，batch可不存在，支持x1与x2的batch维度broadcast，输出batch与broadcast之后的batch一致，m与x1的m一致，n与x2的n一致。
   - x1，x2为INT8，out为INT32，bias为INT32或nullptr时，各scale实际不参与计算，计算公式如下：
-    - bias INT32
+    - bias INT32：
 
         $$
         out = x1@x2 + bias
         $$
 
-    - 无bias
+    - 无bias：
 
         $$
         out = x1@x2
@@ -815,7 +815,7 @@ aclnnStatus aclnnQuantMatmulV5(
       - 当前仅支持2维ND格式。
       - transposeX2为true时维度为：(n, k)，要求k为偶数。
       - transposeX2为false时维度为：(k, n)，要求n为偶数。
-    - 数据类型为INT32时，每个INT32数据存放8个INT4数据，
+    - 数据类型为INT32时，每个INT32数据存放8个INT4数据：
       - 当前仅支持2维ND格式。
       - transposeX2为true时维度为：(n, ceil(k / 8))，要求k为8的倍数。
       - transposeX2为false时维度为：(k, ceil(n / 8))，要求n为8的倍数。
@@ -847,11 +847,11 @@ aclnnStatus aclnnQuantMatmulV5(
   - x1的约束：
     - 当数据类型为INT4或INT32时，支持2~6维ND格式，transposeX1为false。
     - 当数据类型为INT4时，shape为(batch, m, k)，要求k为偶数，batch可不存在。
-    - 当数据类型为INT32时，每个INT32数据存放8个INT4数据，shape为(batch, m, ceil(k / 8))，要求k为8的倍数，batch可不存在。
+    - 当数据类型为INT32时，每个INT32数据存放8个INT4数据：shape为(batch, m, ceil(k / 8))，要求k为8的倍数，batch可不存在。
   - x2的约束：
     - 当数据类型为INT4或INT32时，仅支持2维ND格式。
     - 当数据类型为INT4时，transposeX2为true时shape为(n, k)，要求k为偶数；transposeX2为false时shape为(k, n)，要求n为偶数。
-    - 当数据类型为INT32时，每个INT32数据存放8个INT4数据，transposeX2为true时shape为(n, ceil(k / 8))，要求k为8的倍数；transposeX2为false时shape为(k, ceil(n / 8))，要求n为8的倍数。
+    - 当数据类型为INT32时，每个INT32数据存放8个INT4数据：transposeX2为true时shape为(n, ceil(k / 8))，要求k为8的倍数；transposeX2为false时shape为(k, ceil(n / 8))，要求n为8的倍数。
 
   - K-C量化场景下，x1Scale的shape为(m,)，x2Scale的shape为(n,)，其中m与x1的m一致，n与x2的n一致。
   - K-T量化场景下，x1Scale的shape为(m,)，x2Scale的shape为(1,)，其中m与x1的m一致。

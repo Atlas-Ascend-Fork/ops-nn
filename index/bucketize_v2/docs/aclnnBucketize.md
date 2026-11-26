@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：根据给定的边界数组（boundaries）确定输入张量中每个元素所属的区间索引。对于输入值 $x$ 和边界数组 $boundaries = [b_0, b_1, ..., b_{n-1}]$，输出索引 $y_i$ 满足：
+- 接口功能：根据给定的边界数组（boundaries）确定输入张量中每个元素所属的区间索引。对于输入值$x$和边界数值$boundaries = [b_0, b_1, ..., b_{n-1}]$，输出索引 $y_i$ 满足：
   - 如果 $x \le b_0$，则 $y_i = 0$
   - 如果 $b_{i-1} < x \le b_i$，则 $y_i = i$（默认左开右闭区间）
   - 如果 $x > b_{n-1}$，则 $y_i = n$
@@ -377,7 +377,7 @@ aclnnStatus aclnnBucketize(
 
 ## 参考
 
-### Pytorch AtenIR
+### PyTorch AtenIR
 
 ```cpp
 - func: bucketize.Tensor_out(Tensor self, Tensor boundaries, *, bool outInt32=False, bool right=False, Tensor(a!) out) -> Tensor(a!)

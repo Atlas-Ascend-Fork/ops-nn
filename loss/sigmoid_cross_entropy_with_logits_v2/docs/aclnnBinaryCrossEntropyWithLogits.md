@@ -109,7 +109,7 @@ aclnnStatus aclnnBinaryCrossEntropyWithLogits(
       <tr>
         <td>self（aclTensor*）</td>
         <td>输入</td>
-        <td>连接层输出。</td>
+        <td>全连接层输出。</td>
         <td>-</td>
         <td>FLOAT16、FLOAT、BFLOAT16</td>
         <td>ND</td>
@@ -119,7 +119,7 @@ aclnnStatus aclnnBinaryCrossEntropyWithLogits(
       <tr>
         <td>target（aclTensor*）</td>
         <td>输入</td>
-        <td>label标签值。</td>
+        <td>标签值。</td>
         <td>-</td>
         <td>与self保持一致</td>
         <td>ND</td>

@@ -43,9 +43,9 @@
 
    - BF16/FLOAT16路径（预反量化）
 
-    $$
-    dequantOut_i = cast\_to\_float(x_i)
-    $$
+     $$
+     dequantOut_i = cast\_to\_float(x_i)
+     $$
 
 2. Situ激活
 
@@ -85,7 +85,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用"aclnnDequantSituQuantGetWorkspaceSize"接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用"aclnnDequantSituQuant"接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnDequantSituQuantGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnDequantSituQuant”接口执行计算。
 
 ```Cpp
 aclnnStatus aclnnDequantSituQuantGetWorkspaceSize(
@@ -184,7 +184,7 @@ aclnnStatus aclnnDequantSituQuant(
       <td>quantScaleOptional（aclTensor*）</td>
       <td>输入</td>
       <td>量化的scale。</td>
-      <td><ul><li>不支持空Tensor。</li><li>`quantTypeOptional`为static时必选，shape为(H,)或(1,)。</li><li>`quantTypeOptional`为dynamic时可选，作为smoothScale使用。</li><li>仅INT8使用。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>quantTypeOptional为static时必选，shape为(H,)或(1,)。</li><li>quantTypeOptional为dynamic时可选，作为smoothScale使用。</li><li>仅INT8使用。</li></ul></td>
       <td>FLOAT</td>
       <td>ND</td>
       <td>1</td>
@@ -329,7 +329,7 @@ aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/co
   <tr>
     <td rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
     <td rowspan="6">161002</td>
-    <td>x、yOut、yScaleOut为空tensor。</td>
+    <td>x、yOut、yScaleOut为空Tensor。</td>
   </tr>
   <tr>
     <td>x、weightScaleOptional等的数据类型不在支持的范围之内。</td>

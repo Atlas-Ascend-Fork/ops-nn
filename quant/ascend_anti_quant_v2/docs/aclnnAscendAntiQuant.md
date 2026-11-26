@@ -196,7 +196,7 @@ aclnnStatus aclnnAscendAntiQuant(
     - 入参`scale`、`offset`仅支持一维，且只能等于x尾轴大小或1，当x为int32类型时，必须为x尾轴大小的8倍。
   <!-- end id8 -->
 
-- **返回值**
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
@@ -229,7 +229,7 @@ aclnnStatus aclnnAscendAntiQuant(
       <td>dstType不在有效取值范围，或dstType取值对应的数据类型与y的数据类型不一致。</td>
     </tr>
     <tr>
-      <td>x的数据类型为INT4时，x的反量化轴大小不是偶数。</td>
+      <td>x的数据类型为INT4时，x的尾轴大小不是偶数。</td>
     </tr>
     <tr>
       <td>x的数据类型为INT4且非空Tensor时，x为非连续Tensor。</td>
@@ -278,7 +278,7 @@ aclnnStatus aclnnAscendAntiQuant(
   </tbody>
   </table>
 
-- **返回值**
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 

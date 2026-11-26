@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：对输入变量，以数据块（32\*32）为基本块进行MX量化转换为目的数据类型。在每个基本块中，根据scaleAlg的取值采取不同的scale算法计算出当前块对应的量化参数scale（1\*1），将其广播为scale1（32\*1）和scale2（1\*32）输出。同时对基本块中的每一个数除以scale，根据round_mode转换到对应的dstType，得到量化结果y。
+- 接口功能：对输入变量，以数据块（32\*32）为基本块进行MX量化转换为目标数据类型。在每个基本块中，根据scaleAlg的取值采取不同的scale算法计算出当前块对应的量化参数scale（1\*1），将其广播为scale1（32\*1）和scale2（1\*32）输出。同时对基本块中的每一个数除以scale，根据round_mode转换到对应的dstType，得到量化结果y。
 
 - 计算公式：
   - 场景1，当scaleAlg为0时：
@@ -54,7 +54,7 @@
 
   - 场景2，当scaleAlg为2时，只涉及FLOAT4_E2M1类型：
     - 将长向量按块分，每块长度为k，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型FLOAT4_E2M1，scale存储类型为FLOAT8_E8M0。如果最后一块不足k个元素，把缺失值视为0，按照完整块处理。
-    - 找到该块中数值的最大绝对值:
+    - 找到该块中数值的最大绝对值：
       $$
       Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
       $$
@@ -148,7 +148,7 @@ aclnnStatus aclnnDynamicBlockMxQuant(
       <td>dstType (int64_t)</td>
       <td>输入</td>
       <td>表示指定数据转换后yOut的类型。</td>
-      <td>输入范围为{35, 36, 40, 41}，分别对应输出yOut的数据类型为{35:FLOAT8_E5M2, 36:FLOAT8_E4M3FN, 40:FLOAT4_E2M1, 41:FLOAT4_E1M2}</td>
+      <td>输入范围为{35, 36, 40, 41}，分别对应输出yOut的数据类型为{35:FLOAT8_E5M2, 36:FLOAT8_E4M3FN, 40:FLOAT4_E2M1, 41:FLOAT4_E1M2}。</td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
@@ -321,7 +321,7 @@ aclnnStatus aclnnDynamicBlockMxQuant(
     - scale1.shape[-1] = 2。
     - scale2.shape[-1] = 2。
     - 其他维度与输入x一致。
-    - 举例：输入x的shape为[B, M, N]，目的数据类型为FP8类时，对应的y的shape为[B, M, N]，scale1的shape为[B, M, (ceil(N/32) + 2 - 1) / 2, 2]，scale2的shape为[B, (ceil(M / 32) + 2 - 1) / 2, N, 2]。
+    - 举例：输入x的shape为[B, M, N]，目标数据类型为FP8类时，对应的y的shape为[B, M, N]，scale1的shape为[B, M, (ceil(N/32) + 2 - 1) / 2, 2]，scale2的shape为[B, (ceil(M / 32) + 2 - 1) / 2, N, 2]。
  - 确定性说明：aclnnDynamicBlockMxQuant默认确定性实现。
 
 ## 调用示例

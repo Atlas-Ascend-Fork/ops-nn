@@ -116,7 +116,7 @@ aclnnStatus aclnnDualLevelQuantMatmulWeightNz(
           <ul>
             <li>不支持空Tensor。</li>
             <li>仅支持转置。</li>
-            <li>要求使用INT8数据类型传入，一个int8数据包含2个float4_e2m1数据。</li>
+            <li>要求使用INT8数据类型传入，一个INT8数据包含2个float4_e2m1数据。</li>
           </ul>
         </td>
         <td>FLOAT4_E2M1</td>
@@ -224,7 +224,7 @@ aclnnStatus aclnnDualLevelQuantMatmulWeightNz(
         <td>一级量化下，对输入x1和x2进行反量化计算的groupSize输入，描述一组反量化参数对应的待反量化数据量在Reduce方向的大小。</td>
         <td>
           <ul>
-            <li>一级量化groupsize，仅支持512</li>
+            <li>一级量化groupsize，仅支持512。</li>
           </ul>
         </td>
         <td>INT64</td>
@@ -238,7 +238,7 @@ aclnnStatus aclnnDualLevelQuantMatmulWeightNz(
         <td>二级量化下，对输入x1和x2进行反量化计算的groupSize输入，描述一组反量化参数对应的待反量化数据量在Reduce方向的大小。</td>
         <td>
           <ul>
-            <li>二级量化groupsize，仅支持32</li>
+            <li>二级量化groupsize，仅支持32。</li>
           </ul>
         </td>
         <td>INT64</td>

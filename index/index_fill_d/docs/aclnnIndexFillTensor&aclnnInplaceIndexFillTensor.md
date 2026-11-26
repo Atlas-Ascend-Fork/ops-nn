@@ -195,7 +195,7 @@ aclnnStatus aclnnInplaceIndexFillTensor(
 
 - **返回值**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
   第一段接口完成入参校验，出现以下场景时报错：
 
@@ -275,9 +275,9 @@ aclnnStatus aclnnInplaceIndexFillTensor(
       </tbody>
     </table>
 
-- **返回值：**
+- **返回值**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## aclnnInplaceIndexFillTensorGetWorkspaceSize
 
@@ -339,7 +339,7 @@ aclnnStatus aclnnInplaceIndexFillTensor(
         <td>value</td>
         <td>输入</td>
         <td>指定填充的数据值。</td>
-        <td>-</td>
+        <td>需要可转化为selfRef的数据类型。</td>
         <td>与selfRef一致</td>
         <td>-</td>
         <td>-</td>

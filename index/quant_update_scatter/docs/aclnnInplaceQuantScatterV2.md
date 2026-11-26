@@ -111,7 +111,7 @@ aclnnStatus aclnnInplaceQuantScatterV2(
       <td>quantScales (aclTensor*)</td>
       <td>输入</td>
       <td>量化缩放张量。</td>
-      <td>quantScales的元素个数需要等于updates在quantAxis轴的大小</td>
+      <td>quantScales的元素个数需要等于updates在quantAxis轴的大小。</td>
       <td>BFLOAT16、FLOAT32</td>
       <td>ND</td>
       <td>1-8</td>
@@ -161,7 +161,7 @@ aclnnStatus aclnnInplaceQuantScatterV2(
       <td>roundMode (char*)</td>
       <td>输入</td>
       <td>Quantize公式中的Round，指定数据转换的模式。</td>
-      <td><ul><li>支持{"rint", "round", "hybrid"}模式。</li><li>selfRef的数据类型为INT8/FLOAT8_E4M3FN/FLOAT8_E5M2时，仅支持{"rint"}。</li><li>数据类型为HIFLOAT8，支持{"round", "hybrid"}</li></ul></td>
+      <td><ul><li>支持{"rint", "round", "hybrid"}模式。</li><li>selfRef的数据类型为INT8/FLOAT8_E4M3FN/FLOAT8_E5M2时，仅支持{"rint"}。</li><li>selfRef的数据类型为HIFLOAT8时，支持{"round", "hybrid"}。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -224,7 +224,7 @@ aclnnStatus aclnnInplaceQuantScatterV2(
     <td>selfRef和updates的维度数不一致。</td>
   </tr>
   <tr>
-    <td>axis, quantAxis, roundMode不在支持的范围之内。</td>
+    <td>axis、quantAxis、roundMode不在支持的范围之内。</td>
   </tr>
   <tr>
     <td>不支持的产品型号。</td>
@@ -281,7 +281,7 @@ aclnnStatus aclnnInplaceQuantScatterV2(
   - aclnnInplaceQuantScatterV2默认确定性实现。
 
 - indices的维数只能是1维或者2维；如果是2维，其第2维的大小必须是2；不支持索引越界，索引越界不校验；indices映射的selfRef数据段不能重合，若重合则会因为多核并发原因导致多次执行结果不一样。
-- selfRef，indices，updates，quantScales，quantZeroPoints数据类型输入组合包括：
+- selfRef、indices、updates、quantScales、quantZeroPoints数据类型输入组合包括：
 
   <!-- npu="950" id7 -->
   - <term>Ascend 950PR&950DT系列产品</term>：

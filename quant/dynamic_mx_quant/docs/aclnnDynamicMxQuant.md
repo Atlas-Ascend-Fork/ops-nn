@@ -48,7 +48,7 @@
 
   - 场景2，当scaleAlg为1时，只涉及FP8类型：
     - 将长向量按块分，每块长度为k，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型FP8。如果最后一块不足k个元素，把缺失值视为0，按照完整块处理。
-    - 找到该块中数值的最大绝对值:
+    - 找到该块中数值的最大绝对值：
       $$
       Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
       $$
@@ -122,7 +122,7 @@ aclnnStatus aclnnDynamicMxQuant(
       <td>x（aclTensor*）</td>
       <td>输入</td>
       <td>表示输入x，对应公式中Vi和di。</td>
-      <td><ul><li>目的类型为FLOAT4_E2M1、FLOAT4_E1M2时，x的最后一维必须是偶数。</li><li>x的类型为FLOAT时，仅支持blocksize=32，且量化轴的维度不能小于32。</li></ul></td>
+      <td><ul><li>目的数据类型为FLOAT4_E2M1、FLOAT4_E1M2时，x的最后一维必须是偶数。</li><li>x的类型为FLOAT时，仅支持blocksize=32，且量化轴的维度不能小于32。</li></ul></td>
       <td>FLOAT16、BFLOAT16、FLOAT</td>
       <td>ND</td>
       <td>1-7</td>

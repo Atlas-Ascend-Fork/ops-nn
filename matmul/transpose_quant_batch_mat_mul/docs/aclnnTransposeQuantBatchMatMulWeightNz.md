@@ -23,9 +23,9 @@
 
 ## 功能说明
 
-- 接口功能：完成张量x1与张量x2量化的矩阵乘计算，相较于原有aclnnTransposeQuantBatchMatMul接口，新接口仅支持x1为ND格式，x2为NZ格式，只支持x1为3维，x2为5维。支持MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)（MXFP8/MXFP4）以及HIFP8量化模式。Tensor支持转置，转置序列根据传入的数列进行变更。permX1代表张量x1的转置序列，permX2代表张量x2的转置序列，序列值为0的是batch维度，其余两个维度做矩阵乘法。
+- 接口功能：完成张量x1与张量x2量化的矩阵乘计算，相较于原有aclnnTransposeQuantBatchMatMul接口，新接口仅支持x1为ND格式，x2为NZ格式，只支持x1为3维，x2为5维。支持MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)（MXFP8/MXFP4）以及HIFP8量化模式。Tensor支持转置，转置序列根据传入的数组进行变更。permX1代表张量x1的转置序列，permX2代表张量x2的转置序列，序列值为0的是batch维度，其余两个维度做矩阵乘法。
 
-- 示例：（x2的NZ转换为ND对应的viewshape视角）
+- 示例：（x2的NZ转换为ND对应的ViewShape视角）
   - 假设x1的shape是(M, B, K)，x2的shape是(B, K, N)，x1Scale和x2Scale不为None，batchSplitFactor等于1时，计算输出out的shape是(M, B, N)。
 
 ## 函数原型
@@ -103,7 +103,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>
         <ul>
             <li>数据类型需要与x1满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。</li>
-            <li>x2的k维度需要与x1的K维度大小相等。</li>
+            <li>x2的K维度需要与x1的K维度大小相等。</li>
         </ul>
         </td>
         <td>FLOAT8_E4M3FN、FLOAT4_E2M1、HIFLOAT8、INT8</td>
@@ -159,9 +159,9 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>用于指定输出矩阵的数据类型，支持的值为：1、27、34。</td>
         <td>
         <ul>
-          <li>取值为1,表示输出矩阵类型为FLOAT16。</li>
-          <li>取值为27,表示输出矩阵类型为BFLOAT16。INT8 W8A8 仅支持该取值。</li>
-          <li>取值为34,表示输出矩阵类型为HIFLOAT8（仅HIFP8量化场景支持，需用户自行按HIFLOAT8解析）。</li>
+          <li>取值为1，表示输出矩阵类型为FLOAT16。</li>
+          <li>取值为27，表示输出矩阵类型为BFLOAT16。INT8 W8A8 仅支持该取值。</li>
+          <li>取值为34，表示输出矩阵类型为HIFLOAT8（仅HIFP8量化场景支持，需用户自行按HIFLOAT8解析）。</li>
         </ul>
         </td>
         <td>INT32</td>
@@ -174,7 +174,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
         <td>输入</td>
         <td>用于输入M、N、K方向上的量化分组大小。</td>
         <td>
-        由3个方向的groupSizeM，groupSizeN，groupSizeK三个值拼接组成，每个值占16位，共占用int64_t类型groupSize的低48位（groupSize中的高16位的数值无效）。仅MX量化场景生效，HIFP8量化场景需传0。
+        由3个方向的groupSizeM、groupSizeN、groupSizeK三个值拼接组成，每个值占16位，共占用int64_t类型groupSize的低48位（groupSize中的高16位的数值无效）。仅MX量化场景生效，HIFP8量化场景需传0。
         </td>
         <td>INT64</td>
         <td>-</td>
@@ -184,7 +184,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
       <tr>
         <td>permX1（aclIntArray*）</td>
         <td>输入</td>
-        <td>表示矩阵乘的第一个矩阵的转置序列，host侧的aclIntArray。</td>
+        <td>表示矩阵乘的第一个矩阵的转置序列，Host侧的aclIntArray。</td>
         <td>支持[1, 0, 2]。</td>
         <td>INT64</td>
         <td>-</td>
@@ -352,7 +352,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
 
 ## 约束说明
 
-- 确定性说明： aclnnTransposeQuantBatchMatMulWeightNz默认确定性实现。
+- 确定性说明：aclnnTransposeQuantBatchMatMulWeightNz默认确定性实现。
 
 <!-- npu="A3,910b" id7 -->
 - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：仅支持 INT8 W8A8 K-C。x1 为 INT8 ND，形状 [M, B, K]；x2 为 INT8 FRACTAL_NZ，逻辑形状 [B, K, N]。x1Scale、x2Scale 为 FLOAT32，x1Scale 为 [M, B]，x2Scale 为 [B, N]，y 为 BF16 [M, B, N]。permX1、permY 为 [1, 0, 2]，permX2 为 [0, 1, 2]。K 为 32 的倍数，N 为 16 的倍数，batchSplitFactor 为 1。A2 上 B*K 小于 65536。dtype 仅支持 27（BF16）。
@@ -377,7 +377,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <memory>
 #include <vector>

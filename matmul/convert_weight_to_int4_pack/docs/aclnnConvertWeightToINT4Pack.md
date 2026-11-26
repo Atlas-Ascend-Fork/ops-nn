@@ -158,7 +158,7 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
       <td>传入空tensor场景。</td>
     </tr>
     <tr>
-      <td>输入tensor的Format不是ND。</td>
+      <td>输入tensor的数据格式不是ND。</td>
     </tr>
     <tr>
       <td rowspan="2">ACLNN_ERR_RUNTIME_ERROR</td>
@@ -768,8 +768,8 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
 
   // 创建4bit紧密排布（INT4/FLOAT4_E2M1）且存储格式为FRACTAL_NZ的aclTensor
   // 逻辑shape按原始ND矩阵(k, n)传入；Ascend 950上NZ的storageShape为(ceil(n/16), ceil(k/16), 16, 16)，
-  // 每个分块为16*16个4bit数据（占128字节），device侧内存按storageShape的大小申请
-  // hostData为打包后的字节数据（2个4bit存放在1个int8中），仅拷贝hostData.size()个字节，
+  // 每个分块为16*16个4比特数据（占128字节），device侧内存按storageShape的大小申请
+  // hostData为打包后的字节数据（2个4比特存放在1个int8中），仅拷贝hostData.size()个字节，
   // 尾部对齐部分无需初始化，调用aclnnConvertWeightToINT4Pack后整块内存会被重写
   template <typename T>
   int CreateAclTensorNz(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
@@ -1054,8 +1054,8 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
 
   // 创建4bit紧密排布（INT4/FLOAT4_E2M1）且存储格式为FRACTAL_NZ的aclTensor
   // 逻辑shape按原始ND矩阵(k, n)传入；Ascend 950上NZ的storageShape为(ceil(n/16), ceil(k/16), 16, 16)，
-  // 每个分块为16*16个4bit数据（占128字节），device侧内存按storageShape的大小申请
-  // hostData为打包后的字节数据（2个4bit存放在1个int8中），仅拷贝hostData.size()个字节，
+  // 每个分块为16*16个4比特数据（占128字节），device侧内存按storageShape的大小申请
+  // hostData为打包后的字节数据（2个4比特存放在1个int8中），仅拷贝hostData.size()个字节，
   // 尾部对齐部分无需初始化，调用aclnnConvertWeightToINT4Pack后整块内存会被重写
   template <typename T>
   int CreateAclTensorNz(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
@@ -1198,7 +1198,7 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
     workspaceAddr = nullptr;
     workspaceAddrPtr.reset();
 
-    // 5. 调用aclnnWeightQuantBatchMatmulNz执行伪量化matmul，antiquantGroupSize为pergroup场景的groupSize
+    // 6. 调用aclnnWeightQuantBatchMatmulNz执行伪量化matmul，antiquantGroupSize为pergroup场景的groupSize
     ret = aclnnWeightQuantBatchMatmulNzGetWorkspaceSize(xFp16, weightInt4Pack, antiquantScaleFp8, nullptr, nullptr,
                                                         nullptr, nullptr, antiquantGroupSize, yFp16, &workspaceSize,
                                                         &executor);
@@ -1214,7 +1214,7 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
     workspaceAddr = nullptr;
     workspaceAddrPtr.reset();
 
-    // 6. 调用aclnnCast，将输出由FP16转为FP32
+    // 7. 调用aclnnCast，将输出由FP16转为FP32
     ret = aclnnCastGetWorkspaceSize(yFp16, aclDataType::ACL_FLOAT, y, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCastGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
     if (workspaceSize > 0) {
@@ -1227,7 +1227,7 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
     workspaceAddr = nullptr;
     workspaceAddrPtr.reset();
 
-    // 7.（固定写法）同步等待任务执行结束，将device侧结果拷贝至host侧并打印
+    // 8.（固定写法）同步等待任务执行结束，将device侧结果拷贝至host侧并打印
     ret = aclrtSynchronizeStream(stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
     auto size = GetShapeSize(yShape);
@@ -1239,7 +1239,7 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
       LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
     }
 
-    // 8.（固定写法）释放stream等资源，aclTensor和device内存已由unique_ptr自动释放
+    // 9.（固定写法）释放stream等资源，aclTensor和device内存已由unique_ptr自动释放
     aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);
     aclFinalize();

@@ -154,7 +154,7 @@ aclnnStatus aclnnForeachExpm1(
       <td>x或out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>out的数据类型不符合与x的数据类型映射关系：x为BFLOAT16、FLOAT16、FLOAT32时，out与x一致；x为INT16、INT8、UINT8时，out为FLOAT32。</td>
+      <td>out的数据类型不满足与x的数据类型映射关系：x为BFLOAT16、FLOAT16、FLOAT32时，out与x一致；x为INT16、INT8、UINT8时，out为FLOAT32。</td>
     </tr>
     <tr>
       <td>x或out中的Tensor的数据类型不一致。</td>

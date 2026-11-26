@@ -26,8 +26,8 @@
 - 接口功能：实现门控循环单元（Gated Recurrent Unit, GRU）计算，支持多层堆叠、双向、定长序列和不定长序列（PackedSequence）两种输入模式。训练模式下可输出各门控中间结果（r、z、n、hn、h），用于反向传播。
 
 - 输入输出shape：
-  - 定长模式（batchSizes为nullptr）：如果输入张量 input 的shape为(T, B, I)（batchFirst=false）或(B, T, I)（batchFirst=true），则输出张量 output 的shape为(T, B, D *H)（batchFirst=false）或(B, T, D* H)（batchFirst=true），最终隐状态 hy 的shape为(L * D, B, H)。
-  - 不定长模式（batchSizes非nullptr）：输入张量 input 的shape为(sum(batch_size), I)，输出张量 output 的shape为(sum(batch_size), D *H)，最终隐状态 hy 的shape为(L* D, B, H)。
+  - 定长模式（batchSizes为nullptr）：如果输入张量 input 的shape为(T, B, I)（batchFirst=false）或(B, T, I)（batchFirst=true），则输出张量 output 的shape为(T, B, D*H)（batchFirst=false）或(B, T, D*H)（batchFirst=true），最终隐状态 hy 的shape为(L*D, B, H)。
+  - 不定长模式（batchSizes非nullptr）：输入张量 input 的shape为(sum(batch_size), I)，输出张量 output 的shape为(sum(batch_size), D*H)，最终隐状态 hy 的shape为(L*D, B, H)。
 
 - 计算公式：
 
@@ -143,7 +143,7 @@ aclnnStatus aclnnGRU(
     <tr>
       <td>hx（aclTensor*）</td>
       <td>可选输入</td>
-      <td>GRU每层的初始隐藏状态。对应0时刻的h(t-1)。</td>
+      <td>GRU每层的初始隐状态。对应0时刻的h(t-1)。</td>
       <td><ul><li>可选参数，传入空指针表示不使用该参数，此时初始隐状态为零向量。</li><li>多层双向时每个tensor数据沿第0维按先双向后逐层排布。</li><li>数据类型与input一致。</li><li>[numLayers * D, batch_size, hidden_size]。</li></ul></td>
       <td>FLOAT32、FLOAT16</td>
       <td>ND</td>
@@ -244,7 +244,7 @@ aclnnStatus aclnnGRU(
       <td>rOut（aclTensorList*）</td>
       <td>可选输出</td>
       <td>表示训练模式下的重置门输出，对应公式中的 $r_t$。</td>
-      <td><ul><li>训练模式下必传，推理模式下传入空指针。</li><li>列表长度 = dScale * numLayers。</li><li>定长模式：列表中每个shape为[time_step, batch_size, hidden_size];</li><li>不定长模式：列表中每个shape为[sum(batch_size), hidden_size]。</li></ul></td>
+      <td><ul><li>训练模式下必传，推理模式下传入空指针。</li><li>列表长度 = dScale * numLayers。</li><li>定长模式：列表中每个shape为[time_step, batch_size, hidden_size]。</li><li>不定长模式：列表中每个shape为[sum(batch_size), hidden_size]。</li></ul></td>
       <td>FLOAT32、FLOAT16</td>
       <td>ND</td>
       <td>2-3</td>
@@ -254,7 +254,7 @@ aclnnStatus aclnnGRU(
       <td>zOut（aclTensorList*）</td>
       <td>可选输出</td>
       <td>表示训练模式下的更新门输出，对应公式中的 $z_t$。</td>
-      <td><ul><li>训练模式下必传，推理模式下传入空指针。</li><li>列表长度 = dScale * numLayers。</li><li>定长模式：列表中每个shape为[time_step, batch_size, hidden_size];</li><li>不定长模式：列表中每个shape为[sum(batch_size), hidden_size]。</li></ul></td>
+      <td><ul><li>训练模式下必传，推理模式下传入空指针。</li><li>列表长度 = dScale * numLayers。</li><li>定长模式：列表中每个shape为[time_step, batch_size, hidden_size]。</li><li>不定长模式：列表中每个shape为[sum(batch_size), hidden_size]。</li></ul></td>
       <td>FLOAT32、FLOAT16</td>
       <td>ND</td>
       <td>2-3</td>
@@ -264,7 +264,7 @@ aclnnStatus aclnnGRU(
       <td>nOut（aclTensorList*）</td>
       <td>可选输出</td>
       <td>表示训练模式下的新门输出，对应公式中的 $n_t$。</td>
-      <td><ul><li>训练模式下必传，推理模式下传入空指针。</li><li>列表长度 = dScale * numLayers。</li><li>定长模式：列表中每个shape为[time_step, batch_size, hidden_size];</li><li>不定长模式：列表中每个shape为[sum(batch_size), hidden_size]。</li></ul></td>
+      <td><ul><li>训练模式下必传，推理模式下传入空指针。</li><li>列表长度 = dScale * numLayers。</li><li>定长模式：列表中每个shape为[time_step, batch_size, hidden_size]。</li><li>不定长模式：列表中每个shape为[sum(batch_size), hidden_size]。</li></ul></td>
       <td>FLOAT32、FLOAT16</td>
       <td>ND</td>
       <td>2-3</td>
@@ -274,7 +274,7 @@ aclnnStatus aclnnGRU(
       <td>hnOut（aclTensorList*）</td>
       <td>可选输出</td>
       <td>表示训练模式下的隐状态-新门输出 $W_{hn} h_{(t-1)} + b_{hn}$。</td>
-      <td><ul><li>训练模式下必传，推理模式下传入空指针。</li><li>列表长度 = dScale * numLayers。</li><li>定长模式：列表中每个shape为[time_step, batch_size, hidden_size];</li><li>不定长模式：列表中每个shape为[sum(batch_size), hidden_size]。</li></ul></td>
+      <td><ul><li>训练模式下必传，推理模式下传入空指针。</li><li>列表长度 = dScale * numLayers。</li><li>定长模式：列表中每个shape为[time_step, batch_size, hidden_size]。</li><li>不定长模式：列表中每个shape为[sum(batch_size), hidden_size]。</li></ul></td>
       <td>FLOAT32、FLOAT16</td>
       <td>ND</td>
       <td>2-3</td>
@@ -284,7 +284,7 @@ aclnnStatus aclnnGRU(
       <td>hOut（aclTensorList*）</td>
       <td>可选输出</td>
       <td>表示训练模式下的隐状态输出，即各时间步的 $h_t$。</td>
-      <td><ul><li>训练模式下必传，推理模式下传入空指针。</li><li>列表长度 = dScale * numLayers。</li><li>定长模式：列表中每个shape为[time_step, batch_size, hidden_size];</li><li>不定长模式：列表中每个shape为[sum(batch_size), hidden_size]。</li></ul></td>
+      <td><ul><li>训练模式下必传，推理模式下传入空指针。</li><li>列表长度 = dScale * numLayers。</li><li>定长模式：列表中每个shape为[time_step, batch_size, hidden_size]。</li><li>不定长模式：列表中每个shape为[sum(batch_size), hidden_size]。</li></ul></td>
       <td>FLOAT32、FLOAT16</td>
       <td>ND</td>
       <td>2-3</td>

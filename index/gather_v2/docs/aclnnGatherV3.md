@@ -23,21 +23,21 @@
 
 ## 功能说明
 
-- 接口功能：从输入Tensor的指定维度dim，按index中的下标序号提取元素，batchDims代表运算批次。保存到out Tensor中。
+- 接口功能：从输入Tensor的指定维度dim，按index中的下标序号提取元素，batchDims代表运算批次，保存到out Tensor中。
 - 示例：
 
   例如，当batchDims为0时，输入张量 $self=\begin{bmatrix}1 & 2 & 3 \\ 4 & 5 & 6 \\ 7 & 8 & 9\end{bmatrix}$ 和索引张量index=[1, 0]。
   - dim=0的结果：$out=\begin{bmatrix}4 & 5 & 6 \\ 1 & 2 & 3\end{bmatrix}$
 
-  - dim=1的结果： $out=\begin{bmatrix}2 & 1\\ 5 & 4\\ 8 & 7\end{bmatrix}$
+  - dim=1的结果：$out=\begin{bmatrix}2 & 1\\ 5 & 4\\ 8 & 7\end{bmatrix}$
 
   具体计算过程如下：
-  以三维张量为例，shape为(3,2,2)的张量self =$\begin{bmatrix}[[1,&2],&[3,&4]], \\ [[5,&6],&[7,&8]], \\ [[9,&10],&[11,&12]]\end{bmatrix}$   index=[1, 0],   self张量dim=0，1，2对应的下标分别是$l， m， n$，index是一维（零维的情况：当成是size为1的一维）
-  - dim为0：I=index[i];  &nbsp;&nbsp;   out$[i][m][n]$ = self$[I][m][n]$
+  以三维张量为例，shape为(3,2,2)的张量self =$\begin{bmatrix}[[1,&2],&[3,&4]], \\ [[5,&6],&[7,&8]], \\ [[9,&10],&[11,&12]]\end{bmatrix}$ index=[1, 0],   self张量dim=0，1，2对应的下标分别是$l， m， n$，index是一维（零维的情况：当成是size为1的一维）。
+  - dim为0：I=index[i]; &nbsp;&nbsp;   out$[i][m][n]$ = self$[I][m][n]$
 
   - dim为1：J=index[j];  &nbsp;&nbsp;   out$[l][j][n]$ = self$[l][J][n]$
 
-  - dim为2：K=index[k];  &nbsp;&nbsp;   out$[l][m][k]$ = self$[l][m][K]$
+  - dim为2：K=index[k]; &nbsp;&nbsp;   out$[l][m][k]$ = self$[l][m][K]$
 
   当batchDims为1时：以四维张量为例shape为(3,3,2,2)的张量self与shape为(3,2)的张量index，相当于进行3次batchDims为0，dim=dim-batchDims的gather操作。
 
@@ -135,7 +135,7 @@ aclnnStatus aclnnGatherV3(
         <td>mode</td>
         <td>输入</td>
         <td>计算模式。</td>
-        <td>取值范围在[0, 2]内。<ul><li>0：索引散列场景性能优化；</li><li>1：索引聚集场景性能优化。</li><li>2：支持索引越界，当前只支持1。</li></ul></td>
+        <td>取值范围在[0, 2]内。<ul><li>0：索引散列场景性能优化。</li><li>1：索引聚集场景性能优化。</li><li>2：支持索引越界，当前只支持1。</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>
@@ -174,7 +174,7 @@ aclnnStatus aclnnGatherV3(
     </tbody></table>
 
   <!-- npu="A3,910b" id7 -->
-  - <term>Atlas A2系列产品</term>、 <term>Atlas A3系列产品</term>: dim当前仅支持0，batchDims当前仅支持0。
+  - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>: dim当前仅支持0，batchDims当前仅支持0。
 
   <!-- end id7 -->
 

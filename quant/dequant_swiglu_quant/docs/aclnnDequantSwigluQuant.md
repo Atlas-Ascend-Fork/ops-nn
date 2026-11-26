@@ -249,7 +249,7 @@ aclnnStatus aclnnDequantSwigluQuant(
 
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-    - weightScaleOptional参数中，shape表示为[H]或[groupNum, H]，且取值H和x最后一维保持一致。当groupIndexOptional为空指针时，shape为[H]，[1, H]；当groupIndexOptional不为空指针时，shape为[groupNum, H]。
+    - weightScaleOptional参数中，shape表示为[H]或[groupNum, H]，且取值H和x最后一维保持一致。当groupIndexOptional为空指针时，shape为[H]、[1, H]；当groupIndexOptional不为空指针时，shape为[groupNum, H]。
     - activationScaleOptional参数中，shape为[N,...]，shape不超过7维不小于1维，维度比x的维度少一维，且shape与对应维度的x的shape一致。
     - quantScaleOptional参数中，仅支持FLOAT，仅支持quantModeOptional为dynamic的场景。当quantModeOptional为dynamic时，shape表示为[H/2]或[groupNum, H/2]。当groupIndexOptional为空指针时，shape为[H/2]；当groupIndexOptional不为空指针时，shape为[groupNum, H/2]。
     - quantOffsetOptional参数中，暂时不支持该参数。
@@ -361,7 +361,7 @@ aclnnStatus aclnnDequantSwigluQuant(
 <!-- npu="A3,910b" id9 -->
 - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
   - x的最后一维需要是2的倍数，且x的维数必须大于1维。
-  - 算子支持的输入张量的内存大小有上限，校验公式：weightScaleOptional张量内存大小+biasOptional张量内存大小+quantScaleOptional张量内存大小+quantOffsetOptional张量内存大小 +（activationScaleOptional张量内存大小 + scaleOut张量内存大小）/40  + x张量最后一维H内存大小 * 10 < 192KB。
+  - 算子支持的输入张量的内存大小有上限，校验公式：weightScaleOptional张量内存大小+biasOptional张量内存大小+quantScaleOptional张量内存大小+quantOffsetOptional张量内存大小 +（activationScaleOptional张量内存大小 + scaleOut张量内存大小）/40 + x张量最后一维H内存大小 * 10 < 192KB。
 <!-- end id9 -->
 
 <!-- npu="950" id10 -->

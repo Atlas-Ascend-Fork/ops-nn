@@ -35,7 +35,7 @@ HardsigmoidBackward(grad\_output, self)=
 \end{cases}
 $$
 
-其中 $\alpha$ 固定为 $1/6$、$\beta$ 固定为 $0.5$，判定区间等价于 $self \in (-3, 3)$（开区间）。输出 out 为公式中的 grad_input，即 self 的梯度。
+其中$\alpha$固定为$1/6$、$\beta$固定为$0.5$，判定区间等价于$self \in (-3, 3)$（开区间）。输出out为公式中的grad_input，即self的梯度。
 
 ## 函数原型
 

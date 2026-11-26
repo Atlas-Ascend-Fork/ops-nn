@@ -41,7 +41,7 @@
   mul运算：
 
   $$
-  y=(x1 @ x2 + bias) ∗ x3
+  y=(x1 @ x2 + bias) * x3
   $$
 
   gelu_tanh运算：
@@ -401,7 +401,7 @@ aclnnStatus aclnnFusedMatmulV2(
   <!-- end id10 -->
 
 - 当fusedOpType取值为"gelu_erf"、"gelu_tanh"时，x1、x2的数据类型必须为BFLOAT16、FLOAT16，且x1、x2、y仅支持二维；当fusedOpType为""、"relu"时，x1、x2的数据类型必须为FLOAT32（cubeMathType只支持3）、BFLOAT16、FLOAT16；当fusedOpType取值为"16cast32"时，x1、x2的数据类型必须为BFLOAT16、FLOAT16，且x1、x2、y支持二维，或batch轴为1的三维；当fusedOpType为"add"、"mul"时，x1、x2、x3的数据类型必须为FLOAT32（cubeMathType只支持3）、BFLOAT16、FLOAT16。
-- 当fusedOpType取值为""、"relu"、"add"、"mul"时，在多维场景下不支持batch轴broadcast，batch维度需要一致；以下relu共享x2场景除外。
+- 当fusedOpType取值为""、"relu"、"add"、"mul"时，在多维场景下不支持batch轴广播，batch维度需要一致；以下relu共享x2场景除外。
 <!-- npu="950" -->
 - 当fusedOpType取值为"relu"时，支持x1为3-6维、x1不转置且x2的所有batch轴均为1（包括x2为二维）的场景。此时x1和x2的维度数可以不同，输出shape按MatMul的batch轴广播规则确定；x1的所有batch轴与M轴长度的乘积不能超过INT32_MAX。
 <!-- end -->

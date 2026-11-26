@@ -299,7 +299,7 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <td>dstType（int64_t）</td>
       <td>输入</td>
       <td>表示指定输出y的数据类型。</td>
-      <td><ul><li>dstType的取值范围是:[2, 34,35, 36, 40, 41]，分别对应INT8、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、FLOAT4_E1M2。</li></ul></td>
+      <td><ul><li>dstType的取值范围是：[2, 34,35, 36, 40, 41]，分别对应INT8、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、FLOAT4_E1M2。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -309,7 +309,7 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <td>roundModeOptional（char*）</td>
       <td>输入</td>
       <td>表示对输出y结果的舍入模式。</td>
-      <td><ul><li>取值范围是：["rint", "round", "floor", "ceil", "trunc"]。</li><li>当输出y的数据类型为INT8、FLOAT8_E5M2、FLOAT8_E4M3FN时，仅支持"rint"模式。</li><li>当输出y的数据类型为HIFLOAT8时，仅支持"round"模式。</li><li>支持传入空指针，传入空指针时，则默认使用“rint”。</li></ul></td>
+      <td><ul><li>取值范围是：["rint", "round", "floor", "ceil", "trunc"]。</li><li>当输出y的数据类型为INT8、FLOAT8_E5M2、FLOAT8_E4M3FN时，仅支持“rint”模式。</li><li>当输出y的数据类型为HIFLOAT8时，仅支持“round”模式。</li><li>支持传入空指针，传入空指针时，则默认使用“rint”。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -329,7 +329,7 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <td>swigluMode（int64_t）</td>
       <td>输入</td>
       <td>表示swiglu的计算模式。</td>
-      <td><ul><li>取值范围为：[0，1，2，3]，默认是0。</li><li>0：表示传统swiglu计算方式。</li><li>1：表示swiglu的变种（GPT-OSS变体），使用奇偶分块方式，并支持clampLimit、gluAlpha激活系数以及gluBias偏差。</li><li>2：计算方式与1相同（同为变体swiglu，支持clampLimit、gluAlpha、gluBias），区别在于使用连续前后半分块方式（与0的切分方式一致），而非奇偶分块。</li><li>3：变体swiglu，切分方式与0和2相同采用连续前后半分块方式，计算方式与2区别在于clamp在silu之后，不支持gluAlpha、gluBias。</li></ul></td>
+      <td><ul><li>取值范围为：[0, 1, 2, 3]，默认是0。</li><li>0：表示传统swiglu计算方式。</li><li>1：表示swiglu的变体（GPT-OSS变体），使用奇偶分块方式，并支持clampLimit、gluAlpha激活系数以及gluBias偏差。</li><li>2：计算方式与1相同（同为变体swiglu，支持clampLimit、gluAlpha、gluBias），区别在于使用连续前后半分块方式（与0的切分方式一致），而非奇偶分块。</li><li>3：变体swiglu，切分方式与0和2相同采用连续前后半分块方式，计算方式与2区别在于clamp在silu之后，不支持gluAlpha、gluBias。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -369,7 +369,7 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <td>yOut（aclTensor*）</td>
       <td>输出</td>
       <td>-</td>
-      <td><ul><li>当activateDim对应的x的尾轴时，shape为[X1,X2,...Xn,H]。</li><li>当activateDim对应的不是x的尾轴时，shape为[X1,X2,...,XactivateDim / 2,...,2H]。</li><li>当yOut的数据类型为FLOAT4_E2M1、FLOAT4_E1M2时，yOut的最后一维需要是2的倍数。</li><li>当activateDim对应的不是x的尾轴时，yOut的尾轴需要小于5120。</li></ul></td>
+      <td><ul><li>当activateDim对应的x的尾轴时，shape为[X1,X2,...Xn,H]。</li><li>当activateDim对应的不是x的尾轴时，shape为[X1,X2,...,XactivateDim / 2,...,2H]。</li><li>当yOut的数据类型为FLOAT4_E2M1、FLOAT4_E1M2时，yOut的最后一维需要是2的倍数。</li><li>当activateDim对应的不是x的尾轴时，yOut的尾轴需要不超过5120。</li></ul></td>
       <td>INT8、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、FLOAT4_E1M2</td>
       <td>ND</td>
       <td>2-8</td>

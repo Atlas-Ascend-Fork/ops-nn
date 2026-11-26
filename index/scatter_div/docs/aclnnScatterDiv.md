@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 算子功能：实现兼容tf.compat.v1.scatter_div的功能，将tensor updates中的值按指定的索引tensor indices逐切片除到tensor varRef的切片上。若有多于一个updates值作用到varRef的同一个切片，那么这些值将会在这一切片上连除。规则如下：
+- 算子功能：实现兼容tf.compat.v1.scatter_div的功能，将Tensor updates中的值按指定的索引Tensor indices逐切片除到Tensor varRef的切片上。若有多于一个updates值作用到varRef的同一个切片，那么这些值将会在这一切片上连除。规则如下：
 
 $$
 varRef[indices[i],...] = varRef[indices[i],...] / updates[i,...]
@@ -168,7 +168,7 @@ aclnnStatus aclnnScatterDiv(
       <td>varRef、indices、updates的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>varRef、updates的dtype不一致。</td>
+      <td>varRef、updates的数据类型不一致。</td>
     </tr>
     <tr>
       <td>ACLNN_ERR_INNER_TILING_ERROR</td>
@@ -233,7 +233,7 @@ aclnnStatus aclnnScatterDiv(
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

@@ -81,7 +81,7 @@ aclnnStatus aclnnGelu(
       <td>self（aclTensor*）</td>
       <td>输入</td>
       <td>表示GELU激活函数的输入，公式中的self。</td>
-      <td><ul><li>数据类型必须和out一样。</li><li>shape必须和out一样。</li><li>支持空Tensor。</li></ul></td>
+      <td><ul><li>数据类型必须和out一致。</li><li>shape必须和out一致。</li><li>支持空Tensor。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>

@@ -268,7 +268,7 @@ aclnnStatus aclnnBatchNorm(
       <td>输入或输出Tensor的shape不在支持的范围内。</td>
     </tr>
     <tr>
-      <td>weight，bias，runningMean，runningVar、saveMean（训练场景下）、saveInvstd（训练场景下）的shape长度与input shape中channel轴的长度不相等。</td>
+      <td>weight、bias、runningMean、runningVar、saveMean（训练场景下）、saveInvstd（训练场景下）的shape长度与input shape中channel轴的长度不相等。</td>
     </tr>
     <tr>
       <td>input和output的数据格式不一致。</td>
