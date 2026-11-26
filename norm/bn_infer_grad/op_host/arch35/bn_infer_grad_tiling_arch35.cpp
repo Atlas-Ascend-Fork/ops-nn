@@ -127,8 +127,9 @@ bool PadAndSqueeze(const std::vector<std::vector<int64_t>>& input_shapes,
 
 // c_axis: 归一化 max_bro_shape 中 C 维的下标（scale/batch_variance 的唯一非 1 轴）；
 //         C=1 被 squeeze 后传入 -1 表示无需保护。
-// 设计约束（DESIGN.md §3.4 / §4.1.1）：禁止选 C 维作为切分轴（scale/variance 沿 C 广播，
-// 切分 C 增加搬运与广播复杂度）。⚠️ 但 C 的大小必须计入 inner 累乘——C 在每个 tile 内完整存在，
+// 设计约束：C 维优先整体放入 tile（scale/variance 沿 C 广播，切分 C 增加搬运与广播复杂度），
+// 仅当 C×inner 超出单 buffer 时退化为按 per_buf/inner 切 C（见 k==c_axis 分支）。
+// ⚠️ 但 C 的大小必须计入 inner 累乘——C 在每个 tile 内完整存在，
 // 否则当切分轴落在 C 之上（如 N 维 axis=0）时 inner 缺少 C 因子，a_i / count 会算错。
 bool FindSplitAxis(const std::vector<int64_t>& max_bro_shape, int64_t dtype_size, int64_t ub_per_core,
                    int64_t phys_nodes, int64_t c_axis, SplitResult& out)
@@ -142,21 +143,20 @@ bool FindSplitAxis(const std::vector<int64_t>& max_bro_shape, int64_t dtype_size
     int64_t inner = 1;
     for (int64_t k = rank - 1; k >= 0; k--) {
         if (k == c_axis) {
-            // C 维禁止作为切分轴。分两种情况处理，且无论哪种，C 的大小都要计入 inner。
+            // C 维是广播轴，但 C 的大小必须计入 inner 累乘（DESIGN §3.4 / §4.1.1）。
             if (max_bro_shape[k] * inner > per_buf_elems) {
-                // 完整 C 与已累乘的 inner 无法共同放入单 buffer：切分轴下移到 C 内侧一维（k+1），
-                // 整块 inner（此时已保证 inner <= per_buf_elems）作为一个 tile，C 落到切分轴之外（outer），
-                // 由外层坐标遍历，仍保持完整、不被细分。
-                if (k + 1 < rank) {
-                    out.axis = k + 1;
-                    out.a_i = max_bro_shape[k + 1];
-                    out.a_o = 1;
-                    out.a_i_tail = max_bro_shape[k + 1];
-                    return true;
+                // 完整 C 与已累乘的 inner 无法共同放入单 buffer：直接按 per_buf/inner 切 C。
+                // ⚠️ 不能退化为把切分轴下移到 C 内侧一维（k+1）——那会让每个 tile 只有 inner
+                // 个元素而把 C 全量放进外层循环，产生海量微型 tile（例如 shape [54,1024,17]
+                // 会生成 54×1024 = 55,296 个 17 元素的 tile），MTE2/MTE3 固定开销与事件同步
+                // 成为主导，MTE-bound 性能崩塌。
+                // 切 C 后 tile = a_i(C) × inner，scale/variance 沿 C stride=1、沿内侧广播轴
+                // stride=0，NDDMA 随路广播与 kernel 坐标映射（eff_coord[C]=a_o_off*a_i）均正确。
+                // 由 k+1 轴的常规溢出检查保证此处 inner <= per_buf_elems（否则早在内侧轴已切分）。
+                out.a_i = per_buf_elems / inner;
+                if (out.a_i <= 0) {
+                    return false;
                 }
-                // C 为最内轴且单独超限（罕见：2D [N, C] 且 C > per_buf_elems）：
-                // 无更内侧轴可退让，退化为按 per_buf 切 C，避免 UB 溢出。
-                out.a_i = per_buf_elems;
                 out.a_o = (max_bro_shape[k] + out.a_i - 1) / out.a_i;
                 int64_t rem = max_bro_shape[k] % out.a_i;
                 out.a_i_tail = (rem == 0) ? out.a_i : rem;

@@ -50,6 +50,10 @@ static const std::string OP_NAME = "BNInferGrad";
 static constexpr uint64_t kUbSize = 248UL * 1024UL;
 static constexpr uint64_t kCoreNum = 32UL;
 static constexpr uint64_t kTilingDataSize = 4096UL;
+// 单 buffer 可容纳元素数 = ((ubPerCore / kPhysNodes) & ~31) / dtypeSize（dtypeSize 恒为 4，见 tiling）。
+// 与 op_kernel/arch35/bn_infer_grad_tiling_data.h 的 kPhysNodes 保持一致，避免期望值手算漂移。
+static constexpr int64_t kPerBufElems = ((static_cast<int64_t>(kUbSize) / kPhysNodes) & ~31LL) /
+                                        static_cast<int64_t>(sizeof(float));
 static constexpr float kEpsilon = 0.0001f;
 
 // 由运行期 vector 构造 gert::StorageShape（rank=0 时为空 shape）
@@ -260,6 +264,77 @@ TEST_F(BNInferGradTilingTest, LargeShape_MultiCore)
     TilingInfo info;
     ASSERT_TRUE(RunOneCase({256, 64, 28, 28}, ge::DT_FLOAT, ge::GRAPH_SUCCESS, info));
     EXPECT_GE(info.blockNum, 1u);
+}
+
+// ---------------------------------------------------------------------------
+// C 维切分（MTE-bound 修复回归）：C×inner 超出单 buffer 时按 per_buf/inner 切 C，
+// 而不是退化为 C 内侧一维的小 tile（后者会生成海量微型 tile，固定开销主导）。
+// per_buf = (248KB/kPhysNodes & ~31)/4 = 10576 个 fp32 元素。
+// ---------------------------------------------------------------------------
+template <int64_t R>
+static const BNInferGradTilingData<R>* DecodeTiling(const TilingInfo& info)
+{
+    EXPECT_GE(info.tilingDataSize, sizeof(BNInferGradTilingData<R>));
+    return reinterpret_cast<const BNInferGradTilingData<R>*>(info.tilingData.get());
+}
+
+TEST_F(BNInferGradTilingTest, Split_CSmallInner_357)
+{
+    // shape [54,1024,17]：C=1024, inner=17, C×inner=17408 > per_buf → 按 C 切分。
+    TilingInfo info;
+    ASSERT_TRUE(RunOneCase({54, 1024, 17}, ge::DT_FLOAT16, ge::GRAPH_SUCCESS, info));
+    const auto* td = DecodeTiling<4>(info);
+    // rank3→R4 前补 1 维，C 轴由 1 右移到 2
+    const int64_t expectedAi = kPerBufElems / 17;
+    EXPECT_EQ(td->split.axis, 2);
+    EXPECT_EQ(td->split.a_i, expectedAi);             // 622
+    EXPECT_EQ(td->split.a_o, 2);                      // ceil(1024/622)
+    EXPECT_EQ(td->split.a_i_tail, 1024 % expectedAi); // 402
+    EXPECT_LE(td->split.a_i * 17, kPerBufElems);      // tile 不超 UB
+    EXPECT_EQ(td->multicore.total_tiles, 54 * 2);     // 108（原病态 55296）
+    EXPECT_EQ(td->multicore.num_cores, 32);
+    EXPECT_EQ(info.blockNum, 32u);
+}
+
+TEST_F(BNInferGradTilingTest, Split_CSmallInner_Rank5_149)
+{
+    // shape [4977,512,3,6,3]：C=512, inner=3*6*3=54, C×inner=27648 > per_buf → 按 C 切分。
+    TilingInfo info;
+    ASSERT_TRUE(RunOneCase({4977, 512, 3, 6, 3}, ge::DT_BF16, ge::GRAPH_SUCCESS, info));
+    const auto* td = DecodeTiling<8>(info);
+    // rank5→R8 前补 3 维，C 轴由 1 右移到 4
+    const int64_t expectedAi = kPerBufElems / 54;
+    EXPECT_EQ(td->split.axis, 4);
+    EXPECT_EQ(td->split.a_i, expectedAi);            // 195
+    EXPECT_EQ(td->split.a_o, 3);                     // ceil(512/195)
+    EXPECT_EQ(td->split.a_i_tail, 512 % expectedAi); // 122
+    EXPECT_LE(td->split.a_i * 54, kPerBufElems);
+    EXPECT_EQ(td->multicore.total_tiles, 4977 * 3); // 14931（原病态 2548224）
+}
+
+TEST_F(BNInferGradTilingTest, Split_CWhole_GoesOuterAxis)
+{
+    // shape [8,16,17]：C×inner=16*17=272 ≤ per_buf → C 整体不切，切分轴落到最外层 N。
+    TilingInfo info;
+    ASSERT_TRUE(RunOneCase({8, 16, 17}, ge::DT_FLOAT, ge::GRAPH_SUCCESS, info));
+    const auto* td = DecodeTiling<4>(info);
+    EXPECT_EQ(td->split.axis, 1); // N 轴（原 0 + delta 1）
+    EXPECT_EQ(td->split.a_i, 8);
+    EXPECT_EQ(td->split.a_o, 1);
+    EXPECT_EQ(td->multicore.total_tiles, 1);
+}
+
+TEST_F(BNInferGradTilingTest, Split_CInnermostOverflow)
+{
+    // shape [100,20000]：C 即最内轴且 C > per_buf → 直接按 per_buf 切 C。
+    TilingInfo info;
+    ASSERT_TRUE(RunOneCase({100, 20000}, ge::DT_FLOAT, ge::GRAPH_SUCCESS, info));
+    const auto* td = DecodeTiling<4>(info);
+    EXPECT_EQ(td->split.axis, 3); // rank2→R4，C 轴 1 右移 2
+    EXPECT_EQ(td->split.a_i, kPerBufElems);
+    EXPECT_EQ(td->split.a_o, 2);                         // ceil(20000/10576)
+    EXPECT_EQ(td->split.a_i_tail, 20000 - kPerBufElems); // 9424
+    EXPECT_EQ(td->multicore.total_tiles, 100 * 2);
 }
 
 // epsilon 专项包装：其余参数取合法默认（fp32、NCHW、rank1 scale/var）
