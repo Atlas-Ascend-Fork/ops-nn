@@ -441,8 +441,17 @@ ge::graphStatus BatchNormGradExt2InferBase::DoLibApiTiling() { return ge::GRAPH_
 
 ge::graphStatus BatchNormGradExt2InferBase::GetWorkspaceSize()
 {
-    // 计算workspace大小
-    workspaceSize_ = MINIMAL_WORKSPACE;
+    // MINIMAL_WORKSPACE(=16MB) 是**系统预留**（与其它模板的 BNG_WORKSPACE_RESERVED 同值），
+    // 内核拿到的是 GetUserWorkspace(workspace)，即预留区之后的地址；因此用户区必须**额外**声明，
+    // 否则对 usrWorkspace 的任何读写都会落到分配之外（真机表现为 `非法 GM 地址`，errcode 95）。
+    // 用户区用途：R 方向多核切分时每核每通道 4 个 dd 字（s0hi/s0lo/s1hi/s1lo）。
+    constexpr uint64_t kDdWordsPerChannel = 4;
+    // 上界：核数（按平台最大核数取，覆盖任何 rSplitNum/blockNum 组合）× 通道数
+    const uint64_t rBlocks = std::max<uint64_t>(1, static_cast<uint64_t>(aicoreParams_.numBlocks));
+    const uint64_t aChannels = std::max<uint64_t>(1, static_cast<uint64_t>(aDim));
+    workspaceSize_ = MINIMAL_WORKSPACE + rBlocks * aChannels * kDdWordsPerChannel * sizeof(float);
+    OP_LOGI(context_->GetNodeName(), "Infer workspace: reserved %u B + user %lu B", MINIMAL_WORKSPACE,
+            static_cast<unsigned long>(workspaceSize_ - MINIMAL_WORKSPACE));
     return ge::GRAPH_SUCCESS;
 }
 

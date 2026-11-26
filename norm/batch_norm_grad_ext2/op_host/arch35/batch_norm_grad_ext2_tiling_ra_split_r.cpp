@@ -26,7 +26,8 @@ constexpr uint64_t STAGE0_A_ELEM_NUM = 4; // mean, rstd, dbeta, dgamma
 constexpr uint64_t STAGE2_A_ELEM_NUM = 5; // mean, rstd, dbeta, dgamma, gamma
 constexpr uint64_t STAGE2_R_ELEM_NUM = 3; // dy, x, dx
 constexpr uint64_t DOUBLE_BUFF = 2;
-constexpr uint64_t WORKSPACE_NUM = 2;
+constexpr uint64_t WORKSPACE_NUM = 6;      // fp32: dbeta_hi/lo/sat + dgamma_hi/lo/sat
+constexpr uint64_t WORKSPACE_NUM_FP16 = 4; // fp16: 无 sat 伴生（|x*dy| <= 2^32、R <= 2^32，不会饱和）
 constexpr uint64_t ULONG_BIT_LEN = 64;
 constexpr int64_t R_LOOP_FACTOR = 64;
 constexpr int64_t LIMIT_ADIM_FACTOR = 16;
@@ -55,6 +56,9 @@ bool BatchNormGradExt2TilingRASplitR::IsCapable()
 ge::graphStatus BatchNormGradExt2TilingRASplitR::DoOpTiling()
 {
     dyTypeSize_ = ge::GetSizeByDataType(dyDtype);
+    // fp16 的归约不可能饱和（|x*dy| <= 65504^2 = 2^32、R <= 2^32、|sum dy| <= 2^48 << FLT_MAX），
+    // 缩放伴生累加器恒为 0 且从不参与结果，内核 fp16 实例化把它整段编译掉了。
+    workspaceNum_ = (dyDtype == ge::DT_FLOAT) ? WORKSPACE_NUM : WORKSPACE_NUM_FP16;
     int64_t blockFactor = Ops::Base::CeilDiv(r1Dim, static_cast<int64_t>(coreNum));
     blockFactor_ = std::max(R_LOOP_FACTOR, blockFactor);
     usedCoreNum_ = Ops::Base::CeilDiv(r1Dim, blockFactor_);
@@ -87,11 +91,16 @@ ge::graphStatus BatchNormGradExt2TilingRASplitR::Stage0Stage1UbTiling()
     // 校验UB是否越界
     uint64_t rElemUbSize = Ops::Base::CeilAlign(
         aFactorAlign_ * rLoopFactor_ * STAGE0_R_ELEM_NUM * dyTypeSize_ * DOUBLE_BUFF, blockSize / dyTypeSize_);
-    uint64_t cacheBuffSize = Ops::Base::CeilAlign(cacheBuffCnt_ * aFactorAlign_ * FLOAT_BYTE_SIZE,
+    // double-fp32 累加器：每个 A 子块 dbeta/dgamma 各一组 hi/lo
+    int64_t vlFp32 = static_cast<int64_t>(Ops::Base::GetVRegSize(context_) / FLOAT_BYTE_SIZE);
+    int64_t accBlockNum = Ops::Base::CeilDiv(aFactorAlign_, vlFp32);
+    // fp32 6 段：dbeta/dgamma 各 hi/lo + 各自的缩放伴生累加（见 comp_sum.h CompAddScaled）；
+    // fp16 4 段：饱和不可能，伴生累加不分配（与内核 compAccBuf_ 的 4 段一致）
+    uint64_t compAccUbSize = Ops::Base::CeilAlign(accBlockNum * vlFp32 * workspaceNum_ * FLOAT_BYTE_SIZE,
                                                   blockSize / FLOAT_BYTE_SIZE);
     uint64_t aElemUbSize = Ops::Base::CeilAlign(aFactorAlign_ * STAGE0_A_ELEM_NUM * DOUBLE_BUFF * FLOAT_BYTE_SIZE,
                                                 blockSize / FLOAT_BYTE_SIZE);
-    uint64_t oneStepUbSize = rElemUbSize + cacheBuffSize + aElemUbSize;
+    uint64_t oneStepUbSize = rElemUbSize + compAccUbSize + aElemUbSize;
     OP_CHECK_IF(ubSize < oneStepUbSize,
                 OP_LOGE_WITHOUT_REPORT(context_, "ubSize %lu less than oneStepUbSize: %lu.", ubSize, oneStepUbSize),
                 return ge::GRAPH_FAILED);
@@ -123,7 +132,7 @@ uint64_t BatchNormGradExt2TilingRASplitR::GetTilingKey() const { return BNG_RA_S
 
 ge::graphStatus BatchNormGradExt2TilingRASplitR::GetWorkspaceSize()
 {
-    workspaceSize_ = BNG_WORKSPACE_RESERVED + usedCoreNum_ * aDim * FLOAT_BYTE_SIZE * WORKSPACE_NUM;
+    workspaceSize_ = BNG_WORKSPACE_RESERVED + usedCoreNum_ * aDim * FLOAT_BYTE_SIZE * workspaceNum_;
     OP_LOGI(context_->GetNodeName(), "Workspace size: %ld", workspaceSize_);
     size_t* workspaces = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
@@ -154,6 +163,10 @@ ge::graphStatus BatchNormGradExt2TilingRASplitR::PostTiling()
 {
     tilingData_.usedCoreNum = usedCoreNum_;
     tilingData_.rDim = r1Dim;
+    // fl32(1 / R_exact)：host 侧用 double 求倒数再舍入一次（aicore 侧禁止 double）。
+    // 不能写成 fl32(1/fl32(R))：R > 2^24 且不可表示时 fl32(R) != R，会让 dscale/R 整通道
+    // 带 (R-fl32(R))/R 的同号偏差（与 comp_sum.h 里两字商/两字倒数修的是同一类问题）。
+    tilingData_.reciprocal = static_cast<float>(1.0 / static_cast<double>(r1Dim));
     tilingData_.aDim = aDim;
     tilingData_.blockFactor = blockFactor_;
     tilingData_.tailBlockFactor = tailBlockFactor_;

@@ -23,11 +23,15 @@ using namespace ge;
 
 namespace optiling {
 static constexpr int64_t TWO = 2;
+static constexpr int64_t FOUR = 4;
 
 static constexpr uint64_t BNG_RAR_RECOMPUTE_SPLIT_R1_INFER = 1;
 static constexpr uint64_t BNG_RAR_RECOMPUTE_SPLIT_R0_INFER = 2;
 static constexpr int ULONG_BIT_LEN = 64;
 static constexpr int64_t BNG_PER_CORE_PROCESS_MIN_UB_SIZE = 1024;
+// 与 kernel batch_norm_grad_ext2_infer.h 的 RS_MAX_A_DIM / RS_MIN_R1 保持一致
+static constexpr int64_t RS_MAX_A_DIM = 8;
+static constexpr int64_t RS_MIN_R1 = 16;
 
 class BatchNormGradExt2InferTiling : public BatchNormGradExt2InferBase {
 public:
@@ -63,6 +67,7 @@ private:
     void DoBinaryAddTiling(BatchNormGradExt2BinaryAddTilingData& tilingData, int64_t quotient);
 
     int64_t onceProcUbNeed{0}; // A轴上执行一次，需要占用的ub大小
+    bool rSplitMode{false};    // dgamma/dbeta 按 R1 跨核切分（kernel: useRSplit_）
     uint64_t binaryAddBufSize{0};
     uint64_t subTilingKey{0};
     int64_t r1Factor{0};
@@ -250,11 +255,29 @@ ge::graphStatus BatchNormGradExt2InferTiling::DoOpTilingForStage1()
         // R0可全载，核内切R1
         subTilingKey = BNG_RAR_RECOMPUTE_SPLIT_R1_INFER;
     }
+    // R（= r1Dim*r0Dim）很短、A 比 R 长时（如 C=1035140, R=16），dgamma/dbeta 的旧路径是逐通道串行
+    // （每通道一次 4B 搬入/搬出 + 累加器初始化/finalize），实测被延迟打死（MBU 2.3%）。这种形状统一
+    // 交给 SplitR0 模板里的"lane = 通道"实现（kernel：BatchNormGradExt2InferDgammaDbetaSplitR0 的
+    // useChannelLane_ 分支），按 64 通道一批处理。
+    if (r1Dim * r0Dim <= static_cast<int64_t>(vlFp32_) && aDim >= r1Dim * r0Dim) {
+        subTilingKey = BNG_RAR_RECOMPUTE_SPLIT_R0_INFER;
+    }
+    // A 很短而 R1 很长时（NCHW/NCDHW 小通道形状，如 L1_191 NCHW 128x2x8709x2：r1=128, a=2, r0=17418），
+    // dgamma/dbeta 的旧路径按 A 切核，只有 aDim 个核有活（2/72），其余核空闲，2.2M 元素逐 lane 累加
+    // ≈1ms。改为按 r1 切核：blockNum 提到满核数，每核处理 r1 的一段、全部通道，把每核每通道 4 个 dd
+    // 字（s0hi/s0lo/s1hi/s1lo，workspace 已按该口径预留）落盘，SyncAll 后 0 号核补偿合并 + finalize
+    // （kernel：同文件的 useRSplit_ 分支，条件必须与 kernel 侧完全一致）。
+    rSplitMode = enableDgamma && enableDbeta && (aDim <= RS_MAX_A_DIM) &&
+                 (aDim < static_cast<int64_t>(aicoreParams_.numBlocks)) && (r1Dim >= RS_MIN_R1) &&
+                 (aDim * FOUR <= static_cast<int64_t>(aicoreParams_.numBlocks));
+    if (rSplitMode) {
+        subTilingKey = BNG_RAR_RECOMPUTE_SPLIT_R0_INFER;
+    }
 
     onceProcUbNeed = INT64_MAX;
     int64_t minADimPerCore = std::max(1L, Ops::Base::CeilDiv(BNG_PER_CORE_PROCESS_MIN_UB_SIZE, onceProcUbNeed));
-    int64_t blockNum = aicoreParams_.numBlocks;
-    if (static_cast<int64_t>(minADimPerCore * aicoreParams_.numBlocks) > aDim) {
+    int64_t blockNum = rSplitMode ? static_cast<int64_t>(aicoreParams_.numBlocks) : aicoreParams_.numBlocks;
+    if (!rSplitMode && static_cast<int64_t>(minADimPerCore * aicoreParams_.numBlocks) > aDim) {
         // 每个核最少要处理 BNG_PER_CORE_PROCESS_MIN_UB_SIZE, minADimPerCore向上取整不可能是0
         blockNum = aDim / minADimPerCore;
         if (blockNum == 0) {
@@ -287,6 +310,38 @@ ge::graphStatus BatchNormGradExt2InferTiling::DoOpTilingForStage1()
     tilingData_.enableDx = static_cast<int32_t>(enableDx);
     tilingData_.enableDgamma = static_cast<int32_t>(enableDgamma);
     tilingData_.enableDbeta = static_cast<int32_t>(enableDbeta);
+
+    // ---- UB 账本：按 infer.h 中 SplitR0 / SplitR1 的真实 InitBuffer 重算并断言 ----
+    // 上面的 binaryAddBufSize / factorMax 保留历史口径（决定 r0/r1 切分，不改），本账本只核算
+    // dgamma/dbeta 阶段实际占用的 buffer（BUFFER_NUM = 2；ONE_BLK_SIZE = 32B；UB_ADD_BUF = 3KB；
+    // compAccBuf_ = 4 * vlFp32 * 4B，是 kernel 新增后公式里一直没计的部分）。
+    //   SplitR0: 2*dyBuf + 2*xBuf + 2*32(mean) + 2*32(var) + 3KB(dbetaOut,1 buffer) + 3KB(dgammaOut)
+    //   SplitR1: 2*dyBuf + 2*xBuf + 2*32(mean) + 2*32(var) + 2*32(dbetaOut) + 2*32(dgammaOut)
+    constexpr int64_t kInferBufferNum = 2;
+    constexpr int64_t kInferOneBlkSize = 32;
+    constexpr int64_t kInferAddOutBuf = 3 * 1024;
+    const int64_t compAccUb = 4 * vlFp32_ * FLOAT32_BYTES;
+    int64_t dbgUbNeed = 0;
+    if (subTilingKey == BNG_RAR_RECOMPUTE_SPLIT_R1_INFER) {
+        const int64_t rAlign = static_cast<int64_t>(ubRDimFactor);
+        const int64_t dyBuf = Ops::Base::CeilAlign(rAlign * bytesPerDy_, TWO * blockSize_);
+        dbgUbNeed = kInferBufferNum * (dyBuf + dyBuf) + kInferBufferNum * 4 * kInferOneBlkSize + compAccUb;
+    } else {
+        const int64_t tailFactorAlign = Ops::Base::CeilAlign(static_cast<int64_t>(ubRDimTailFactor) * bytesPerDy_,
+                                                             blockSize_) /
+                                        bytesPerDy_;
+        const int64_t dyBuf = tailFactorAlign * TWO * bytesPerDy_;
+        const int64_t xBuf = static_cast<int64_t>(ubRDimTailFactorAlign) * TWO * FLOAT32_BYTES;
+        dbgUbNeed = kInferBufferNum * (dyBuf + xBuf + TWO * kInferOneBlkSize) + TWO * kInferAddOutBuf + compAccUb;
+    }
+
+    OP_LOGI(context_->GetNodeName(), "Infer dgamma/dbeta UB ledger: need %ldB, ub %luB, subTilingKey %lu.", dbgUbNeed,
+            aicoreParams_.ubSize, subTilingKey);
+    OP_CHECK_IF(dbgUbNeed > static_cast<int64_t>(aicoreParams_.ubSize),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "infer dgamma/dbeta UB footprint",
+                                                      std::to_string(dbgUbNeed).c_str(),
+                                                      "exceeds the unified buffer size of the infer template"),
+                return ge::GRAPH_PARAM_INVALID);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -302,6 +357,14 @@ uint64_t BatchNormGradExt2InferTiling::GetTilingKey() const { return TILINGKEY_I
 ge::graphStatus BatchNormGradExt2InferTiling::PostTiling()
 {
     context_->SetBlockDim(std::max(usedCoreNums_, tilingData_.blockNum));
+    // rSplit 路径用 SyncAll 做跨核 partial 合并，必须 batch mode，否则 barrier 形同虚设
+    // （结果是随运行漂移的脏值）。
+    if (rSplitMode) {
+        auto ret = context_->SetScheduleMode(1);
+        OP_CHECK_IF(ret != ge::GRAPH_SUCCESS,
+                    OP_LOGE_WITHOUT_REPORT(context_, "SetScheduleMode(batch) failed for R1-split infer tiling."),
+                    return ret);
+    }
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
     currentWorkspace[0] = workspaceSize_;

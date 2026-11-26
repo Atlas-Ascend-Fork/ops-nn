@@ -147,10 +147,16 @@ ge::graphStatus BatchNormGradExt2RARSplitCoreR1::DoOpTilingStage0()
     // binAddTmpFactor*sizeof(float)) + aInnerAligned * sizeof(float) * DOUBLE_BUFFER * SMALL_SHAPES_STG0 +
     // cacheBufferCount）
 
+    // 补偿累加器：每通道 6 个标量（S0/S1 的 hi/lo/lo2）；先把这块从可用 UB 里扣掉，
+    // 后面的切割公式保持与基线一致（改动切割公式会改变 aInner/R 切分，曾因此把 aInnerStg0 算成 0）
+    const int64_t vlFp32Acc = static_cast<int64_t>(Ops::Base::GetVRegSize(context_) / FLOAT32_BYTES);
+    int64_t compAccBytes = 6 * Ops::Base::CeilDiv(aInnerAligned, vlFp32Acc) * vlFp32Acc * FLOAT32_BYTES;
+    const int64_t ubSizeForTiling = ubSize - compAccBytes;
+
     // dbeta二分预处理，fp32直接用拷贝输入，b16增加cast输出缓存
     int64_t reduceTmpBufNum = dyDtype == ge::DT_FLOAT ? REDUCE_TMP_BUF_NUM_FP32 : REDUCE_TMP_BUF_NUM_FP16;
     // 切r0
-    int64_t factorMax = (ubSize -
+    int64_t factorMax = (ubSizeForTiling -
                          aInnerAligned * FLOAT32_BYTES * (DOUBLE_BUFFER * SMALL_SHAPES_STG0 + cacheBufferCount)) /
                         dyBaseLen_ / (DOUBLE_BUFFER * dyDtypeSize_ * BIG_SHAPES_STG0 + reduceTmpBufNum * FLOAT32_BYTES);
 
@@ -186,16 +192,34 @@ ge::graphStatus BatchNormGradExt2RARSplitCoreR1::DoOpTilingStage0()
         r0Outer, r1InnerOuter, cacheBufferCount);
 
     // 切a, 取（aInner + (blockFp32Nums_ -1)) == aAligned 简化计算
-    int64_t aInnerMax = (ubSize - (blockFp32Nums_ - CONST_ONE) * FLOAT32_BYTES *
-                                      (DOUBLE_BUFFER * SMALL_SHAPES_STG0 + cacheBufferCount)) /
+    int64_t aInnerMax = (ubSizeForTiling - (blockFp32Nums_ - CONST_ONE) * FLOAT32_BYTES *
+                                               (DOUBLE_BUFFER * SMALL_SHAPES_STG0 + cacheBufferCount)) /
                         (r0Inner * r1InnerInner *
                              (dyDtypeSize_ * DOUBLE_BUFFER * BIG_SHAPES_STG0 + reduceTmpBufNum * FLOAT32_BYTES) +
                          (DOUBLE_BUFFER * SMALL_SHAPES_STG0 + cacheBufferCount + 2) * FLOAT32_BYTES);
 
     aInner = aInnerMax < aDim ? aInnerMax : aDim;
+    // 硬下限：aInner == 0 会让 aInnerAligned == 0，kernel 侧补偿累加器 6 个分区全部重叠、
+    // hi/lo 写出也重叠（曾把 key=1000 的整体归约打成只剩几个残差项）。
+    OP_CHECK_IF(aInner <= 0,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "aInner", std::to_string(aInner).c_str(),
+                                                      "RAR R1 split core template stage0 aInner"),
+                return ge::GRAPH_PARAM_INVALID);
     aInnerAligned = Ops::Base::CeilAlign(aInner, blockFp32Nums_);
     int64_t aOuter = Ops::Base::CeilDiv(aDim, aInner);
     int64_t aTail = aDim - (aOuter - CONST_ONE) * aInner;
+
+    // ---- UB 账本：按 kernel stage0 的真实 InitBuffer 复核（aInner 取下限时也必须成立）----
+    //   dy/x: r0InnerStg0*r1InnerInnerStg0*aInnerStg0*sizeof(dy)*DOUBLE_BUFFER*2
+    //   mean/rstd: aInnerAligned*4*DOUBLE_BUFFER*2 ; dbeta/dgamma 输出: aInnerAligned*4*2(hi,lo)
+    //   compAccBuf_: compAccBytes
+    const int64_t stg0UbNeed = r0Inner * r1InnerInner * aInner * dyDtypeSize_ * DOUBLE_BUFFER * BIG_SHAPES_STG0 +
+                               aInnerAligned * FLOAT32_BYTES * (DOUBLE_BUFFER * 2 + 4) + compAccBytes;
+    OP_CHECK_IF(
+        stg0UbNeed > static_cast<int64_t>(ubSize),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "stage0 UB footprint",
+                                              std::to_string(stg0UbNeed).c_str(), "exceeds the unified buffer size"),
+        return ge::GRAPH_PARAM_INVALID);
 
     tilingData_.r0InnerStg0 = r0Inner;
     tilingData_.r0OuterStg0 = r0Outer;
@@ -259,8 +283,9 @@ ge::graphStatus BatchNormGradExt2RARSplitCoreR1::DoOpTilingStage1()
 
     // 计算公式: ubSize >= aInnerStg1 * sizeof(float) * usedCoreNums_ * DOUBLE_BUFFER * 2 +
     // aInnerStg1 * DOUBLE_BUFFER * 2 * (sizeof(float) + sizeof(DTYPE_WEIGHT))
+    // in-queue 每份装 hi 与 lo 两片 → usedCoreNums_ 份 sizeof(float) 要算两次
     int64_t factorMax = ubSize / (DOUBLE_BUFFER * CONST_TWO * weightBaseLen *
-                                  (FLOAT32_BYTES * usedCoreNums_ + (FLOAT32_BYTES + weightDtypeSize)));
+                                  (CONST_TWO * FLOAT32_BYTES * usedCoreNums_ + (FLOAT32_BYTES + weightDtypeSize)));
 
     OP_CHECK_IF(
         factorMax <= 0,
@@ -350,7 +375,8 @@ uint64_t BatchNormGradExt2RARSplitCoreR1::GetTilingKey() const
 
 ge::graphStatus BatchNormGradExt2RARSplitCoreR1::GetWorkspaceSize()
 {
-    workspaceSize_ = BNG_WORKSPACE_RESERVED + usedCoreNums_ * aDimAligned_ * FLOAT32_BYTES * CONST_TWO;
+    // 4 个区：dbeta hi/lo + dgamma hi/lo（stage0 的 dd 对，stage1 用 hi 区覆盖为最终 fp32）
+    workspaceSize_ = BNG_WORKSPACE_RESERVED + usedCoreNums_ * aDimAligned_ * FLOAT32_BYTES * 4;
 
     OP_LOGI(context_, "Workspace size: %ld", workspaceSize_);
 

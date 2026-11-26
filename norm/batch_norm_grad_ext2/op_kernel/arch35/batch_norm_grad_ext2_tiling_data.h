@@ -132,6 +132,10 @@ struct BatchNormGradExt2RASplitRTilingData {
     int64_t dxLastCoreTail = 0;
     int64_t dxLastCoreTimes = 0;
     int64_t cacheBuffCnt = 0;
+    // fl32(1 / rDim)，rDim 是**精确整数 R**：host 端用 double 求倒数后一次舍入再传入
+    // （kernel 的 aicore 函数禁止 double）。不能用 fl32(1/fl32(R))：R > 2^24 且不可表示时
+    // （如 26843545 -> 26843544）会让整通道的 dscale/R 带 (R-fl32(R))/R 的同号偏差。
+    float reciprocal = 0.0f;
 };
 
 struct BatchNormGradExt2InferChannelLastDxTilingData {
@@ -168,6 +172,10 @@ struct BatchNormGradExt2InferChannelLastTilingData {
     int32_t enableDx = 0;
     int32_t enableDgamma = 0;
     int32_t enableDbeta = 0;
+    // 900000 R-vec 形状门控（host 写入）：(R >= 750000) || (C >= 25) 时置 1。
+    // 追加在末尾的 4 字节正好填满结构体原有的尾部对齐填充，sizeof 与各字段偏移均不变
+    // （kernel 侧仅在 kRVecLanes != 0 时读取本字段）。
+    int32_t rVecEnable = 0;
 };
 
 struct BatchNormGradExt2InferDxTilingData {

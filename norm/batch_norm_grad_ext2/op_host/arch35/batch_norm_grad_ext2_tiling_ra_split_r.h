@@ -65,6 +65,8 @@ private:
     int64_t dxLastCoreTimes_{0};
     int64_t cacheBuffCnt_{0};
     int64_t dyTypeSize_{0};
+    // workspace 中 dd 区数：fp32 = 6（dbeta/dgamma 各 hi/lo + 各 sat），fp16 = 4（无 sat）
+    uint64_t workspaceNum_{0};
     BatchNormGradExt2BaseTilingData baseTilingData_;
     BatchNormGradExt2RASplitRTilingData tilingData_;
 };

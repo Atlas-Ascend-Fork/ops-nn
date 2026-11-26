@@ -29,6 +29,11 @@ constexpr int64_t CONST_ONE = 1;
 constexpr int64_t CONST_TWO = 2;
 constexpr int64_t CONST_FOUR = 4;
 constexpr int64_t CONST_TEN = 10;
+constexpr int64_t CONST_TWELVE = 12;
+// 900000 R-vec 形状门控阈值（与 kernel infer_channel_last.h 的 kRVecLanes 配套）：
+// 转置 DMA 与跨 lane 归约是每个 tile 的固定开销，R 太短摊不薄，故只在 R 足够长或通道足够多时启用。
+constexpr int64_t RVEC_MIN_R_LEN = 750000;
+constexpr int64_t RVEC_MIN_CHANNEL = 25;
 
 class BatchNormGradExt2InferChannelLastTiling : public BatchNormGradExt2InferBase {
 public:
@@ -121,6 +126,13 @@ ge::graphStatus BatchNormGradExt2InferChannelLastTiling::DoOpTilingForStage0()
 
 ge::graphStatus BatchNormGradExt2InferChannelLastTiling::DoOpTilingForStage1()
 {
+    // R-vec 形状门控：R = r1Dim * r0Dim（每通道归约长度），C = aDim（通道数）。
+    // 本模板 IsCapable 已保证 r0Dim == 1，这里仍按折叠后的 R 计算，与 kernel 门控语义一致。
+    const int64_t rVecRLen = r1Dim * r0Dim;
+    tilingData_.rVecEnable = ((rVecRLen >= RVEC_MIN_R_LEN) || (aDim >= RVEC_MIN_CHANNEL)) ? 1 : 0;
+    OP_LOGI(context_->GetNodeName(), "InferChannelLast R-vec gate: R %ld, C %ld, rVecEnable %d.", rVecRLen, aDim,
+            tilingData_.rVecEnable);
+
     // 二分
     int64_t binAddRFactor = DEFAULT_BIN_ADD_R_FACTOR;
     int64_t binAddRLoop = r1Dim / binAddRFactor;
@@ -158,8 +170,10 @@ ge::graphStatus BatchNormGradExt2InferChannelLastTiling::DoOpTilingForStage1()
     int64_t aBase = dyDtype_ == ge::DT_FLOAT ? FP32_BLOCK_ALIGN_NUM : FP16_BLOCK_ALIGN_NUM;
     int64_t factorMax = 0;
     if (dyDtype_ == ge::DT_FLOAT) {
+        // 12 = compAccBuf_ 的 8 个字（dbeta/dgamma 各 hi/lo/lo2 + satS0/satS1 两个缩放伴生字）
+        //      + mean/var/dbeta/dgamma 四个队列的 4 个字。
         factorMax = aicoreParams_.ubSize / aBase / FLOAT32_BYTES /
-                    (binAddRFactor * CONST_FOUR + CONST_TEN + binAddCacheBufferCount * CONST_TWO);
+                    (binAddRFactor * CONST_FOUR + CONST_TWELVE + binAddCacheBufferCount * CONST_TWO);
     } else {
         factorMax = aicoreParams_.ubSize / aBase /
                     (binAddRFactor * (CONST_FOUR * FLOAT16_BYTES + FLOAT32_BYTES * CONST_TWO) +
@@ -193,10 +207,49 @@ ge::graphStatus BatchNormGradExt2InferChannelLastTiling::DoOpTilingForStage1()
     tilingData_.aTailStg1 = aTail;
     tilingData_.aOuterPerCoreStg1 = aOuterPerCore;
     tilingData_.usedCoreNumsStg1 = usedCoreNums;
+    // aDim < VL（A 在一个向量内）时 dgamma/dbeta 走 kernel 侧的 R 轴多核切分
+    // （infer_channel_last.h 的 …RSplit），它按 GetBlockNum() 重新切 R，需要把全部核都启动起来：
+    // blockDim = max(usedCoreNumsStg1, dx 的 usedCoreNums)，这里直接取满核数。
+    if (aDim < vlFp32_) {
+        tilingData_.usedCoreNumsStg1 = static_cast<int64_t>(aicoreParams_.numBlocks);
+    }
 
     tilingData_.enableDx = static_cast<int32_t>(enableDx);
     tilingData_.enableDgamma = static_cast<int32_t>(enableDgamma);
     tilingData_.enableDbeta = static_cast<int32_t>(enableDbeta);
+
+    // ---- UB 账本：按 infer_channel_last.h 两个阶段的真实 InitBuffer 重算并断言 ----
+    // 两阶段之间有 pipe_->Reset()，UB 复用，故取两者较大值。上面的切分公式不改（决定 tile 形状）。
+    //   DX 阶段 (BatchNormGradExt2InferChannelLastDx): 2*tileBlockALen*(gamma + runningVar)
+    //                                                 + 4*tileBlockBLen*tileBlockALen*sizeof(T1)
+    //   dgamma/dbeta 阶段 (…ChannelLastRecompute): 2*dyLen*sizeof(T1)*2 (dy+x)
+    //                                                 + 2*4*(mean+dbeta+dgamma+varElems)
+    //                                                 + compAccBuf_ = 6*varElems*4
+    //   其中 varElems = ceil(aInnerStg1 / vlFp32) * vlFp32（kernel 为 RstdExactF32Ub 的整向量
+    //   load 把 varQueue_ 向上取整到整向量）。
+    const int64_t varElems = Ops::Base::CeilDiv(tilingData_.aInnerStg1, vlFp32_) * vlFp32_;
+    const int64_t dxUbNeed = INPUT_OUTPUT_NUM * tilingData_.dxTilingData.tileBlockALen *
+                                 (bytesPerWeight_ + bytesPerRunningVar_) +
+                             INPUT_OUTPUT_NUM * INPUT_OUTPUT_NUM * tilingData_.dxTilingData.tileBlockBLen *
+                                 tilingData_.dxTilingData.tileBlockALen * bytesPerDy_;
+    const int64_t dyLenStg1 = tilingData_.binAddRFactorStg1 * tilingData_.aInnerStg1;
+    // compAccBuf_ = COMP_ACC_WORDS * varElems * 4B：dbeta/dgamma 各 hi/lo/lo2 三个补偿字
+    // （第三字记 lo 的残差，见 comp_sum.h CompAddWide）；fp32 另加 satS0/satS1 两个缩放伴生字
+    // （2^-80 / 2^-160，见 CompAddScaled / CompFinalizeDgammaDbetaSat）。fp16 归约不会饱和，
+    // kernel 侧也用 COMP_ACC_WORDS=6 编译，账本必须与 kernel 的 InitBuffer 完全一致。
+    const int64_t COMP_ACC_WORDS = (dyDtype_ == ge::DT_FLOAT) ? 8 : 6;
+    const int64_t recomputeUbNeed = INPUT_OUTPUT_NUM * INPUT_OUTPUT_NUM * dyLenStg1 * bytesPerDy_ +
+                                    INPUT_OUTPUT_NUM * FLOAT32_BYTES * (3 * tilingData_.aInnerStg1 + varElems) +
+                                    COMP_ACC_WORDS * varElems * FLOAT32_BYTES;
+    const int64_t clUbNeed = std::max(dxUbNeed, recomputeUbNeed);
+    OP_LOGI(context_->GetNodeName(), "InferChannelLast UB ledger: dx %ldB, recompute %ldB, max %ldB, ub %luB.",
+            dxUbNeed, recomputeUbNeed, clUbNeed, aicoreParams_.ubSize);
+    OP_CHECK_IF(clUbNeed > static_cast<int64_t>(aicoreParams_.ubSize),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "infer channel last UB footprint",
+                                                      std::to_string(clUbNeed).c_str(),
+                                                      "exceeds the unified buffer size of the infer channel last "
+                                                      "template"),
+                return ge::GRAPH_PARAM_INVALID);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -212,6 +265,13 @@ ge::graphStatus BatchNormGradExt2InferChannelLastTiling::PostTiling()
 {
     context_->SetBlockDim(
         static_cast<uint32_t>(std::max(tilingData_.usedCoreNumsStg1, tilingData_.dxTilingData.usedCoreNums)));
+    // aDim < VL 时 dgamma/dbeta 走 kernel 侧 R 轴多核切分（…RSplit），它的跨核合并用 SyncAll：
+    // SyncAll 要求所有 block 同时启动（batch mode），否则先到的核可能读不到后到核的 partial。
+    if (aDim < vlFp32_) {
+        auto ret = context_->SetScheduleMode(1);
+        OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "SetScheduleMode batch mode failed."),
+                    return ret);
+    }
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
     currentWorkspace[0] = workspaceSize_;

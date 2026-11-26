@@ -24,6 +24,7 @@ namespace optiling {
 static constexpr uint64_t BATCH_NORM_GRAD_EXT2_RAR_SPLIT_CORE_R0_TILING_KEY = 1100;
 static constexpr int64_t DOUBLE_BUFFER = 2;
 static constexpr int64_t CONST_TWO = 2;
+static constexpr int64_t CONST_FOUR = 4;
 static constexpr int32_t ULONG_BIT_LEN = 64;
 static constexpr int64_t CACHE_BUFFER_COUNT_MAX = 63; // 按int64最大值代入计算
 static constexpr int64_t FLOAT32_BYTES = 4;
@@ -199,6 +200,31 @@ ge::graphStatus BatchNormGradExt2RARSplitCoreR0::DoOpTilingStage0()
     tilingData_.aOuterStg0 = aOuter;
     tilingData_.aTailStg0 = aTail;
 
+    // ---- UB 账本：按 kernel Stage0InitBuffer 的真实分配重算并断言 ----
+    // 上面的 factorMax / aInnerMax 保留历史口径（仍预留已删除的 bin-add cache / reduce-tmp），刻意
+    // 不改：它们决定 r0/r1/a 的切分，改动会改变归约顺序进而改变数值。该旧口径按元素预留
+    // (DOUBLE_BUFFER*SMALL_SHAPES_STG0 + cacheBufferCount + 2) 个 float 加 reduceTmpBufNum 个 float，
+    // 恒大于下面的真实占用，因此本账本不会拒绝旧口径已放行的任何切分。
+    // 真实分配（BUFFER_NUM = 2）：
+    //   dyInQue_/xInQue_                 : 2 * dyLen * sizeof(DY)（各一套）
+    //   meanInQue_/rstdInQue_            : 2 * aAligned * 4（各一套）
+    //   dbetaTmpOutQue_/dgammaTmpOutQue_ : 2 * (aAligned * 4 * 2)（每个 buffer 存 hi+lo 两组）
+    //   compAccBuf_                      : 4 * aAligned * 4（S0/S1 各 hi/lo）
+    constexpr int64_t kStg0BufferNum = 2;
+    const int64_t dyLenStg0Ledger = r1Inner * r0InnerInner * aInner;
+    const int64_t stg0UbNeed = kStg0BufferNum * dyLenStg0Ledger * dyDtypeSize_ * CONST_TWO + // dy + x
+                               kStg0BufferNum * aInnerAligned * FLOAT32_BYTES * CONST_TWO +  // mean + rstd
+                               kStg0BufferNum * aInnerAligned * FLOAT32_BYTES * CONST_FOUR + // dbetaTmpOut (hi+lo)
+                               kStg0BufferNum * aInnerAligned * FLOAT32_BYTES * CONST_FOUR + // dgammaTmpOut (hi+lo)
+                               CONST_FOUR * aInnerAligned * FLOAT32_BYTES;                   // compAccBuf_
+    OP_LOGI(context_->GetNodeName(), "R0 split core stage0 UB ledger: need %ldB, ub %luB, dyLen: %ld.", stg0UbNeed,
+            ubSize, dyLenStg0Ledger);
+    OP_CHECK_IF(stg0UbNeed > static_cast<int64_t>(ubSize),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context_->GetNodeName(), "stage0 UB footprint", std::to_string(stg0UbNeed).c_str(),
+                    "exceeds the unified buffer size of the RAR split core R0 template"),
+                return ge::GRAPH_PARAM_INVALID);
+
     return ge::GRAPH_SUCCESS;
 }
 
@@ -337,7 +363,8 @@ uint64_t BatchNormGradExt2RARSplitCoreR0::GetTilingKey() const
 
 ge::graphStatus BatchNormGradExt2RARSplitCoreR0::GetWorkspaceSize()
 {
-    workspaceSize_ = BNG_WORKSPACE_RESERVED + usedCoreNums_ * aDimAligned_ * FLOAT32_BYTES * CONST_TWO;
+    workspaceSize_ = BNG_WORKSPACE_RESERVED +
+                     usedCoreNums_ * aDimAligned_ * FLOAT32_BYTES * CONST_FOUR; // dbeta_hi/lo + dgamma_hi/lo
 
     OP_LOGI(context_, "Workspace size: %ld", workspaceSize_);
 

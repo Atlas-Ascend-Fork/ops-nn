@@ -23,6 +23,36 @@
 
 namespace BatchNormGradExt2 {
 using namespace AscendC;
+
+// ---------------------------------------------------------------------------------------------
+// 转置搬运（NDDMA loop mode）：GM 上 [rowSize][srcRowStride] 的子块 -> UB 上 [colSize][dstStride]，
+// 即   dst[c * dstStride + r] == src[r * srcRowStride + c]。
+// 900000（infer channel last）与 910001/910002（infer）两族的 dgamma/dbeta 都用它把
+// "通道在内、R 在外"的 tile 换成 "lane = 通道（或 R）" 的连续布局。
+// 参数用法抄自 norm/layer_norm_grad/op_kernel/arch35/layer_norm_grad_base.h:1025-1040 的
+// CopyInTranspose<T>(dstTensor, srcTensor, rowSize, colSize, dstStride)：
+//   loop0（内层，源侧连续的一段）: loopSize=colSize, loopSrcStride=1,        loopDstStride=dstStride
+//   loop1（外层，逐行）          : loopSize=rowSize, loopSrcStride=<行跨距>, loopDstStride=1
+// 与 layer_norm 的唯一差别：那里的 tile 覆盖整行，源行跨距恰好等于 colSize；本算子按 A/R 切片，
+// 所以把行跨距显式做成形参（其余逐字段一致）。源/目标跨距都是元素单位。
+// ---------------------------------------------------------------------------------------------
+template <typename T>
+__aicore__ inline void CopyInTransposeTile(const LocalTensor<T>& dstTensor, const GlobalTensor<T>& srcTensor,
+                                           int64_t rowSize, int64_t colSize, int64_t srcRowStride, int64_t dstStride)
+{
+    static constexpr uint32_t CONST_TWO_DIM = 2;
+    static constexpr NdDmaConfig config = {false};
+    NdDmaLoopInfo<CONST_TWO_DIM> copyLoopInfo;
+    copyLoopInfo.loopSrcStride[0] = 1;
+    copyLoopInfo.loopSrcStride[1] = static_cast<uint32_t>(srcRowStride);
+    copyLoopInfo.loopDstStride[0] = static_cast<uint32_t>(dstStride);
+    copyLoopInfo.loopDstStride[1] = 1;
+    copyLoopInfo.loopSize[0] = static_cast<uint32_t>(colSize);
+    copyLoopInfo.loopSize[1] = static_cast<uint32_t>(rowSize);
+    NdDmaParams<T, CONST_TWO_DIM> params = {copyLoopInfo, 0};
+    DataCopy<T, CONST_TWO_DIM, config>(dstTensor, srcTensor, params);
+}
+
 using AscendC::MicroAPI::LoadDist;
 using AscendC::MicroAPI::MaskReg;
 using AscendC::MicroAPI::RegTensor;
@@ -41,6 +71,8 @@ static constexpr uint32_t VL_FP32 = VECTOR_LENGTH / sizeof(float);
 
 static constexpr uint32_t DIGIT_TWO = 2;
 static constexpr uint32_t DIGIT_THREE = 3;
+static constexpr uint32_t DIGIT_FOUR = 4;
+static constexpr uint32_t DIGIT_FIVE = 5;
 static constexpr uint32_t CACHE_BUFF_SIZE = 6 * 1024 + 2 * 256;
 static constexpr uint32_t DGAMA_CACHE_INDEX = 768;
 static constexpr uint32_t CACHE_LEVEL0_INDEX = 0;
@@ -117,6 +149,57 @@ __aicore__ inline void StoreOneTensor(const __local_mem__ void* output, MicroAPI
         DataCopy<half, MicroAPI::StoreDist::DIST_PACK_B32>((__local_mem__ half*)(output) + offset, xFp16, preg);
     } else {
         DataCopy((__local_mem__ float*)(output) + offset, src, preg);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// 单次舍入输出（dx 的 fp16 输出用）：
+//
+//   golden = fl16(在 fp64 里算完的精确值)——"只舍入一次"。任何 fp32 计算链都是先舍到 fp32 再
+//   舍到 fp16（两次舍入），只有当 fp32 中间值**恰好落在 fp16 网格中点上**时两者才会差 1 个
+//   fp16 ULP（实测 L1_469：1660/30985416 个元素，且 1660 个全部满足"低 13 位 == 0x1000"）。
+//
+//   base  = fl32(exact)   （调用方用两次 Mul 得到的当前结果）
+//   resid = exact - base  （调用方用 FMA 残差算出：p=fl(dy*gamma)、e1=dy*gamma-p、
+//                          c=fl(p*rstd)、resid=(p*rstd-c)+e1*rstd）
+//
+//   这里在中点 lane 上用 resid 的符号决定舍入方向（而不是 round-half-even），非中点 lane 保持
+//   Cast 的逐位结果不变。中点判定用整数位段：fp16 只保留 fp32 尾数的高 10 位，故 base 恰为
+//   中点 ⟺ 尾数低 13 位 == 0x1000。方向：resid > 0（精确值大于 base）按数值向上调，
+//   否则向下调；调节量取 |base|*2^-12 ∈ [ULP16/4, ULP16/2)，必然改变 fp32 值又不会跨到
+//   下一个 rung。subnormal 区（|base| < 2^-14）调节量 ≤ 2^-26 小于 subnormal ULP，天然不变。
+//   对 fp32 输出（T = float）直接写 base——base 本身就是对 exact 的一次舍入。
+// ---------------------------------------------------------------------------------------------
+template <typename T>
+__aicore__ inline void StoreDxSingleRounded(const __local_mem__ void* output, MicroAPI::RegTensor<float>& base,
+                                            MicroAPI::RegTensor<float>& resid, MicroAPI::MaskReg& preg, uint32_t offset)
+{
+    if constexpr (IsSameType<T, half>::value) {
+        MicroAPI::RegTensor<int32_t> mask13, midPattern, lowBits;
+        MicroAPI::RegTensor<float> absC, delta, negDelta, signedDelta, cand;
+        MicroAPI::RegTensor<half> outFp16;
+        MaskReg isMid, residPos, residNonZero;
+        MicroAPI::RegTensor<int32_t>& bits = reinterpret_cast<MicroAPI::RegTensor<int32_t>&>(base);
+        MicroAPI::Duplicate(mask13, static_cast<int32_t>(0x1FFF), preg);
+        MicroAPI::Duplicate(midPattern, static_cast<int32_t>(0x1000), preg);
+        MicroAPI::And<int32_t, MicroAPI::MaskMergeMode::ZEROING>(lowBits, bits, mask13, preg);
+        MicroAPI::Compare<int32_t, AscendC::CMPMODE::EQ>(isMid, lowBits, midPattern, preg);
+        MicroAPI::Abs(absC, base, preg);
+        MicroAPI::Muls<float, float, MicroAPI::MaskMergeMode::ZEROING>(delta, absC, 0.000244140625f, preg);
+        MicroAPI::Muls<float, float, MicroAPI::MaskMergeMode::ZEROING>(negDelta, delta, -1.0f, preg);
+        MicroAPI::CompareScalar<float, AscendC::CMPMODE::GT>(residPos, resid, 0.0f, preg);
+        MicroAPI::Select(signedDelta, delta, negDelta, residPos);
+        MicroAPI::Add<float, MicroAPI::MaskMergeMode::ZEROING>(cand, base, signedDelta, preg);
+        // resid == 0（精确值恰好就是中点）必须保持 round-half-even：golden 也是把中点舍到偶数。
+        // L1_088 有 6071 个元素属于"精确值 == 中点"，无此守卫时会被统一往下拨 1 ULP（npu 8696 vs
+        // golden 8704）。
+        MicroAPI::CompareScalar<float, AscendC::CMPMODE::NE>(residNonZero, resid, 0.0f, preg);
+        MicroAPI::MaskAnd(isMid, isMid, residNonZero, preg);
+        MicroAPI::Select(signedDelta, cand, base, isMid);
+        Cast<half, float, castTraitB322B16>(outFp16, signedDelta, preg);
+        DataCopy<half, MicroAPI::StoreDist::DIST_PACK_B32>((__local_mem__ half*)(output) + offset, outFp16, preg);
+    } else {
+        StoreOneTensor<T>(output, base, preg, offset);
     }
 }
 
