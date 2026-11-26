@@ -10,4 +10,5 @@
 
 if ((UT_TEST_ALL OR OP_KERNEL_UT) AND NOT UT_DONE)
     AddOpTestCase(situ_mx_quant "ascend950pr_9599" "")
+    AddOpTestCase(situ_mx_quant "ascend960dt" "")
 endif()

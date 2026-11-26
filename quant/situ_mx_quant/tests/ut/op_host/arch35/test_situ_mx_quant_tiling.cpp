@@ -31,10 +31,11 @@ protected:
     static void TearDownTestCase() { std::cout << "SituMxQuantTilingTest TearDown" << std::endl; }
 };
 
-static void ExecuteTestCase(ge::DataType xDtype, ge::DataType yDtype, ge::DataType yScaleDtype,
-                            gert::StorageShape xShape, gert::StorageShape yShape, gert::StorageShape yScaleShape,
-                            float beta, float linear_beta, bool activate_left, int64_t axis, int64_t dst_type,
-                            const std::string& round_mode, ge::graphStatus status = ge::GRAPH_SUCCESS)
+static void ExecuteTestCaseOnPlatform(ge::DataType xDtype, ge::DataType yDtype, ge::DataType yScaleDtype,
+                                      gert::StorageShape xShape, gert::StorageShape yShape,
+                                      gert::StorageShape yScaleShape, float beta, float linear_beta, bool activate_left,
+                                      int64_t axis, int64_t dst_type, const std::string& round_mode,
+                                      const std::string& socVersion, const std::string& npuArch, ge::graphStatus status)
 {
     string compile_info_string = R"({
         "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
@@ -49,7 +50,7 @@ static void ExecuteTestCase(ge::DataType xDtype, ge::DataType yDtype, ge::DataTy
     map<string, string> soc_infos;
     map<string, string> aicore_spec;
     map<string, string> intrinsics;
-    map<string, string> socversions = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+    map<string, string> socversions = {{"Short_SoC_version", socVersion}, {"NpuArch", npuArch}};
     GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
 
     fe::PlatFormInfos platform_info;
@@ -114,6 +115,17 @@ static void ExecuteTestCase(ge::DataType xDtype, ge::DataType yDtype, ge::DataTy
     tiling_context->GetPlatformInfo()->SetPlatformRes("version", socversions);
 
     EXPECT_EQ(tiling_func(tiling_context), status);
+}
+
+static void ExecuteTestCase(ge::DataType xDtype, ge::DataType yDtype, ge::DataType yScaleDtype,
+                            gert::StorageShape xShape, gert::StorageShape yShape, gert::StorageShape yScaleShape,
+                            float beta, float linear_beta, bool activate_left, int64_t axis, int64_t dst_type,
+                            const std::string& round_mode, ge::graphStatus status = ge::GRAPH_SUCCESS)
+{
+    ExecuteTestCaseOnPlatform(xDtype, yDtype, yScaleDtype, xShape, yShape, yScaleShape, beta, linear_beta,
+                              activate_left, axis, dst_type, round_mode, "Ascend950", "3510", status);
+    ExecuteTestCaseOnPlatform(xDtype, yDtype, yScaleDtype, xShape, yShape, yScaleShape, beta, linear_beta,
+                              activate_left, axis, dst_type, round_mode, "Ascend960DT", "9201", status);
 }
 
 TEST_F(SituMxQuantTilingTest, test_tiling_bf16_to_fp8_e4m3)
