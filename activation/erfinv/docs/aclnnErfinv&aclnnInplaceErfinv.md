@@ -249,7 +249,7 @@ aclnnStatus aclnnInplaceErfinv(
   <tbody>
       <tr>
       <td>selfRef（aclTensor*）</td>
-      <td>输入</td>
+      <td>输入/输出</td>
       <td>待进行erfinv计算的入参。输入时对应计算公式中的x，输出时内容为计算公式中的y，复用输入的空间。</td>
       <td>支持空Tensor。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
@@ -515,7 +515,7 @@ int main() {
     LOG_PRINT("inplaceResult[%ld] is: %f\n", i, inplaceResultData[i]);
   }
 
-  // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
+  // 6. 释放aclTensor，需要根据具体API的接口定义修改
   aclDestroyTensor(self);
   aclDestroyTensor(out);
 

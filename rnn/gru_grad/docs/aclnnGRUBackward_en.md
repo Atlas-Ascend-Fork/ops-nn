@@ -30,14 +30,14 @@
   * Reset gate $r_t= \sigma(W_{ir}x_t + b_{ir} + W_{hr}h_{t-1} + b_{hr})$
   * Update gate $z_t = \sigma(W_{iz}x_t + b_{iz} + W_{hz}h_{t-1} + b_{hz})$
   * Candidate hidden state $n_t = \tanh(W_{in}x_t + b_{in} + r_t \odot (W_{hn}h_{t-1} + b_{hn}))$
-  * Hidden state $h_t = (1-z) \odot n_t + z_t \odot h_{t-1}$
+  * Hidden state $h_t = (1-z_t) \odot n_t + z_t \odot h_{t-1}$
 * Backward computation formula:
   * $\text{ Total upstream gradient:} \quad dh_t = dy_t + dh_{next} \quad $($dy_t$ is the gradient from the upper layer, and $dh_{next}$ is the gradient passed back at time step t+1)
-  * $\text{ Update gate gradient:} \quad dz_t = dh_t * (h_{t-1} - \tilde{h}_t) * z_t * (1 - z_t)$
-  * $\text{ Candidate state gradient:} \quad dh_{\tilde{h}t} = dh_t * (1 - z_t) * (1 - \tilde{h}_t^2)$
-  * $\text{ Reset gate gradient:} \quad dr_t = dh_{\tilde{h}t} * lin_{hh}[2*hidden\_size:3*hidden\_size] * r_t * (1 - r_t)$
+  * $\text{ Update gate gradient:} \quad dz_t = dh_t * (h_{t-1} - n_t) * z_t * (1 - z_t)$
+  * $\text{ Candidate state gradient:} \quad dh_{nt} = dh_t * (1 - z_t) * (1 - n_t^2)$
+  * $\text{ Reset gate gradient:} \quad dr_t = dh_{nt} * lin_{hh}[2*hidden\_size:3*hidden\_size] * r_t * (1 - r_t)$
   * $\text{ Linear transformation gradient decomposition:}$
-    $\quad dlin_{ih} = [dz_t; dr_t; dh_{\tilde{h}t}], \quad dlin_{hh} = [dz_t; dr_t; dh_{\tilde{h}t} * r_t]$
+    $\quad dlin_{ih} = [dz_t; dr_t; dh_{nt}], \quad dlin_{hh} = [dz_t; dr_t; dh_{nt} * r_t]$
   * $\text{ Input gradient (passed to the lower layer):} \quad dx_t = W_{ih}^T @ dlin_{ih}$
   * $\text{ Previous hidden state gradient (passed to t-1):} \quad dh_{prev} = W_{hh}^T @ dlin_{hh} + dh_t * z_t$
   * $\text{ Weight/bias gradient accumulation:}$
@@ -112,7 +112,7 @@
        <td>The input sequence of GRU, corresponding to x in the corresponding formula.</td>
        <td><ul><li>batch_size indicates the number of sequences; time_step indicates the time dimension; input_size indicates the number of input features.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td><ul>
        <li>If a valid batchSizesOptional is passed in, the shape is [time_step * batch_size, input_size];</li>
        <li>If a null pointer batchSizesOptional is passed in, the shape is [time_step, batch_size, input_size] or [batch_size, time_step, input_size]</li>
@@ -126,7 +126,7 @@
        <td><ul><li>If bidirection is True, `D = 2`; otherwise, `D = 1`. If hasBiases is True, `B = 2`; otherwise, `B = 1`. The list length is D * B * num_layers * 2.</li><li>If both bidirection and hasBias are True, the layout is: [weight_ih_0, weight_hh_0, bias_ih_0, bias_hh_0, weight_ih_reverse_0, weight_hh_reverse_0, bias_ih_reverse_0, bias_hh_reverse_0].</li>
        <li>If hasBias is False, there is no bias item; if bidirection is False, there is no reverse item.</li><li>For multiple layers, tensors are laid out layer by layer.</li><li>The data type is consistent with input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td>weight_ih: [3*hidden_size, cur_input_size]<br>weight_hh: [3*hidden_size, hidden_size]<br>bias_ih: [3*hidden_size]<br>bias_hh: [3*hidden_size]<br>Empty tensors are not supported.</td>
        <td>√</td>
      </tr>
@@ -136,7 +136,7 @@
        <td>Initial hidden state of each GRU layer. Corresponds to h(t-1) at time 0.</td>
        <td><ul><li>For multi-layer bidirectional mode, each tensor is laid out along dim 0, bidirectional first and then layer by layer.</li><li>The data type is consistent with input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td>The shape of each tensor is [numLayers * D, batch_size, hidden_size]<br>Empty tensors are not supported</td>
        <td>√</td>
      </tr>
@@ -146,7 +146,7 @@
        <td>Gradient of the hidden output of the last layer in the GRU forward pass. Corresponds to ∂L/∂h^(l) in the formula.</td>
        <td><ul><li>In bidirectional mode, data is laid out along the last dimension in forward and backward direction.</li><li>The data type is consistent with input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td><ul>
        <li>If a valid batchSizesOptional is passed in, the shape is [time_step * batch_size, hidden_size * D];</li>
        <li>If batchSizesOptional is a null pointer, the shape is [time_step, batch_size, hidden_size * D] or [batch_size, time_step, hidden_size * D]</li>
@@ -159,7 +159,7 @@
        <td>Gradient passed from the next time step at time T for the hidden output of each layer in GRU forward propagation. Corresponds to δh_next.</td>
        <td><ul><li>In the multi-layer bidirectional case, data is laid out along dimension 0 in the order of bidirectional first and then layers.</li><li>The data type is consistent with that of input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td>[numLayers * D, batch_size, hidden_size]<br>Empty tensor is not supported.</td>
        <td>√</td>
      </tr>
@@ -169,7 +169,7 @@
        <td>Activation value of the reset gate of each layer at each time step in GRU forward. Corresponds to r in the corresponding formula.</td>
        <td><ul><li>List length is D * num_layers.</li><li>For multi-layer bidirectional, the tensor layout is bidirection first and then multi-layer.</li><li>The data type is consistent with input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td><ul>
        <li>If a valid batchSizesOptional is passed in, the shape is [time_step * batch_size, hidden_size];</li>
        <li>If a null pointer batchSizesOptional is passed in, the shape is [time_step, batch_size, hidden_size]</li>
@@ -182,7 +182,7 @@
        <td>Activation value of the update gate of each layer at each time step in GRU forward. Corresponds to z in the corresponding formula.</td>
        <td><ul><li>The list length is D * num_layers.</li><li>For multi-layer bidirectional, the layout of tensors is bidirectional first and then layer by layer.</li><li>The data type is consistent with that of input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td><ul>
        <li>If a valid batchSizesOptional is passed in, the shape is [time_step * batch_size, hidden_size];</li>
        <li>If an empty pointer batchSizesOptional is passed in, the shape is [time_step, batch_size, hidden_size]</li>
@@ -195,7 +195,7 @@
        <td>Activation value of the candidate hidden state for each layer at each time step in GRU forward propagation. It corresponds to n in the corresponding formula.</td>
        <td><ul><li>The list length is D * num_layers.</li><li>For multi-layer bidirectional, the layout of tensors is bidirectional first and then layer by layer.</li><li>The data type is consistent with that of input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td><ul>
        <li>If a valid batchSizesOptional is passed in, the shape is [time_step * batch_size, hidden_size];</li>
        <li>If an empty pointer batchSizesOptional is passed in, the shape is [time_step, batch_size, hidden_size]</li>
@@ -208,7 +208,7 @@
        <td>Intermediate value of the candidate hidden state at each time step of each layer in GRU forward. It corresponds to $W_{hn}h_{t-1} + b_{hn}$ in the corresponding formula.</td>
        <td><ul><li>The list length is D * num_layers.</li><li>For multi-layer bidirectional, the layout of tensors is bidirectional first and then layer by layer.</li><li>The data type is consistent with input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td><ul>
        <li>If a valid batchSizesOptional is passed in, the shape is [time_step * batch_size, hidden_size];</li>
        <li>If an empty pointer batchSizesOptional is passed in, the shape is [time_step, batch_size, hidden_size]</li>
@@ -221,7 +221,7 @@
        <td>Hidden state of each layer at each time step in GRU forward. It corresponds to h in the formula.</td>
        <td><ul><li>List length is D * num_layers.</li><li>In multi-layer bidirectional mode, tensors are laid out bidirectional first and then by layer.</li><li>The data type is consistent with input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td><ul>
        <li>If a valid batchSizesOptional is passed in, the shape is [time_step * batch_size, hidden_size];</li>
        <li>If a null pointer batchSizesOptional is passed in, the shape is [time_step, batch_size, hidden_size]</li>
@@ -284,7 +284,7 @@
        <td>Gradient of input, corresponding to δx in the formula.</td>
        <td><ul><li>The shape is consistent with input.</li><li>The data type is consistent with input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td><ul>
         <li>If a valid batchSizesOptional is passed, the shape is [time_step * batch_size, input_size];</li>
         <li>If a null pointer batchSizesOptional is passed, the shape is [time_step, batch_size, input_size] or [batch_size, time_step, input_size]</li>
@@ -297,7 +297,7 @@
        <td>Gradient of the initial hidden state of each GRU layer, corresponding to δh_prev at t=0.</td>
        <td><ul><li>In multi-layer bidirectional mode, data is laid out along dimension 0 with bidirection first, then layer by layer.</li><li>The data type is consistent with input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td>[D * num_layers, batch_size, hidden_size]<br>Empty tensors are not supported.</td>
        <td>√</td>
      </tr>
@@ -307,7 +307,7 @@
        <td>List of gradient tensors for weights and biases. They correspond to δw and δb in the corresponding formula.</td>
        <td><ul><li>The list length is D * B * num_layers * 2.</li><li>The layout is consistent with input params.</li><li>The data type is consistent with input.</li></ul></td>
        <td>FLOAT32, FLOAT16</td>
-       <td>ND</td>
+       <td>ND, NCL</td>
        <td>dweight_ih: [3*hidden_size, cur_input_size]<br>dweight_hh: [3*hidden_size, hidden_size]<br>dbias: [3*hidden_size]<br>Empty tensors are not supported.</td>
        <td>√</td>
      </tr>
@@ -357,17 +357,26 @@
        <td>If the input parameter is aclTensor or aclTensorList and is not batchSizesOptional, it is a null pointer.</td>
      </tr>
      <tr>
-       <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
-       <td rowspan="4">161002</td>
+      <td rowspan="7">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="7">161002</td>
        <td>If the input parameter is aclTensor or aclTensorList, the data type is not in the supported range.</td>
      </tr>
      <tr>
        <td>If the input parameter is aclTensor or aclTensorList, the data types are inconsistent.</td>
      </tr>
      <tr>
+      <td>If the input parameter is aclTensor or aclTensorList, the data format is outside the supported range (ND/NCL; batchSizesOptional supports only ND).</td>
+    </tr>
+    <tr>
        <td>The input parameter is of type aclTensor or aclTensorList, and the shape does not meet the corresponding shape requirements.</td>
      </tr>
      <tr>
+      <td>When batchSizesOptional is a null pointer, input is not 3-dimensional; when batchSizesOptional is not a null pointer, input is not 2-dimensional.</td>
+    </tr>
+    <tr>
+      <td>Any of time_step, batch_size, input_size, or hidden_size is not greater than 0.</td>
+    </tr>
+    <tr>
        <td>numLayers is not greater than 0.</td>
      </tr>
    </tbody>
@@ -515,7 +524,7 @@ int CreateAclTensorList(const std::vector<std::vector<int64_t>>& shapes, void** 
     aclTensor* tensors[size];
     for (int i = 0; i < size; i++) {
         std::vector<T> hostData(GetShapeSize(shapes[i]), initVal);
-        int ret = CreateAclTensor<float>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
+        int ret = CreateAclTensor<T>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
         CHECK_RET(ret == ACL_SUCCESS, return ret);
     }
     *tensor = aclCreateTensorList(tensors, size);

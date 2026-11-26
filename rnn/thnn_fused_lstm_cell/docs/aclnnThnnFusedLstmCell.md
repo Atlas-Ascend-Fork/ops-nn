@@ -480,7 +480,7 @@ int main() {
   ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), hyDeviceAddr,
                     commonSize * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy hy result from device to host failed. ERROR: %d\n", ret); return ret);
-  for (int64_t i = 0; i < commonSize and i < 10; i++) {
+  for (int64_t i = 0; i < commonSize && i < 10; i++) {
     LOG_PRINT("result hy[%ld] is: %f\n", i, resultData[i]);
   }
 

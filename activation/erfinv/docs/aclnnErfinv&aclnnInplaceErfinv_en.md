@@ -251,7 +251,7 @@ aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../
   <tbody>
       <tr>
       <td>selfRef (aclTensor*)</td>
-      <td>Input</td>
+      <td>Input/Output</td>
       <td>Input parameter for the erfinv computation. Corresponds to x in the computation formula when used as input. Contains y in the computation formula and reuses the input space when used as output.</td>
       <td>Supports empty tensors.</td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
@@ -517,7 +517,7 @@ int main() {
     LOG_PRINT("inplaceResult[%ld] is: %f\n", i, inplaceResultData[i]);
   }
 
-  // 6. Release aclTensor and aclScalar. Modify the code based on the actual API definition.
+  // 6. Release aclTensor. Modify the code based on the actual API definition.
   aclDestroyTensor(self);
   aclDestroyTensor(out);
 

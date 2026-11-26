@@ -10,6 +10,7 @@
 #include <iostream>
 #include <vector>
 #include <random>
+#include <string>
 #include <algorithm>
 #include "acl/acl.h"
 #include "aclnnop/aclnn_modulate_backward.h"

@@ -27,11 +27,11 @@
 - 计算公式：
 
     $$
-    lossOut = log(sum\_exp\_logits) - predicted\_logits
+    lossOut = log(sumExpLogits) - predictedLogits
     $$
 
     $$
-    softMaxOutOptional = exp(vocab\_parallel\_logits -logits\_max.unsqueeze(dim = -1)) \ sum\_exp\_logits.unsqueeze(dim = -1)
+    softMaxOutOptional = exp(vocabParallelLogits - logitsMax.unsqueeze(dim = -1)) / sumExpLogits.unsqueeze(dim = -1)
     $$
 
 ## 函数原型
@@ -170,7 +170,7 @@ aclnnStatus aclnnFusedCrossEntropyLossWithMaxSum(
     <tr>
       <td class="tg-0pky">softMaxOutOptional（aclTensor*）</td>
       <td class="tg-0pky">输出</td>
-      <td class="tg-0pky">中间变量，公式中的vocabParallelLogits。</td>
+      <td class="tg-0pky">中间变量，公式中的softMaxOutOptional。</td>
       <td class="tg-0pky">shape与vocabParallelLogitsOptional一致；vocabParallelLogitsOptional非空时必须传入，否则第一段返回161001。</td>
       <td class="tg-0pky">FLOAT</td>
       <td class="tg-0pky">ND</td>
@@ -458,7 +458,7 @@ int main() {
     LOG_PRINT("result[%ld] is: %f\n", i, secondResultData[i]);
   }
 
-  // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
+  // 6. 释放aclTensor，需要根据具体API的接口定义修改
   aclDestroyTensor(logitsMax);
   aclDestroyTensor(sumExpLogits);
   aclDestroyTensor(predictedLogits);

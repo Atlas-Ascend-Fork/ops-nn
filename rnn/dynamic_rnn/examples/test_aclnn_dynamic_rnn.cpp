@@ -94,7 +94,7 @@ int CreateAclTensorList(const std::vector<std::vector<int64_t>>& shapes, void** 
     aclTensor* tensors[size];
     for (int i = 0; i < size; i++) {
         std::vector<T> hostData(GetShapeSize(shapes[i]), initVal);
-        int ret = CreateAclTensor<float>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
+        int ret = CreateAclTensor<T>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
         CHECK_RET(ret == ACL_SUCCESS, return ret);
     }
     *tensor = aclCreateTensorList(tensors, size);
@@ -118,9 +118,9 @@ int main()
     int64_t numLayers = 1;
     bool isbias = false;
     bool batchFirst = false;
-    bool bidirection = false;
+    bool bidirectional = false;
     bool isTraining = true;
-    int64_t d_scale = bidirection == true ? 2 : 1;
+    int64_t d_scale = bidirectional == true ? 2 : 1;
 
     std::vector<int64_t> inputShape = {time_step, batch_size, input_size};
     std::vector<int64_t> outputShape = {time_step, batch_size, d_scale * hidden_size};
@@ -148,8 +148,8 @@ int main()
             outHListShape.push_back({time_step, batch_size, hidden_size});
             outCListShape.push_back({time_step, batch_size, hidden_size});
         } else {
-            outHListShape.push_back({batch_size, hidden_size});
-            outCListShape.push_back({batch_size, hidden_size});
+            outHListShape.push_back({time_step, batch_size, hidden_size});
+            outCListShape.push_back({time_step, batch_size, hidden_size});
         }
         outTanhCListShape.push_back({time_step, batch_size, hidden_size});
         cur_input_size = hidden_size;
@@ -229,7 +229,7 @@ int main()
     aclOpExecutor* executor;
 
     // 调用aclnnLSTM第一段接口
-    ret = aclnnLSTMGetWorkspaceSize(input, params, nullptr, nullptr, isbias, numLayers, 0.0, isTraining, bidirection,
+    ret = aclnnLSTMGetWorkspaceSize(input, params, nullptr, nullptr, isbias, numLayers, 0.0, isTraining, bidirectional,
                                     batchFirst, output, hy, cy, outIList, outJList, outFList, outOList, outHList,
                                     outCList, outTanhCList, &workspaceSize, &executor);
 

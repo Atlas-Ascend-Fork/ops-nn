@@ -158,7 +158,7 @@ int main()
         LOG_PRINT("inplaceResult[%ld] is: %f\n", i, inplaceResultData[i]);
     }
 
-    // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
+    // 6. 释放aclTensor，需要根据具体API的接口定义修改
     aclDestroyTensor(self);
     aclDestroyTensor(out);
 

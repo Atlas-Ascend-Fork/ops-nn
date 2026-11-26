@@ -23,7 +23,7 @@ English | [简体中文](./README.md)
 
     $$
     \begin{cases}
-    \text{grad\_x} = \text{grad\_output} \odot \text{scale}^{\uparrow L} \\
+    \text{grad\_x} = \text{grad\_output} \odot (1 + \text{scale})^{\uparrow L} \\
     \text{grad\_scale} = \sum_{l=1}^{L} (\text{grad\_output} \odot \text{input})_{b,l,d} \\
     \text{grad\_shift} = \sum_{l=1}^{L} \text{grad\_output}_{b,l,d}
     \end{cases}
@@ -33,7 +33,7 @@ English | [简体中文](./README.md)
     - $\odot$: denotes element-wise multiplication;
     - $\sum_{l=1}^{L}$: summation operation, performed along the sequence dimension $L$ (that is, dim=1)
     - $b,l,d$: subscripts indicating the dimension indexes of the tensor (usually Batch, Length, Dimension)
-    - $\text{scale}^{\uparrow L}$: indicates that the scale tensor is broadcast (expanded) along the sequence dimension $L$
+    - $(1 + \text{scale})^{\uparrow L}$: adds the constant 1 from the forward formula to scale and then broadcasts (expands) the result along the sequence dimension $L$
 
 ## Parameters
 

@@ -30,7 +30,7 @@
 
     $$
     \begin{cases}
-    \text{grad\_input} = \text{grad\_output} \odot \text{scale}^{\uparrow L} \\
+    \text{grad\_input} = \text{grad\_output} \odot (1 + \text{scale})^{\uparrow L} \\
     \text{grad\_scale} = \sum_{l=1}^{L} (\text{grad\_output} \odot \text{input})_{b,l,d} \\
     \text{grad\_shift} = \sum_{l=1}^{L} \text{grad\_output}_{b,l,d}
     \end{cases}
@@ -40,7 +40,7 @@
     - $\odot$: 表示逐元素乘法；
     - $\sum_{l=1}^{L}$: 求和操作，沿序列维度$L$(即dim=1)进行
     - $b,l,d$：下标，表示张量的维度索引（通常为Batch、Length、Dimension）
-    - $\text{scale}^{\uparrow L}$：表示将scale张量在序列维度 $L$ 上进行广播（扩展）
+    - $(1 + \text{scale})^{\uparrow L}$：表示将scale与正向公式中的常数1相加后，在序列维度 $L$ 上进行广播（扩展）
 
 ## 函数原型
 
@@ -296,6 +296,8 @@ aclnnStatus aclnnModulateBackward(
 ```Cpp
 #include <iostream>
 #include <vector>
+#include <string>
+#include <algorithm>
 #include "acl/acl.h"
 #include "aclnnop/aclnn_modulate_backward.h"
 
@@ -453,11 +455,11 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
     // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
-   PrintOutResult(grad_inputShape, grad_inputDeviceAddr,"grad_input");
-   PrintOutResult(grad_scaleShape, grad_scaleDeviceAddr,"grad_scale");
-   PrintOutResult(grad_shiftShape, grad_shiftDeviceAddr,"grad_shift");
+    PrintOutResult(grad_inputShape, grad_inputDeviceAddr,"grad_input");
+    PrintOutResult(grad_scaleShape, grad_scaleDeviceAddr,"grad_scale");
+    PrintOutResult(grad_shiftShape, grad_shiftDeviceAddr,"grad_shift");
 
-    // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
+    // 6. 释放aclTensor，需要根据具体API的接口定义修改
     aclDestroyTensor(grad_output);
     aclDestroyTensor(input);
     aclDestroyTensor(scale);

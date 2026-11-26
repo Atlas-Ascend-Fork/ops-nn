@@ -42,7 +42,7 @@
 
   - $x_t ∈ R^{d}$：LSTM单元的输入向量。
   - $f_t ∈ (0, 1)^{h}$：遗忘门激活向量。
-  - $i_t ∈ (0, 1)^{h}$：输入门、更新门激活向量。
+  - $i_t ∈ (0, 1)^{h}$：输入门激活向量。
   - $o_t ∈ (0, 1)^{h}$：输出门激活向量。
   - $h_t ∈ (-1, 1)^{h}$：隐藏状态向量，也称为LSTM单元的输出向量。
   - $\tilde{c}_t ∈ (-1, 1)^{h}$：cell输入激活向量。
@@ -654,8 +654,8 @@ int main()
             outHListShape.push_back({time_step, batch_size, hidden_size});
             outCListShape.push_back({time_step, batch_size, hidden_size});
         } else {
-            outHListShape.push_back({batch_size, hidden_size});
-            outCListShape.push_back({batch_size, hidden_size});
+            outHListShape.push_back({time_step, batch_size, hidden_size});
+            outCListShape.push_back({time_step, batch_size, hidden_size});
         }
         outTanhCListShape.push_back({time_step, batch_size, hidden_size});
         cur_input_size = hidden_size;

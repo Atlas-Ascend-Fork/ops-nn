@@ -127,7 +127,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
        <td>Input</td>
        <td>zero_point in the formula, indicating the input zero-point parameter for pseudo-quantization.</td>
        <td>The size must be consistent with that of scale and with the size of self along axis.</td>
-       <td>INT32, FLOAT16, FLOAT</td>
+       <td>INT32, FLOAT16, FLOAT32</td>
        <td>ND</td>
        <td>1</td>
        <td>√</td>
@@ -300,7 +300,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
 - Deterministic computation:
   - aclnnFakeQuantPerChannelAffineCachemask defaults to a deterministic implementation.
 
-- The zero_point of this aclnn API supports INT32, FLOAT16 and FLOAT (out-of-range dtypes return 161002).
+- The zero_point of this aclnn API supports INT32, FLOAT16 and FLOAT32 (out-of-range dtypes return 161002).
 
 <!-- npu="950" id7 -->
 - <term>Ascend 950PR&950DT products</term>: Floating-point zero_point supports cross combinations with self; the GEIR graph mode additionally supports BFLOAT16 zero_point (cross-combinable with self).
@@ -404,7 +404,7 @@ int main() {
   std::vector<char> maskHostData{1};
   int64_t quantMin = 1;
   int64_t quantMax = 3;
-  int axis = 0;
+  int64_t axis = 0;
   // Create an aclTensor.
   ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
   CHECK_RET(ret == ACL_SUCCESS, return ret);

@@ -33,7 +33,7 @@
 
     $$
     \begin{cases}
-    \text{grad\_input} = \text{grad\_output} \odot \text{scale}^{\uparrow L} \\
+    \text{grad\_input} = \text{grad\_output} \odot (1 + \text{scale})^{\uparrow L} \\
     \text{grad\_scale} = \sum_{l=1}^{L} (\text{grad\_output} \odot \text{input})_{b,l,d} \\
     \text{grad\_shift} = \sum_{l=1}^{L} \text{grad\_output}_{b,l,d}
     \end{cases}
@@ -42,8 +42,8 @@
     Symbol description:
     - $\odot$: Indicates element-wise multiplication.
     - $\sum_{l=1}^{L}$: Summation operation, performed along the sequence dimension $L$ (i.e., dim=1).
+    - $(1 + \text{scale})^{\uparrow L}$: Adds the constant 1 from the forward formula to scale and then broadcasts (expands) the result along the sequence dimension $L$.
     - $b,l,d$: Subscripts, representing the dimension indices of the tensor (typically Batch, Length, Dimension).
-    - $\text{scale}^{\uparrow L}$: indicates broadcasting (expanding) the scale tensor along the sequence dimension $L$
 
 ## Function Prototype
 
@@ -307,6 +307,8 @@ The following is sample code for reference only. For details about the compilati
 ```Cpp
 #include <iostream>
 #include <vector>
+#include <string>
+#include <algorithm>
 #include "acl/acl.h"
 #include "aclnnop/aclnn_modulate_backward.h"
 
@@ -464,11 +466,11 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
     // 5. Obtain the output values and copy the results from device memory to host memory. Modify the code based on the actual API definition.
-   PrintOutResult(grad_inputShape, grad_inputDeviceAddr,"grad_input");
-   PrintOutResult(grad_scaleShape, grad_scaleDeviceAddr,"grad_scale");
-   PrintOutResult(grad_shiftShape, grad_shiftDeviceAddr,"grad_shift");
+    PrintOutResult(grad_inputShape, grad_inputDeviceAddr,"grad_input");
+    PrintOutResult(grad_scaleShape, grad_scaleDeviceAddr,"grad_scale");
+    PrintOutResult(grad_shiftShape, grad_shiftDeviceAddr,"grad_shift");
 
-    // 6. Release aclTensor and aclScalar. Modify the code based on the actual API definition.
+    // 6. Release aclTensor. Modify the code based on the actual API definition.
     aclDestroyTensor(grad_output);
     aclDestroyTensor(input);
     aclDestroyTensor(scale);

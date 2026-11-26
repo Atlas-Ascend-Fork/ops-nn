@@ -188,7 +188,7 @@ aclnnStatus aclnnModulate(
     <tr>
       <td>workspaceSize</td>
       <td>Input</td>
-      <td>Size of the workspace applied by the device side, obtained by the first-phase API aclnnMultiScaleDeformableAttentionGradGetWorkspaceSize.</td>
+      <td>Size of the workspace applied by the device side, obtained by the first-phase API aclnnModulateGetWorkspaceSize.</td>
     </tr>
     <tr>
       <td>executor</td>
@@ -343,7 +343,7 @@ int main() {
     LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
   }
 
-  // 6. Release aclTensor and aclScalar, and modify the code according to the specific API definition.
+  // 6. Release aclTensor, and modify the code according to the specific API definition.
   aclDestroyTensor(self);
   aclDestroyTensor(scaleOptional);
   aclDestroyTensor(shiftOptional);

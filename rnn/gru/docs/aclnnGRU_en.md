@@ -54,8 +54,8 @@
   - $\odot$ indicates element-wise multiplication (Hadamard product).
   - $r_t$, $z_t$, and $n_t$ are the reset gate, update gate, and new gate, respectively.
   - $h_t$ is the hidden state at the current time step.
-  - $W_{ir}$, $W_{iz}$, and $W_{in}$ are the input weight matrices with shape $[H, I]$ (stored in transposed form as $[3H, I]$).
-  - $W_{hr}$, $W_{hz}$, $W_{hn}$ are hidden state weight matrices, with shape $[H, H]$ (stored in transposed form as $[3H, H]$).
+  - $W_{ir}$, $W_{iz}$, and $W_{in}$ are the input weight matrices with shape $[H, I]$ (stored stacked by gate as $[3H, I]$).
+  - $W_{hr}$, $W_{hz}$, $W_{hn}$ are hidden state weight matrices, with shape $[H, H]$ (stored stacked by gate as $[3H, H]$).
   - If hasBias=true, $b_{ir}$, $b_{iz}$, $b_{in}$ and $b_{hr}$, $b_{hz}$, $b_{hn}$ are the input biases and hidden state biases respectively, both with shape $[H]$ (stored as $[3H]$).
 
 ## Function Prototype
@@ -235,7 +235,7 @@ aclnnStatus aclnnGRU(
     <tr>
       <td>hy (aclTensor*)</td>
       <td>Output</td>
-      <td>Indicates the final hidden state of all directions in the last layer, corresponding to $h_t$ at the last time step in the corresponding formula.</td>
+      <td>Indicates the final hidden states of all layers and directions, corresponding to $h_t$ at the last time step in the corresponding formula. Dimension 0 is ordered by layer and direction.</td>
       <td>The shape is [numLayers * D, batch_size, hidden_size].</td>
       <td>FLOAT32, FLOAT16</td>
       <td>ND</td>
@@ -512,7 +512,7 @@ int CreateAclTensorList(
     aclTensor* tensors[size];
     for (int i = 0; i < size; i++) {
         std::vector<T> hostData(GetShapeSize(shapes[i]), initVal);
-        int ret = CreateAclTensor<float>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
+        int ret = CreateAclTensor<T>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
         CHECK_RET(ret == ACL_SUCCESS, return ret);
     }
     *tensor = aclCreateTensorList(tensors, size);

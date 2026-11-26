@@ -42,7 +42,7 @@
 
   - $x_t ∈ R^{d}$: Input vector of the LSTM unit.
   - $f_t ∈ (0, 1)^{h}$: forget gate activation vector.
-  - $i_t ∈ (0, 1)^{h}$: input gate and update gate activation vector.
+  - $i_t ∈ (0, 1)^{h}$: input gate activation vector.
   - $o_t ∈ (0, 1)^{h}$: output gate activation vector.
   - $h_t ∈ (-1, 1)^{h}$: Hidden state vector, also known as the output vector of the LSTM unit.
   - $\tilde{c}_t ∈ (-1, 1)^{h}$: cell input activation vector.
@@ -587,7 +587,7 @@ int CreateAclTensorList(
     aclTensor* tensors[size];
     for (int i = 0; i < size; i++) {
         std::vector<T> hostData(GetShapeSize(shapes[i]), initVal);
-        int ret = CreateAclTensor<float>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
+        int ret = CreateAclTensor<T>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
         CHECK_RET(ret == ACL_SUCCESS, return ret);
     }
     *tensor = aclCreateTensorList(tensors, size);
@@ -641,8 +641,8 @@ int main()
             outHListShape.push_back({time_step, batch_size, hidden_size});
             outCListShape.push_back({time_step, batch_size, hidden_size});
         } else {
-            outHListShape.push_back({batch_size, hidden_size});
-            outCListShape.push_back({batch_size, hidden_size});
+            outHListShape.push_back({time_step, batch_size, hidden_size});
+            outCListShape.push_back({time_step, batch_size, hidden_size});
         }
         outTanhCListShape.push_back({time_step, batch_size, hidden_size});
         cur_input_size = hidden_size;

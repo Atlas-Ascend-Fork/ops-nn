@@ -28,9 +28,9 @@
 
 **变量定义**
 
-* **输入梯度**：$\delta h_t$ (`gradHy`)， $\delta c_t$ (`gradC`)
-* **正向缓存**：$i，f，g，o$ (各门激活值`storage`)，$c_{t-1}$ (`cx`)，$c_t$ (`cy`)
-* **输出梯度**：$\delta a_i，\delta a_f，\delta a_g，\delta a_o$ (存入`gradGatesOut`)，$\delta c_{t-1}$ (`gradCxOut`)
+* **输入梯度**：$\delta h_t$ (`gradHyOptional`)，$\delta c_t$ (`gradCOptional`)
+* **正向缓存**：$i, f, g, o$ (各门激活值`storage`)，$c_{t-1}$ (`cx`)，$c_t$ (`cy`)
+* **输出梯度**：$\delta a_i, \delta a_f, \delta a_g, \delta a_o$ (存入`gradGatesOut`)，$\delta c_{t-1}$ (`gradCxOut`)
 
 **第一阶段：中间梯度与状态回传**
 
@@ -201,7 +201,7 @@ aclnnStatus aclnnThnnFusedLstmCellBackward(
     <tr>
       <td>gradBiasOut</td>
       <td>输出</td>
-      <td>表示LSTM正向中输入偏置的梯度。</td>
+      <td>表示LSTMCell正向中输入偏置的梯度。</td>
       <td>数据类型与输入保持一致。</td>
       <td>FLOAT32、FLOAT16</td>
       <td>ND</td>

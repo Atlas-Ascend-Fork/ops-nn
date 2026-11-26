@@ -21,7 +21,7 @@
 
     $$
     \begin{cases}
-    \text{grad\_x} = \text{grad\_output} \odot \text{scale}^{\uparrow L} \\
+    \text{grad\_x} = \text{grad\_output} \odot (1 + \text{scale})^{\uparrow L} \\
     \text{grad\_scale} = \sum_{l=1}^{L} (\text{grad\_output} \odot \text{input})_{b,l,d} \\
     \text{grad\_shift} = \sum_{l=1}^{L} \text{grad\_output}_{b,l,d}
     \end{cases}
@@ -31,7 +31,7 @@
     - $\odot$: 表示逐元素乘法；
     - $\sum_{l=1}^{L}$: 求和操作，沿序列维度$L$(即dim=1)进行
     - $b,l,d$：下标，表示张量的维度索引（通常为Batch，Length，Dimension）
-    - $\text{scale}^{\uparrow L}$：表示将scale张量在序列维度 $L$ 上进行广播（扩展）
+    - $(1 + \text{scale})^{\uparrow L}$：表示将scale与正向公式中的常数1相加后，在序列维度 $L$ 上进行广播（扩展）
 
 ## 参数说明
 

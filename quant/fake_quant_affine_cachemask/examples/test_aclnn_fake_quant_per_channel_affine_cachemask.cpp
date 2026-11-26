@@ -102,7 +102,7 @@ int main()
     std::vector<char> maskHostData{1};
     int64_t quantMin = 1;
     int64_t quantMax = 3;
-    int axis = 0;
+    int64_t axis = 0;
     // 创建 aclTensor
     ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
     CHECK_RET(ret == ACL_SUCCESS, return ret);

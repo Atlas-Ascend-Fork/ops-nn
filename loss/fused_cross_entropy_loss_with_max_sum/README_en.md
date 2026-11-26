@@ -19,11 +19,11 @@ English | [简体中文](./README.md)
 - Formula:
 
     $$
-    lossOut = log(sum\_exp\_logits) - predicted\_logits
+    lossOut = log(sumExpLogits) - predictedLogits
     $$
 
     $$
-    softMaxOutOptional = exp(vocab\_parallel\_logits -logits\_max.unsqueeze(dim = -1)) \ sum\_exp\_logits.unsqueeze(dim = -1)
+    softMaxOutOptional = exp(vocabParallelLogits - logitsMax.unsqueeze(dim = -1)) / sumExpLogits.unsqueeze(dim = -1)
     $$
 
 ## Parameters

@@ -793,7 +793,7 @@ int main() {
   std::vector<int64_t> dhShape = {1, n, hiddenSize};
   std::vector<int64_t> dcShape = dhShape;
   std::vector<int64_t> iShape = hShape;
-  std::vector<int64_t> jShape = hShape;
+  std::vector<int64_t> gShape = hShape;
   std::vector<int64_t> fShape = hShape;
   std::vector<int64_t> oShape = hShape;
   std::vector<int64_t> tanhCtShape = hShape;
@@ -821,7 +821,7 @@ int main() {
   void* dhDeviceAddr = nullptr;
   void* dcDeviceAddr = nullptr;
   void* iDeviceAddr = nullptr;
-  void* jDeviceAddr = nullptr;
+  void* gDeviceAddr = nullptr;
   void* fDeviceAddr = nullptr;
   void* oDeviceAddr = nullptr;
   void* tanhCtDeviceAddr = nullptr;
@@ -850,7 +850,7 @@ int main() {
   aclTensor* dh = nullptr;
   aclTensor* dc = nullptr;
   aclTensor* i = nullptr;
-  aclTensor* j = nullptr;
+  aclTensor* g = nullptr;
   aclTensor* f = nullptr;
   aclTensor* o = nullptr;
   aclTensor* tanhCt = nullptr;
@@ -866,7 +866,7 @@ int main() {
 
   std::vector<float> xHostData(xShape[0] * xShape[1] * xShape[2], 1.0f); // 1*1*8 = 8个1
   std::vector<float> wiHostData(wiShape[0] * wiShape[1], 1.0f); // 32*8 = 256个1
-  std::vector<float> whHostData(whShape[0] * whShape[1], 1.0f); // (8+8)*32 = 16*32 = 512个1
+  std::vector<float> whHostData(whShape[0] * whShape[1], 1.0f); // 32*8 = 256个1
   std::vector<float> biHostData(bShape[0], 1.0f); // 32个1
   std::vector<float> bhHostData(bShape[0], 1.0f); // 32个1
   std::vector<float> yHostData(yShape[0] * yShape[1] * yShape[2], 1.0f); // 1*1*8 = 8个1
@@ -878,7 +878,7 @@ int main() {
   std::vector<float> dhHostData(dhShape[0] * dhShape[1] * dhShape[2], 1.0f); // 1*8 = 8个1
   std::vector<float> dcHostData(dcShape[0] * dcShape[1] * dcShape[2], 1.0f); // 1*8 = 8个1
   std::vector<float> iHostData(iShape[0] * iShape[1] * iShape[2], 1.0f); // 1*1*8 = 8个1
-  std::vector<float> jHostData(jShape[0] * jShape[1] * jShape[2], 1.0f); // 1*1*8 = 8个1
+  std::vector<float> gHostData(gShape[0] * gShape[1] * gShape[2], 1.0f); // 1*1*8 = 8个1
   std::vector<float> fHostData(fShape[0] * fShape[1] * fShape[2], 1.0f); // 1*1*8 = 8个1
   std::vector<float> oHostData(oShape[0] * oShape[1] * oShape[2], 1.0f); // 1*1*8 = 8个1
   std::vector<float> tanhCtHostData;
@@ -957,10 +957,10 @@ int main() {
   auto iList = aclCreateTensorList(iArray, 1);
 
   // 创建j aclTensor
-  ret = CreateAclTensor(jHostData, jShape, &jDeviceAddr, aclDataType::ACL_FLOAT, &j, aclFormat::ACL_FORMAT_NCL);
+  ret = CreateAclTensor(gHostData, gShape, &gDeviceAddr, aclDataType::ACL_FLOAT, &g, aclFormat::ACL_FORMAT_NCL);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
-  aclTensor* jArray[] = {j};
-  auto jList = aclCreateTensorList(jArray, 1);
+  aclTensor* gArray[] = {g};
+  auto gList = aclCreateTensorList(gArray, 1);
 
   // 创建f aclTensor
   ret = CreateAclTensor(fHostData, fShape, &fDeviceAddr, aclDataType::ACL_FLOAT, &f, aclFormat::ACL_FORMAT_NCL);
@@ -1020,7 +1020,7 @@ int main() {
   uint64_t forwardWorkspaceSize = 0;
   aclOpExecutor* forwardExecutor = nullptr;
   ret = aclnnLSTMGetWorkspaceSize(x, paramsList, initHcList, nullptr, true, 1, 0.0, true, false, false,
-                                  y, hy, cy, iList, jList, fList, oList, hList, cList, tanhCtList,
+                                  y, hy, cy, iList, gList, fList, oList, hList, cList, tanhCtList,
                                   &forwardWorkspaceSize, &forwardExecutor);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnLSTMGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
   void* forwardWorkspace = nullptr;
@@ -1044,7 +1044,7 @@ int main() {
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
   // 调用aclnnLstmBackward第一段接口
-  ret = aclnnLstmBackwardGetWorkspaceSize(x, initHcList, paramsList, dy, dh, dc, iList, jList, fList,
+  ret = aclnnLstmBackwardGetWorkspaceSize(x, initHcList, paramsList, dy, dh, dc, iList, gList, fList,
     oList, hList, cList ,tanhCtList, nullptr, true, 1, 0, true, false, false, nullptr, dx, dhPrev, dcPrev, dparamsList,
     &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnLstmBackwardGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
@@ -1146,7 +1146,7 @@ int main() {
   aclDestroyTensorList(hList);
   aclDestroyTensorList(cList);
   aclDestroyTensorList(iList);
-  aclDestroyTensorList(jList);
+  aclDestroyTensorList(gList);
   aclDestroyTensorList(fList);
   aclDestroyTensorList(oList);
   aclDestroyTensorList(tanhCtList);
@@ -1167,7 +1167,7 @@ int main() {
   aclrtFree(dhDeviceAddr);
   aclrtFree(dcDeviceAddr);
   aclrtFree(iDeviceAddr);
-  aclrtFree(jDeviceAddr);
+  aclrtFree(gDeviceAddr);
   aclrtFree(fDeviceAddr);
   aclrtFree(oDeviceAddr);
   aclrtFree(tanhCtDeviceAddr);

@@ -52,8 +52,8 @@
   - $\odot$ 表示逐元素乘法（Hadamard积）。
   - $r_t$、$z_t$、$n_t$ 分别为重置门、更新门和新门。
   - $h_t$ 为当前时刻的隐状态。
-  - $W_{ir}$、$W_{iz}$、$W_{in}$ 为输入权重矩阵，形状为 $[H, I]$（转置存储为 $[3H, I]$）。
-  - $W_{hr}$、$W_{hz}$、$W_{hn}$ 为隐状态权重矩阵，形状为 $[H, H]$（转置存储为 $[3H, H]$）。
+  - $W_{ir}$、$W_{iz}$、$W_{in}$ 为输入权重矩阵，形状为 $[H, I]$（按门顺序堆叠存储为 $[3H, I]$）。
+  - $W_{hr}$、$W_{hz}$、$W_{hn}$ 为隐状态权重矩阵，形状为 $[H, H]$（按门顺序堆叠存储为 $[3H, H]$）。
   - 若 hasBias=true，则 $b_{ir}$、$b_{iz}$、$b_{in}$ 和 $b_{hr}$、$b_{hz}$、$b_{hn}$ 分别为输入偏置和隐状态偏置，形状均为 $[H]$（存储为 $[3H]$）。
 
 ## 函数原型
@@ -233,7 +233,7 @@ aclnnStatus aclnnGRU(
     <tr>
       <td>hy（aclTensor*）</td>
       <td>输出</td>
-      <td>表示最后一层所有方向的最终隐状态，对应公式中最后时刻的 $h_t$。</td>
+      <td>表示各层所有方向的最终隐状态，对应公式中最后时刻的 $h_t$，第0维依次为各层各方向。</td>
       <td>shape为[numLayers * D, batch_size, hidden_size]。</td>
       <td>FLOAT32、FLOAT16</td>
       <td>ND</td>
@@ -516,7 +516,7 @@ int CreateAclTensorList(
     aclTensor* tensors[size];
     for (int i = 0; i < size; i++) {
         std::vector<T> hostData(GetShapeSize(shapes[i]), initVal);
-        int ret = CreateAclTensor<float>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
+        int ret = CreateAclTensor<T>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
         CHECK_RET(ret == ACL_SUCCESS, return ret);
     }
     *tensor = aclCreateTensorList(tensors, size);

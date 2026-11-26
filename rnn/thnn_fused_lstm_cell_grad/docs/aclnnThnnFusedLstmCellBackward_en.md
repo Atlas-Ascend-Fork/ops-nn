@@ -30,7 +30,7 @@
 
 **Variable Definitions**
 
-* **Input gradients**: $\delta h_t$ (`gradHy`), $\delta c_t$ (`gradC`)
+* **Input gradients**: $\delta h_t$ (`gradHyOptional`), $\delta c_t$ (`gradCOptional`)
 * **Forward cache**: $i, f, g, o$ (activation values of each gate `storage`), $c_{t-1}$ (`cx`), $c_t$ (`cy`)
 * **Output gradients**: $\delta a_i, \delta a_f, \delta a_g, \delta a_o$ (stored in `gradGatesOut`), $\delta c_{t-1}$ (`gradCxOut`)
 
@@ -203,7 +203,7 @@ aclnnStatus aclnnThnnFusedLstmCellBackward(
     <tr>
       <td>gradBiasOut</td>
       <td>Output</td>
-      <td>Indicates the gradient of the input bias in LSTM forward propagation.</td>
+      <td>Indicates the gradient of the input bias in LSTMCell forward propagation.</td>
       <td>Data type is consistent with input.</td>
       <td>FLOAT32, FLOAT16</td>
       <td>ND</td>

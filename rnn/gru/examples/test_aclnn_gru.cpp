@@ -45,7 +45,7 @@ void PrintOutResult(const std::string& name, const std::vector<int64_t>& shape, 
     auto ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), *deviceAddr,
                            size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy %s from device to host failed. ERROR: %d\n", name.c_str(), ret);
-              return );
+              return);
     LOG_PRINT("=== %s shape=[", name.c_str());
     for (size_t i = 0; i < shape.size(); i++) {
         LOG_PRINT("%ld%s", shape[i], (i + 1 < shape.size()) ? "," : "");
@@ -101,7 +101,7 @@ int CreateAclTensorList(const std::vector<std::vector<int64_t>>& shapes, void** 
     aclTensor* tensors[size];
     for (int i = 0; i < size; i++) {
         std::vector<T> hostData(GetShapeSize(shapes[i]), initVal);
-        int ret = CreateAclTensor<float>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
+        int ret = CreateAclTensor<T>(hostData, shapes[i], deviceAddr + i, dataType, tensors + i);
         CHECK_RET(ret == ACL_SUCCESS, return ret);
     }
     *tensor = aclCreateTensorList(tensors, size);
@@ -274,7 +274,7 @@ int main()
         }
     }
 
-    // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
+    // 6. 释放aclTensor，需要根据具体API的接口定义修改
     aclDestroyTensor(input);
     aclDestroyTensorList(params);
     aclDestroyTensor(output);

@@ -29,11 +29,11 @@
 - Formula:
 
     $$
-    lossOut = log(sum\_exp\_logits) - predicted\_logits
+    lossOut = log(sumExpLogits) - predictedLogits
     $$
 
     $$
-    softMaxOutOptional = exp(vocab\_parallel\_logits -logits\_max.unsqueeze(dim = -1)) \ sum\_exp\_logits.unsqueeze(dim = -1)
+    softMaxOutOptional = exp(vocabParallelLogits - logitsMax.unsqueeze(dim = -1)) / sumExpLogits.unsqueeze(dim = -1)
     $$
 
 ## Function Prototype
@@ -172,7 +172,7 @@ aclnnStatus aclnnFusedCrossEntropyLossWithMaxSum(
     <tr>
       <td class="tg-0pky">softMaxOutOptional (aclTensor*)</td>
       <td class="tg-0pky">Output</td>
-      <td class="tg-0pky">Intermediate variable, vocabParallelLogits in the formula.</td>
+      <td class="tg-0pky">Intermediate variable, softMaxOutOptional in the formula.</td>
       <td class="tg-0pky">Shape is consistent with vocabParallelLogitsOptional; must be provided when vocabParallelLogitsOptional is not null, otherwise the first API returns 161001.</td>
       <td class="tg-0pky">FLOAT</td>
       <td class="tg-0pky">ND</td>
@@ -460,7 +460,7 @@ int main() {
     LOG_PRINT("result[%ld] is: %f\n", i, secondResultData[i]);
   }
 
-  // 6. Release aclTensor and aclScalar. Modify as required by the specific API definition.
+  // 6. Release aclTensor. Modify as required by the specific API definition.
   aclDestroyTensor(logitsMax);
   aclDestroyTensor(sumExpLogits);
   aclDestroyTensor(predictedLogits);
