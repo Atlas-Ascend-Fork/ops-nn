@@ -754,8 +754,8 @@ TEST(QuantBatchMatmulMxState, ChecksBiasTableUsingL1StrideBeforeSelectingL0Plan)
                     SCOPED_TRACE(::testing::Message() << "dtype=" << dtype << ", baseN=" << baseN
                                                       << ", explicit=" << explicitPlan << ", dbL0C=" << +dbL0C);
                     EXPECT_EQ(tiling.ApplyMxL0CPingpongPlan(), baseN == 512U);
+                    EXPECT_EQ(cube.dbL0C, dbL0C);
                     if (baseN > 512U) {
-                        EXPECT_EQ(cube.dbL0C, dbL0C);
                         EXPECT_EQ(tiling.tilingData_.adaptiveSlidingWin.mL0, 0U);
                     }
                     // No-bias callers, including InplaceAdd, do not consume BT.

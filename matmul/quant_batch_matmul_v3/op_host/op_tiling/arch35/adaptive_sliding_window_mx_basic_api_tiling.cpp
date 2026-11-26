@@ -279,7 +279,6 @@ bool AdaptiveSlidingWindowMXBasicAPITiling::ApplyMxL0CPingpongPlan()
     useMxL0CPingpong_ = plan.mL0 != 0 || mxL0CPingpongEligibility_.legacyTail;
     if (plan.mL0 != 0) {
         cube.baseK = plan.baseK;
-        cube.dbL0C = qmmv3_tiling_const::DOUBLE_BUFFER_NUM;
     }
     return true;
 }

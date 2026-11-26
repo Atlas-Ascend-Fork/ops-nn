@@ -476,9 +476,11 @@ TEST_P(TestQuantMatmulActivationQuantTiling, generalTest)
         const bool withoutBatch = GetBatchCount(param.x1Shape) == 1 && GetBatchCount(param.x2OriginShape) == 1;
         const uint64_t batchMode = withoutBatch ? TPL_WITHOUT_BATCH : TPL_WITH_BATCH;
         auto* rawTiling = tilingContext->GetRawTilingData();
-        const auto checkTilingFields = [&param](const auto& data) {
+        const auto checkTilingFields = [&param, &compileInfo](const auto& data) {
             EXPECT_EQ(static_cast<int64_t>(data.scaleAlg), param.scaleAlg);
             EXPECT_EQ(data.isBias, param.hasBias ? 1U : 0U);
+            const uint64_t tileBytes = static_cast<uint64_t>(data.baseM) * data.baseN * sizeof(float);
+            EXPECT_EQ(data.dbL0C, 2U * tileBytes <= compileInfo.l0cSize ? 2U : 1U) << param.caseName;
             EXPECT_EQ(data.m, param.yShape.GetDim(param.yShape.GetDimNum() - 2));
             EXPECT_EQ(data.n,
                       param.x2OriginShape.GetDim(param.x2OriginShape.GetDimNum() - (param.transposeX2 ? 2 : 1)));
