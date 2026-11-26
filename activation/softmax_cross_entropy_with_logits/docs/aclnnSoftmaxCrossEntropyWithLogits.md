@@ -36,6 +36,8 @@ $$
 
 其中，$x_i$对应输入的features，$y_i$对应输入的labels。
 
+当输入shape为`[N, 0]`且`N > 0`时，类别维上的空集合求和为0，因此`loss`的`N`个元素均为0，`backprop`为空Tensor。
+
 ## 函数原型
 
 每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnSoftmaxCrossEntropyWithLogitsGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnSoftmaxCrossEntropyWithLogits”接口执行计算。

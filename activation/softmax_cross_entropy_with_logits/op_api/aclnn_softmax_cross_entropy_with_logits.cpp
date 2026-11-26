@@ -12,6 +12,7 @@
 #include "softmax_cross_entropy_with_logits.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/reshape.h"
+#include "level0/fill.h"
 #include "op_api/op_api_def_nn.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/common_types.h"
@@ -114,6 +115,24 @@ static aclnnStatus CheckParams(const aclTensor* features, const aclTensor* label
     return ACLNN_SUCCESS;
 }
 
+static aclnnStatus FillEmptyClassLoss(const aclTensor* loss, aclOpExecutor* executor)
+{
+    // Use the view shape so ViewCopy also handles a strided or sliced loss.
+    const int64_t batchSize = loss->GetViewShape().GetDim(0);
+    auto shapeArray = executor->AllocIntArray(&batchSize, 1);
+    auto dims = executor->ConvertToTensor(&batchSize, 1, DataType::DT_INT64);
+    auto zero = executor->AllocScalar(0);
+    CHECK_RET(shapeArray != nullptr && dims != nullptr && zero != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    auto value = executor->ConvertToTensor(zero, loss->GetDataType());
+    CHECK_RET(value != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+    auto zeroLoss = l0op::Fill(dims, value, shapeArray, executor);
+    CHECK_RET(zeroLoss != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    auto lossResult = l0op::ViewCopy(zeroLoss, loss, executor);
+    CHECK_RET(lossResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    return ACLNN_SUCCESS;
+}
+
 aclnnStatus ExecSoftmaxCrossEntropyWithLogitsGetWorkspaceSize(const aclTensor* features, const aclTensor* labels,
                                                               const aclTensor* loss, const aclTensor* backprop,
                                                               uint64_t* workspaceSize, aclOpExecutor** executor)
@@ -128,6 +147,11 @@ aclnnStatus ExecSoftmaxCrossEntropyWithLogitsGetWorkspaceSize(const aclTensor* f
 
     // 空Tensor处理
     if (features->IsEmpty()) {
+        // When the class dimension is zero, each sample has a loss of zero.
+        if (!loss->IsEmpty()) {
+            ret = FillEmptyClassLoss(loss, uniqueExecutor.get());
+            CHECK_RET(ret == ACLNN_SUCCESS, ret);
+        }
         *workspaceSize = uniqueExecutor->GetWorkspaceSize();
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
