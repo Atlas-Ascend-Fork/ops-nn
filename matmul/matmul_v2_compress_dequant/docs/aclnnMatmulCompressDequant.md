@@ -158,7 +158,7 @@ aclnnStatus aclnnMatmulCompressDequant(
     <tr>
       <td>compressInfo</td>
       <td>输入</td>
-      <td>整型数据列表，数据类型为INT64，其中包括压缩块信息tilingN、tilingK（通过msModelSlim工具中weight_compression模块压缩后获取，分别表示压缩前shape(n, k)在n方向和k方向上一个基本压缩块的大小），压缩前x2矩阵原始shape（shape为2维，用(n, k)表示），以及压缩块遍历方向的标识。其中tilingN和tilingK仅支持取值为8。</td>
+      <td>整型数据列表，数据类型为INT64，其中包括压缩块信息tilingK、tilingN（通过msModelSlim工具中weight_compression模块压缩后获取，分别表示压缩前shape(n, k)在k方向和n方向上一个基本压缩块的大小），压缩前x2矩阵原始shape（shape为2维，用(n, k)表示），以及压缩块遍历方向的标识。其中tilingK和tilingN仅支持取值为8。</td>
       <td>-</td>
       <td>INT64</td>
       <td>-</td>
@@ -327,7 +327,7 @@ aclnnStatus aclnnMatmulCompressDequant(
   write2file(output, "./data/output.bin")
 
   # 生成bias
-  bias = random.randn(n).astype(np.float32)
+  bias = random.randint(0, 100, size=n).astype(np.int32)
   write2file(bias, "./data/bias.bin")
 
   # 生成deq_scale
@@ -337,10 +337,10 @@ aclnnStatus aclnnMatmulCompressDequant(
   deq_scale_int64.tofile("./data/deqScale.bin")
   ```
 
-  执行gen_data.py，假设mat1和mat2的shape入参为m=512、k=1024、n=1024。
+  执行gen_data.py，假设mat1和mat2的shape入参为m=256、k=1024、n=1024。
 
   ```shell
-  python3 gen_data.py 512 1024 1024
+  python3 gen_data.py 256 1024 1024
   ```
 
 - **对数据进行预处理**
@@ -371,8 +371,8 @@ aclnnStatus aclnnMatmulCompressDequant(
 
     ```python
     import numpy as np
-    data = np.fromfile('./deqScale_original.bin', dtype=np.int32).astype(np.int64)
-    data.tofile('./deqScale.bin')
+    data = np.fromfile('./data/deqScale_ori.bin', dtype=np.int32).astype(np.int64)
+    data.tofile('./data/deqScale.bin')
     ```
 
 - **调用aclnn接口运算**
@@ -508,7 +508,7 @@ int main(int argc, char* argv[]) {
   std::vector<int64_t> mat2CompressedShape = {wCompressedSize};
   std::vector<int64_t> indexShape = {indexSize};
   std::vector<int64_t> biasShape = {n};
-  std::vector<int64_t> deqScaleShape = {n};
+  std::vector<int64_t> deqScaleShape = {1, n};
   std::vector<int64_t> outputShape = {m, n};
 
   std::vector<int64_t> compressInfoHostData = {8, 8, k, n, 1};
@@ -549,11 +549,11 @@ int main(int argc, char* argv[]) {
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Create bias tensor failed. ERROR: %d\n", ret); return ret);
   // 创建deqScale aclTensor
   std::string deqScaleFilePath = rootPath + "deqScale.bin";
-  ret = CreateAclTensor(deqScaleFilePath, deqScaleShape, sizeof(int32_t), &deqScaleDeviceAddr, aclDataType::ACL_UINT64,
+  ret = CreateAclTensor(deqScaleFilePath, deqScaleShape, sizeof(int64_t), &deqScaleDeviceAddr, aclDataType::ACL_UINT64,
                         &deqScale);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Create deqScale tensor failed. ERROR: %d\n", ret); return ret);
   // 创建compressInfo
-  compressInfo = aclCreateIntArray(compressInfoHostData.data(), aclDataType::ACL_INT64);
+  compressInfo = aclCreateIntArray(compressInfoHostData.data(), compressInfoHostData.size());
   // 创建out aclTensor
   std::string outputFilePath = rootPath + "output.bin";
   ret = CreateAclTensor(outputFilePath, outputShape, 2, &outputDeviceAddr, aclDataType::ACL_FLOAT16, &output);
@@ -564,7 +564,7 @@ int main(int argc, char* argv[]) {
   // 3. 调用CANN算子库API，需要修改为具体的API名称
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
-  // 调用aclnnMm第一段接口
+  // 调用aclnnMatmulCompressDequantGetWorkspaceSize第一段接口
   ret = aclnnMatmulCompressDequantGetWorkspaceSize(mat1, mat2Compressed, index, bias, deqScale, nullptr, offsetX, compressInfo, output, &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnMatmulCompressDequantGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
   // 根据第一段接口计算出的workspaceSize申请device内存
@@ -573,7 +573,7 @@ int main(int argc, char* argv[]) {
     ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
   }
-  // 调用aclnnMm第二段接口
+  // 调用aclnnMatmulCompressDequant第二段接口
   ret = aclnnMatmulCompressDequant(workspaceAddr, workspaceSize, executor, stream);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnMatmulCompressDequant failed. ERROR: %d\n", ret); return ret);
 
@@ -583,12 +583,12 @@ int main(int argc, char* argv[]) {
 
   // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
   auto size = GetShapeSize(outputShape);
-  std::vector<float> resultData(size, 0);
+  std::vector<aclFloat16> resultData(size, aclFloatToFloat16(0.0F));
   ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), outputDeviceAddr,
                     size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
   for (int64_t i = 0; i < size; i++) {
-    LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
+    LOG_PRINT("result[%ld] is: %f\n", i, aclFloat16ToFloat(resultData[i]));
   }
 
   // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改

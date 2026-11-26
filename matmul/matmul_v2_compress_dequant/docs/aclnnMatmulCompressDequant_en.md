@@ -160,7 +160,7 @@ aclnnStatus aclnnMatmulCompressDequant(
     <tr>
       <td>compressInfo</td>
       <td>Input</td>
-      <td>Integer data list of the INT64 data type. It includes compression block information tilingN and tilingK (obtained after compression by the weight_compression module in the msModelSlim tool, indicating the size of a basic compression block along the n and k dimensions of the pre-compression shape (n, k), respectively), the original shape of the x2 matrix before compression (2D shape denoted as (n, k)), and an identifier of the compression block traversal direction. tilingN and tilingK support only the value 8.</td>
+      <td>Integer data list of the INT64 data type. It includes compression block information tilingK and tilingN (obtained after compression by the weight_compression module in the msModelSlim tool, indicating the size of a basic compression block along the k and n dimensions of the pre-compression shape (n, k), respectively), the original shape of the x2 matrix before compression (2D shape denoted as (n, k)), and an identifier of the compression block traversal direction. tilingK and tilingN support only the value 8.</td>
       <td>-</td>
       <td>INT64</td>
       <td>-</td>
@@ -329,7 +329,7 @@ aclnnStatus aclnnMatmulCompressDequant(
   write2file(output, "./data/output.bin")
 
   # Generate bias.
-  bias = random.randn(n).astype(np.float32)
+  bias = random.randint(0, 100, size=n).astype(np.int32)
   write2file(bias, "./data/bias.bin")
 
   # Generate deq_scale.
@@ -339,10 +339,10 @@ aclnnStatus aclnnMatmulCompressDequant(
   deq_scale_int64.tofile("./data/deqScale.bin")
   ```
 
-  Execute gen_data.py, assuming the shape parameters of mat1 and mat2 are m=512, k=1024, and n=1024.
+  Execute gen_data.py, assuming the shape parameters of mat1 and mat2 are m=256, k=1024, and n=1024.
 
   ```shell
-  python3 gen_data.py 512 1024 1024
+  python3 gen_data.py 256 1024 1024
   ```
 
 - **Preprocess the data.**
@@ -373,8 +373,8 @@ aclnnStatus aclnnMatmulCompressDequant(
 
     ```python
     import numpy as np
-    data = np.fromfile('./deqScale_original.bin', dtype=np.int32).astype(np.int64)
-    data.tofile('./deqScale.bin')
+    data = np.fromfile('./data/deqScale_ori.bin', dtype=np.int32).astype(np.int64)
+    data.tofile('./data/deqScale.bin')
     ```
 
 - **Call the aclnn API for computation.**
@@ -510,7 +510,7 @@ int main(int argc, char* argv[]) {
   std::vector<int64_t> mat2CompressedShape = {wCompressedSize};
   std::vector<int64_t> indexShape = {indexSize};
   std::vector<int64_t> biasShape = {n};
-  std::vector<int64_t> deqScaleShape = {n};
+  std::vector<int64_t> deqScaleShape = {1, n};
   std::vector<int64_t> outputShape = {m, n};
 
   std::vector<int64_t> compressInfoHostData = {8, 8, k, n, 1};
@@ -551,11 +551,11 @@ int main(int argc, char* argv[]) {
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Create bias tensor failed. ERROR: %d\n", ret); return ret);
   // Create deqScale aclTensor.
   std::string deqScaleFilePath = rootPath + "deqScale.bin";
-  ret = CreateAclTensor(deqScaleFilePath, deqScaleShape, sizeof(int32_t), &deqScaleDeviceAddr, aclDataType::ACL_UINT64,
+  ret = CreateAclTensor(deqScaleFilePath, deqScaleShape, sizeof(int64_t), &deqScaleDeviceAddr, aclDataType::ACL_UINT64,
                         &deqScale);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Create deqScale tensor failed. ERROR: %d\n", ret); return ret);
   // Create compressInfo.
-  compressInfo = aclCreateIntArray(compressInfoHostData.data(), aclDataType::ACL_INT64);
+  compressInfo = aclCreateIntArray(compressInfoHostData.data(), compressInfoHostData.size());
   // Create out aclTensor.
   std::string outputFilePath = rootPath + "output.bin";
   ret = CreateAclTensor(outputFilePath, outputShape, 2, &outputDeviceAddr, aclDataType::ACL_FLOAT16, &output);
@@ -566,7 +566,7 @@ int main(int argc, char* argv[]) {
   // 3. Call the CANN operator library API, and modify it to the specific API name.
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
-  // Call the first-phase API of aclnnMm.
+  // Call the first-phase API of aclnnMatmulCompressDequantGetWorkspaceSize.
   ret = aclnnMatmulCompressDequantGetWorkspaceSize(mat1, mat2Compressed, index, bias, deqScale, nullptr, offsetX, compressInfo, output, &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnMatmulCompressDequantGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
   // Request device memory based on the workspaceSize calculated by the first-phase API.
@@ -575,7 +575,7 @@ int main(int argc, char* argv[]) {
     ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
   }
-  // Call the second-phase API of aclnnMm.
+  // Call the second-phase API of aclnnMatmulCompressDequant.
   ret = aclnnMatmulCompressDequant(workspaceAddr, workspaceSize, executor, stream);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnMatmulCompressDequant failed. ERROR: %d\n", ret); return ret);
 
@@ -585,12 +585,12 @@ int main(int argc, char* argv[]) {
 
   // 5. Obtain the output value, and copy the result on device memory to the host memory. Modify the code according to the specific API definition.
   auto size = GetShapeSize(outputShape);
-  std::vector<float> resultData(size, 0);
+  std::vector<aclFloat16> resultData(size, aclFloatToFloat16(0.0F));
   ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), outputDeviceAddr,
                     size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
   for (int64_t i = 0; i < size; i++) {
-    LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
+    LOG_PRINT("result[%ld] is: %f\n", i, aclFloat16ToFloat(resultData[i]));
   }
 
   // 6. Release aclTensor and aclScalar. Modify the code according to the specific API definition.

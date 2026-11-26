@@ -323,7 +323,7 @@ int main()
     const std::vector<int64_t> x2Shape = {static_cast<int64_t>(x2HostData.size())};
     const std::vector<int64_t> compressIndexShape = {static_cast<int64_t>(compressIndexHostData.size())};
     const std::vector<int64_t> biasShape = {128};
-    const std::vector<int64_t> deqScaleShape = {128};
+    const std::vector<int64_t> deqScaleShape = {1, 128};
     const std::vector<int64_t> outShape = {16, 128};
     const std::vector<int64_t> compressInfoData = {8, 8, 320, 128, 1};
     const std::vector<int8_t> x1HostData(GetShapeSize(x1Shape), 1);
