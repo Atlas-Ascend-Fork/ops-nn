@@ -224,8 +224,8 @@ The Python frontend manages JIT compilation, schema/meta registration, and publi
        def __init__(self):
            super().__init__("swiglu_group")
 
-        def sources(self):
-            return [self.resolve_source("swiglu_group.cpp")]
+       def sources(self):
+           return [self.resolve_source("swiglu_group.cpp")]
 
        def schema(self):
            return "swiglu_group(Tensor x, *, Tensor? weight=None, Tensor? group_index=None, float clamp_limit=-1.0) -> Tensor"

@@ -224,8 +224,8 @@ nn仓的算子采用**分布式目录结构**：每个算子的torch_extension�
        def __init__(self):
            super().__init__("swiglu_group")
 
-        def sources(self):
-            return [self.resolve_source("swiglu_group.cpp")]
+       def sources(self):
+           return [self.resolve_source("swiglu_group.cpp")]
 
        def schema(self):
            return "swiglu_group(Tensor x, *, Tensor? weight=None, Tensor? group_index=None, float clamp_limit=-1.0) -> Tensor"
