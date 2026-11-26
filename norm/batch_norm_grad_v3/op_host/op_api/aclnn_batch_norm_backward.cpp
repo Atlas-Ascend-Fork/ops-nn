@@ -94,18 +94,11 @@ static aclnnStatus CheckMask(const aclTensor* gradInput, const aclTensor* gradWe
                              const aclBoolArray* outputMask)
 {
     OP_CHECK(outputMask != nullptr, ReportNullPointerError(__func__, "outputMask"), return ACLNN_ERR_PARAM_NULLPTR);
-    if (outputMask->Size() < GRAD_WEIGHT_INDEX) {
+    // outputMask长度必须为3且所有平台一致校验，长度2/4原样通过会造成(*outputMask)[2]越界读（issue#8817/#7034）
+    if (outputMask->Size() != BN_GRAD_V3_RESULT_CNT) {
         OP_LOGE_FOR_INVALID_LISTSIZE("aclnnBatchNormBackward", "outputMask", std::to_string(outputMask->Size()).c_str(),
-                                     "at least 1");
+                                     std::to_string(BN_GRAD_V3_RESULT_CNT).c_str());
         return ACLNN_ERR_PARAM_INVALID;
-    }
-    if (Ops::NN::AclnnUtil::IsRegbase()) {
-        if (outputMask->Size() != BN_GRAD_V3_RESULT_CNT) {
-            OP_LOGE_FOR_INVALID_LISTSIZE("aclnnBatchNormBackward", "outputMask",
-                                         std::to_string(outputMask->Size()).c_str(),
-                                         std::to_string(BN_GRAD_V3_RESULT_CNT).c_str());
-            return ACLNN_ERR_PARAM_INVALID;
-        }
     }
     if ((*outputMask)[0]) {
         OP_CHECK(gradInput != nullptr, ReportNullPointerError(__func__, "gradInput"), return ACLNN_ERR_PARAM_NULLPTR);
@@ -354,10 +347,10 @@ static bool CheckDtypeMatchReferenceOrFloat(const aclTensor* tensor, const aclTe
     return true;
 }
 
-static bool RegbaseCheckDtypeSame(const aclTensor* gradOut, const aclTensor* gradInput, const aclTensor* gradWeight,
-                                  const aclTensor* gradBias, const aclBoolArray* outputMask, const aclTensor* weight,
-                                  const aclTensor* runningMean, const aclTensor* runningVar, const aclTensor* saveMean,
-                                  const aclTensor* saveInvstd)
+static bool CheckDtypeSame(const aclTensor* gradOut, const aclTensor* gradInput, const aclTensor* gradWeight,
+                           const aclTensor* gradBias, const aclBoolArray* outputMask, const aclTensor* weight,
+                           const aclTensor* runningMean, const aclTensor* runningVar, const aclTensor* saveMean,
+                           const aclTensor* saveInvstd)
 {
     CHECK_RET(CheckDtypeMatchReferenceOrFloat(weight, gradOut, "weight", "gradOut"), false);
     CHECK_RET(CheckDtypeMatchReferenceOrFloat(runningMean, gradOut, "runningMean", "gradOut"), false);
@@ -407,11 +400,10 @@ static aclnnStatus CheckParams(const aclTensor* gradOut, const aclTensor* input,
     CHECK_RET(CheckGradDtypeValid(gradInput, gradWeight, gradBias, outputMask), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckOtherDtypeValid(weight, runningMean, runningVar, saveMean, saveInvstd), ACLNN_ERR_PARAM_INVALID);
 
-    if (Ops::NN::AclnnUtil::IsRegbase()) {
-        CHECK_RET(RegbaseCheckDtypeSame(gradOut, gradInput, gradWeight, gradBias, outputMask, weight, runningMean,
-                                        runningVar, saveMean, saveInvstd),
-                  ACLNN_ERR_PARAM_INVALID);
-    }
+    // dtype一致性校验（与gradOut同型或FLOAT）平台化执行，不再门禁在Regbase分支（issue#8817）
+    CHECK_RET(CheckDtypeSame(gradOut, gradInput, gradWeight, gradBias, outputMask, weight, runningMean, runningVar,
+                             saveMean, saveInvstd),
+              ACLNN_ERR_PARAM_INVALID);
 
     CHECK_RET(CheckFormat(gradOut, input, gradInput, outputMask), ACLNN_ERR_PARAM_INVALID);
 
@@ -419,12 +411,9 @@ static aclnnStatus CheckParams(const aclTensor* gradOut, const aclTensor* input,
     int64_t dimC = GetDimC(input);
     CHECK_RET(CheckOtherShape(dimC, weight, runningMean, runningVar), ACLNN_ERR_PARAM_INVALID);
 
-    if (Ops::NN::AclnnUtil::IsRegbase()) {
-        // 校验saveMean和saveInvstd的shape
-        CHECK_RET(CheckSaveMeanSaveInvstdShape(dimC, saveMean, saveInvstd, training), ACLNN_ERR_PARAM_INVALID);
-        // 校验gradWeight和gradBias的shape
-        CHECK_RET(CheckGradWeightGradBiasShape(dimC, gradWeight, gradBias, outputMask), ACLNN_ERR_PARAM_INVALID);
-    }
+    // saveMean/saveInvstd/gradWeight/gradBias的shape校验平台化执行（issue#8817/#8816）
+    CHECK_RET(CheckSaveMeanSaveInvstdShape(dimC, saveMean, saveInvstd, training), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckGradWeightGradBiasShape(dimC, gradWeight, gradBias, outputMask), ACLNN_ERR_PARAM_INVALID);
 
     return ACLNN_SUCCESS;
 }
@@ -903,6 +892,11 @@ aclnnStatus aclnnBatchNormBackwardGetWorkspaceSize(const aclTensor* gradOut, con
 
     CHECK_RET(CheckInputNotNull(gradOut, input), ACLNN_ERR_PARAM_NULLPTR);
 
+    auto ret = CheckParams(gradOut, input, gradInput, gradWeight, gradBias, outputMask, weight, runningMean, runningVar,
+                           saveMean, saveInvstd, training);
+    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+
+    // 空tensor分支置于参数校验之后，避免绕过outputMask长度、dtype、shape等校验（issue#8817）
     if (input->IsEmpty() || gradOut->IsEmpty()) {
         auto fillRet = FillGradWeightGradBiasWithZero(outputMask, gradWeight, gradBias, batchNormUniqueExecutor.get());
         CHECK_RET(fillRet == ACLNN_SUCCESS, fillRet);
@@ -910,10 +904,6 @@ aclnnStatus aclnnBatchNormBackwardGetWorkspaceSize(const aclTensor* gradOut, con
         batchNormUniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
     }
-
-    auto ret = CheckParams(gradOut, input, gradInput, gradWeight, gradBias, outputMask, weight, runningMean, runningVar,
-                           saveMean, saveInvstd, training);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     bool canEarlyReturn = Ops::NN::AclnnUtil::IsRegbase() && !(*outputMask)[0] && !(*outputMask)[GRAD_WEIGHT_INDEX] &&
                           !(*outputMask)[GRAD_BIAS_INDEX];

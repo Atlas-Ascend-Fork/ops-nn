@@ -898,3 +898,143 @@ TEST_F(l2BatchNormBackwardTest, l2_batch_norm_backward_2d_nd_success)
     // 2维ND按文档放行，不受4维/5维格式配对校验影响（issue#7036回归保护）
     EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
 }
+
+TEST_F(l2BatchNormBackwardTest, l2_batch_norm_backward_output_mask_size_2_failed)
+{
+    auto gradOutDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 10);
+    auto selfDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 10);
+
+    auto weightDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto rMeanDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{0, 0, 0, 0, 0});
+    auto rVarDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto sMeanDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{0, 0, 0, 0, 0});
+    auto sVarDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true});
+
+    auto gradInDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeightDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto gradBiasDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(
+        aclnnBatchNormBackward,
+        INPUT(gradOutDesc, selfDesc, weightDesc, rMeanDesc, rVarDesc, sMeanDesc, sVarDesc, true, 1e-5, output_mask),
+        OUTPUT(gradInDesc, gradWeightDesc, gradBiasDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    // outputMask长度非法（含2/4）平台化拒绝，消除mask[2]越界读（issue#8817/#7034）
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2BatchNormBackwardTest, l2_batch_norm_backward_empty_save_stats_train_failed)
+{
+    auto gradOutDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 10);
+    auto selfDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 10);
+
+    auto weightDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto rMeanDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{0, 0, 0, 0, 0});
+    auto rVarDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto sEmptyDesc = TensorDesc({0}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto sMeanDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{0, 0, 0, 0, 0});
+    auto sVarDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+
+    auto gradInDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeightDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto gradBiasDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    // 训练态saveMean为空Tensor：shape校验平台化后返回161002（issue#8816，原成功并写出脏值）
+    auto ut = OP_API_UT(
+        aclnnBatchNormBackward,
+        INPUT(gradOutDesc, selfDesc, weightDesc, rMeanDesc, rVarDesc, sEmptyDesc, sVarDesc, true, 1e-5, output_mask),
+        OUTPUT(gradInDesc, gradWeightDesc, gradBiasDesc));
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+
+    // 训练态saveInvstd为空Tensor：同样返回161002（issue#8816，原成功且梯度放大316倍）
+    ut = OP_API_UT(
+        aclnnBatchNormBackward,
+        INPUT(gradOutDesc, selfDesc, weightDesc, rMeanDesc, rVarDesc, sMeanDesc, sEmptyDesc, true, 1e-5, output_mask),
+        OUTPUT(gradInDesc, gradWeightDesc, gradBiasDesc));
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2BatchNormBackwardTest, l2_batch_norm_backward_dtype_mismatch_failed)
+{
+    // fp16主张量 + bf16统计量：同型或FLOAT口径之外的跨型混搭应拒绝（issue#8817）
+    auto gradOutDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW).ValueRange(1, 10);
+    auto selfDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW).ValueRange(1, 10);
+
+    auto weightDesc = TensorDesc({5}, ACL_BF16, ACL_FORMAT_ND).ValueRange(1, 10);
+    auto rMeanDesc = TensorDesc({5}, ACL_BF16, ACL_FORMAT_ND).ValueRange(1, 10);
+    auto rVarDesc = TensorDesc({5}, ACL_BF16, ACL_FORMAT_ND).ValueRange(1, 10);
+    auto sMeanDesc = TensorDesc({5}, ACL_BF16, ACL_FORMAT_ND).ValueRange(1, 10);
+    auto sVarDesc = TensorDesc({5}, ACL_BF16, ACL_FORMAT_ND).ValueRange(1, 10);
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+
+    auto gradInDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto gradWeightDesc = TensorDesc({5}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto gradBiasDesc = TensorDesc({5}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(
+        aclnnBatchNormBackward,
+        INPUT(gradOutDesc, selfDesc, weightDesc, rMeanDesc, rVarDesc, sMeanDesc, sVarDesc, true, 1e-5, output_mask),
+        OUTPUT(gradInDesc, gradWeightDesc, gradBiasDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
+}
+TEST_F(l2BatchNormBackwardTest, l2_batch_norm_backward_grad_weight_len_failed)
+{
+    auto gradOutDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 10);
+    auto selfDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 10);
+
+    auto weightDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto rMeanDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{0, 0, 0, 0, 0});
+    auto rVarDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto sMeanDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{0, 0, 0, 0, 0});
+    auto sVarDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+
+    auto gradInDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeightErrDesc = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto gradBiasDesc = TensorDesc({5}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(
+        aclnnBatchNormBackward,
+        INPUT(gradOutDesc, selfDesc, weightDesc, rMeanDesc, rVarDesc, sMeanDesc, sVarDesc, true, 1e-5, output_mask),
+        OUTPUT(gradInDesc, gradWeightErrDesc, gradBiasDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    // gradWeight长度非C：shape校验平台化后返回161002而非内部错误码561103（issue#8817）
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2BatchNormBackwardTest, l2_batch_norm_backward_grad_input_dtype_failed)
+{
+    auto gradOutDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW).ValueRange(1, 10);
+    auto selfDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT16, ACL_FORMAT_NCHW).ValueRange(1, 10);
+
+    auto weightDesc = TensorDesc({5}, ACL_FLOAT16, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto rMeanDesc = TensorDesc({5}, ACL_FLOAT16, ACL_FORMAT_ND).Value(vector<float>{0, 0, 0, 0, 0});
+    auto rVarDesc = TensorDesc({5}, ACL_FLOAT16, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto sMeanDesc = TensorDesc({5}, ACL_FLOAT16, ACL_FORMAT_ND).Value(vector<float>{0, 0, 0, 0, 0});
+    auto sVarDesc = TensorDesc({5}, ACL_FLOAT16, ACL_FORMAT_ND).Value(vector<float>{1, 1, 1, 1, 1});
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+
+    auto gradInDesc = TensorDesc({3, 5, 3, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeightDesc = TensorDesc({5}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto gradBiasDesc = TensorDesc({5}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(
+        aclnnBatchNormBackward,
+        INPUT(gradOutDesc, selfDesc, weightDesc, rMeanDesc, rVarDesc, sMeanDesc, sVarDesc, true, 1e-5, output_mask),
+        OUTPUT(gradInDesc, gradWeightDesc, gradBiasDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    // gradInput与gradOut的dtype不一致：平台化校验后返回161002而非内部错误码561103（issue#8817）
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
+}
