@@ -24,6 +24,8 @@
 #include "opdev/fast_vector.h"
 #include "op_common/op_host/util/op_const_def.h"
 
+#define CONVOLUTION_UTIL_API __attribute__((visibility("default")))
+
 namespace Ops {
 namespace NN {
 const bool NAMESPACE_PLACEHOLDER = true;
@@ -137,6 +139,13 @@ const aclTensor* View4DSwapHWForTensor(const aclTensor* input, aclOpExecutor* ex
 bool CheckDisContinuousStride(const aclTensor* input, const std::vector<int64_t>& newStrides, uint32_t dims);
 void GetUbSize();
 void GetL1Size();
+CONVOLUTION_UTIL_API bool ShouldUseConvTranspose2DVecFallbackWithL1(const aclTensor* input, const aclTensor* weight,
+                                                                    const aclTensor* bias, const aclTensor* output,
+                                                                    uint64_t l1Size);
+CONVOLUTION_UTIL_API bool ShouldUseConvTranspose3DVecFallbackWithL1(const aclTensor* input, const aclTensor* weight,
+                                                                    const aclTensor* output, const aclIntArray* stride,
+                                                                    const aclIntArray* dilation, uint64_t l1Size);
+CONVOLUTION_UTIL_API const aclTensor* GetConvTransposeVecFallbackOutputInfo(aclTensor* output, aclOpExecutor* executor);
 bool CheckDmaLimits(const aclTensor* input, const aclTensor* weight, const aclIntArray* stride,
                     const aclIntArray* padding, const aclIntArray* dilation, const aclTensor* bias);
 bool CheckL1SizeLimitsDma(uint32_t inputDtypeSize, uint64_t biasL1Size, uint32_t weightDtypeSize, int64_t k0);

@@ -13,6 +13,7 @@
  * \brief
  */
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 #include <string>
@@ -419,6 +420,157 @@ void GetUbSize()
         return;
     }
     g_ubSize = ubSize - RESERVED_SIZE_8K;
+}
+
+namespace {
+constexpr int64_t CONV_TRANSPOSE_2D_DIM_SIZE = 4;
+constexpr int64_t CONV_TRANSPOSE_3D_DIM_SIZE = 5;
+constexpr int64_t CONV_TRANSPOSE_CI_INDEX = 1;
+constexpr int64_t CONV_TRANSPOSE_D_INDEX = 2;
+constexpr int64_t CONV_TRANSPOSE_H_INDEX = 3;
+constexpr int64_t CONV_TRANSPOSE_W_INDEX = 4;
+
+bool IsConvTransposeVecFallbackDtypeSupported(const aclTensor* input, const aclTensor* weight, const aclTensor* output)
+{
+    if (input == nullptr || weight == nullptr || output == nullptr) {
+        return false;
+    }
+    auto dtype = input->GetDataType();
+    if (dtype != op::DataType::DT_FLOAT16 && dtype != op::DataType::DT_BF16 && dtype != op::DataType::DT_FLOAT) {
+        return false;
+    }
+    return weight->GetDataType() == dtype && output->GetDataType() == dtype;
+}
+} // namespace
+
+bool ShouldUseConvTranspose2DVecFallbackWithL1(const aclTensor* input, const aclTensor* weight, const aclTensor* bias,
+                                               const aclTensor* output, uint64_t l1Size)
+{
+    if (GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_2201 ||
+        !IsConvTransposeVecFallbackDtypeSupported(input, weight, output)) {
+        return false;
+    }
+    auto inputShape = input->GetViewShape();
+    auto weightShape = weight->GetViewShape();
+    auto outputShape = output->GetViewShape();
+    bool input4d = inputShape.GetDimNum() == CONV_TRANSPOSE_2D_DIM_SIZE;
+    bool input5d = inputShape.GetDimNum() == CONV_TRANSPOSE_3D_DIM_SIZE;
+    if ((!input4d && !input5d) || weightShape.GetDimNum() != inputShape.GetDimNum() ||
+        outputShape.GetDimNum() != CONV_TRANSPOSE_2D_DIM_SIZE) {
+        return false;
+    }
+    auto expectedFormat = input4d ? Format::FORMAT_NCHW : Format::FORMAT_NCDHW;
+    if (op::GetPrimaryFormat(input->GetStorageFormat()) != expectedFormat ||
+        op::GetPrimaryFormat(weight->GetStorageFormat()) != expectedFormat ||
+        op::GetPrimaryFormat(output->GetStorageFormat()) != Format::FORMAT_NCHW) {
+        return false;
+    }
+
+    constexpr int64_t kBlockSize = 16;
+    constexpr int64_t kByteBlock = 32;
+    auto dtypeBytes = static_cast<int64_t>(ge::GetSizeByDataType(weight->GetDataType()));
+    auto filterCo0 = (weight->GetDataType() == DataType::DT_FLOAT) ? kByteBlock / dtypeBytes : kBlockSize;
+    auto kernelElements = weightShape.GetDim(weightShape.GetDimNum() - 2) *
+                          weightShape.GetDim(weightShape.GetDimNum() - 1);
+    uint64_t weightL1Size = static_cast<uint64_t>(kernelElements) * filterCo0 * kBlockSize * dtypeBytes;
+    uint64_t biasL1Size = bias == nullptr ? 0 : kBlockSize * ge::GetSizeByDataType(bias->GetDataType());
+    return weightL1Size + biasL1Size > l1Size;
+}
+
+bool ShouldUseConvTranspose3DVecFallbackWithL1(const aclTensor* input, const aclTensor* weight, const aclTensor* output,
+                                               const aclIntArray* stride, const aclIntArray* dilation, uint64_t l1Size)
+{
+    if (GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_2201 ||
+        !IsConvTransposeVecFallbackDtypeSupported(input, weight, output)) {
+        return false;
+    }
+    auto inputShape = input->GetViewShape();
+    auto weightShape = weight->GetViewShape();
+    auto outputShape = output->GetViewShape();
+    if (inputShape.GetDimNum() != CONV_TRANSPOSE_3D_DIM_SIZE || weightShape.GetDimNum() != CONV_TRANSPOSE_3D_DIM_SIZE ||
+        outputShape.GetDimNum() != CONV_TRANSPOSE_3D_DIM_SIZE || stride->Size() != CONV_TRANSPOSE_3D_DIM_SIZE - 2 ||
+        dilation->Size() != CONV_TRANSPOSE_3D_DIM_SIZE - 2) {
+        return false;
+    }
+    if (op::GetPrimaryFormat(input->GetStorageFormat()) != Format::FORMAT_NCDHW ||
+        op::GetPrimaryFormat(weight->GetStorageFormat()) != Format::FORMAT_NCDHW ||
+        op::GetPrimaryFormat(output->GetStorageFormat()) != Format::FORMAT_NCDHW) {
+        return false;
+    }
+
+    constexpr int64_t kBlockSize = 16;
+    constexpr int64_t kFP32BlockReduce = 8;
+    constexpr int64_t kByteBlock = 32;
+    constexpr int64_t kDimWNormalUp = 4096;
+    auto dtypeBytes = static_cast<int64_t>(ge::GetSizeByDataType(weight->GetDataType()));
+    bool isFp32 = input->GetDataType() == DataType::DT_FLOAT;
+    int64_t aC0 = isFp32 ? kFP32BlockReduce : kBlockSize;
+    int64_t filterCo0 = isFp32 ? kByteBlock / dtypeBytes : kBlockSize;
+    int64_t filterCi0 = kBlockSize;
+
+    int64_t aC = inputShape.GetDim(CONV_TRANSPOSE_CI_INDEX);
+    int64_t aD = inputShape.GetDim(CONV_TRANSPOSE_D_INDEX);
+    int64_t aH = inputShape.GetDim(CONV_TRANSPOSE_H_INDEX);
+    int64_t aW = inputShape.GetDim(CONV_TRANSPOSE_W_INDEX);
+    int64_t kD = weightShape.GetDim(CONV_TRANSPOSE_D_INDEX);
+    int64_t kH = weightShape.GetDim(CONV_TRANSPOSE_H_INDEX);
+    int64_t kW = weightShape.GetDim(CONV_TRANSPOSE_W_INDEX);
+    int64_t cW = outputShape.GetDim(CONV_TRANSPOSE_W_INDEX);
+    if (aC <= 0 || aD <= 0 || aH <= 0 || aW <= 0 || cW <= 0) {
+        return false;
+    }
+    int64_t strideD = (*stride)[0];
+    int64_t strideH = (*stride)[1];
+    int64_t strideW = (*stride)[2];
+    int64_t filterHDilation = (kH - 1) * (*dilation)[1] + 1;
+    int64_t filterWDilation = (kW - 1) * (*dilation)[2] + 1;
+
+    int64_t wValue = std::max(aW * strideW, filterWDilation);
+    int64_t hValueMax = (filterHDilation - 1) + kBlockSize / cW + 2;
+    if (cW > kBlockSize) {
+        hValueMax = filterHDilation + 1;
+    } else if (kBlockSize % cW == 0) {
+        hValueMax = (filterHDilation - 1) + kBlockSize / cW;
+    }
+    hValueMax = std::max(std::min(hValueMax, aH * strideH), filterHDilation);
+
+    int64_t aC1 = (aC + aC0 - 1) / aC0;
+    int64_t l1RealDkCheck = (aC1 == 1) ? kD : 1;
+    int64_t aL1D = (l1RealDkCheck - 1 + strideD - 1) / strideD + 1;
+    aL1D = std::max(std::min(aL1D, aD), static_cast<int64_t>(1));
+
+    uint64_t aL1Size = static_cast<uint64_t>(hValueMax) * wValue * aL1D * aC0 * dtypeBytes;
+    uint64_t bL1Size = static_cast<uint64_t>(kH) * filterCo0 * kW * filterCi0 * dtypeBytes;
+    uint64_t fillZeroSize = isFp32 ? 0 : kBlockSize * kBlockSize * dtypeBytes;
+    bool wSizeLimit = std::max(aC, wValue) <= kDimWNormalUp;
+    // Cube tiling also needs alignment and auxiliary L1 space, so leave a 25% safety margin.
+    constexpr uint64_t kL1MarginNumerator = 3;
+    constexpr uint64_t kL1MarginDenominator = 4;
+    uint64_t l1Threshold = l1Size / kL1MarginDenominator * kL1MarginNumerator;
+    return wSizeLimit && aL1Size + bL1Size + fillZeroSize > l1Threshold;
+}
+
+const aclTensor* GetConvTransposeVecFallbackOutputInfo(aclTensor* output, aclOpExecutor* executor)
+{
+    auto outputShape = output->GetViewShape();
+    if (outputShape.GetDimNum() == CONV_TRANSPOSE_3D_DIM_SIZE) {
+        return output;
+    }
+    if (outputShape.GetDimNum() != CONV_TRANSPOSE_2D_DIM_SIZE) {
+        return nullptr;
+    }
+    op::Shape outputShape5d(
+        {outputShape.GetDim(0), outputShape.GetDim(1), 1, outputShape.GetDim(2), outputShape.GetDim(3)});
+    auto outputInfo = executor->CreateView(output, outputShape5d, output->GetViewOffset());
+    if (outputInfo == nullptr) {
+        return nullptr;
+    }
+    const_cast<aclTensor*>(outputInfo)->SetStorageShape(outputShape5d);
+    const_cast<aclTensor*>(outputInfo)->SetOriginalShape(outputShape5d);
+    const_cast<aclTensor*>(outputInfo)->SetStorageFormat(Format::FORMAT_NCDHW);
+    const_cast<aclTensor*>(outputInfo)->SetOriginalFormat(Format::FORMAT_NCDHW);
+    const_cast<aclTensor*>(outputInfo)->SetViewFormat(Format::FORMAT_NCDHW);
+    return outputInfo;
 }
 
 void GetL1Size()

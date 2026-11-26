@@ -16,6 +16,7 @@
 #include "aclnn_convolution.h"
 #include "convolution_util.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <vector>
@@ -47,6 +48,7 @@
 #include "matmul/common/op_host/op_api/cube_util.h"
 #include "../../../../matmul/common/op_host/op_api/matmul_util.h"
 #include "../../../../matmul/common/op_host/op_api/batch_matmul_util.h"
+#include "../../../convolution_backward/op_api/convolutionbackward.h"
 #include "op_api/aclnn_util.h"
 
 using namespace op;
@@ -5115,6 +5117,48 @@ static aclnnStatus CheckN2HAndTranspose(const aclTensor*& input, const aclTensor
     return ACLNN_SUCCESS;
 }
 
+static bool GetConvTransposeLocalMemSize(uint64_t& l1Size)
+{
+    auto platformInfo = GetCurrentPlatformInfo().GetPlatformInfos();
+    if (platformInfo == nullptr) {
+        return false;
+    }
+    platformInfo->GetLocalMemSize(fe::LocalMemType::L1, l1Size);
+    return l1Size != 0;
+}
+
+static bool ShouldUseConvTranspose2DVecFallback(const aclTensor* input, const aclTensor* weight, const aclTensor* bias,
+                                                const aclTensor* output)
+{
+    if (GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_2201) {
+        return false;
+    }
+    uint64_t l1Size = 0;
+    if (!GetConvTransposeLocalMemSize(l1Size)) {
+        return false;
+    }
+    return ConvolutionUtil::ShouldUseConvTranspose2DVecFallbackWithL1(input, weight, bias, output, l1Size);
+}
+
+static bool ShouldUseConvTranspose3DVecFallback(const aclTensor* input, const aclTensor* weight,
+                                                const aclTensor* output, const aclIntArray* stride,
+                                                const aclIntArray* dilation)
+{
+    if (GetCurrentPlatformInfo().GetCurNpuArch() != NpuArch::DAV_2201) {
+        return false;
+    }
+    uint64_t l1Size = 0;
+    if (!GetConvTransposeLocalMemSize(l1Size)) {
+        return false;
+    }
+    return ConvolutionUtil::ShouldUseConvTranspose3DVecFallbackWithL1(input, weight, output, stride, dilation, l1Size);
+}
+
+static const aclTensor* GetConvTransposeVecFallbackOutputInfo(aclTensor* output, aclOpExecutor* executor)
+{
+    return ConvolutionUtil::GetConvTransposeVecFallbackOutputInfo(output, executor);
+}
+
 class ConvTransposed3dImpl : public ConvolutionImpl {
 public:
     CONV_CONSTRUCTOR(Transposed3d)
@@ -5148,8 +5192,18 @@ public:
         if (PreProcessCheckOutputDtype(bias, opInfo, entityName) != ACLNN_SUCCESS) {
             return ACLNN_ERR_PARAM_INVALID;
         }
+        vecFallback_ = isPseudo3d_ ? ShouldUseConvTranspose2DVecFallback(input, weight, bias, output) :
+                                     ShouldUseConvTranspose3DVecFallback(input, weight, output, stride, dilation);
+        if (vecFallback_) {
+            OP_LOGI("convTranspose3d using Conv3DBackpropInputV2 vector fallback, pseudo3d=%d.",
+                    static_cast<int>(isPseudo3d_));
+        }
+        needChangeFormat = needChangeFormat && !vecFallback_;
         auto ret = CommonPreProcess(input, weight, bias, groups, transposed, opInfo, needChangeFormat, true, executor);
         CHECK_RET(ret == ACLNN_SUCCESS, ret);
+        if (vecFallback_) {
+            return ACLNN_SUCCESS;
+        }
         TransposeAdaptParam adptParams = {nullptr};
         GetConv3DTransposeAdapterParam(input, stride, padding, dilation, outputPadding, executor, &adptParams);
         return CheckN2HAndTranspose(input, weight, groups, executor, &adptParams);
@@ -5157,6 +5211,34 @@ public:
 
     aclnnStatus Impl() override
     {
+        if (vecFallback_) {
+            auto outputInfo = GetConvTransposeVecFallbackOutputInfo(output, executor);
+            CHECK_RET(outputInfo != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+            TransposeAdaptParam adapt = {nullptr};
+            GetConv3DTransposeAdapterParam(input, stride, padding, dilation, outputPadding, executor, &adapt);
+            CHECK_RET(adapt.adaptStride != nullptr && adapt.adaptDilation != nullptr && adapt.adaptPad != nullptr,
+                      ACLNN_ERR_INNER_NULLPTR);
+            l0op::AdaptParam vecAdapt = {adapt.adaptStride, adapt.adaptDilation, adapt.adaptPad, true};
+
+            // ConvTranspose(input, weight, outputShape) == Conv3DBackpropInput(outputShape, weight, input).
+            // Bias remains in the existing PostProcess path.
+            if (input->GetDataType() == op::DataType::DT_FLOAT16) {
+                convOut = l0op::Conv3DBackpropInputFp162Fp16(outputInfo, weight, input, stride, padding, dilation,
+                                                             groups, executor, &vecAdapt);
+            } else if (input->GetDataType() == op::DataType::DT_BF16) {
+                convOut = l0op::Conv3DBackpropInputBf162Bf16(outputInfo, weight, input, stride, padding, dilation,
+                                                             groups, executor, &vecAdapt);
+            } else {
+                convOut = l0op::Conv3DBackpropInputFp322Fp32(outputInfo, weight, input, stride, padding, dilation,
+                                                             groups, executor, &vecAdapt);
+            }
+            if (convOut == nullptr) {
+                OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_RUNTIME_ERROR, "convTranspose3d vector fallback failed.");
+                return ACLNN_ERR_RUNTIME_ERROR;
+            }
+            return ACLNN_SUCCESS;
+        }
         convOut = FUNCTION_CALL(l0Functions, opInfo, input, weight, bias, stride, padding, dilation, transposed,
                                 outputPadding, groups, useHf32, executor);
         if (convOut == nullptr) {
@@ -5239,6 +5321,12 @@ public:
     };
 
     ~ConvTransposed3dImpl() override = default;
+
+protected:
+    bool isPseudo3d_ = false;
+
+private:
+    bool vecFallback_ = false;
 };
 
 class ConvTranspose2dTo3dImpl : public ConvTransposed3dImpl {
@@ -5277,6 +5365,7 @@ public:
         CHECK_RET(dilation != nullptr, ACLNN_ERR_INNER_NULLPTR);
         auto changeRes = ChangeConv2dInputToConv3d(input, weight, executor);
         CHECK_RET(changeRes == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);
+        isPseudo3d_ = true;
         return ConvTransposed3dImpl::PreProcess();
     };
 
@@ -5440,7 +5529,8 @@ std::shared_ptr<ConvolutionImpl> CreateConvolutionImpl(const aclTensor* input, c
                                                           executor, entityName);
         }
         case CONV_2D_DIM_SIZE: {
-            if (IsSupportConv2DTransposeTo3D(input, weight, bias, stride, padding, dilation, outputPadding, groups,
+            if (ShouldUseConvTranspose2DVecFallback(input, weight, bias, output) ||
+                IsSupportConv2DTransposeTo3D(input, weight, bias, stride, padding, dilation, outputPadding, groups,
                                              output)) {
                 return std::make_shared<ConvTranspose2dTo3dImpl>(input, weight, bias, stride, padding, dilation,
                                                                  transposed, outputPadding, groups, output, useHf32,
