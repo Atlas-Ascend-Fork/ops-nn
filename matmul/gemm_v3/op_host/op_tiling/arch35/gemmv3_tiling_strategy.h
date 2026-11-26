@@ -25,11 +25,13 @@
 namespace optiling {
 namespace gemmv3 {
 namespace strategy {
-constexpr int32_t BASE = 999;
+constexpr int32_t BASIC_ASWT = 4; // 与 matmul_v3_advanced::strategy::BASIC_ASWT 保持一致
 
-const static std::map<NpuArch, std::vector<int32_t>> Gemmv3PrioritiesMap = {{Ops::Base::DAV_3510, {strategy::BASE}},
-                                                                            {::Ops::Base::DAV_9201, {strategy::BASE}},
-                                                                            {::Ops::Base::DAV_9202, {strategy::BASE}}};
+// A5/A6: GemmV3 走 Blaze(TENSOR_LEVEL) ASWT
+const static std::map<NpuArch, std::vector<int32_t>> Gemmv3PrioritiesMap = {
+    {Ops::Base::DAV_3510, {strategy::BASIC_ASWT}},
+    {::Ops::Base::DAV_9201, {strategy::BASIC_ASWT}},
+    {::Ops::Base::DAV_9202, {strategy::BASIC_ASWT}}};
 
 inline std::vector<int32_t> GetGemmV3Priorities(NpuArch npuArch)
 {

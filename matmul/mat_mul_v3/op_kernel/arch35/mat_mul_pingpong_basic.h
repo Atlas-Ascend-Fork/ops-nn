@@ -23,7 +23,8 @@
 namespace MatmulV3Advanced {
 
 template <class A_TYPE, class B_TYPE, class C_TYPE, class BIAS_TYPE, class A_LAYOUT, class B_LAYOUT, class C_LAYOUT,
-          uint64_t FULL_LOAD_MODE = 0, uint64_t FUSED_OP_TYPE = 0, uint64_t NON_CONTIGIOUS_TYPE = 0>
+          uint64_t FULL_LOAD_MODE = 0, uint64_t FUSED_OP_TYPE = 0, uint64_t NON_CONTIGIOUS_TYPE = 0,
+          Blaze::Gemm::MatmulOutputMode OUTPUT_MODE = Blaze::Gemm::MatmulOutputMode::OVERWRITE>
 __aicore__ inline void MatMulBasicKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR biasGM, GM_ADDR cGM, GM_ADDR workspaceGM,
                                          const MatMulV3BasicTilingData& tilingData, int64_t batch = 0)
 {
@@ -49,7 +50,7 @@ __aicore__ inline void MatMulBasicKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR biasG
 
     // 定义MMAD类型
     using DispatchPolicy = Blaze::Gemm::MatmulMultiBlockBasic<
-        FULL_LOAD_MODE, FUSED_OP_TYPE, Blaze::Gemm::KernelMmadMultiBlockBasic, NON_CONTIGIOUS_TYPE>;
+        FULL_LOAD_MODE, FUSED_OP_TYPE, Blaze::Gemm::KernelMmadMultiBlockBasic, NON_CONTIGIOUS_TYPE, OUTPUT_MODE>;
     using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, LayoutA, BType, LayoutB, OutType, LayoutC,
                                                     BiasType, LayoutBias>;
 

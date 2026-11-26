@@ -74,7 +74,7 @@ void GemmV3Tiling::ExtractAttrFlags()
     if (context_->GetAttrs()->GetAttrNum() >= HF32_ATTR_NUM) {
         args_.isHf32 = *context_->GetAttrs()->GetAttrPointer<bool>(HF32_ATTR_INDEX);
     }
-    OP_LOGD(args_.opName, "GemmV3 Hf32 flag is: %d", args_.isHf32);
+    OP_LOGD(args_.opName, "Hf32 flag is: %d", args_.isHf32);
 }
 
 ge::graphStatus GemmV3Tiling::ExtractTranspose()
@@ -175,7 +175,9 @@ ge::graphStatus GemmV3Tiling::ValidateOpSpecific()
     auto attrs = context_->GetAttrs();
     const float* alphaValue = attrs->GetAttrPointer<float>(ALPHA_ATTR_INDEX);
     const float* betaValue = attrs->GetAttrPointer<float>(BETA_ATTR_INDEX);
-    if (std::abs(*alphaValue - 1.0f) > EPSILON || std::abs(*betaValue - 1.0f) > EPSILON) {
+    // 用 !(abs <= EPSILON) 而非 abs > EPSILON：NaN 与任何值比较均为 false，
+    // 前者可拦截 NaN（NaN 会绕过 > 校验被写入 tilingData，导致后续结算无效）。
+    if (!(std::abs(*alphaValue - 1.0f) <= EPSILON) || !(std::abs(*betaValue - 1.0f) <= EPSILON)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             args_.opName, "alpha, beta", Ops::NN::FormatString("%f, %f", *alphaValue, *betaValue).c_str(),
             Ops::NN::FormatString("The values of %s must be %s", "alpha, beta", "1.0").c_str());

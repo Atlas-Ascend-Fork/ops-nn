@@ -36,6 +36,7 @@ protected:
     ge::graphStatus ValidateBias() override;
     ge::graphStatus ValidateOpSpecific() override;
     ge::graphStatus ValidateDtype() override;
+    const char* GetRegistryOpType() const override { return "GemmV3"; }
     std::vector<int32_t> GetRegistryPriorities(NpuArch npuArch) const override;
     MatMulV3TilingKey* GetTilingKeyObj() override;
     std::vector<std::vector<ge::DataType>> GetDtypeSupportList() const override;

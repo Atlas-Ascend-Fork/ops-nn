@@ -244,4 +244,75 @@ TEST_F(GemmV3InferShape, GemmV3_Test_BiasBroadcastInvalid)
 
     EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
 }
+
+// A5(Ascend950/350) 典型场景（与 arch35 ST/tiling 用例同形）
+TEST_F(GemmV3InferShape, GemmV3_Test_A5Shape_NoTrans)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("GemmV3")->infer_shape;
+    gert::StorageShape a_shape = {{1424, 256}, {1424, 256}};
+    gert::StorageShape b_shape = {{256, 320}, {256, 320}};
+    gert::StorageShape c_shape = {{1424, 320}, {1424, 320}};
+    gert::StorageShape output_shape = {{}, {}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&a_shape, &b_shape, &c_shape})
+                      .OutputShapes({&output_shape})
+                      .NodeAttrs({{"alpha", Ops::NN::AnyValue::CreateFrom<float>(1.0f)},
+                                  {"beta", Ops::NN::AnyValue::CreateFrom<float>(1.0f)},
+                                  {"transpose_a", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"transpose_b", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"enable_hf32", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)), "[1424, 320]");
+}
+
+TEST_F(GemmV3InferShape, GemmV3_Test_A5Shape_AbTrans)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("GemmV3")->infer_shape;
+    gert::StorageShape a_shape = {{832, 240}, {832, 240}};
+    gert::StorageShape b_shape = {{1536, 832}, {1536, 832}};
+    gert::StorageShape c_shape = {{240, 1536}, {240, 1536}};
+    gert::StorageShape output_shape = {{}, {}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&a_shape, &b_shape, &c_shape})
+                      .OutputShapes({&output_shape})
+                      .NodeAttrs({{"alpha", Ops::NN::AnyValue::CreateFrom<float>(1.0f)},
+                                  {"beta", Ops::NN::AnyValue::CreateFrom<float>(1.0f)},
+                                  {"transpose_a", Ops::NN::AnyValue::CreateFrom<bool>(true)},
+                                  {"transpose_b", Ops::NN::AnyValue::CreateFrom<bool>(true)},
+                                  {"enable_hf32", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)), "[240, 1536]");
+}
+
+// arch35 大 shape 典型场景（与 tiling 用例同形）
+TEST_F(GemmV3InferShape, GemmV3_Test_Arch35LargeShape_NoTrans)
+{
+    auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("GemmV3")->infer_shape;
+    gert::StorageShape a_shape = {{4096, 8192}, {4096, 8192}};
+    gert::StorageShape b_shape = {{8192, 1280}, {8192, 1280}};
+    gert::StorageShape c_shape = {{4096, 1280}, {4096, 1280}};
+    gert::StorageShape output_shape = {{}, {}};
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&a_shape, &b_shape, &c_shape})
+                      .OutputShapes({&output_shape})
+                      .NodeAttrs({{"alpha", Ops::NN::AnyValue::CreateFrom<float>(1.0f)},
+                                  {"beta", Ops::NN::AnyValue::CreateFrom<float>(1.0f)},
+                                  {"transpose_a", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"transpose_b", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"enable_hf32", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .Build();
+
+    EXPECT_EQ(infer_shape_func(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(Ops::Base::ToString(*holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0)), "[4096, 1280]");
+}
 } // namespace ge
