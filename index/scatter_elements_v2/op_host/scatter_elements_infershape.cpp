@@ -29,8 +29,10 @@ static ge::graphStatus InferShape4ScatterElementsV2(gert::InferShapeContext* con
 {
     const gert::Shape* var_in_shape = context->GetInputShape(0);
     gert::Shape* var_out_shape = context->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, var_in_shape);
-    OP_CHECK_NULL_WITH_CONTEXT(context, var_out_shape);
+    OP_CHECK_IF(var_in_shape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(var_out_shape == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing var output shape"),
+                return ge::GRAPH_FAILED);
 
     *var_out_shape = *var_in_shape;
     return ge::GRAPH_SUCCESS;

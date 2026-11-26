@@ -60,7 +60,8 @@ string ToString(void* buf, size_t size)
 }
 
 static void ExecuteTestCase(const MaskedScatterOpsParamInfos& opsParamInfos, string expectTilingData,
-                            ge::graphStatus status = ge::GRAPH_SUCCESS)
+                            ge::graphStatus status = ge::GRAPH_SUCCESS, size_t tilingCapacity = 4096,
+                            uint64_t ubBytes = 253952)
 {
     string compileInfoString = R"({
         "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
@@ -74,6 +75,7 @@ static void ExecuteTestCase(const MaskedScatterOpsParamInfos& opsParamInfos, str
     map<string, string> intrinsics;
 
     GetPlatFormInfos(compileInfoString.c_str(), socInfos, aicoreSpec, intrinsics);
+    aicoreSpec["ub_size"] = std::to_string(ubBytes);
 
     // platform info
     fe::PlatFormInfos platformInfo;
@@ -89,7 +91,7 @@ static void ExecuteTestCase(const MaskedScatterOpsParamInfos& opsParamInfos, str
     auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
 
     // tilingFunc simulate
-    auto param = gert::TilingData::CreateCap(4096);
+    auto param = gert::TilingData::CreateCap(tilingCapacity);
     auto workspaceSizeHoler = gert::ContinuousVector::Create<size_t>(4096);
     auto wsSize = reinterpret_cast<gert::ContinuousVector*>(workspaceSizeHoler.get());
     ASSERT_NE(param, nullptr);
@@ -284,4 +286,22 @@ TEST_F(MaskedScatterTiling, MaskedScatter_tiling_ascendc_error_y_shape)
     opsParamInfos.yShape = {{60, 14, 16, 1}, {60, 14, 16, 1}};
     string expectTilingData = "";
     ExecuteTestCase(opsParamInfos, expectTilingData, ge::GRAPH_FAILED);
+}
+TEST_F(MaskedScatterTiling, RejectsTilingBufferTooSmall)
+{
+    const gert::StorageShape shape = {{2, 4}, {2, 4}};
+    const MaskedScatterOpsParamInfos inputs = {ge::DT_INT32, ge::DT_BOOL, ge::DT_INT32, ge::DT_INT32,
+                                               shape,        shape,       shape,        shape};
+    constexpr size_t oneFieldCapacity = sizeof(int64_t);
+    ExecuteTestCase(inputs, "", ge::GRAPH_FAILED, oneFieldCapacity);
+}
+
+TEST_F(MaskedScatterTiling, RejectsUbSmallerThanReservedCache)
+{
+    const gert::StorageShape shape = {{2, 4}, {2, 4}};
+    const MaskedScatterOpsParamInfos inputs = {ge::DT_INT32, ge::DT_BOOL, ge::DT_INT32, ge::DT_INT32,
+                                               shape,        shape,       shape,        shape};
+    constexpr size_t tilingCapacity = 4096;
+    constexpr uint64_t smallUbBytes = 16 * 1024;
+    ExecuteTestCase(inputs, "", ge::GRAPH_FAILED, tilingCapacity, smallUbBytes);
 }

@@ -32,38 +32,57 @@ REGISTER_TILING_DATA_CLASS(ScatterElements_3001008, ScatterElementsV2SmallShapeT
 
 static ge::graphStatus TilingScatterElements(gert::TilingContext* context)
 {
+    if (context == nullptr) {
+        OP_LOGE_WITHOUT_REPORT("ScatterElements", "Tiling context is null");
+        return ge::GRAPH_FAILED;
+    }
     const auto* input = context->GetInputShape(0);
     const auto* indices = context->GetInputShape(1);
     const auto* updates = context->GetInputShape(2);
     const auto* inputDesc = context->GetInputDesc(0);
     const auto* compileInfo = static_cast<const ScatterElementsV2CompileInfoArch35*>(context->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context, input);
-    OP_CHECK_NULL_WITH_CONTEXT(context, indices);
-    OP_CHECK_NULL_WITH_CONTEXT(context, updates);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(input == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "data"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(indices == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "indices"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(updates == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "updates"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(inputDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "data"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing compile information"),
+                return ge::GRAPH_FAILED);
     const auto& dataShape = input->GetStorageShape();
     const auto& indexShape = indices->GetStorageShape();
     const auto& updateShape = updates->GetStorageShape();
     const auto rank = dataShape.GetDimNum();
     // V1 accepts tensor updates. V2's scalar broadcast must not extend V1's input contract.
     if (rank != indexShape.GetDimNum() || rank != updateShape.GetDimNum()) {
-        OP_LOGE(context->GetNodeName(), "Input ranks must match, got data=%zu, indices=%zu, updates=%zu", rank,
-                indexShape.GetDimNum(), updateShape.GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context->GetNodeName(), "data, indices, updates",
+            (std::to_string(rank) + ", " + std::to_string(indexShape.GetDimNum()) + ", " +
+             std::to_string(updateShape.GetDimNum()))
+                .c_str(),
+            "The input ranks must match");
         return ge::GRAPH_FAILED;
     }
     for (size_t d = 0; d < rank; ++d) {
         if (indexShape.GetDim(d) > updateShape.GetDim(d)) {
-            OP_LOGE(context->GetNodeName(), "Indices dimension %zu must not exceed the updates dimension", d);
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), "indices, updates",
+                (Ops::Base::ToString(indexShape) + ", " + Ops::Base::ToString(updateShape)).c_str(),
+                ("indices must not exceed updates at dimension " + std::to_string(d)).c_str());
             return ge::GRAPH_FAILED;
         }
     }
 
     auto* raw = context->GetRawTilingData();
-    OP_CHECK_NULL_WITH_CONTEXT(context, raw);
+    OP_CHECK_IF(raw == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing raw tiling data"),
+                return ge::GRAPH_FAILED);
     constexpr uint32_t COPY_BYTES_PER_CORE = 16 * 1024;
     const int64_t elementBytes = ge::GetSizeByDataType(inputDesc->GetDataType());
     if (elementBytes <= 0 || compileInfo->totalCoreNum <= 0) {
+        OP_LOGE_WITHOUT_REPORT(
+            context->GetNodeName(), "Invalid copy tiling inputs: dtype=%d, elementBytes=%ld, cores=%ld",
+            static_cast<int>(inputDesc->GetDataType()), elementBytes, static_cast<int64_t>(compileInfo->totalCoreNum));
         return ge::GRAPH_FAILED;
     }
     const int64_t dataElements = dataShape.GetShapeSize();
@@ -82,10 +101,15 @@ static ge::graphStatus TilingScatterElements(gert::TilingContext* context)
             return status;
         }
         auto* workspaces = context->GetWorkspaceSizes(1);
-        OP_CHECK_NULL_WITH_CONTEXT(context, workspaces);
+        OP_CHECK_IF(workspaces == nullptr,
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing workspace size output"),
+                    return ge::GRAPH_FAILED);
         ScatterElementsCopyTilingData copyTiling;
         copyTiling.set_dataBytes(static_cast<uint64_t>(dataElements) * elementBytes);
         if (raw->GetCapacity() < copyTiling.GetDataSize()) {
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                                   "Copy tiling buffer too small: requiredBytes=%zu, availableBytes=%zu",
+                                   copyTiling.GetDataSize(), raw->GetCapacity());
             return ge::GRAPH_FAILED;
         }
         copyTiling.SaveToBuffer(raw->GetData(), raw->GetCapacity());
@@ -105,7 +129,9 @@ static ge::graphStatus TilingScatterElements(gert::TilingContext* context)
     if (context->GetTilingKey() / 1000000 == 3) {
         // Reserve the system workspace required by the input copy barrier.
         auto* workspaces = context->GetWorkspaceSizes(1);
-        OP_CHECK_NULL_WITH_CONTEXT(context, workspaces);
+        OP_CHECK_IF(workspaces == nullptr,
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing workspace size output"),
+                    return ge::GRAPH_FAILED);
         workspaces[0] = std::max<size_t>(workspaces[0], compileInfo->workspaceSize);
     }
     // V2's single-core SortInvoke expects one caller.
@@ -119,6 +145,9 @@ static ge::graphStatus TilingPrepareForScatterElements(gert::TilingParseContext*
     auto status = TilingArch35PrepareForScatterElementsV2(context);
     if (status == ge::GRAPH_SUCCESS) {
         auto* compileInfo = context->GetCompiledInfo<ScatterElementsV2CompileInfoArch35>();
+        OP_CHECK_IF(compileInfo == nullptr,
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing compile information"),
+                    return ge::GRAPH_FAILED);
         compileInfo->workspaceSize = platform_ascendc::PlatformAscendC(context->GetPlatformInfo())
                                          .GetLibApiWorkSpaceSize();
     }

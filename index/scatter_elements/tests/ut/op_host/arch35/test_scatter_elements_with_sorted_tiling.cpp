@@ -11,6 +11,7 @@
 #include <map>
 #include <string>
 #include <gtest/gtest.h>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "kernel_run_context_facker.h"
 #include "platform/platform_infos_def.h"
 #include "register/op_impl_registry.h"
@@ -39,7 +40,8 @@ struct WithSortedTilingResult {
 
 void RunWithSortedTilingCase(ge::DataType inputDtype, ge::DataType indicesDtype, gert::StorageShape& inputShape,
                              gert::StorageShape& indicesShape, int64_t axis, const std::string& reduction,
-                             int32_t deterministic, WithSortedTilingResult& result)
+                             int32_t deterministic, WithSortedTilingResult& result,
+                             gert::StorageShape* updates = nullptr, size_t tilingCapacity = 4096)
 {
     const std::string opType("ScatterElements");
     auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
@@ -78,11 +80,11 @@ void RunWithSortedTilingCase(ge::DataType inputDtype, ge::DataType indicesDtype,
     parseContext->GetPlatformInfo()->SetPlatformRes("version", npuArch);
     ASSERT_EQ(tilingParseFunc(kernelHolder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
-    auto tilingData = gert::TilingData::CreateCap(4096);
+    auto tilingData = gert::TilingData::CreateCap(tilingCapacity);
     auto workspaceHolder = gert::ContinuousVector::Create<size_t>(4096);
     auto workspace = reinterpret_cast<gert::ContinuousVector*>(workspaceHolder.get());
     ASSERT_NE(tilingData, nullptr);
-    gert::StorageShape updatesShape = indicesShape;
+    gert::StorageShape updatesShape = updates == nullptr ? indicesShape : *updates;
     gert::StorageShape outputShape = inputShape;
     auto holder = gert::TilingContextFaker()
                       .SetOpType(opType)
@@ -360,4 +362,49 @@ TEST(ScatterElementsWithSortedTiling, EmptyDeterministicUpdateStillCopiesData)
     EXPECT_EQ(result.localMemorySize, 16U * 1024);
     EXPECT_EQ(result.workspaceSize, 0U);
     EXPECT_GT(result.blockDim, 0U);
+}
+
+TEST(ScatterElementsWithSortedTiling, RejectsMismatchedRanks)
+{
+    gert::StorageShape dataShape = {{2, 4}, {2, 4}};
+    gert::StorageShape indicesShape = {{2}, {2}};
+    WithSortedTilingResult result;
+    auto& errors = ErrorManager::GetInstance();
+    (void)errors.GetRawErrorMessages();
+    RunWithSortedTilingCase(ge::DT_FLOAT, ge::DT_INT32, dataShape, indicesShape, 0, "none", 0, result);
+
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    const auto reports = errors.GetRawErrorMessages();
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports[0].error_id, "EZ0013");
+    EXPECT_EQ(reports[0].args_map.at("incorrect_dims"), "2, 1, 1");
+}
+
+TEST(ScatterElementsWithSortedTiling, RejectsIndicesLargerThanUpdates)
+{
+    gert::StorageShape dataShape = {{2, 4}, {2, 4}};
+    gert::StorageShape indicesShape = {{2, 3}, {2, 3}};
+    gert::StorageShape updatesShape = {{2, 2}, {2, 2}};
+    WithSortedTilingResult result;
+    auto& errors = ErrorManager::GetInstance();
+    (void)errors.GetRawErrorMessages();
+    RunWithSortedTilingCase(ge::DT_FLOAT, ge::DT_INT32, dataShape, indicesShape, 1, "none", 0, result, &updatesShape);
+
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    const auto reports = errors.GetRawErrorMessages();
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports[0].error_id, "EZ0010");
+    EXPECT_EQ(reports[0].args_map.at("param_names"), "indices, updates");
+    EXPECT_EQ(reports[0].args_map.at("reason"), "indices must not exceed updates at dimension 1");
+}
+
+TEST(ScatterElementsWithSortedTiling, RejectsShortCopyOnlyTilingBuffer)
+{
+    gert::StorageShape dataShape = {{32}, {32}};
+    gert::StorageShape indicesShape = {{0}, {0}};
+    WithSortedTilingResult result;
+    constexpr size_t shortCapacity = sizeof(uint64_t) - 1;
+    RunWithSortedTilingCase(ge::DT_FLOAT, ge::DT_INT32, dataShape, indicesShape, 0, "add", 1, result, nullptr,
+                            shortCapacity);
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
 }

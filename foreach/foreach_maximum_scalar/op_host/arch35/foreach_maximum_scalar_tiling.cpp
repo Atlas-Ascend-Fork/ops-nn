@@ -212,7 +212,12 @@ static ge::graphStatus ForeachMaximumScalarTilingFunc(gert::TilingContext* conte
     currentWorkspace[0] = WS_SYS_SIZE;
 
     // 7. Set local memory size
-    context->SetLocalMemorySize(static_cast<uint32_t>(ubSize - DCACHE_SIZE));
+    const auto ubBytes = static_cast<uint32_t>(ubSize - DCACHE_SIZE);
+    const auto status = context->SetDynUBufSize(ubBytes);
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(opName, "SetDynUBufSize failed: requestedBytes=%u, rc=%u", ubBytes, status);
+        return status;
+    }
 
     // 8. Set tiling key by dtype
     uint64_t tilingKey = 0;

@@ -252,8 +252,11 @@ ge::graphStatus ApplyFtrlRegbaseTiling::SetTilingData()
                 ", dtype=" + ge::TypeUtils::DataTypeToSerialString(tilingContext_->GetInputDesc(0)->GetDataType()) +
                 ". Preserve input metadata and tiling logs for the opbase implementation owner.");
     }
-    tilingContext_->SetBlockDim(static_cast<uint32_t>(numBlocks));
-    return ge::GRAPH_SUCCESS;
+    const auto status = tilingContext_->SetBlockDim(static_cast<uint32_t>(numBlocks));
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(), "SetBlockDim failed: rc=%u", status);
+    }
+    return status;
 }
 
 ge::graphStatus ApplyFtrlRegbaseTiling::RunTiling()

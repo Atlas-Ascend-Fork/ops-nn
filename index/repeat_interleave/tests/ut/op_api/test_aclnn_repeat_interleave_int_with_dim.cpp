@@ -10,6 +10,8 @@
 
 #include <vector>
 #include <array>
+#include <limits>
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "gtest/gtest.h"
 
 #include "../../../op_api/aclnn_repeat_interleave.h"
@@ -19,6 +21,7 @@
 #include "op_api_ut_common/op_api_ut.h"
 #include "opdev/platform.h"
 #include "acl/acl.h"
+#include <dlfcn.h>
 
 using namespace op;
 using namespace std;
@@ -265,7 +268,40 @@ TEST_F(l2_repeat_interleave_dim_int_test, l2_repeat_interleave_dim_int_test_19)
     test_run_invalid({2, 3, 3}, ACL_FLOAT16, ACL_FORMAT_ND, {-10, 10}, -2, 3, 6, {2, 6, 3}, ACL_FLOAT16, ACL_FORMAT_ND);
 }
 
-// 可以加个outputSize的校验
+TEST_F(l2_repeat_interleave_dim_int_test, nonempty_input_rejects_zero_output_size)
+{
+    test_run_invalid({2, 3}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, 2, 1, 0, {2, 6}, ACL_FLOAT, ACL_FORMAT_ND);
+    const auto getError = reinterpret_cast<const char* (*)()>(dlsym(RTLD_DEFAULT, "aclGetRecentErrMsg"));
+    ASSERT_NE(getError, nullptr);
+    const auto* error = getError();
+    ASSERT_NE(error, nullptr);
+    const std::string message(error);
+    const std::string
+        expected = "Parameter outputSize of aclnnRepeatInterleaveIntWithDim has incorrect value 0. It should be 6.";
+    const auto pos = message.find(expected);
+    ASSERT_NE(pos, std::string::npos) << message;
+    EXPECT_EQ(message.find(expected, pos + 1), std::string::npos) << message;
+}
+
+TEST_F(l2_repeat_interleave_dim_int_test, rejects_scalar_repeats_when_axis_size_overflows)
+{
+    auto& errorManager = ErrorManager::GetInstance();
+    errorManager.GenWorkStreamIdDefault();
+    (void)errorManager.GetRawErrorMessages();
+    test_run_invalid({2, 3}, ACL_FLOAT, ACL_FORMAT_ND, {-1, 1}, std::numeric_limits<int64_t>::max(), 1, 0, {2, 0},
+                     ACL_FLOAT, ACL_FORMAT_ND);
+
+    std::vector<ErrorManager::ErrorItem> reports;
+    for (const auto& report : errorManager.GetRawErrorMessages()) {
+        if (report.error_id.compare(0, 2, "EZ") == 0) {
+            reports.push_back(report);
+        }
+    }
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports[0].error_id, "EZ0026");
+    EXPECT_EQ(reports[0].args_map.at("param_name"), "repeats");
+    EXPECT_NE(reports[0].args_map.at("reason").find("exceeds INT64_MAX"), std::string::npos);
+}
 
 TEST_F(l2_repeat_interleave_dim_int_test, ascend960_bfloat16_scalar_repeats)
 {

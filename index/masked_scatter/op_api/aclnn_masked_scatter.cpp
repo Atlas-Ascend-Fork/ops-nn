@@ -126,23 +126,6 @@ static bool CheckDtypeValid(const aclTensor* selfRef, const aclTensor* mask, con
     return true;
 }
 
-static bool isMaskCanExpandToSelfRef(const aclTensor* selfRef, const aclTensor* mask, op::Shape* broadcastShape)
-{
-    op::Shape selfRefShape = selfRef->GetViewShape();
-    size_t selfRefShapeLen = selfRefShape.GetDimNum();
-    for (size_t i = 0; i < selfRefShapeLen; i++) {
-        if (broadcastShape->GetDim(i) != selfRefShape.GetDim(i)) {
-            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(kOpName, "self, mask",
-                                                   (op::ToString(selfRef->GetViewShape()).GetString() +
-                                                    std::string(", ") + op::ToString(mask->GetViewShape()).GetString())
-                                                       .c_str(),
-                                                   "The shape of mask must be broadcastable to the shape of self");
-            return false;
-        }
-    }
-    return true;
-}
-
 static bool CheckShape(const aclTensor* selfRef, const aclTensor* mask, const aclTensor* source)
 {
     if (selfRef->GetViewShape().GetDimNum() > MAX_DIM_LEN) {
@@ -164,12 +147,25 @@ static bool CheckShape(const aclTensor* selfRef, const aclTensor* mask, const ac
         return false;
     }
 
-    Shape broadcastShape;
-    OP_CHECK_BROADCAST_AND_INFER_SHAPE(selfRef, mask, broadcastShape, return false);
+    const auto& selfShape = selfRef->GetViewShape();
+    const auto& maskShape = mask->GetViewShape();
+    if (maskShape.GetDimNum() > selfShape.GetDimNum()) {
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            kOpName, "selfRef, mask",
+            (std::to_string(selfShape.GetDimNum()) + ", " + std::to_string(maskShape.GetDimNum())).c_str(),
+            "The rank of mask must not exceed the rank of selfRef");
+        return false;
+    }
 
-    if (!isMaskCanExpandToSelfRef(selfRef, mask, &broadcastShape)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(kOpName, "self, mask", "shape mismatch",
-                                              "The number of dimensions in self tensor must be >= the mask tensor");
+    Shape broadcastShape;
+    if (!BroadcastInferShape(selfShape, maskShape, broadcastShape)) {
+        return false;
+    }
+    if (broadcastShape != selfShape) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            kOpName, "selfRef, mask",
+            (std::string(op::ToString(selfShape).GetString()) + ", " + op::ToString(maskShape).GetString()).c_str(),
+            "The shape of mask must broadcast to the shape of selfRef");
         return false;
     }
 

@@ -44,7 +44,7 @@ const aclTensor* RepeatInterleave(const aclTensor* x, const aclTensor* repeats, 
     auto out = executor->AllocTensor(outShape, x->GetDataType(), x->GetViewFormat());
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(RepeatInterleave, OP_INPUT(x, repeats), OP_OUTPUT(out), OP_ATTR(axis));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "RepeatInterleaveAiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             OP_LOGE_WITHOUT_REPORT(ret, "RepeatInterleaveAiCore ADD_TO_LAUNCHER_LIST_AICORE failed: rc=%d", ret),
              return nullptr);
     return out;
 }
@@ -58,7 +58,7 @@ const aclTensor* RepeatInterleaveV2(const aclTensor* x, const aclTensor* repeats
     auto out = executor->AllocTensor(outShape, x->GetDataType(), x->GetViewFormat());
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(RepeatInterleaveV2, OP_INPUT(x, repeats), OP_OUTPUT(out), OP_ATTR(axis));
     OP_CHECK(ret == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "RepeatInterleaveV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             OP_LOGE_WITHOUT_REPORT(ret, "RepeatInterleaveV2AiCore ADD_TO_LAUNCHER_LIST_AICORE failed: rc=%d", ret),
              return nullptr);
     return out;
 }

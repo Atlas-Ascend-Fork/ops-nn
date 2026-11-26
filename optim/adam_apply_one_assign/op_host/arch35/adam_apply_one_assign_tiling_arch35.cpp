@@ -480,7 +480,11 @@ ge::graphStatus AdamTiling::DoTilingAndSet()
             tiling->output_strides[i][d] = 0;
         }
 
-    ctx_->SetBlockDim(tiling->multicore.num_cores);
+    const auto status = ctx_->SetBlockDim(tiling->multicore.num_cores);
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(ctx_->GetNodeName(), "SetBlockDim failed: rc=%u", status);
+        return status;
+    }
 
     // 维测: TilingData 全部字段（从 struct 数组打印，含 R 维 padding）
     OP_LOGI(ctx_->GetNodeName(),

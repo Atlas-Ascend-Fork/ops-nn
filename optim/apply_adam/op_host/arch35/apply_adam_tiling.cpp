@@ -43,20 +43,21 @@ constexpr int32_t VAR_OUT_INDEX = 0;
 constexpr int32_t M_OUT_INDEX = 1;
 constexpr int32_t V_OUT_INDEX = 2;
 constexpr int32_t OUTPUT_NUM = 1;
+constexpr const char* kInputNames[] = {"var", "m",     "v",     "beta1_power", "beta2_power",
+                                       "lr",  "beta1", "beta2", "epsilon",     "grad"};
 constexpr int64_t KEY_FP16 = 101;
 constexpr int64_t KEY_BF16 = 102;
 constexpr int64_t KEY_FP32 = 103;
 
 class ApplyAdamTiling {
 public:
-    explicit ApplyAdamTiling(gert::TilingContext* context) : tilingContext_(context){};
+    explicit ApplyAdamTiling(gert::TilingContext* context) : tilingContext_(context) {};
 
     ge::graphStatus RunTiling();
     ApplyAdamTilingData* tiling_ = nullptr;
 
 protected:
     ge::graphStatus SetTilingData();
-    bool CheckIsScalar(int32_t inputIdx);
     ge::graphStatus CheckShape();
     ge::graphStatus CheckDtype();
 
@@ -76,10 +77,14 @@ ge::graphStatus ApplyAdamTiling::SetTilingData()
     tiling_->useNesterov = useNesterov_;
 
     auto rawTilingData = tilingContext_->GetRawTilingData();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, rawTilingData);
+    OP_CHECK_IF(rawTilingData == nullptr,
+                OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(), "Missing tiling rawTilingData"),
+                return ge::GRAPH_FAILED);
 
     size_t* currentWorkspace = tilingContext_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, currentWorkspace);
+    OP_CHECK_IF(currentWorkspace == nullptr,
+                OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(), "Missing tiling currentWorkspace"),
+                return ge::GRAPH_FAILED);
     currentWorkspace[0] = SYS_WORKSPACE;
 
     if (this->varDtype_ == ge::DT_FLOAT16) {
@@ -90,24 +95,28 @@ ge::graphStatus ApplyAdamTiling::SetTilingData()
         tilingContext_->SetTilingKey(KEY_FP32);
     }
 
-    tilingContext_->SetBlockDim(tiling_->baseTiling.blockNum);
-    return ge::GRAPH_SUCCESS;
+    const auto status = tilingContext_->SetBlockDim(tiling_->baseTiling.blockNum);
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(), "SetBlockDim failed: rc=%u", status);
+    }
+    return status;
 }
 
 ge::graphStatus ApplyAdamTiling::CheckDtype()
 {
     auto varDesc = tilingContext_->GetInputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, varDesc);
+    OP_CHECK_IF(varDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), "var"),
+                return ge::GRAPH_FAILED);
 
     this->varDtype_ = varDesc->GetDataType();
-    static const char* kInputNames[] = {"var", "m",     "v",     "beta1_power", "beta2_power",
-                                        "lr",  "beta1", "beta2", "epsilon",     "grad"};
     static const char* kOutputNames[] = {"var"};
 
     std::vector<int32_t> tensorInputs = {M_INDEX, V_INDEX, GRAD_INDEX};
     for (int32_t inputIdx : tensorInputs) {
         auto inputDesc = tilingContext_->GetInputDesc(inputIdx);
-        OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputDesc);
+        OP_CHECK_IF(inputDesc == nullptr,
+                    OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), kInputNames[inputIdx]),
+                    return ge::GRAPH_FAILED);
 
         auto curDtype = inputDesc->GetDataType();
         if (curDtype != varDtype_) {
@@ -124,7 +133,9 @@ ge::graphStatus ApplyAdamTiling::CheckDtype()
                                          BETA1_INDEX,       BETA2_INDEX,       EPSILON_INDEX};
     for (int32_t inputIdx : scalarInputs) {
         auto inputDesc = tilingContext_->GetInputDesc(inputIdx);
-        OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputDesc);
+        OP_CHECK_IF(inputDesc == nullptr,
+                    OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), kInputNames[inputIdx]),
+                    return ge::GRAPH_FAILED);
 
         auto curDtype = inputDesc->GetDataType();
         if (curDtype != ge::DT_FLOAT) {
@@ -137,7 +148,9 @@ ge::graphStatus ApplyAdamTiling::CheckDtype()
 
     for (int32_t outputIdx = 0; outputIdx < OUTPUT_NUM; outputIdx++) {
         auto outputDesc = tilingContext_->GetOutputDesc(outputIdx);
-        OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, outputDesc);
+        OP_CHECK_IF(outputDesc == nullptr,
+                    OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(), "Missing tiling outputDesc"),
+                    return ge::GRAPH_FAILED);
 
         auto curDtype = outputDesc->GetDataType();
         if (curDtype != varDtype_) {
@@ -154,31 +167,23 @@ ge::graphStatus ApplyAdamTiling::CheckDtype()
     return ge::GRAPH_SUCCESS;
 }
 
-bool ApplyAdamTiling::CheckIsScalar(int32_t inputIdx)
-{
-    auto inputShape = tilingContext_->GetInputShape(inputIdx);
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputShape);
-    auto storageShape = inputShape->GetStorageShape();
-    if (storageShape.IsScalar() || storageShape.GetShapeSize() == 1) {
-        return true;
-    }
-    return false;
-}
-
 ge::graphStatus ApplyAdamTiling::CheckShape()
 {
-    OP_CHECK_IF(!CheckIsScalar(BETA1_POWER_INDEX),
-                OP_LOGE(tilingContext_->GetNodeName(), "Input beta1_power must be scalar."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckIsScalar(BETA2_POWER_INDEX),
-                OP_LOGE(tilingContext_->GetNodeName(), "Input beta2_power must be scalar."), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckIsScalar(LR_INDEX), OP_LOGE(tilingContext_->GetNodeName(), "Input lr must be scalar."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckIsScalar(BETA1_INDEX), OP_LOGE(tilingContext_->GetNodeName(), "Input beta1 must be scalar."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckIsScalar(BETA2_INDEX), OP_LOGE(tilingContext_->GetNodeName(), "Input beta2 must be scalar."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!CheckIsScalar(EPSILON_INDEX), OP_LOGE(tilingContext_->GetNodeName(), "Input epsilon must be scalar."),
-                return ge::GRAPH_FAILED);
+    constexpr int32_t scalarInputs[] = {BETA1_POWER_INDEX, BETA2_POWER_INDEX, LR_INDEX,
+                                        BETA1_INDEX,       BETA2_INDEX,       EPSILON_INDEX};
+    for (int32_t inputIdx : scalarInputs) {
+        const auto* inputShape = tilingContext_->GetInputShape(inputIdx);
+        OP_CHECK_IF(inputShape == nullptr,
+                    OP_LOGE_WITH_INVALID_INPUT(tilingContext_->GetNodeName(), kInputNames[inputIdx]),
+                    return ge::GRAPH_FAILED);
+        const auto& shape = inputShape->GetStorageShape();
+        if (!shape.IsScalar() && shape.GetShapeSize() != 1) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(tilingContext_->GetNodeName(), kInputNames[inputIdx],
+                                                  Ops::Base::ToString(shape).c_str(),
+                                                  "Expected a scalar or a tensor with one element");
+            return ge::GRAPH_FAILED;
+        }
+    }
     return ge::GRAPH_SUCCESS;
 }
 
@@ -187,13 +192,21 @@ ge::graphStatus ApplyAdamTiling::RunTiling()
     ElewiseBaseTiling eleBaseTiling(tilingContext_);
     tiling_ = tilingContext_->GetTilingData<ApplyAdamTilingData>();
 
-    OP_CHECK_IF(CheckDtype() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext_->GetNodeName(), "Dtype check failed."),
+    OP_CHECK_IF(tiling_ == nullptr,
+                OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(), "Missing ApplyAdam tiling data buffer"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckShape() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext_->GetNodeName(), "Shape check failed."),
-                return ge::GRAPH_FAILED);
+    auto status = CheckDtype();
+    if (status != ge::GRAPH_SUCCESS) {
+        return status;
+    }
+    status = CheckShape();
+    if (status != ge::GRAPH_SUCCESS) {
+        return status;
+    }
 
     auto attrs = tilingContext_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, attrs);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(), "Missing tiling attrs"),
+                return ge::GRAPH_FAILED);
 
     const bool* useLockingAttr = attrs->GetAttrPointer<bool>(0);
     useLocking_ = useLockingAttr != nullptr ? *useLockingAttr : false;
@@ -201,36 +214,21 @@ ge::graphStatus ApplyAdamTiling::RunTiling()
     const bool* useNesterovAttr = attrs->GetAttrPointer<bool>(1);
     useNesterov_ = useNesterovAttr != nullptr ? *useNesterovAttr : false;
 
-    if (useNesterov_) {
-        if (this->varDtype_ == ge::DT_FLOAT16 || this->varDtype_ == ge::DT_BF16) {
-            OP_CHECK_IF(eleBaseTiling.DoTiling<ApplyAdamDagFusionNesterov<half>::OpDag>(tiling_->baseTiling) !=
-                            ge::GRAPH_SUCCESS,
-                        OP_LOGE(tilingContext_->GetNodeName(), "do tiling failed for fp16/bf16 with nesterov"),
-                        return ge::GRAPH_FAILED);
-        } else if (this->varDtype_ == ge::DT_FLOAT) {
-            OP_CHECK_IF(eleBaseTiling.DoTiling<ApplyAdamDagFusionNesterov<float>::OpDag>(tiling_->baseTiling) !=
-                            ge::GRAPH_SUCCESS,
-                        OP_LOGE(tilingContext_->GetNodeName(), "do tiling failed for fp32 with nesterov"),
-                        return ge::GRAPH_FAILED);
-        } else {
-            OP_LOGE_FOR_INVALID_DTYPE(tilingContext_->GetNodeName(), "var",
-                                      Ops::Base::ToString(this->varDtype_).c_str(), "fp16, bf16 or fp32");
-            return ge::GRAPH_FAILED;
-        }
+    if (varDtype_ == ge::DT_FLOAT16 || varDtype_ == ge::DT_BF16) {
+        status = useNesterov_ ? eleBaseTiling.DoTiling<ApplyAdamDagFusionNesterov<half>::OpDag>(tiling_->baseTiling) :
+                                eleBaseTiling.DoTiling<ApplyAdamDagFusion<half>::OpDag>(tiling_->baseTiling);
+    } else if (varDtype_ == ge::DT_FLOAT) {
+        status = useNesterov_ ? eleBaseTiling.DoTiling<ApplyAdamDagFusionNesterov<float>::OpDag>(tiling_->baseTiling) :
+                                eleBaseTiling.DoTiling<ApplyAdamDagFusion<float>::OpDag>(tiling_->baseTiling);
     } else {
-        if (this->varDtype_ == ge::DT_FLOAT16 || this->varDtype_ == ge::DT_BF16) {
-            OP_CHECK_IF(
-                eleBaseTiling.DoTiling<ApplyAdamDagFusion<half>::OpDag>(tiling_->baseTiling) != ge::GRAPH_SUCCESS,
-                OP_LOGE(tilingContext_->GetNodeName(), "do tiling failed for fp16"), return ge::GRAPH_FAILED);
-        } else if (this->varDtype_ == ge::DT_FLOAT) {
-            OP_CHECK_IF(
-                eleBaseTiling.DoTiling<ApplyAdamDagFusion<float>::OpDag>(tiling_->baseTiling) != ge::GRAPH_SUCCESS,
-                OP_LOGE(tilingContext_->GetNodeName(), "do tiling failed for fp32"), return ge::GRAPH_FAILED);
-        } else {
-            OP_LOGE_FOR_INVALID_DTYPE(tilingContext_->GetNodeName(), "var",
-                                      Ops::Base::ToString(this->varDtype_).c_str(), "fp16, bf16 or fp32");
-            return ge::GRAPH_FAILED;
-        }
+        OP_LOGE_FOR_INVALID_DTYPE(tilingContext_->GetNodeName(), "var", Ops::Base::ToString(varDtype_).c_str(),
+                                  "fp16, bf16 or fp32");
+        return ge::GRAPH_FAILED;
+    }
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(), "Elewise tiling failed: dtype=%d, useNesterov=%d, rc=%u",
+                               static_cast<int>(varDtype_), useNesterov_, status);
+        return status;
     }
 
     return SetTilingData();
@@ -239,9 +237,13 @@ ge::graphStatus ApplyAdamTiling::RunTiling()
 static ge::graphStatus TilingPrepareForApplyAdam(gert::TilingParseContext* context)
 {
     auto compileInfoPtr = context->GetCompiledInfo<ApplyAdamCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfoPtr);
+    OP_CHECK_IF(compileInfoPtr == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing tiling compileInfoPtr"),
+                return ge::GRAPH_FAILED);
     fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
+    OP_CHECK_IF(platformInfoPtr == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing tiling platformInfoPtr"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     compileInfoPtr->coreNum = ascendcPlatform.GetCoreNumAiv();
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfoPtr->ubSize);
@@ -251,7 +253,7 @@ static ge::graphStatus TilingPrepareForApplyAdam(gert::TilingParseContext* conte
 static ge::graphStatus TilingForApplyAdam(gert::TilingContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE("ApplyAdam", "Tiling context is null");
+        OP_LOGE_WITHOUT_REPORT("ApplyAdam", "Tiling context is null");
         return ge::GRAPH_FAILED;
     }
 

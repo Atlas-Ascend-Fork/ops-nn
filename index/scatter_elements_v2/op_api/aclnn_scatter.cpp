@@ -286,7 +286,7 @@ static bool CheckDimRange(const aclTensor* self, int64_t dim)
     auto dimMax = std::max(-1 * dimSize, dimSize - 1);
     auto dimMin = std::min(-1 * dimSize, dimSize - 1);
     if (dim > dimMax || dim < dimMin) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dim must be in range [%ld, %ld].", dimMin, dimMax);
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "dim %ld must be in range [%ld, %ld].", dim, dimMin, dimMax);
         return false;
     }
     return true;

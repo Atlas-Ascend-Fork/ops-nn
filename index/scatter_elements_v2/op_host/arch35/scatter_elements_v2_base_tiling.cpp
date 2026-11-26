@@ -32,21 +32,21 @@ static ge::graphStatus ScatterElementsV2TilingForArch35(gert::TilingContext* con
 ge::graphStatus TilingArch35PrepareForScatterElementsV2(gert::TilingParseContext* context)
 {
     auto compileInfo = context->GetCompiledInfo<ScatterElementsV2CompileInfoArch35>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing compile information"),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing platform information"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    uint64_t ubSizePlatForm;
+    uint64_t ubSizePlatForm = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm);
     compileInfo->ubSizePlatForm = static_cast<uint64_t>(ubSizePlatForm);
-    if (compileInfo->ubSizePlatForm <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "compileInfo->ubSizePlatForm",
-                                              std::to_string(compileInfo->ubSizePlatForm).c_str(),
-                                              "ubSize must be greater than 0");
+    if (compileInfo->totalCoreNum == 0 || compileInfo->ubSizePlatForm == 0) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Invalid platform: cores=%lu, ubBytes=%lu",
+                               static_cast<uint64_t>(compileInfo->totalCoreNum), compileInfo->ubSizePlatForm);
+        return ge::GRAPH_FAILED;
     }
-
-    uint32_t workspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     return ge::GRAPH_SUCCESS;
 }
 

@@ -219,7 +219,11 @@ static ge::graphStatus ApplyProximalGradientDescentTilingFunc(gert::TilingContex
     if (totalIdx == 0) {
         tiling->blockFactor = 0;
         tiling->ubFactor = 0;
-        context->SetBlockDim(1);
+        const auto status = context->SetBlockDim(1);
+        if (status != ge::GRAPH_SUCCESS) {
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SetBlockDim failed: rc=%u", status);
+            return status;
+        }
         // 仍需选择一个合法 TilingKey，缺省选 FP32+DB 即可（不进 kernel）
         uint32_t dTypeX = static_cast<uint32_t>(dataType);
         uint64_t useDoubleBuffer = 1;
@@ -256,7 +260,11 @@ static ge::graphStatus ApplyProximalGradientDescentTilingFunc(gert::TilingContex
     OP_CHECK_IF(tiling->ubFactor == 0, ReportTilingFailure(context->GetNodeName(), "UB cannot hold one aligned tile"),
                 return ge::GRAPH_FAILED);
 
-    context->SetBlockDim(usedCoreNum);
+    const auto status = context->SetBlockDim(usedCoreNum);
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SetBlockDim failed: rc=%u", status);
+        return status;
+    }
 
     // TilingKey 参数：D_T_X + BUFFER_MODE（与 ASCENDC_TPL_ARGS_DECL 顺序一致）
     // 编码：tilingKey = dtype | (buffer_mode << 8)

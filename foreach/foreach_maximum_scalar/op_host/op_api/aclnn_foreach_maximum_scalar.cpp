@@ -20,6 +20,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
 #include "base/err_msg.h"
+#include "log/log.h"
 #include <string>
 #include <vector>
 
@@ -54,7 +55,11 @@ static inline bool CheckFormat(const aclTensorList* maximumScalarSelf, const acl
         // self格式不能是私有格式
         if (IsPrivateFormat((*maximumScalarSelf)[k]->GetStorageFormat()) ||
             IsPrivateFormat((*out)[k]->GetStorageFormat())) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Format only support ND, NCHW, NHWC, HWCN, NDHWC, NCDHW.");
+            const auto actual = std::string(op::ToString((*maximumScalarSelf)[k]->GetStorageFormat()).GetString()) +
+                                ", " + op::ToString((*out)[k]->GetStorageFormat()).GetString();
+            OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+                "aclnnForeachMaximumScalar", ("x[" + std::to_string(k) + "], out[" + std::to_string(k) + "]").c_str(),
+                actual.c_str(), "Only public storage formats are supported");
             return false;
         }
     }
@@ -67,8 +72,13 @@ static const std::initializer_list<DataType>& GetDtypeSupportList()
     if (maximumScalarArch == NpuArch::DAV_2201 || Ops::NN::AclnnUtil::IsRegbase(maximumScalarArch)) {
         return MAXIMUM_SCALAR_TENSOR_DTYPE_SUPPORT_LIST;
     } else {
-        OP_LOGE(ACLNN_ERR_RUNTIME_ERROR, "support for %s is not implemented",
-                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
+        const auto reason = std::string("Unsupported SoC ") +
+                            op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString() +
+                            ". ForeachMaximumScalar AiCore requires DAV_2201 or a Regbase architecture";
+        const std::vector<const char*> keys = {"opName", "reason"};
+        const std::vector<const char*> values = {"aclnnForeachMaximumScalar", reason.c_str()};
+        REPORT_PREDEFINED_ERR_MSG("EZ1009", keys, values);
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_PARAM_INVALID, "%s", reason.c_str());
         return EMPTY_LIST;
     }
 }
@@ -78,8 +88,6 @@ static inline bool CheckDtypeValid(const aclTensorList* maximumScalarSelf, const
 {
     const auto& dtypeSupportList_1 = GetDtypeSupportList();
     if (dtypeSupportList_1.size() == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "support for %s is not implemented",
-                op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
         return false;
     }
     if (maximumScalarSelf->Size() == 0) {

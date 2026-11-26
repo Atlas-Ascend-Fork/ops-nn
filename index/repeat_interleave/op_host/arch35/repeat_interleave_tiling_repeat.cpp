@@ -206,7 +206,13 @@ ge::graphStatus RepeatInterleaveTilingKernelRepeatTiling::PostTiling()
 {
     context_->SetBlockDim(std::max(cumSumCoreNum_, usedCoreNum_));
     context_->SetScheduleMode(1);
-    context_->SetLocalMemorySize(ubSize_ - UB_FOR_SIMT_CACHE);
+    const auto ubBytes = ubSize_ - UB_FOR_SIMT_CACHE;
+    const auto status = context_->SetDynUBufSize(ubBytes);
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "SetDynUBufSize failed: requestedBytes=%ld, rc=%u",
+                               static_cast<int64_t>(ubBytes), status);
+        return status;
+    }
     SetRepeatKernelTilingData();
     return ge::GRAPH_SUCCESS;
 }
@@ -234,7 +240,9 @@ void RepeatInterleaveTilingKernelRepeatTiling::DumpTilingInfo()
 ge::graphStatus RepeatInterleaveTilingKernelRepeatTiling::GetWorkspaceSize()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing platform information"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     auto sysWorkspace = ascendcPlatform.GetLibApiWorkSpaceSize();
     int64_t repeatsShape = repeatShape_.GetDimNum() == 0 ? 1 : repeatShape_.GetDim(0);
@@ -242,7 +250,9 @@ ge::graphStatus RepeatInterleaveTilingKernelRepeatTiling::GetWorkspaceSize()
                                                  static_cast<int64_t>(ge::GetSizeByDataType(repeatDtype_));
     sysWorkspace += repeatsShape * cumSumDataTypeSize + cumSumCoreNum_ * cumSumDataTypeSize;
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    OP_CHECK_IF(currentWorkspace == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing workspace size output"),
+                return ge::GRAPH_FAILED);
     currentWorkspace[0] = sysWorkspace;
     return ge::GRAPH_SUCCESS;
 }

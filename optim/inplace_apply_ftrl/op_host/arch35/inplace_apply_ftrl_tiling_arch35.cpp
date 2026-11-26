@@ -214,8 +214,11 @@ ge::graphStatus InplaceApplyFtrlTilingFunc(gert::TilingContext* context)
     tiling->totalElements = totalElements;
 
     if (totalElements == 0) {
-        context->SetBlockDim(1U);
-        return ge::GRAPH_SUCCESS;
+        const auto blockStatus = context->SetBlockDim(1U);
+        if (blockStatus != ge::GRAPH_SUCCESS) {
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SetBlockDim failed: rc=%u", blockStatus);
+        }
+        return blockStatus;
     }
 
     int64_t ubBlockSize = GetDtypeUbBlockSize(dataType);
@@ -227,9 +230,11 @@ ge::graphStatus InplaceApplyFtrlTilingFunc(gert::TilingContext* context)
 
     tiling->blockFactor = blockFactor;
     tiling->ubFactor = ubFactor;
-    context->SetBlockDim(static_cast<uint32_t>(CeilDiv(totalElements, blockFactor)));
-
-    return ge::GRAPH_SUCCESS;
+    const auto blockStatus = context->SetBlockDim(static_cast<uint32_t>(CeilDiv(totalElements, blockFactor)));
+    if (blockStatus != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SetBlockDim failed: rc=%u", blockStatus);
+    }
+    return blockStatus;
 }
 
 static ge::graphStatus TilingParseForInplaceApplyFtrl([[maybe_unused]] gert::TilingParseContext* context)

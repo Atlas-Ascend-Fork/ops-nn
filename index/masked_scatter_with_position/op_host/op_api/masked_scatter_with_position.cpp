@@ -35,7 +35,8 @@ static const aclTensor* MaskedScatterWithPositionAiCore(const aclTensor* x, cons
     auto retAicore = ADD_TO_LAUNCHER_LIST_AICORE(MaskedScatterWithPosition, OP_INPUT(x, mask, position, updates),
                                                  OP_OUTPUT(x));
     OP_CHECK(retAicore == ACLNN_SUCCESS,
-             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "MaskedScatterWithPosition ADD_TO_LAUNCHER_LIST_AICORE failed."),
+             OP_LOGE_WITHOUT_REPORT(retAicore, "MaskedScatterWithPosition ADD_TO_LAUNCHER_LIST_AICORE failed: rc=%d",
+                                    retAicore),
              return nullptr);
     return x;
 }

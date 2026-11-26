@@ -35,7 +35,7 @@ constexpr size_t SUPPORT_VECTOR_DUP = 11;
 
 ge::graphStatus RepeatInterleaveTilingForAscendC(gert::TilingContext* context)
 {
-    OP_CHECK_IF((context == nullptr), OP_LOGE("RepeatInterleave", "context should not be nullptr."),
+    OP_CHECK_IF((context == nullptr), OP_LOGE_WITHOUT_REPORT("RepeatInterleave", "Tiling context is null"),
                 return ge::GRAPH_FAILED);
     return TilingRegistry::GetInstance().DoTilingImpl(context);
 }
@@ -44,24 +44,24 @@ ge::graphStatus TilingPrepareRepeatInterleaveForAscendC(gert::TilingParseContext
 {
     OP_LOGD(context->GetNodeName(), "TilingPrepareRepeatInterleaveForAscendC entering.");
     auto compileInfo = GetCompileInfoPtr<RepeatInterleaveCompileInfo>(context);
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing compile information"),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing platform information"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNumAscendc = ascendcPlatform.GetCoreNumAiv();
     if (compileInfo->coreNumAscendc <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "coreNum",
-                                              std::to_string(compileInfo->coreNumAscendc).c_str(),
-                                              "failed to get core num");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Invalid platform coreNum: %ld",
+                               static_cast<int64_t>(compileInfo->coreNumAscendc));
         return ge::GRAPH_FAILED;
     }
-    uint64_t ubSize;
+    uint64_t ubSize = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSizeAscendc = static_cast<int64_t>(ubSize);
     if (compileInfo->ubSizeAscendc <= 0) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "ubSize",
-                                              std::to_string(compileInfo->ubSizeAscendc).c_str(),
-                                              "failed to get ub size");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Invalid platform ubSize: %ld",
+                               static_cast<int64_t>(compileInfo->ubSizeAscendc));
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

@@ -34,6 +34,7 @@
 #include "graph/types.h"
 #include "register/op_def_registry.h"
 #include "op_common/log/log.h"
+#include "op_common/op_host/util/shape_util.h"
 #include "../../op_kernel/arch35/inplace_apply_proximal_gradient_descent_tiling_key.h"
 #include "../../op_kernel/arch35/inplace_apply_proximal_gradient_descent_tiling_data.h"
 #include "inplace_apply_proximal_gradient_descent_tiling_host_arch35.h"
@@ -50,7 +51,7 @@ constexpr char kOpName[] = "InplaceApplyProximalGradientDescent";
 ge::graphStatus TilingFuncInplaceApplyProximalGradientDescent(gert::TilingContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE(kOpName, "Tiling context is null");
+        OP_LOGE_WITHOUT_REPORT(kOpName, "Tiling context is null");
         return ge::GRAPH_FAILED;
     }
     OP_LOGI(context->GetNodeName(), "Enter InplaceApplyProximalGradientDescentTilingFunc");
@@ -58,7 +59,7 @@ ge::graphStatus TilingFuncInplaceApplyProximalGradientDescent(gert::TilingContex
     // ==================== §9.9 ReadPlatform（平台查询） ====================
     fe::PlatFormInfos* platformInfo = context->GetPlatformInfo();
     if (platformInfo == nullptr) {
-        OP_LOGI(kOpName, "DBG rc=platform-null");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GetPlatformInfo returned null");
         return ge::GRAPH_FAILED;
     }
     platform_ascendc::PlatformAscendC platform(platformInfo);
@@ -68,52 +69,66 @@ ge::graphStatus TilingFuncInplaceApplyProximalGradientDescent(gert::TilingContex
     platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     if (availableCoreNum == 0 || vecRegLen == 0 || vecRegLen % sizeof(float) != 0 || ubSize == 0 ||
         ubSize > static_cast<uint64_t>(INT64_MAX)) {
-        OP_LOGI(kOpName, "DBG rc=platform-values aiv=%u vl=%u ub=%lu", availableCoreNum, vecRegLen,
-                static_cast<unsigned long>(ubSize));
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Invalid platform: cores=%u, vectorBytes=%u, ubBytes=%lu",
+                               availableCoreNum, vecRegLen, static_cast<unsigned long>(ubSize));
         return ge::GRAPH_FAILED;
     }
     // =========== §9.2 input 0 descriptor 必须存在；dtype 由 OpDef 外层展开 ===========
     const auto* varInputDesc = context->GetInputDesc(0);
     if (varInputDesc == nullptr) {
-        OP_LOGI(kOpName, "DBG rc=input0-desc-null");
+        OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "var");
         return ge::GRAPH_FAILED;
     }
     // ============ §9.3 shape 指针与 StorageShape 逐维校验 ============
-    const auto* varDesc = context->GetInputShape(0);
-    const auto* alphaDesc = context->GetInputShape(1);
-    const auto* l1Desc = context->GetInputShape(2);
-    const auto* l2Desc = context->GetInputShape(3);
-    const auto* deltaDesc = context->GetInputShape(4);
+    constexpr const char* inputNames[] = {"var", "alpha", "l1", "l2", "delta"};
+    const gert::StorageShape* inputs[5] = {};
+    for (size_t i = 0; i < 5; ++i) {
+        inputs[i] = context->GetInputShape(i);
+        if (inputs[i] == nullptr) {
+            OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), inputNames[i]);
+            return ge::GRAPH_FAILED;
+        }
+    }
     const auto* outDesc = context->GetOutputShape(0);
-    if (varDesc == nullptr || alphaDesc == nullptr || l1Desc == nullptr || l2Desc == nullptr || deltaDesc == nullptr ||
-        outDesc == nullptr) {
-        OP_LOGI(kOpName, "DBG rc=shape-desc-null v=%d a=%d l1=%d l2=%d d=%d o=%d", varDesc != nullptr,
-                alphaDesc != nullptr, l1Desc != nullptr, l2Desc != nullptr, deltaDesc != nullptr, outDesc != nullptr);
+    if (outDesc == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing var output shape");
         return ge::GRAPH_FAILED;
     }
-    const gert::Shape& varShape = varDesc->GetStorageShape();
-    const gert::Shape& alphaShape = alphaDesc->GetStorageShape();
-    const gert::Shape& l1Shape = l1Desc->GetStorageShape();
-    const gert::Shape& l2Shape = l2Desc->GetStorageShape();
-    const gert::Shape& deltaShape = deltaDesc->GetStorageShape();
-    const gert::Shape& outShape = outDesc->GetStorageShape();
-    // rank 0–16、var/delta/var_out 逐维完全同形、三路标量载体仅 0-D/[1]
-    if (varShape.GetDimNum() > 16 || deltaShape.GetDimNum() > 16 || outShape.GetDimNum() > 16 ||
-        !ExactShapeEqual(varShape, deltaShape) || !ExactShapeEqual(varShape, outShape) ||
-        !IsSharedScalarShape(alphaShape) || !IsSharedScalarShape(l1Shape) || !IsSharedScalarShape(l2Shape)) {
-        OP_LOGI(kOpName,
-                "DBG rc=shape-check vr=%zu dr=%zu or=%zu veq=%d oeq=%d "
-                "asc=%d l1c=%d l2c=%d",
-                varShape.GetDimNum(), deltaShape.GetDimNum(), outShape.GetDimNum(),
-                ExactShapeEqual(varShape, deltaShape), ExactShapeEqual(varShape, outShape),
-                IsSharedScalarShape(alphaShape), IsSharedScalarShape(l1Shape), IsSharedScalarShape(l2Shape));
+    const auto& varShape = inputs[0]->GetStorageShape();
+    const auto& deltaShape = inputs[4]->GetStorageShape();
+    const auto& outShape = outDesc->GetStorageShape();
+    if (varShape.GetDimNum() > 16 || deltaShape.GetDimNum() > 16 || outShape.GetDimNum() > 16) {
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context->GetNodeName(), "var, delta, var_out",
+            (std::to_string(varShape.GetDimNum()) + ", " + std::to_string(deltaShape.GetDimNum()) + ", " +
+             std::to_string(outShape.GetDimNum()))
+                .c_str(),
+            "Each rank must be at most 16");
         return ge::GRAPH_FAILED;
+    }
+    if (!ExactShapeEqual(varShape, deltaShape) || !ExactShapeEqual(varShape, outShape)) {
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "var, delta, var_out",
+                                               (Ops::Base::ToString(varShape) + ", " + Ops::Base::ToString(deltaShape) +
+                                                ", " + Ops::Base::ToString(outShape))
+                                                   .c_str(),
+                                               "The shapes must be identical");
+        return ge::GRAPH_FAILED;
+    }
+    for (size_t i = 1; i <= 3; ++i) {
+        const auto& scalarShape = inputs[i]->GetStorageShape();
+        if (!IsSharedScalarShape(scalarShape)) {
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), inputNames[i],
+                                                  Ops::Base::ToString(scalarShape).c_str(), "Expected [] or [1]");
+            return ge::GRAPH_FAILED;
+        }
     }
 
     // ============ §9.3 展平 dim0 / §9.4 BUFFER_MODE 阈值 ============
     int64_t dim0 = 0;
     if (!CalcDim0(varShape, dim0)) {
-        OP_LOGI(kOpName, "DBG rc=calcdim0-fail");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context->GetNodeName(), "var", Ops::Base::ToString(varShape).c_str(),
+            "Storage dimensions must be nonnegative and their product must fit in int64");
         return ge::GRAPH_FAILED;
     }
     OP_LOGI(kOpName, "DBG dim0=%ld bufferMode=%lu", dim0,
@@ -137,12 +152,15 @@ ge::graphStatus TilingFuncInplaceApplyProximalGradientDescent(gert::TilingContex
                              CalcLoopTail(blockFactor, ubFactor, formerLoop, formerTail) &&
                              CalcLoopTail(blockTail, ubFactor, tailLoop, tailTail);
         if (!splitOk || ubFactor > static_cast<int64_t>(UINT32_MAX / sizeof(float))) {
-            OP_LOGI(kOpName, "DBG rc=split-fail dim0=%ld ubFactor=%ld splitOk=%d", dim0, ubFactor, splitOk ? 1 : 0);
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Tiling split failed: dim0=%ld, ubBytes=%lu, ubFactor=%ld",
+                                   dim0, static_cast<unsigned long>(ubSize), ubFactor);
             return ge::GRAPH_FAILED;
         }
         int64_t maxRepeatTimes = 0;
         const int64_t vlF32 = static_cast<int64_t>(vecRegLen / sizeof(float));
         if (!CeilDivPositive(ubFactor, vlF32, maxRepeatTimes) || maxRepeatTimes > UINT16_MAX) {
+            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Invalid vector repeat count: actual=%ld, maximum=%u",
+                                   maxRepeatTimes, static_cast<unsigned>(UINT16_MAX));
             return ge::GRAPH_FAILED;
         }
     }
@@ -151,13 +169,15 @@ ge::graphStatus TilingFuncInplaceApplyProximalGradientDescent(gert::TilingContex
     auto* td = context->GetTilingData<InplaceApplyProximalGradientDescentTilingData>();
     size_t* workspace = context->GetWorkspaceSizes(1);
     if (td == nullptr || workspace == nullptr) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing tiling output: tilingData=%d, workspace=%d",
+                               td != nullptr, workspace != nullptr);
         return ge::GRAPH_FAILED;
     }
     const bool commitOk = CommitTilingData(
         td, workspace, [context](uint32_t coreNum) { return context->SetBlockDim(coreNum) == ge::GRAPH_SUCCESS; }, dim0,
         usedCoreNum, blockFactor, blockTail, ubFactor, formerLoop, formerTail, tailLoop, tailTail);
     if (!commitOk) {
-        OP_LOGI(kOpName, "DBG rc=commit-fail");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Failed to commit tiling data: usedCoreNum=%d", usedCoreNum);
         return ge::GRAPH_FAILED;
     }
 

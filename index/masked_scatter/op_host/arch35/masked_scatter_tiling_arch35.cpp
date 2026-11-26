@@ -45,12 +45,19 @@ bool MaskedScatterTiling::IsCapable() { return true; }
 ge::graphStatus MaskedScatterTiling::GetPlatformInfo()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing platform information"),
+                return ge::GRAPH_FAILED);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     totalCoreNum_ = ascendcPlatform.GetCoreNumAiv();
     uint64_t ubSizePlatform = 0;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatform);
+    if (totalCoreNum_ <= 0 || ubSizePlatform <= DCACHE_SIZE) {
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Invalid platform: cores=%ld, ubBytes=%lu, reservedBytes=%ld",
+                               totalCoreNum_, ubSizePlatform, DCACHE_SIZE);
+        return ge::GRAPH_FAILED;
+    }
     ubSize_ = ubSizePlatform - DCACHE_SIZE;
     return ge::GRAPH_SUCCESS;
 }
@@ -58,10 +65,12 @@ ge::graphStatus MaskedScatterTiling::GetPlatformInfo()
 ge::graphStatus MaskedScatterTiling::CheckDataType()
 {
     auto inputXPtr = context_->GetRequiredInputDesc(INPUT_X_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputXPtr);
+    OP_CHECK_IF(inputXPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "x"),
+                return ge::GRAPH_FAILED);
     dType_ = inputXPtr->GetDataType();
     auto inputMaskPtr = context_->GetRequiredInputDesc(INPUT_MASK_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputMaskPtr);
+    OP_CHECK_IF(inputMaskPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "mask"),
+                return ge::GRAPH_FAILED);
     auto maskDtype = inputMaskPtr->GetDataType();
     if (maskDtype != ge::DT_BOOL) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "mask",
@@ -70,10 +79,12 @@ ge::graphStatus MaskedScatterTiling::CheckDataType()
         return ge::GRAPH_FAILED;
     }
     auto inputUpdatesPtr = context_->GetRequiredInputDesc(INPUT_UPDATES_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputUpdatesPtr);
+    OP_CHECK_IF(inputUpdatesPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "updates"),
+                return ge::GRAPH_FAILED);
     auto updatesDtype = inputUpdatesPtr->GetDataType();
     auto outputYPtr = context_->GetOutputDesc(OUTPUT_Y_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputYPtr);
+    OP_CHECK_IF(outputYPtr == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing y output descriptor"),
+                return ge::GRAPH_FAILED);
     auto yDtype = outputYPtr->GetDataType();
     if (dType_ != updatesDtype || dType_ != yDtype) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
@@ -103,17 +114,21 @@ ge::graphStatus MaskedScatterTiling::CheckDataType()
 ge::graphStatus MaskedScatterTiling::CheckOutputShape()
 {
     auto xShapePtr = context_->GetRequiredInputShape(INPUT_X_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShapePtr);
+    OP_CHECK_IF(xShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "x"),
+                return ge::GRAPH_FAILED);
     auto xShape = xShapePtr->GetStorageShape();
     auto updatesShapePtr = context_->GetRequiredInputShape(INPUT_UPDATES_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, updatesShapePtr);
+    OP_CHECK_IF(updatesShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "updates"),
+                return ge::GRAPH_FAILED);
     auto updatesShape = updatesShapePtr->GetStorageShape();
     updateEleNums_ = updatesShape.GetShapeSize();
     auto maskShapePtr = context_->GetRequiredInputShape(INPUT_MASK_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, maskShapePtr);
+    OP_CHECK_IF(maskShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "mask"),
+                return ge::GRAPH_FAILED);
     auto maskShape = maskShapePtr->GetStorageShape();
     auto yShapePtr = context_->GetOutputShape(OUTPUT_Y_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yShapePtr);
+    OP_CHECK_IF(yShapePtr == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing y output shape"),
+                return ge::GRAPH_FAILED);
     auto yShape = yShapePtr->GetStorageShape();
     if (xShape != maskShape || xShape != yShape) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
@@ -195,13 +210,28 @@ ge::graphStatus MaskedScatterTiling::PostTiling()
     tilingData_.set_bufferSize(bufferSize_);
     tilingData_.set_prefixSumUbSize(prefixSumUbSize_);
     auto workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing workspace size output"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     context_->SetBlockDim(usedCoreNum_);
     context_->SetScheduleMode(1);
-    context_->SetLocalMemorySize(ubSize_);
-    tilingData_.SaveToBuffer(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity());
-    context_->GetRawTilingData()->SetDataSize(tilingData_.GetDataSize());
+    const auto status = context_->SetDynUBufSize(ubSize_);
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "SetDynUBufSize failed: requestedBytes=%ld, rc=%u", ubSize_,
+                               status);
+        return status;
+    }
+    auto* raw = context_->GetRawTilingData();
+    OP_CHECK_IF(raw == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing raw tiling data"),
+                return ge::GRAPH_FAILED);
+    if (raw->GetCapacity() < tilingData_.GetDataSize()) {
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                               "Tiling buffer too small: requiredBytes=%zu, availableBytes=%zu",
+                               tilingData_.GetDataSize(), raw->GetCapacity());
+        return ge::GRAPH_FAILED;
+    }
+    tilingData_.SaveToBuffer(raw->GetData(), raw->GetCapacity());
+    raw->SetDataSize(tilingData_.GetDataSize());
     return ge::GRAPH_SUCCESS;
 }
 

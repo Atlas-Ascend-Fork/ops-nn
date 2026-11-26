@@ -57,22 +57,26 @@ static graphStatus InferShape4RepeatInterleave(gert::InferShapeContext* context)
     OP_LOGI(context->GetNodeName(), "Enter RepeatInterleaveInferShape");
 
     const gert::Shape* xShape = context->GetInputShape(INPUT_X_ID);
-    OP_CHECK_NULL_WITH_CONTEXT(context, xShape);
+    OP_CHECK_IF(xShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "x"), return ge::GRAPH_FAILED);
 
     const gert::Shape* repeatsShape = context->GetInputShape(INPUT_REPEATS_ID);
-    OP_CHECK_NULL_WITH_CONTEXT(context, repeatsShape);
+    OP_CHECK_IF(repeatsShape == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "repeats"),
+                return ge::GRAPH_FAILED);
 
     gert::Shape* yShape = context->GetOutputShape(OUTPUT_Y_ID);
-    OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
+    OP_CHECK_IF(yShape == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing y output shape"),
+                return ge::GRAPH_FAILED);
 
     const auto repeatsInput = context->GetInputTensor(INPUT_REPEATS_ID);
-    OP_CHECK_NULL_WITH_CONTEXT(context, repeatsInput);
+    OP_CHECK_IF(repeatsInput == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "repeats"),
+                return ge::GRAPH_FAILED);
 
     const RuntimeAttrs* attrs = context->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing runtime attributes"),
+                return ge::GRAPH_FAILED);
 
     const int64_t* axis = attrs->GetAttrPointer<int64_t>(ATTR_AXIS_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, axis);
+    OP_CHECK_IF(axis == nullptr, OP_LOGE_WITH_INVALID_INPUT(context->GetNodeName(), "axis"), return ge::GRAPH_FAILED);
 
     if (Ops::Base::IsUnknownRank(*xShape)) {
         OP_LOGD(context->GetNodeName(), "input shape is UnknownRank, set output shape to -2");
@@ -83,9 +87,9 @@ static graphStatus InferShape4RepeatInterleave(gert::InferShapeContext* context)
     int64_t xDimNum = xShape->GetDimNum();
     int64_t axisAttr = *axis;
     if (axisAttr < -xDimNum || axisAttr >= xDimNum) {
-        OP_LOGE(context->GetNodeName(),
-                "InferShape4RepeatInterleave FAILED, axisAttr %ld is out of range, expected in [%ld, %ld)", axisAttr,
-                -xDimNum, xDimNum);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "axis", std::to_string(axisAttr).c_str(),
+            ("axis must be in [" + std::to_string(-xDimNum) + ", " + std::to_string(xDimNum) + ")").c_str());
         return ge::GRAPH_FAILED;
     }
     if (axisAttr < 0) {
@@ -101,13 +105,13 @@ static graphStatus InferShape4RepeatInterleave(gert::InferShapeContext* context)
         switch (repeatsDtype) {
             case DT_INT32:
                 OP_CHECK_IF(repeatsInput->GetData<int32_t>() == nullptr,
-                            OP_LOGE(context->GetNodeName(), "repeatsInput->GetData() is nullptr"),
+                            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Constant repeats has no data buffer"),
                             return ge::GRAPH_FAILED);
                 yShape->SetDim(axisAttr, GetOutputAxisLen<int32_t>(xShape, repeatsShape, repeatsInput, axisAttr));
                 break;
             case DT_INT64:
                 OP_CHECK_IF(repeatsInput->GetData<int64_t>() == nullptr,
-                            OP_LOGE(context->GetNodeName(), "repeatsInput->GetData() is nullptr"),
+                            OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Constant repeats has no data buffer"),
                             return ge::GRAPH_FAILED);
                 yShape->SetDim(axisAttr, GetOutputAxisLen<int64_t>(xShape, repeatsShape, repeatsInput, axisAttr));
                 break;

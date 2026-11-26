@@ -315,17 +315,19 @@ void RepeatInterleaveTilingKernelNorm::setCumSumTilingData()
 
 ge::graphStatus RepeatInterleaveTilingKernelNorm::PostTiling()
 {
-    if (isSimtSplitRepeatSum_ || isSimtSplitBatch_) {
-        int64_t coreNum = std::max(usedCoreNum_, cumSumCoreNum_);
-        context_->SetBlockDim(coreNum);
-        context_->SetScheduleMode(1);
-        context_->SetLocalMemorySize(ubSize_);
+    const auto status = context_->SetDynUBufSize(ubSize_);
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "SetDynUBufSize failed: requestedBytes=%ld, rc=%u",
+                               static_cast<int64_t>(ubSize_), status);
+        return status;
+    }
+    const bool useCumSum = isSimtSplitRepeatSum_ || isSimtSplitBatch_;
+    context_->SetBlockDim(useCumSum ? std::max(usedCoreNum_, cumSumCoreNum_) : usedCoreNum_);
+    context_->SetScheduleMode(1);
+    if (useCumSum) {
         setCumSumTilingData();
         return ge::GRAPH_SUCCESS;
     }
-    context_->SetBlockDim(usedCoreNum_);
-    context_->SetScheduleMode(1);
-    context_->SetLocalMemorySize(ubSize_);
     if (isSplitShape_) {
         kernelTilingDataSmall_.set_totalCoreNum(totalCoreNum_);
         kernelTilingDataSmall_.set_usedCoreNum(usedCoreNum_);
@@ -417,7 +419,9 @@ void RepeatInterleaveTilingKernelNorm::DumpTilingInfo()
 ge::graphStatus RepeatInterleaveTilingKernelNorm::GetWorkspaceSize()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing platform information"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     auto sysWorkspace = ascendcPlatform.GetLibApiWorkSpaceSize();
     if (isSimtSplitRepeatSum_ || isSimtSplitBatch_) {
@@ -429,7 +433,9 @@ ge::graphStatus RepeatInterleaveTilingKernelNorm::GetWorkspaceSize()
         sysWorkspace += totalCoreNum_ * CACHELINE_SIZE;
     }
     size_t* currentWorkspace = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, currentWorkspace);
+    OP_CHECK_IF(currentWorkspace == nullptr,
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing workspace size output"),
+                return ge::GRAPH_FAILED);
     currentWorkspace[0] = sysWorkspace;
     return ge::GRAPH_SUCCESS;
 }

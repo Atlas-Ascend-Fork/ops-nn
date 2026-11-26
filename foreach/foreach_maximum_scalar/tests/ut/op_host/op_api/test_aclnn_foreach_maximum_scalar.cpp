@@ -20,6 +20,7 @@
 #include "op_api_ut_common/tensor_desc.h"
 #include "op_api_ut_common/scalar_desc.h"
 #include "op_api_ut_common/op_api_ut.h"
+#include "opdev/platform.h"
 
 using namespace std;
 
@@ -104,4 +105,35 @@ TEST_F(l2_foreach_maximum_scalar_test, rejects_non_scalar_tensor)
                                {"correct_size", "1"},
                                {"op_name", "aclnnForeachMaximumScalar"}});
     }
+}
+
+TEST_F(l2_foreach_maximum_scalar_test, rejects_unsupported_soc_with_one_report)
+{
+    op::SocVersionManager platform(op::SocVersion::ASCEND910);
+    auto x = TensorDesc({2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto scalar = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnForeachMaximumScalar, INPUT(TensorListDesc({x}), scalar), OUTPUT(TensorListDesc({x})));
+
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+    ExpectError(
+        "EZ1009",
+        {{"opName", "aclnnForeachMaximumScalar"},
+         {"reason",
+          "Unsupported SoC Ascend910. ForeachMaximumScalar AiCore requires DAV_2201 or a Regbase architecture"}});
+}
+
+TEST_F(l2_foreach_maximum_scalar_test, rejects_private_storage_format)
+{
+    op::SocVersionManager platform(op::SocVersion::ASCEND910B);
+    auto x = TensorDesc({1, 1, 1, 1}, ACL_FLOAT, ACL_FORMAT_NC1HWC0);
+    auto out = TensorDesc({1, 1, 1, 1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto scalar = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnForeachMaximumScalar, INPUT(TensorListDesc({x}), scalar), OUTPUT(TensorListDesc({out})));
+
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+    ExpectError("EZ0018", {{"param_names", "x[0], out[0]"},
+                           {"incorrect_formats", "NC1HWC0, ND"},
+                           {"op_name", "aclnnForeachMaximumScalar"}});
 }

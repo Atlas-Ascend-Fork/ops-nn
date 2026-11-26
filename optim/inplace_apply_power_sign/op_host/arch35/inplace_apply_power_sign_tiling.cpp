@@ -232,7 +232,7 @@ static ge::graphStatus FinalizeTilingData(gert::TilingContext* context)
 // Fill tiling for the empty-tensor case (dim0 == 0): single block, no work.
 // The buffer from GetTilingData<T>() is not guaranteed zeroed, so the UB
 // loop/tail fields (unused when blockNum == 0) are cleared explicitly.
-static void FillEmptyTiling(gert::TilingContext* context, InplaceApplyPowerSignTilingData& tilingData)
+static ge::graphStatus FillEmptyTiling(gert::TilingContext* context, InplaceApplyPowerSignTilingData& tilingData)
 {
     OP_LOGW(context->GetNodeName(), "InplaceApplyPowerSign: dim0 is 0, empty tensor detected, returning empty output");
     tilingData.coreNum = 1;
@@ -244,7 +244,7 @@ static void FillEmptyTiling(gert::TilingContext* context, InplaceApplyPowerSignT
     tilingData.ubTailOfFormerBlock = 0;
     tilingData.ubLoopOfTailBlock = 0;
     tilingData.ubTailOfTailBlock = 0;
-    context->SetBlockDim(1);
+    return context->SetBlockDim(1);
 }
 
 // Compute core/UB split for the non-empty case and populate tilingData.
@@ -300,8 +300,7 @@ static ge::graphStatus ComputeTiling(gert::TilingContext* context, int64_t dim0,
     tilingData.ubLoopOfTailBlock = ubLoopOfTailBlock;
     tilingData.ubTailOfTailBlock = ubTailOfTailBlock;
 
-    context->SetBlockDim(static_cast<uint32_t>(blockNum));
-    return ge::GRAPH_SUCCESS;
+    return context->SetBlockDim(static_cast<uint32_t>(blockNum));
 }
 
 static ge::graphStatus InplaceApplyPowerSignTilingFunc(gert::TilingContext* context)
@@ -339,13 +338,12 @@ static ge::graphStatus InplaceApplyPowerSignTilingFunc(gert::TilingContext* cont
     tilingData.elemNum = dim0;
     tilingData.scheMode = 0;
 
-    if (dim0 == 0) {
-        FillEmptyTiling(context, tilingData);
-        return FinalizeTilingData(context);
+    const auto status = dim0 == 0 ? FillEmptyTiling(context, tilingData) :
+                                    ComputeTiling(context, dim0, dtypeSize, ubSize, availableCoreNum, tilingData);
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Tiling setup failed: elements=%ld, rc=%u", dim0, status);
+        return status;
     }
-
-    OP_CHECK_IF(ComputeTiling(context, dim0, dtypeSize, ubSize, availableCoreNum, tilingData) != ge::GRAPH_SUCCESS,
-                OP_LOGE_WITHOUT_REPORT(context, "ComputeTiling failed"), return ge::GRAPH_FAILED);
 
     return FinalizeTilingData(context);
 }

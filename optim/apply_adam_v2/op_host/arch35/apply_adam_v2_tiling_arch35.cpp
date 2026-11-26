@@ -419,8 +419,11 @@ ge::graphStatus ApplyAdamV2Tiling::DoEmptyTilingAndSet()
             tiling->outputShapes[i][d] = d < delta ? 1 : shape[d - delta];
         }
     }
-    ctx_->SetBlockDim(1);
-    return GRAPH_SUCCESS;
+    const auto status = ctx_->SetBlockDim(1);
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(ctx_->GetNodeName(), "SetBlockDim failed: rc=%u", status);
+    }
+    return status;
 }
 
 template <int64_t R>
@@ -509,7 +512,11 @@ ge::graphStatus ApplyAdamV2Tiling::DoTilingAndSet()
     tiling->stepSizeVal = 0.0f; // kernel reads from GM if needed
     tiling->lrVal = 0.0f;       // kernel reads from GM if needed
 
-    ctx_->SetBlockDim(tiling->multicore.numCores);
+    const auto status = ctx_->SetBlockDim(tiling->multicore.numCores);
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(ctx_->GetNodeName(), "SetBlockDim failed: rc=%u", status);
+        return status;
+    }
 
     OP_LOGI(ctx_->GetNodeName(),
             "TilingData: per_buf_bytes=%ld rank=%ld->R=%d "

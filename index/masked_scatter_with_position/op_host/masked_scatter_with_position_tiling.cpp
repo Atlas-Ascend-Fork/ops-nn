@@ -53,11 +53,13 @@ ge::graphStatus MaskedScatterWithPositionTiling::GetPlatformInfo() // 1、获取
 {
     OP_LOGI(opName_, "MaskedScatterWithPositionTiling GetPlatformInfo.");
     auto compileInfo = static_cast<const MaskedScatterWithPositionCompileInfo*>(context_->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing compile information"),
+                return ge::GRAPH_FAILED);
 
     totalCoreNum_ = static_cast<int64_t>(compileInfo->totalCoreNum);
     ubSize_ = compileInfo->ubSize - DCACHE_SIZE;
-    OP_CHECK_IF((ubSize_ <= 0), OP_LOGE(opName_, "ub size is invalid."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((ubSize_ <= 0), OP_LOGE_WITHOUT_REPORT(opName_, "Invalid UB size: %ld bytes", ubSize_),
+                return ge::GRAPH_FAILED);
     OP_LOGI(opName_, "MaskedScatterWithPositionTiling::GetPlatformInfo ubSize_=%d, totalCoreNum_=%d", ubSize_,
             totalCoreNum_);
     return ge::GRAPH_SUCCESS;
@@ -114,13 +116,17 @@ ge::graphStatus MaskedScatterWithPositionTiling::PostTiling() // 7、保存Tilin
 {
     OP_LOGD(opName_, "MaskedScatterWithPositionTiling PostTiling.");
     auto workspaces = context_->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, workspaces);
+    OP_CHECK_IF(workspaces == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing workspace size output"),
+                return ge::GRAPH_FAILED);
     workspaces[0] = workspaceSize_;
     tilingKey_ = GetTilingKey();
     context_->SetTilingKey(tilingKey_);
     context_->SetBlockDim(usedCoreNum_);
-    context_->SetLocalMemorySize(ubSize_);
-    return ge::GRAPH_SUCCESS;
+    const auto status = context_->SetDynUBufSize(ubSize_);
+    if (status != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(opName_, "SetDynUBufSize failed: requestedBytes=%ld, rc=%u", ubSize_, status);
+    }
+    return status;
 }
 
 void MaskedScatterWithPositionTiling::DumpTilingInfo()
@@ -148,21 +154,25 @@ ge::graphStatus MaskedScatterWithPositionTiling::CheckInputShape()
 {
     OP_LOGI(opName_, "MaskedScatterWithPositionTiling::CheckInputShape begin.");
     auto xShapePtr = context_->GetRequiredInputShape(INPUT_X_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShapePtr);
+    OP_CHECK_IF(xShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "x"),
+                return ge::GRAPH_FAILED);
     auto xShape = xShapePtr->GetStorageShape();
     xEleNums_ = xShape.GetShapeSize();
 
     auto updatesShapePtr = context_->GetRequiredInputShape(INPUT_UPDATES_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, updatesShapePtr);
+    OP_CHECK_IF(updatesShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "updates"),
+                return ge::GRAPH_FAILED);
     auto updatesShape = updatesShapePtr->GetStorageShape();
     updatesEleNums_ = updatesShape.GetShapeSize();
 
     auto positionShapePtr = context_->GetRequiredInputShape(INPUT_POSITION_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, positionShapePtr);
+    OP_CHECK_IF(positionShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "position"),
+                return ge::GRAPH_FAILED);
     auto positionShape = positionShapePtr->GetStorageShape();
 
     auto maskShapePtr = context_->GetRequiredInputShape(INPUT_MASK_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, maskShapePtr);
+    OP_CHECK_IF(maskShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "mask"),
+                return ge::GRAPH_FAILED);
     auto maskShape = maskShapePtr->GetStorageShape();
     maskEleNums_ = maskShape.GetShapeSize();
 
@@ -276,7 +286,8 @@ ge::graphStatus MaskedScatterWithPositionTiling::CheckDataType()
 {
     OP_LOGI(opName_, "MaskedScatterWithPositionTiling::CheckDataType begin.");
     auto inputXPtr = context_->GetRequiredInputDesc(INPUT_X_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputXPtr);
+    OP_CHECK_IF(inputXPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "x"),
+                return ge::GRAPH_FAILED);
     dType_ = inputXPtr->GetDataType();
     if (SUPPORT_DTYPE.count(dType_) == 0) {
         OP_LOGE_FOR_INVALID_DTYPE(opName_, "x", Ops::Base::ToString(dType_).c_str(),
@@ -285,7 +296,8 @@ ge::graphStatus MaskedScatterWithPositionTiling::CheckDataType()
     }
 
     auto inputMaskPtr = context_->GetRequiredInputDesc(INPUT_MASK_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputMaskPtr);
+    OP_CHECK_IF(inputMaskPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "mask"),
+                return ge::GRAPH_FAILED);
     auto maskDtype = inputMaskPtr->GetDataType();
     if (maskDtype != ge::DT_BOOL) {
         OP_LOGE_FOR_INVALID_DTYPE(opName_, "mask", Ops::Base::ToString(maskDtype).c_str(), "bool");
@@ -293,7 +305,8 @@ ge::graphStatus MaskedScatterWithPositionTiling::CheckDataType()
     }
 
     auto inputPositionPtr = context_->GetRequiredInputDesc(INPUT_POSITION_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputPositionPtr);
+    OP_CHECK_IF(inputPositionPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "position"),
+                return ge::GRAPH_FAILED);
     auto positionDtype = inputPositionPtr->GetDataType();
     if (positionDtype != ge::DT_INT64) {
         OP_LOGE_FOR_INVALID_DTYPE(opName_, "position", Ops::Base::ToString(positionDtype).c_str(), "int64");
@@ -301,7 +314,8 @@ ge::graphStatus MaskedScatterWithPositionTiling::CheckDataType()
     }
 
     auto inputUpdatesPtr = context_->GetRequiredInputDesc(INPUT_UPDATES_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputUpdatesPtr);
+    OP_CHECK_IF(inputUpdatesPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "updates"),
+                return ge::GRAPH_FAILED);
     auto updatesDtype = inputUpdatesPtr->GetDataType();
     if (dType_ != updatesDtype) {
         std::string dtypeMsg = Ops::Base::ToString(dType_) + " and " + Ops::Base::ToString(updatesDtype);
@@ -326,18 +340,23 @@ static ge::graphStatus TilingParse4MaskedScatterWithPosition(gert::TilingParseCo
 {
     OP_LOGI(context->GetNodeName(), "TilingParse4MaskedScatterWithPosition begin.");
     auto compileInfo = context->GetCompiledInfo<MaskedScatterWithPositionCompileInfo>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing compile information"),
+                return ge::GRAPH_FAILED);
     auto platformInfo = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
+    OP_CHECK_IF(platformInfo == nullptr, OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Missing platform information"),
+                return ge::GRAPH_FAILED);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->totalCoreNum <= 0),
-                OP_LOGE(context, "Tiling4MaskedScatterWithPosition fail to get core num."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfo->totalCoreNum <= 0),
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Invalid platform core num: %ld", compileInfo->totalCoreNum),
+        return ge::GRAPH_FAILED);
 
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSize = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF((compileInfo->ubSize <= 0), OP_LOGE(context, "Tiling4MaskedScatterWithPosition fail to get ub size."),
+    OP_CHECK_IF((compileInfo->ubSize <= 0),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "Invalid platform ub size: %ld", compileInfo->ubSize),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }

@@ -33,7 +33,8 @@ bool RepeatInterleaveBaseTiling::IsCapable() { return true; }
 ge::graphStatus RepeatInterleaveBaseTiling::GetPlatformInfo()
 {
     auto compileInfo = reinterpret_cast<const RepeatInterleaveCompileInfo*>(context_->GetCompileInfo());
-    OP_CHECK_NULL_WITH_CONTEXT(context_, compileInfo);
+    OP_CHECK_IF(compileInfo == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing compile information"),
+                return ge::GRAPH_FAILED);
     totalCoreNum_ = compileInfo->coreNumAscendc;
     ubSize_ = compileInfo->ubSizeAscendc;
     return ge::GRAPH_SUCCESS;
@@ -53,7 +54,8 @@ int64_t RepeatInterleaveBaseTiling::MergeDimExceptAxis(const gert::Shape& input,
 ge::graphStatus RepeatInterleaveBaseTiling::CheckDtype()
 {
     auto outputYPtr = context_->GetOutputDesc(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, outputYPtr);
+    OP_CHECK_IF(outputYPtr == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing y output descriptor"),
+                return ge::GRAPH_FAILED);
     auto yDtype = outputYPtr->GetDataType();
 
     if (!IsSupportDtype(SUPPORTED_DTYPE, inputDtype_)) {
@@ -82,8 +84,9 @@ ge::graphStatus RepeatInterleaveBaseTiling::CheckShape()
     int64_t outputDimMerge = MergeDimExceptAxis(yShape_, axis_);
 
     if ((!isDefaultAxis_) && (axis_ < 0 || axis_ >= static_cast<int64_t>(inputShape_.GetDimNum()))) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "axis", std::to_string(axis_).c_str(),
-                                              "axis is invalid");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context_->GetNodeName(), "axis", std::to_string(axis_).c_str(),
+            ("axis must be in [0, " + std::to_string(inputShape_.GetDimNum()) + ")").c_str());
         return ge::GRAPH_FAILED;
     }
 
@@ -101,9 +104,9 @@ ge::graphStatus RepeatInterleaveBaseTiling::CheckShape()
     }
 
     if (repeatShape_.GetDimNum() > 1) {
-        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "repeats",
-                                              std::to_string(repeatShape_.GetDimNum()).c_str(),
-                                              "the input repeats should be 1D tensor or a scalar");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "repeats",
+                                                 std::to_string(repeatShape_.GetDimNum()).c_str(),
+                                                 "the input repeats should be 1D tensor or a scalar");
         return ge::GRAPH_FAILED;
     }
 
@@ -118,13 +121,13 @@ ge::graphStatus RepeatInterleaveBaseTiling::CheckShape()
         (repeatShape_.GetDim(0) != inputShape_.GetDim(axis_))) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             context_->GetNodeName(), "repeats, x",
-            (std::to_string(repeatShape_.GetDim(0)) + ", " + std::to_string(inputShape_.GetDim(axis_))).c_str(),
-            "the input repeats shape should be 1 or a scalar or the same as input axis shape");
+            (Ops::Base::ToString(repeatShape_) + ", " + Ops::Base::ToString(inputShape_)).c_str(),
+            ("repeats must have length 1 or match the size of x on axis " + std::to_string(axis_)).c_str());
         return ge::GRAPH_FAILED;
     }
 
     if ((!isDefaultAxis_) && (inputShape_.GetDimNum() != yShape_.GetDimNum())) {
-        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
             context_->GetNodeName(), "x, y",
             (std::to_string(inputShape_.GetDimNum()) + ", " + std::to_string(yShape_.GetDimNum())).c_str(),
             "the input dim and output dim should be the same when axis isn't none");
@@ -134,8 +137,8 @@ ge::graphStatus RepeatInterleaveBaseTiling::CheckShape()
     if ((!isDefaultAxis_) && (inputDimMerge != outputDimMerge)) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             context_->GetNodeName(), "x, y",
-            (std::to_string(inputDimMerge) + ", " + std::to_string(outputDimMerge)).c_str(),
-            "the output shape is invalid when axis isn't none");
+            (Ops::Base::ToString(inputShape_) + ", " + Ops::Base::ToString(yShape_)).c_str(),
+            ("x and y must have equal element counts outside axis " + std::to_string(axis_)).c_str());
         return ge::GRAPH_FAILED;
     }
 
@@ -145,22 +148,27 @@ ge::graphStatus RepeatInterleaveBaseTiling::CheckShape()
 ge::graphStatus RepeatInterleaveBaseTiling::GetShapeAttrsInfo()
 {
     auto xShapePtr = context_->GetRequiredInputShape(INDEX_X_INPUT);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, xShapePtr);
+    OP_CHECK_IF(xShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "x"),
+                return ge::GRAPH_FAILED);
     inputShape_ = xShapePtr->GetStorageShape();
 
     auto repeatShapePtr = context_->GetRequiredInputShape(INDEX_REPEATS_INPUT);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, repeatShapePtr);
+    OP_CHECK_IF(repeatShapePtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "repeats"),
+                return ge::GRAPH_FAILED);
     repeatShape_ = repeatShapePtr->GetStorageShape();
 
     auto yShapePtr = context_->GetOutputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, yShapePtr);
+    OP_CHECK_IF(yShapePtr == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing y output shape"),
+                return ge::GRAPH_FAILED);
     yShape_ = yShapePtr->GetStorageShape();
 
     auto* attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    OP_CHECK_IF(attrs == nullptr, OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "Missing runtime attributes"),
+                return ge::GRAPH_FAILED);
 
     auto* attrAxis = attrs->GetAttrPointer<int64_t>(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrAxis);
+    OP_CHECK_IF(attrAxis == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "axis"),
+                return ge::GRAPH_FAILED);
     axis_ = *attrAxis;
 
     axis_ = axis_ < 0 ? axis_ + inputShape_.GetDimNum() : axis_;
@@ -170,24 +178,17 @@ ge::graphStatus RepeatInterleaveBaseTiling::GetShapeAttrsInfo()
     }
 
     auto inputXPtr = context_->GetRequiredInputDesc(INDEX_X_INPUT);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, inputXPtr);
+    OP_CHECK_IF(inputXPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "x"),
+                return ge::GRAPH_FAILED);
     inputDtype_ = inputXPtr->GetDataType();
 
     auto repeatsPtr = context_->GetRequiredInputDesc(INDEX_REPEATS_INPUT);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, repeatsPtr);
+    OP_CHECK_IF(repeatsPtr == nullptr, OP_LOGE_WITH_INVALID_INPUT(context_->GetNodeName(), "repeats"),
+                return ge::GRAPH_FAILED);
     repeatDtype_ = repeatsPtr->GetDataType();
 
-    ge::graphStatus ret = CheckShape();
-    if (ret != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Check shape failed.");
-        return ret;
-    }
-    ret = CheckDtype();
-    if (ret != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context_->GetNodeName(), "Check dtype failed.");
-        return ret;
-    }
-    return ge::GRAPH_SUCCESS;
+    const auto ret = CheckShape();
+    return ret == ge::GRAPH_SUCCESS ? CheckDtype() : ret;
 }
 
 ge::graphStatus RepeatInterleaveBaseTiling::DoOpTiling() { return ge::GRAPH_SUCCESS; }

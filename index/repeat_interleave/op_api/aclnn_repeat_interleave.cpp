@@ -9,6 +9,8 @@
  */
 
 #include "aclnn_repeat_interleave.h"
+
+#include <limits>
 #include "log/log.h"
 #include "level0/arange.h"
 #include "level0/broadcast_to.h"
@@ -457,7 +459,7 @@ static const aclTensor* CastIfNeeded(const aclTensor* x, bool needCast, op::Data
     if (needCast) {
         x = l0op::Cast(x, dtype, executor);
         if (x == nullptr) {
-            OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "After cast, x is nullptr.");
+            OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "Cast returned null for x");
         }
     }
     return x;
@@ -681,6 +683,23 @@ aclnnStatus aclnnRepeatInterleaveIntWithDimGetWorkspaceSize(const aclTensor* sel
         expectedShape.SetDim(WrapDim(dim, GetTensorDimNum(self)), 0);
         CHECK_RET(CheckZeroRepeatsOutput(out, outputSize, expectedShape, "aclnnRepeatInterleaveIntWithDim"),
                   ACLNN_ERR_PARAM_INVALID);
+    }
+
+    if (repeats > 0 && !self->IsEmpty()) {
+        const auto axisSize = self->GetViewShape().GetDim(WrapDim(dim, GetTensorDimNum(self)));
+        if (axisSize > std::numeric_limits<int64_t>::max() / repeats) {
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                "aclnnRepeatInterleaveIntWithDim", "repeats", std::to_string(repeats).c_str(),
+                ("repeats times the selected dimension size " + std::to_string(axisSize) + " exceeds INT64_MAX")
+                    .c_str());
+            return ACLNN_ERR_PARAM_INVALID;
+        }
+        const auto expectedOutputSize = axisSize * repeats;
+        if (outputSize != expectedOutputSize) {
+            OP_LOGE_FOR_INVALID_VALUE("aclnnRepeatInterleaveIntWithDim", "outputSize",
+                                      std::to_string(outputSize).c_str(), std::to_string(expectedOutputSize).c_str());
+            return ACLNN_ERR_PARAM_INVALID;
+        }
     }
 
     if (repeats == 0 || self->IsEmpty() || outputSize == 0) {

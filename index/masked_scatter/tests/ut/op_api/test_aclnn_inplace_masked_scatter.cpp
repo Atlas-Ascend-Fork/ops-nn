@@ -8,8 +8,10 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 #include <array>
+#include <dlfcn.h>
 #include <vector>
 #include "gtest/gtest.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 
 #include "../../../op_api/aclnn_masked_scatter.h"
 
@@ -725,6 +727,51 @@ TEST_F(l2_masked_scatter_test, ascend910B2_aclnnInplaceMaskedScatter_bf16_case)
     uint64_t workspaceSize = 0;
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(aclRet, ACL_SUCCESS);
+}
+
+TEST_F(l2_masked_scatter_test, rejects_mask_with_higher_rank)
+{
+    auto self = TensorDesc({2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto mask = TensorDesc({2, 2}, ACL_BOOL, ACL_FORMAT_ND);
+    auto source = TensorDesc({4}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnInplaceMaskedScatter, INPUT(self, mask, source), OUTPUT());
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+    const auto getError = reinterpret_cast<const char* (*)()>(dlsym(RTLD_DEFAULT, "aclGetRecentErrMsg"));
+    ASSERT_NE(getError, nullptr);
+    const auto* error = getError();
+    ASSERT_NE(error, nullptr);
+    const std::string message(error);
+    const std::string
+        expected = "Parameters selfRef, mask of aclnnInplaceMaskedScatter have incorrect shape dims 1, 2.";
+    const auto pos = message.find(expected);
+    ASSERT_NE(pos, std::string::npos) << message;
+    EXPECT_EQ(message.find(expected, pos + 1), std::string::npos) << message;
+    EXPECT_EQ(message.find("shape mismatch"), std::string::npos) << message;
+}
+
+TEST_F(l2_masked_scatter_test, rejects_broadcast_that_expands_self)
+{
+    auto& errorManager = ErrorManager::GetInstance();
+    errorManager.GenWorkStreamIdDefault();
+    (void)errorManager.GetRawErrorMessages();
+    auto self = TensorDesc({1, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto mask = TensorDesc({2, 3}, ACL_BOOL, ACL_FORMAT_ND);
+    auto source = TensorDesc({6}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnInplaceMaskedScatter, INPUT(self, mask, source), OUTPUT());
+    uint64_t workspaceSize = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), ACLNN_ERR_PARAM_INVALID);
+
+    std::vector<ErrorManager::ErrorItem> reports;
+    for (const auto& report : errorManager.GetRawErrorMessages()) {
+        if (report.error_id.compare(0, 2, "EZ") == 0) {
+            reports.push_back(report);
+        }
+    }
+    ASSERT_EQ(reports.size(), 1U);
+    EXPECT_EQ(reports[0].error_id, "EZ0010");
+    EXPECT_EQ(reports[0].args_map.at("incorrect_shapes"), "[1, 3], [2, 3]");
+    EXPECT_EQ(reports[0].args_map.at("param_names"), "selfRef, mask");
 }
 
 TEST_F(l2_masked_scatter_test, aclnnInplaceMaskedScatter_mask_dtype_invalid)
