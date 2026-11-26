@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: backward propagation of the MaxPool2d inverse operation [aclnnMaxUnpool2d](../../scatter_elements/docs/aclnnMaxUnpool2d.md). Fills elements of gradOutput into out based on the indices.
+- Description: backward propagation of the MaxPool2d inverse operation [aclnnMaxUnpool2d](../../scatter_elements/docs/aclnnMaxUnpool2d_en.md). Fills elements of gradOutput into out based on the indices.
 
 - Formula:
 
