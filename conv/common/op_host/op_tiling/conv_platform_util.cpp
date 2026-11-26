@@ -16,6 +16,7 @@
 #include <algorithm>
 #include "platform/platform_info.h"
 #include "log/log.h"
+#include "op_common/op_host/util/op_const_def.h"
 #include "conv_platform_util.h"
 
 namespace Ops {
@@ -64,6 +65,16 @@ void PlatformUtil::GetAICoreIntrinsicDtype(fe::PlatFormInfos& platform_info, con
         value = false;
         OP_LOGW("NO_OP_NAME", "NO PLATFORM INFO for %s", intrinsic_name.c_str());
     }
+}
+
+bool PlatformUtil::IsDwArchAfter35(NpuArch npuArch)
+{
+    return npuArch == NpuArch::DAV_3510 || npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202;
+}
+
+bool PlatformUtil::IsDxArchAfter35(NpuArch npuArch)
+{
+    return IsDwArchAfter35(npuArch) || npuArch == Ops::Base::DAV_5162;
 }
 
 void PlatformUtil::ParseRuntimePlatformInfo(Conv3DBackpropV2CompileInfo& compileInfo, const char* op_name,

@@ -48,10 +48,8 @@ bool CheckRangeInt64(int64_t value, int32_t value_low, int32_t value_up)
 
 bool IsArchAfter35(const gert::TilingContext* context)
 {
-    return context->GetCompileInfo<Ops::NN::Conv::Conv3DBackpropV2CompileInfo>()->npuArch == NpuArch::DAV_3510 ||
-           context->GetCompileInfo<Ops::NN::Conv::Conv3DBackpropV2CompileInfo>()->npuArch == NpuArch::DAV_9201 ||
-           context->GetCompileInfo<Ops::NN::Conv::Conv3DBackpropV2CompileInfo>()->npuArch == NpuArch::DAV_9202 ||
-           context->GetCompileInfo<Ops::NN::Conv::Conv3DBackpropV2CompileInfo>()->npuArch == Ops::Base::DAV_5162;
+    return PlatformUtil::IsDxArchAfter35(
+        context->GetCompileInfo<Ops::NN::Conv::Conv3DBackpropV2CompileInfo>()->npuArch);
 }
 
 static bool IsSocVersion960(const gert::TilingContext* context)

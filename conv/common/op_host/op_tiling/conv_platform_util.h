@@ -53,6 +53,9 @@ public:
     static void ParseRuntimePlatformInfo(Conv3DBackpropV2CompileInfo& compileInfo, const char* op_name,
                                          fe::PlatFormInfos& platform_info);
 
+    static bool IsDwArchAfter35(NpuArch npuArch);
+    static bool IsDxArchAfter35(NpuArch npuArch);
+
 private:
     static void GetLocalMemSize(fe::PlatFormInfos& platform_info, const std::string& lable, const std::string& mem_type,
                                 uint64_t& size);

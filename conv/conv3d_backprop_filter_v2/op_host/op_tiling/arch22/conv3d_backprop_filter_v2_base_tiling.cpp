@@ -113,9 +113,8 @@ namespace NN {
 namespace Conv {
 bool Conv3DBackpropFilterV2Tiling::IsArchAfter35() const
 {
-    return context_->GetCompileInfo<Ops::NN::Conv::Conv3DBackpropV2CompileInfo>()->npuArch == NpuArch::DAV_3510 ||
-           context_->GetCompileInfo<Ops::NN::Conv::Conv3DBackpropV2CompileInfo>()->npuArch == NpuArch::DAV_9201 ||
-           context_->GetCompileInfo<Ops::NN::Conv::Conv3DBackpropV2CompileInfo>()->npuArch == NpuArch::DAV_9202;
+    return PlatformUtil::IsDwArchAfter35(
+        context_->GetCompileInfo<Ops::NN::Conv::Conv3DBackpropV2CompileInfo>()->npuArch);
 }
 
 void Conv3DBackpropFilterV2Tiling::Reset()

@@ -51,11 +51,7 @@ constexpr uint64_t AIV_AIC_RATIO_2 = 2;
 namespace Ops {
 namespace NN {
 namespace Conv {
-bool Conv3DDWV2BasicBlockTilingArch35::IsArchAfter35()
-{
-    return platformInfo_.npuArch == NpuArch::DAV_3510 || platformInfo_.npuArch == NpuArch::DAV_9201 ||
-           platformInfo_.npuArch == NpuArch::DAV_9202;
-}
+bool Conv3DDWV2BasicBlockTilingArch35::IsArchAfter35() { return PlatformUtil::IsDwArchAfter35(platformInfo_.npuArch); }
 
 bool Conv3DDWV2BasicBlockTilingArch35::IsSocVersion960()
 {
