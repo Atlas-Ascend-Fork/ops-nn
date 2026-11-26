@@ -344,7 +344,7 @@ aclnnStatus aclnnTransposeBatchMatMul(
     - When scale is not empty, batchSplitFactor must equal 1, and only type inference with FLOAT16 input and INT8 output is supported.
     - bias is supported with shape (N,) or (1,N) and the same data type as x1 or FLOAT32. It is shared across batches and rows and requires scale=None and batchSplitFactor=1.
     - permX1=[0, 2, 1] or permX2=[1, 0, 2]/[1, 2, 0] requires permY=[0, 1, 2], no scale and batchSplitFactor=1.
-    - ND NBK B uses a contiguous (N, B, K) tensor and permX2=[1, 2, 0].
+    - For the NBK layout of the right-hand matrix x2, pass a contiguous ND tensor of shape (N, B, K) and set permX2=[1, 2, 0]. This permutation selects the B, K, and N axes in that order, giving the logical shape (B, K, N) used for matrix multiplication.
 <!-- end id8 -->
 
 ## Example

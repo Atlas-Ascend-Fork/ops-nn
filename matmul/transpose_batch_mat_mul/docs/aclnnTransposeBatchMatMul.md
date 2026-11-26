@@ -351,7 +351,7 @@ aclnnStatus aclnnTransposeBatchMatMul(
     - 当scale不为空时，batchSplitFactor只能等于1，且仅支持输入为FLOAT16和输出为INT8的类型推导。
     - 支持传入bias，shape为(N,)或(1,N)，数据类型与x1相同或为FLOAT32；bias在各batch和行间共享，仅支持scale为空且batchSplitFactor为1的场景。
     - permX1=[0, 2, 1]或permX2=[1, 0, 2]/[1, 2, 0]要求permY=[0, 1, 2]、scale为空且batchSplitFactor=1。
-    - ND NBK B使用连续(N, B, K)张量及permX2=[1, 2, 0]。
+    - 当右矩阵x2采用NBK布局时，传入shape为(N, B, K)的连续ND张量，需设置permX2=[1, 2, 0]。该排列依次选取B、K、N轴，矩阵乘使用的逻辑shape为(B, K, N)。
 <!-- end id8 -->
 
 ## 调用示例

@@ -88,6 +88,7 @@ English | [简体中文](./README.md)
 - Valid base formats and non-contiguous tensors are supported. FRACTAL_NZ is not supported.
 - hidden, weight, and markov_emb must all be FLOAT16 or all be BFLOAT16. temperature, bias, and out are FLOAT32. The length of weight is $K_1+K_2$; the leading dimensions of markov_emb must match hidden; bias has shape [$N$]; and out has the shape of hidden without its last dimension.
 - Each dimension, $B\times N$, and $K_1+K_2$ must be in $[0,\mathrm{UINT32\_MAX}]$. For a 2D input, $B=1$.
+- When $B\times N>0$ and $K_1+K_2>0$, the L1 usage must satisfy `2*(align_up(K1,16)+align_up(K2,16))+262144+biasBytes<L1Bytes`. The function align_up(value,16) rounds the value up to a multiple of 16. L1Bytes is the device's per-core L1 capacity in bytes. biasBytes is 2048 when bias is provided and 0 otherwise. If the L1 usage reaches or exceeds L1Bytes, aclnnConfidenceHeadFusedGetWorkspaceSize returns 561103 (ACLNN_ERR_INNER_NULLPTR).
 - When $K_1+K_2=0$, bias, temperature, optional clamping, and Sigmoid are still applied. When $B=0$ or $N=0$, the output is empty.
 
 ## Invocation Description

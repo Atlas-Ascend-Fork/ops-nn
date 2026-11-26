@@ -247,10 +247,15 @@ aclnnStatus aclnnConfidenceHeadFused(
         <td>输入或输出的数据类型、数据格式、维度不满足参数说明。</td>
       </tr>
       <tr>
-        <td>hidden、markovEmbOptional、weight、biasOptional或out的shape不匹配，或维度、展平行数及K1+K2超出支持范围。</td>
+        <td>hidden、markovEmbOptional、weight、biasOptional或out的shape不匹配，或维度、展平行数及K1+K2超出[0,UINT32_MAX]。</td>
       </tr>
       <tr>
         <td>clampLowOptional或clampHighOptional的数据类型不能转换为FLOAT32。</td>
+      </tr>
+      <tr>
+        <td>ACLNN_ERR_INNER_NULLPTR</td>
+        <td>561103</td>
+        <td>非空输出且K1+K2大于0时，L1占用达到或超过设备每核L1容量（见约束说明）。</td>
       </tr>
   </tbody></table>
 
@@ -300,6 +305,7 @@ aclnnStatus aclnnConfidenceHeadFused(
 - 支持合法基础格式和非连续Tensor，不支持FRACTAL_NZ。
 - hidden、weight、markovEmbOptional的数据类型须同为FLOAT16或同为BFLOAT16；temperatureOptional、biasOptional和out为FLOAT32。weight的长度为K1+K2，markovEmbOptional的前导维度与hidden一致，biasOptional的shape为[N]，out的shape与hidden去掉最后一维后的shape一致。
 - 各维度、B*N和K1+K2须位于[0,UINT32_MAX]。二维输入按B=1理解。
+- 当B*N和K1+K2均大于0时，L1占用须满足`2*(align_up(K1,16)+align_up(K2,16))+262144+biasBytes<L1Bytes`。align_up(value,16)表示将value向上对齐到16的倍数。L1Bytes为设备每核L1容量（字节）。传入biasOptional时，biasBytes为2048，否则为0。
 - K1+K2=0时仍执行biasOptional、temperatureOptional、可选截断和Sigmoid计算；B=0或N=0时输出为空。
 - 确定性计算：aclnnConfidenceHeadFused默认支持确定性计算。
 
