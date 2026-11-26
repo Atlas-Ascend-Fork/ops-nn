@@ -84,8 +84,11 @@ public:
         }
     }();
 
+    // amax 输出专用（唯一消费者 CastAmaxVf）：amax 与 x 同 dtype，fp16 输入的 amax ≤ 65504、
+    // bf16/fp32 输入同域，饱和不可能合法触发；SAT 模式会把 NaN 冲成 0（issue #10181），
+    // 含 NaN 组的 amax 需向输出传播 NaN，故取 NO_SAT（同 act_ulq_clamp_*_grad 的 fp32→B16 先例）。
     static constexpr AscendC::Reg::CastTrait CAST_TRAIT_FP32_TO_X_DETYPE = []() {
-        return AscendC::Reg::CastTrait{AscendC::Reg::RegLayout::ZERO, AscendC::Reg::SatMode::SAT,
+        return AscendC::Reg::CastTrait{AscendC::Reg::RegLayout::ZERO, AscendC::Reg::SatMode::NO_SAT,
                                        AscendC::Reg::MaskMergeMode::ZEROING, RoundMode::CAST_RINT};
     }();
 

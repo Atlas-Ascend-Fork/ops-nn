@@ -557,7 +557,11 @@ __aicore__ inline void QuantMaxV2Kernel<T, U, RoundMode, TPL_QUANT_MODE_DYNAMIC,
             float amax = 0.0f;
             for (int64_t core = 0; core < actualCoreNum_; ++core) {
                 const float part = groupMax.GetValue(core * groupStride_ + groupIdx);
-                amax = part > amax ? part : amax;
+                // NaN 传播：与 G=1/G>=8 的 VF 归并及 Per-Tensor 路径一致——含 NaN 的组 amax 保持
+                // NaN（NaN 与任何数比较为假，朴素 max 会把 NaN 吞成 0，导致 amax 与 y/yScale 互斥）。
+                if (part != part || part > amax) {
+                    amax = part;
+                }
             }
             merged.SetValue(groupIdx, amax);
             quantScale.SetValue(groupIdx, amax > 0.0f ? tilingData_->dstTypeMax / amax : 0.0f);
@@ -1464,7 +1468,10 @@ __aicore__ inline void QuantMaxV2Kernel<T, U, RoundMode, TPL_QUANT_MODE_STATIC, 
             float maximum = 0.0f;
             for (int64_t core = 0; core < slabLen; ++core) {
                 const float part = groupMax.GetValue(core * groupStride_ + groupIdx);
-                maximum = part > maximum ? part : maximum;
+                // NaN 传播：与 VF 归并路径一致（见动态 MergeScale 同款注释）。
+                if (part != part || part > maximum) {
+                    maximum = part;
+                }
             }
             slabLocal.SetValue(groupIdx, maximum);
         }
@@ -1571,7 +1578,10 @@ __aicore__ inline void QuantMaxV2Kernel<T, U, RoundMode, TPL_QUANT_MODE_STATIC, 
             float maximum = 0.0f;
             for (int64_t core = 0; core < actualCoreNum_; ++core) {
                 const float part = groupMax.GetValue(core * groupStride_ + groupIdx);
-                maximum = part > maximum ? part : maximum;
+                // NaN 传播：与 VF 归并路径一致（见动态 MergeScale 同款注释）。
+                if (part != part || part > maximum) {
+                    maximum = part;
+                }
             }
             merged.SetValue(groupIdx, maximum);
         }
