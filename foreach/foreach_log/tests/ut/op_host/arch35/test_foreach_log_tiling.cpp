@@ -306,10 +306,176 @@ TEST_F(ForeachLogTilingArch35, foreach_log_float32_large_flow)
 // driven through this faker: TilingContextFaker hangs during Build() for a list with
 // zero instances, so that path stays covered by code review only.
 
+// ---------------------------------------------------------------------------
+// Error-code remediation negative tests: formal first-error reporting for the
+// user-parameter root causes in the shared flat-regbase validator and in
+// ForeachLogTilingFunc.
+// ---------------------------------------------------------------------------
+#include <map>
+#include <string>
+#include "base/err_mgr.h"
+
+namespace {
+
+ge::graphStatus RunForeachLogTiling(const std::vector<gert::StorageShape>& xShapes,
+                                    const std::vector<ge::DataType>& xDtypes, uint32_t yCount)
+{
+    fe::PlatFormInfos pf;
+    std::map<std::string, std::string> soc;
+    std::map<std::string, std::string> ai;
+    std::map<std::string, std::string> intr;
+    GetPlatFormInfos(R"({"hardware_info":{"UB_SIZE":253952,"CORE_NUM":64}})", soc, ai, intr);
+    if (!pf.Init()) {
+        return ge::GRAPH_FAILED;
+    }
+    struct ForeachLogCompileInfo {
+    } ci;
+    auto opType = std::string("ForeachLog");
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    if (opImpl == nullptr || opImpl->tiling == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto param = gert::TilingData::CreateCap(8192);
+    auto wsh = gert::ContinuousVector::Create<size_t>(4096);
+    std::vector<gert::StorageShape> yShapes(yCount);
+    std::vector<gert::StorageShape*> outPtr;
+    for (uint32_t i = 0; i < yCount; i++) {
+        yShapes[i] = xShapes[0];
+        outPtr.push_back(&yShapes[i]);
+    }
+    // per-instance dtype inside one dynamic input requires TensorV2-level inputs
+    gert::StorageFormat storageFormat(ge::FORMAT_ND, ge::FORMAT_ND, gert::ExpandDimsType());
+    std::vector<gert::TensorV2> inputTensorsStorage;
+    for (size_t i = 0; i < xShapes.size(); i++) {
+        inputTensorsStorage.emplace_back(xShapes[i], storageFormat, gert::TensorPlacement::kOnHost, xDtypes[i],
+                                         nullptr);
+    }
+    std::vector<gert::TensorV2*> inputTensors;
+    for (auto& t : inputTensorsStorage) {
+        inputTensors.push_back(&t);
+    }
+    gert::TilingContextFaker builder;
+    builder.SetOpType("ForeachLog")
+        .NodeIoNum(1, yCount)
+        .IrInstanceNum({static_cast<uint32_t>(xShapes.size())}, {yCount})
+        .InputTensors(inputTensors)
+        .OutputShapes(outPtr)
+        .CompileInfo(&ci)
+        .PlatformInfo(reinterpret_cast<char*>(&pf));
+    for (uint32_t i = 0; i < yCount; i++) {
+        builder.NodeOutputTd(static_cast<int32_t>(i), xDtypes[0], ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    auto th = std::move(builder)
+                  .TilingData(param.get())
+                  .Workspace(reinterpret_cast<gert::ContinuousVector*>(wsh.get()))
+                  .Build();
+    auto* ctx = th.GetContext<gert::TilingContext>();
+    ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc);
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", ai);
+    ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
+    return opImpl->tiling(ctx);
+}
+
+void ExpectSingleRawError(const char* expectedCode, const std::map<std::string, std::string>& expectedMap)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), expectedCode);
+    std::map<std::string, std::string> actual;
+    for (size_t j = 0; j < errors.front().args_key.size(); ++j) {
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[j].get(), errors.front().args_value[j].get()).second);
+    }
+    EXPECT_EQ(actual, expectedMap);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+} // namespace
+
+TEST_F(ForeachLogTilingArch35, tensor_num_over_limit_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    const uint32_t overLimit = 257U;
+    std::vector<gert::StorageShape> xShapes(overLimit, {{4}, {4}});
+    std::vector<ge::DataType> xDtypes(overLimit, ge::DT_FLOAT);
+    EXPECT_EQ(RunForeachLogTiling(xShapes, xDtypes, overLimit), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0023", {{"param_names", "x"},
+                                    {"op_name", "ForeachLog"},
+                                    {"incorrect_nums", "257"},
+                                    {"reason", "tensor-list size must be in [1, 256]"}});
+}
+
+TEST_F(ForeachLogTilingArch35, rank_over_limit_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x = {{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}};
+    EXPECT_EQ(RunForeachLogTiling({x}, {ge::DT_FLOAT}, 1), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0012", {{"param_name", "x[0]"},
+                                    {"op_name", "ForeachLog"},
+                                    {"incorrect_dim", "9"},
+                                    {"reason", "x[0] supports at most 8 dimensions"}});
+}
+
+TEST_F(ForeachLogTilingArch35, negative_dim_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x = {{-1, 5}, {-1, 5}};
+    EXPECT_EQ(RunForeachLogTiling({x}, {ge::DT_FLOAT}, 1), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0009", {{"param_name", "x[0]"},
+                                    {"op_name", "ForeachLog"},
+                                    {"incorrect_shape", "[-1, 5]"},
+                                    {"reason", "x[0] contains a negative dimension"}});
+}
+
+TEST_F(ForeachLogTilingArch35, unsupported_dtype_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x = {{4, 4}, {4, 4}};
+    EXPECT_EQ(RunForeachLogTiling({x}, {ge::DT_INT32}, 1), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0020", {{"param_name", "x[0]"},
+                                    {"op_name", "ForeachLog"},
+                                    {"incorrect_dtype", "DT_INT32"},
+                                    {"reason", "x[0] has an unsupported dtype"}});
+}
+
+TEST_F(ForeachLogTilingArch35, mixed_dtype_list_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x0 = {{4, 4}, {4, 4}};
+    gert::StorageShape x1 = {{2, 2}, {2, 2}};
+    EXPECT_EQ(RunForeachLogTiling({x0, x1}, {ge::DT_FLOAT, ge::DT_FLOAT16}, 2), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0020",
+                         {{"param_name", "x"},
+                          {"op_name", "ForeachLog"},
+                          {"incorrect_dtype", "DT_FLOAT16"},
+                          {"reason", "all tensors in a tensor list must have the same dtype: the dtype of x[1] "
+                                     "differs from the list dtype DT_FLOAT"}});
+}
+
+TEST_F(ForeachLogTilingArch35, output_count_mismatch_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x0 = {{4, 4}, {4, 4}};
+    gert::StorageShape x1 = {{2, 2}, {2, 2}};
+    EXPECT_EQ(RunForeachLogTiling({x0, x1}, {ge::DT_FLOAT, ge::DT_FLOAT}, 1), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0037", {{"param_name", "x and y"},
+                                    {"op_name", "ForeachLog"},
+                                    {"reason", "input and output tensor lists must have the same list size"}});
+}
+
 // A single tensor whose element count exceeds the int32 offset limit must be
-// rejected before any narrowing write into the tiling fields.
+// rejected before any narrowing write into the tiling fields, with a single
+// formal EZ0015 first error carrying the offending count.
 TEST_F(ForeachLogTilingArch35, foreach_log_float32_int32_overflow_rejected)
 {
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
     fe::PlatFormInfos pf;
     std::map<std::string, std::string> soc;
     std::map<std::string, std::string> ai;
@@ -326,6 +492,7 @@ TEST_F(ForeachLogTilingArch35, foreach_log_float32_int32_overflow_rejected)
     auto param = gert::TilingData::CreateCap(8192);
     auto wsh = gert::ContinuousVector::Create<size_t>(4096);
     auto th = gert::TilingContextFaker()
+                  .SetOpType("ForeachLog")
                   .NodeIoNum(1, 1)
                   .IrInstanceNum({1})
                   .InputShapes({&xS})
@@ -343,4 +510,8 @@ TEST_F(ForeachLogTilingArch35, foreach_log_float32_int32_overflow_rejected)
     ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
     EXPECT_NE(tilingFn(ctx), ge::GRAPH_SUCCESS);
+    ExpectSingleRawError("EZ0015", {{"param_name", "x[0]"},
+                                    {"op_name", "ForeachLog"},
+                                    {"incorrect_size", "2147483648"},
+                                    {"reason", "tensor 0 has 2147483648 elements, exceeding the int32 offset limit"}});
 }

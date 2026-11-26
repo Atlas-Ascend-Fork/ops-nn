@@ -96,3 +96,79 @@ TEST_F(ForeachAtanTilingTest, foreach_atan_bfloat16)
 {
     DoCase({4, 4}, ge::DT_BF16, GET_TPL_TILING_KEY(FOREACH_ATAN_TPL_SCH_MODE_BF16));
 }
+
+// ---------------------------------------------------------------------------
+// Error-code remediation negative tests: formal first-error reporting for the
+// user-parameter dtype root cause in ForeachAtanTilingFunc.
+// ---------------------------------------------------------------------------
+#include <map>
+#include <string>
+#include "base/err_mgr.h"
+#include "graph/utils/type_utils.h"
+
+namespace {
+
+ge::graphStatus RunAtanTiling(const gert::StorageShape& xShape, ge::DataType dt)
+{
+    fe::PlatFormInfos pf;
+    std::map<std::string, std::string> soc;
+    std::map<std::string, std::string> ai;
+    std::map<std::string, std::string> intr;
+    GetPlatFormInfos(R"({"hardware_info":{"UB_SIZE":253952,"CORE_NUM":64}})", soc, ai, intr);
+    if (!pf.Init()) {
+        return ge::GRAPH_FAILED;
+    }
+    struct ForeachAtanCompileInfo {
+    } ci;
+    auto opType = std::string("ForeachAtan");
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    if (opImpl == nullptr || opImpl->tiling == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    gert::StorageShape yS = xShape;
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsh = gert::ContinuousVector::Create<size_t>(4096);
+    auto th = gert::TilingContextFaker()
+                  .SetOpType("ForeachAtan")
+                  .NodeIoNum(1, 1)
+                  .IrInstanceNum({1})
+                  .InputShapes({const_cast<gert::StorageShape*>(&xShape)})
+                  .OutputShapes({&yS})
+                  .CompileInfo(&ci)
+                  .PlatformInfo(reinterpret_cast<char*>(&pf))
+                  .NodeInputTd(0, dt, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeOutputTd(0, dt, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .TilingData(param.get())
+                  .Workspace(reinterpret_cast<gert::ContinuousVector*>(wsh.get()))
+                  .Build();
+    auto* ctx = th.GetContext<gert::TilingContext>();
+    ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc);
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", ai);
+    ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
+    return opImpl->tiling(ctx);
+}
+
+} // namespace
+
+TEST_F(ForeachAtanTilingTest, unsupported_dtype_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x = {{4, 4}, {4, 4}};
+    EXPECT_EQ(RunAtanTiling(x, ge::DT_INT32), ge::GRAPH_FAILED);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), "EZ0019");
+    std::map<std::string, std::string> actual;
+    for (size_t j = 0; j < errors.front().args_key.size(); ++j) {
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[j].get(), errors.front().args_value[j].get()).second);
+    }
+    const std::map<std::string, std::string> expected = {
+        {"param_name", "x"},
+        {"op_name", "ForeachAtan"},
+        {"incorrect_dtype", ge::TypeUtils::DataTypeToSerialString(ge::DT_INT32)},
+        {"correct_dtype", "FP32, FP16 or BF16"}};
+    EXPECT_EQ(actual, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}

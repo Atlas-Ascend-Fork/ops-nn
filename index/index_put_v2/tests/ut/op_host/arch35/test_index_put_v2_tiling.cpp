@@ -193,11 +193,15 @@ SimdTilingResult RunSimdTiling(std::initializer_list<int64_t> xDims, std::initia
     return result;
 }
 
+// 匿名命名空间隔离：本仓多个 UT 文件定义同名不同布局结构体，全局作用域下其隐式
+// 构造函数为 weak 符号会被链接器串台（ODR），内部链接保证各 TU 用自身定义。
+namespace {
 struct PlatformResources {
     map<string, string> socInfos;
     map<string, string> aicoreSpec;
     map<string, string> intrinsics;
 };
+} // namespace
 
 ge::graphStatus RunTilingParse(const string& compileInfoString, optiling::IndexCompileInfo* compileInfo)
 {
@@ -543,4 +547,77 @@ TEST_F(IndexPutV2Tiling, SimdRejectsInt32LinearOffsetOverflow)
     EXPECT_EQ(smallInt32.tilingKey, SIMD_TILING_KEY);
     ASSERT_EQ(largeInt64.status, ge::GRAPH_SUCCESS);
     EXPECT_EQ(largeInt64.tilingKey, SIMD_TILING_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// 错误码整改负向用例：indexedSizes(index 2) 的 const tensor dtype 未定义
+// （不在 GetConstIntToShape 支持的 [int32, int64, uint64, uint32] 内）时，
+// IndexSimtTiling::UpdateTilingData 返回 0，其失败出口以 OP_LOGE_WITHOUT_REPORT
+// 包装（不再重复上报），注册 tiling 入口返回 GRAPH_FAILED。
+// 覆盖 index/index/op_host/arch35/index_tiling_arch35.cpp 的 WITHOUT_REPORT 失败分支。
+// 注：const 数据本体仍提供合法 int64 视图 {1,0}，使优先级更高的
+// IndexPutV2SimdTiling(10) 不因空指针解引用崩溃，并通过
+// indices=INT32 + inputLength>INT32_MAX 触发其主动让位。
+// ---------------------------------------------------------------------------
+TEST_F(IndexPutV2Tiling, SimtUpdateTilingDataFailsWithoutConstIndexedSizes)
+{
+    optiling::IndexCompileInfo compileInfo{};
+    compileInfo.core_num = DEFAULT_CORE_NUM;
+    compileInfo.ubSize = DEFAULT_UB_SIZE;
+    map<string, string> socInfos;
+    map<string, string> aicoreSpec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(DEFAULT_COMPILE_INFO, socInfos, aicoreSpec, intrinsics);
+    fe::PlatFormInfos platformInfo;
+    platformInfo.Init();
+
+    auto rawTilingData = gert::TilingData::CreateCap(4096);
+    auto workspaceHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto workspace = reinterpret_cast<gert::ContinuousVector*>(workspaceHolder.get());
+    ASSERT_NE(rawTilingData, nullptr);
+    ASSERT_NE(workspace, nullptr);
+
+    // inputLength = 4400000000 > INT32_MAX，配合 indices=DT_INT32 使 SIMD 模板让位
+    gert::StorageShape x({2200000000LL, 2}, {2200000000LL, 2});
+    gert::StorageShape value({2}, {2});
+    gert::StorageShape indexedSizesShape({2}, {2});
+    gert::StorageShape indexedStridesShape({2}, {2});
+    gert::StorageShape indices({4096}, {4096});
+    gert::StorageShape y({4096, 2}, {4096, 2});
+
+    // const 数据按 int64 视图提供 {1,0}（SIMD 模板按 int64 读取，不崩溃）
+    int64_t mask[2] = {1, 0};
+    std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> constTensors;
+    SetConstInput(2, DT_INT64, mask, 2, constTensors);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("IndexPutV2")
+                      .NodeIoNum(5, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1})
+                      .InputShapes({&x, &value, &indexedSizesShape, &indexedStridesShape, &indices})
+                      .OutputShapes({&y})
+                      // 关键：不给 index 2 设置 NodeInputTd，保持其 dtype 未定义，
+                      // GetConstIntToShape 走 default 分支返回 false
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"accumulate", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .ConstInput(constTensors)
+                      .TilingData(rawTilingData.get())
+                      .Workspace(workspace)
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .Build();
+    auto context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(context, nullptr);
+    ASSERT_NE(context->GetPlatformInfo(), nullptr);
+    context->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("IndexPutV2");
+    ASSERT_NE(opImpl, nullptr);
+    ASSERT_NE(opImpl->tiling, nullptr);
+    EXPECT_EQ(opImpl->tiling(context), ge::GRAPH_FAILED);
 }

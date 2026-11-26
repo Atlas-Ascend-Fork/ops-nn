@@ -14,8 +14,11 @@
 
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <string>
 #include <vector>
 
+#include "base/err_mgr.h"
 #include "../../../../op_kernel/arch35/scatter_nd_sub_tiling_data.h"
 #include "ut_op_util.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -219,4 +222,79 @@ TEST_F(TestScatterNdSubTiling, scatter_nd_sub_indices_last_dim_gt_var_rank_faile
 {
     auto result = DoScatterNdSubTilingCase({4, 8}, {2, 3}, {2}, ge::DT_FLOAT, ge::DT_INT32);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+}
+
+// 负向用例：var rank 2 < indices last dim 3。根因层（CheckScatterNdSubShapes）应产出唯一 EZ0012 正式首错，
+// 外层 TilingFunc 只补日志不重复上报（一次故障一个 ErrorManager 首错）。
+TEST_F(TestScatterNdSubTiling, scatter_nd_sub_var_rank_lt_indices_last_dim_single_formal_error)
+{
+    fe::PlatFormInfos platFormInfo;
+    map<string, string> socInfos;
+    map<string, string> aicoreSpec;
+    map<string, string> intrinsics;
+    map<string, string> socVersion = {{"Short_SoC_version", "ASCEND950"}};
+    InitPlatForm(platFormInfo, socInfos, aicoreSpec, intrinsics, socVersion);
+
+    std::string opType("ScatterNdSub");
+    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
+    ASSERT_NE(tilingFunc, nullptr);
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspaceSizeHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(workspaceSizeHolder.get());
+
+    gert::StorageShape varStorage = {{4, 8}, {4, 8}};
+    gert::StorageShape indicesStorage = {{2, 3}, {2, 3}};
+    gert::StorageShape updatesStorage = {{2}, {2}};
+    ScatterNdSubUtCompileInfo compileInfo;
+
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(opType)
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&varStorage, &indicesStorage, &updatesStorage})
+                      .OutputShapes({&varStorage})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platFormInfo))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"use_locking", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+
+    gert::TilingContext* tilingContext = holder.GetContext<gert::TilingContext>();
+    tilingContext->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    tilingContext->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("version", socVersion);
+
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+    EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_FAILED);
+    const auto messages = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(messages.size(), 1U);
+    const auto& message = messages.front();
+    ASSERT_NE(message.error_id, nullptr);
+    EXPECT_EQ(std::string(message.error_id.get()), "EZ0012");
+    ASSERT_EQ(message.args_key.size(), 4U);
+    ASSERT_EQ(message.args_value.size(), 4U);
+    std::map<std::string, std::string> arguments;
+    for (size_t i = 0; i < message.args_key.size(); ++i) {
+        ASSERT_NE(message.args_key[i], nullptr);
+        ASSERT_NE(message.args_value[i], nullptr);
+        EXPECT_TRUE(arguments.emplace(message.args_key[i].get(), message.args_value[i].get()).second);
+    }
+    const std::map<std::string, std::string> expected = {
+        {"param_name", "var"},
+        {"op_name", tilingContext->GetNodeName()},
+        {"incorrect_dim", "2D"},
+        {"reason", "var rank must be greater than or equal to indices last dim 3"},
+    };
+    EXPECT_EQ(arguments, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
 }

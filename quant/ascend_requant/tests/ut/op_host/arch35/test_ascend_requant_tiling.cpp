@@ -14,6 +14,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/err_mgr.h"
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -503,7 +504,32 @@ TEST_F(AscendRequantTilingTest, tiling_dtype_not_supported)
                       .TilingData(param.get())
                       .Workspace(wsSize)
                       .Build();
-    EXPECT_NE(tilingFunc(holder.GetContext<gert::TilingContext>()), ge::GRAPH_SUCCESS);
+    gert::TilingContext* tilingContext = holder.GetContext<gert::TilingContext>();
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+    EXPECT_NE(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
+    const auto messages = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(messages.size(), 1U);
+    const auto& message = messages.front();
+    ASSERT_NE(message.error_id, nullptr);
+    EXPECT_EQ(std::string(message.error_id.get()), "EZ0021");
+    ASSERT_EQ(message.args_key.size(), 4U);
+    ASSERT_EQ(message.args_value.size(), 4U);
+    std::map<std::string, std::string> arguments;
+    for (size_t i = 0; i < message.args_key.size(); ++i) {
+        ASSERT_NE(message.args_key[i], nullptr);
+        ASSERT_NE(message.args_value[i], nullptr);
+        EXPECT_TRUE(arguments.emplace(message.args_key[i].get(), message.args_value[i].get()).second);
+    }
+    const std::map<std::string, std::string> expected = {
+        {"param_names", "x, req_scale"},
+        {"op_name", tilingContext->GetNodeName()},
+        {"incorrect_dtypes", "DT_FLOAT, DT_UINT64"},
+        {"reason", "The dtype of x must be INT32 and the dtype of req_scale must be UINT64"},
+    };
+    EXPECT_EQ(arguments, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
 }
 
 TEST_F(AscendRequantTilingTest, tiling_shape_mismatch)

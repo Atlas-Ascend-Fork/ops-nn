@@ -10,9 +10,11 @@
 
 #include <iostream>
 #include <cstring>
+#include <map>
 #include <gtest/gtest.h>
 #include "tiling_context_faker.h"
 #include "tiling_case_executor.h"
+#include "base/err_mgr.h"
 #include "../../../../op_kernel/arch35/data_format_dim_map_tiling_data.h"
 
 namespace DataFormatDimMapUT {
@@ -581,6 +583,67 @@ TEST_F(DataFormatDimMapTilingTest, test_hwnc_to_nhwc_int64_large)
     for (int i = 0; i < 8; i++) {
         EXPECT_EQ(td->expandedTable[i], expectedTable[i]) << "expandedTable[" << i << "] mismatch";
     }
+}
+
+TEST_F(DataFormatDimMapTilingTest, test_reject_rank9_input)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::PROCESS_MODE), 0);
+    auto para = MakeTilingPara({1, 1, 1, 1, 1, 1, 1, 1, 1}, ge::DT_INT32, "NHWC", "NCHW");
+    TilingInfo tilingInfo;
+    error_message::GetErrMgrRawErrorMessages();
+    EXPECT_FALSE(ExecuteTiling(para, tilingInfo));
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_EQ(std::string(errors[0].error_id.get()), "EZ0012");
+    ASSERT_EQ(errors[0].args_key.size(), errors[0].args_value.size());
+    std::map<std::string, std::string> args;
+    for (size_t i = 0; i < errors[0].args_key.size(); ++i) {
+        ASSERT_NE(errors[0].args_key[i], nullptr);
+        ASSERT_NE(errors[0].args_value[i], nullptr);
+        args[errors[0].args_key[i].get()] = errors[0].args_value[i].get();
+    }
+    EXPECT_EQ(args["op_name"], "DataFormatDimMap");
+    EXPECT_EQ(args["param_name"], "x");
+    EXPECT_EQ(args["incorrect_dim"], "9");
+    EXPECT_EQ(args["reason"], "input rank must be within [0, 8]");
+}
+
+TEST_F(DataFormatDimMapTilingTest, test_reject_unsupported_input_dtype)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::PROCESS_MODE), 0);
+    auto para = MakeTilingPara({64}, ge::DT_FLOAT, "NHWC", "NCHW");
+    TilingInfo tilingInfo;
+    error_message::GetErrMgrRawErrorMessages();
+    EXPECT_FALSE(ExecuteTiling(para, tilingInfo)) << "unsupported input dtype must be rejected at tiling gate";
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    ASSERT_NE(errors[0].args_key.size(), 0U);
+    ASSERT_NE(errors[0].args_value.size(), 0U);
+    EXPECT_EQ(errors[0].error_id.get(), std::string("EZ0020"));
+    std::vector<std::string> keys;
+    std::vector<std::string> values;
+    for (const auto& key : errors[0].args_key) {
+        ASSERT_NE(key, nullptr);
+        keys.emplace_back(key.get());
+    }
+    for (const auto& value : errors[0].args_value) {
+        ASSERT_NE(value, nullptr);
+        values.emplace_back(value.get());
+    }
+    auto findArg = [&keys, &values](const std::string& key) {
+        for (size_t i = 0; i < keys.size() && i < values.size(); ++i) {
+            if (keys[i] == key) {
+                return values[i];
+            }
+        }
+        return std::string();
+    };
+    EXPECT_EQ(findArg("param_name"), "x");
+    EXPECT_EQ(findArg("op_name"), "DataFormatDimMap");
+    EXPECT_EQ(findArg("incorrect_dtype"), "DT_FLOAT");
+    EXPECT_EQ(findArg("reason"), "supported dtype list is [DT_INT32, DT_INT64]");
 }
 
 TEST_F(DataFormatDimMapTilingTest, test_invalid_format_permutation)

@@ -528,3 +528,92 @@ TEST_F(ForeachMinimumListTilingTest, large_shape_keeps_32_alignment)
     ExpectListTiling(4096, &expectPerCore, &expectNeedCore, &expectLast);
     DoListTilingCase({4096}, ge::DT_FLOAT, TILING_KEY_FLOAT, expectPerCore, expectNeedCore, expectLast);
 }
+
+// ---------------------------------------------------------------------------
+// Error-code remediation negative test: the tensor-num upper bound rejects the
+// list with a single formal EZ0037 first error instead of the SDK-rejected
+// EZ0022 registration.
+// ---------------------------------------------------------------------------
+#include <map>
+#include <string>
+#include "base/err_mgr.h"
+
+namespace {
+void ExpectSingleRawError(const char* expectedCode, const std::map<std::string, std::string>& expectedMap)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), expectedCode);
+    std::map<std::string, std::string> actual;
+    for (size_t j = 0; j < errors.front().args_key.size(); ++j) {
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[j].get(), errors.front().args_value[j].get()).second);
+    }
+    EXPECT_EQ(actual, expectedMap);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+} // namespace
+
+TEST_F(ForeachMinimumListTilingTest, tensor_num_over_limit_reports_single_formal_error)
+{
+    std::map<std::string, std::string> soc_version_infos = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+    const char* compileInfoStr = R"({
+        "hardware_info": {"UB_SIZE": 262144, "CORE_NUM": 64}
+    })";
+    std::map<std::string, std::string> socInfos;
+    std::map<std::string, std::string> aicoreSpec;
+    std::map<std::string, std::string> intrinsics;
+    GetPlatFormInfos(compileInfoStr, socInfos, aicoreSpec, intrinsics);
+    fe::PlatFormInfos pf;
+    ASSERT_TRUE(pf.Init());
+
+    struct ForeachMinimumListCompileInfo {
+    } ci;
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("ForeachMinimumList");
+    ASSERT_NE(opImpl, nullptr);
+    ASSERT_NE(opImpl->tiling, nullptr);
+
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+
+    // x1 carries 257 tensors while the tensor num is capped at 256; the check
+    // fires before any per-tensor validation.
+    const uint32_t overLimit = 257U;
+    std::vector<gert::StorageShape> xShapes(overLimit * 2, {{1}, {1}});
+    std::vector<gert::StorageShape> yShapes(overLimit, {{1}, {1}});
+    std::vector<void*> xShapeRefs;
+    std::vector<gert::StorageShape*> yShapeRefs;
+    for (auto& shape : xShapes) {
+        xShapeRefs.push_back(&shape);
+    }
+    for (auto& shape : yShapes) {
+        yShapeRefs.push_back(&shape);
+    }
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsh = gert::ContinuousVector::Create<size_t>(4096);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("ForeachMinimumList")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({overLimit, overLimit}, {overLimit})
+                      .InputShapes(xShapeRefs)
+                      .OutputShapes(yShapeRefs)
+                      .CompileInfo(&ci)
+                      .PlatformInfo(reinterpret_cast<char*>(&pf))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .TilingData(param.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(wsh.get()))
+                      .Build();
+    auto* ctx = holder.GetContext<gert::TilingContext>();
+    ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+    EXPECT_EQ(opImpl->tiling(ctx), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0037", {{"param_name", "x1"},
+                                    {"op_name", "ForeachMinimumList"},
+                                    {"reason", "x1 has 257 tensors, but the tensor num must be within the range "
+                                               "[0, 256]"}});
+}

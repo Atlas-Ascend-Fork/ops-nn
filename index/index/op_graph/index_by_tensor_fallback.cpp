@@ -80,8 +80,8 @@ static graphStatus IndexByTensorHostExecuteFunc(OpExecuteContext* hostApiCtx)
                                                                           ge_mask, mask_num, &emptyTensor);
 
     auto api_ret = CANN_OPS_OPB_SYN_EXEC_ACLNN(hostApiCtx, aclnnIndex, self_ge, inputTensorList, out_ge);
-    OP_CHECK_IF(api_ret != GRAPH_SUCCESS, OP_LOGE(hostApiCtx->GetNodeName(), "api_ret failed:%d", api_ret),
-                return GRAPH_FAILED);
+    OP_CHECK_IF(api_ret != GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(hostApiCtx->GetNodeName(), "api_ret failed:%d", api_ret), return GRAPH_FAILED);
 
     return GRAPH_SUCCESS;
 }

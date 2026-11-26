@@ -15,11 +15,27 @@
  * \brief SparseApplyAdadelta operator graph infer resource
  */
 
+#include <string>
+#include <vector>
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 #include "sparse_apply_adadelta_proto.h"
 
 namespace ge {
+// 将 GetDims() 的维度向量格式化为 "[d0, d1, ...]"，供正式错误码宏上报实际 shape
+static std::string DimsToString(const std::vector<int64_t>& dims)
+{
+    std::string text = "[";
+    for (size_t i = 0; i < dims.size(); i++) {
+        if (i != 0) {
+            text += ", ";
+        }
+        text += std::to_string(dims[i]);
+    }
+    text += "]";
+    return text;
+}
+
 // 覆盖内置 nn_training_ops.cc 的 SparseApplyAdadeltaVerify（无未知维保护，
 // 拒绝 var 静态 + grad 动态的 resource 类动态图）。同仓 apply_adagrad/inplace_sub 同款模式。
 IMPLEMT_VERIFIER(SparseApplyAdadelta, VerifySparseApplyAdadelta)
@@ -36,7 +52,8 @@ IMPLEMT_VERIFIER(SparseApplyAdadelta, VerifySparseApplyAdadelta)
         return GRAPH_SUCCESS;
     }
     if (indicesDims.size() != 1) {
-        OP_LOGE(op.GetName().c_str(), "Input indices must be one-dimensional");
+        OP_LOGE_FOR_INVALID_SHAPEDIM(op.GetName().c_str(), "indices",
+                                     (std::to_string(indicesDims.size()) + "D").c_str(), "1D");
         return GRAPH_FAILED;
     }
     // 任一参与校验的输入秩未知(-2)时透传，与本算子 infershape 的未知秩契约一致
@@ -44,16 +61,25 @@ IMPLEMT_VERIFIER(SparseApplyAdadelta, VerifySparseApplyAdadelta)
         return GRAPH_SUCCESS;
     }
     if (varDims.empty() || gradDims.empty()) {
-        OP_LOGE(op.GetName().c_str(), "input var or grad shape size should be greater than 0.");
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            op.GetName().c_str(), "var, grad",
+            (std::to_string(varDims.size()) + "D, " + std::to_string(gradDims.size()) + "D").c_str(),
+            "The rank of var and grad must be at least 1");
         return GRAPH_FAILED;
     }
     if (varDims.size() != gradDims.size()) {
-        OP_LOGE(op.GetName().c_str(), "input var and grad should have same rank.");
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            op.GetName().c_str(), "var, grad",
+            (std::to_string(varDims.size()) + "D, " + std::to_string(gradDims.size()) + "D").c_str(),
+            "The rank of var and grad must be the same");
         return GRAPH_FAILED;
     }
     for (size_t i = 1; i < varDims.size(); i++) {
         if (varDims[i] != UNKNOWN_DIM && gradDims[i] != UNKNOWN_DIM && varDims[i] != gradDims[i]) {
-            OP_LOGE(op.GetName().c_str(), "Input var and grad must match in dimension (%zu)", i);
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                op.GetName().c_str(), "var, grad", (DimsToString(varDims) + ", " + DimsToString(gradDims)).c_str(),
+                ("var and grad must match in each dimension; first mismatch at dimension " + std::to_string(i))
+                    .c_str());
             return GRAPH_FAILED;
         }
     }

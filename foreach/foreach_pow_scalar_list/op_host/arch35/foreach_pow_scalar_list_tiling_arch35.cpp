@@ -160,10 +160,12 @@ static ge::graphStatus ForeachPowScalarListTilingFunc(gert::TilingContext* conte
     // 入参约束校验：list长度/dtype一致性/维度/输出缓冲区大小
     OP_CHECK_IF(CheckTensorListNum(context, tensorNum) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context, "CheckTensorListNum failed"), return ge::GRAPH_FAILED);
+    // dtype/shape sub-checks report their own formal first error (EZ0020/EZ0011/EZ0016);
+    // these wrappers only add the propagation log without a second ErrorManager entry.
     OP_CHECK_IF(CheckTensorListDtype(context, tensorNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "CheckTensorListDtype failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "CheckTensorListDtype failed"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(CheckTensorListShape(context, tensorNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "CheckTensorListShape failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "CheckTensorListShape failed"), return ge::GRAPH_FAILED);
 
     ForeachPowScalarListTilingData* tiling = context->GetTilingData<ForeachPowScalarListTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);

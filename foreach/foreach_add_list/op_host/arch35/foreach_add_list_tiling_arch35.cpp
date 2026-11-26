@@ -56,7 +56,10 @@ static ge::graphStatus ValidateForeachAddList(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
     if (!IsExpectedAlphaDtype(xDesc->GetDataType(), alphaDesc->GetDataType())) {
-        OP_LOGE(context, "alpha dtype does not match the scalar mapping of x1 dtype");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "alpha", Ops::Base::ToString(alphaDesc->GetDataType()).c_str(),
+            "the dtype of alpha must follow the scalar mapping of x1 dtype: the same as x1 for "
+            "FLOAT/FLOAT16/INT32, FLOAT when x1 is BF16, and INT32 when x1 is INT16/INT8/UINT8");
         return ge::GRAPH_FAILED;
     }
 
@@ -65,7 +68,9 @@ static ge::graphStatus ValidateForeachAddList(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
     if (alphaStorageShape.GetShapeSize() != 1) {
-        OP_LOGE(context, "alpha must contain exactly one element");
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "alpha",
+                                                  std::to_string(alphaStorageShape.GetShapeSize()).c_str(),
+                                                  "alpha must contain exactly one element");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

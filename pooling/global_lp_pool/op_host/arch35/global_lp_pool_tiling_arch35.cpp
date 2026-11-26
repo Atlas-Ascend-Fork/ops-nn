@@ -724,7 +724,9 @@ ge::graphStatus GlobalLpPoolTilingFunc::ComputeTiling(gert::TilingContext* ctx)
     SetWorkspaceSize(ctx);
     OP_CHECK_IF(GetPlatformInfoFromCtx(ctx, tc) != ge::GRAPH_SUCCESS, OP_LOGE(ctx, "GetPlatformInfo failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(GetShapeAttrsInfo(ctx, tc) != ge::GRAPH_SUCCESS, OP_LOGE(ctx, "GetShapeAttrsInfo failed"),
+    const auto attrsRet = GetShapeAttrsInfo(ctx, tc);
+    OP_CHECK_IF(attrsRet != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(ctx, "ComputeTiling: GetShapeAttrsInfo failed, rc=%u", attrsRet),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(FusedAxis(tc) != ge::GRAPH_SUCCESS, OP_LOGE(ctx, "FusedAxis failed"), return ge::GRAPH_FAILED);
     OP_LOGD(ctx, "FusedAxis: A=%ld R=%ld isEmptyA=%d isEmptyR=%d isTailA=%d", tc.A, tc.R, static_cast<int>(tc.isEmptyA),

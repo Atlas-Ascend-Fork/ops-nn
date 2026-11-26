@@ -174,9 +174,11 @@ ge::graphStatus INInferV2Tiling::CheckXDescAndShape()
         return ge::GRAPH_FAILED);
     for (size_t i = 0; i < dimNum; i++) {
         OP_CHECK_IF(xStorageShape.GetDim(i) < 0,
-                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context_->GetNodeName(), "x",
-                                                             std::to_string(xStorageShape.GetDim(i)).c_str(),
-                                                             "dynamic shape dim is not supported in tiling"),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context_->GetNodeName(), "x", Ops::Base::ToString(xStorageShape).c_str(),
+                        ("x dimension " + std::to_string(i) + " has value " + std::to_string(xStorageShape.GetDim(i)) +
+                         "; all dimensions must be nonnegative at tiling")
+                            .c_str()),
                     return ge::GRAPH_FAILED);
     }
 

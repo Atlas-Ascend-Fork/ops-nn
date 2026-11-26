@@ -264,3 +264,69 @@ TEST_F(ForeachSinTilingTest, foreach_sin_dim_over_8_rejected)
 {
     RunTilingCase({{1, 1, 1, 1, 1, 1, 1, 1, 1}}, {{1, 1, 1, 1, 1, 1, 1, 1, 1}}, ge::DT_FLOAT, {ge::DT_FLOAT}, false);
 }
+
+// ---------------------------------------------------------------------------
+// Error-code remediation negative test: the GetPlatformInfo wrapper log no
+// longer duplicates the inner first report (OP_LOGE_WITHOUT_REPORT), so an
+// internal platform failure still yields exactly one ErrorManager report.
+// ---------------------------------------------------------------------------
+#include <map>
+#include <string>
+#include "base/err_mgr.h"
+
+TEST_F(ForeachSinTilingTest, get_platform_info_failure_reports_single_error)
+{
+    static const char* kZeroCorePlatformJson = R"({"hardware_info": {"BT_SIZE": 0,
+                      "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true,
+                      "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
+                      "UB_SIZE": 253952, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                      "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                      "CORE_NUM": 0}
+                      })";
+    const std::string opType("ForeachSin");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str()), nullptr);
+    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
+    ASSERT_NE(tilingFunc, nullptr);
+
+    std::map<std::string, std::string> socInfos;
+    std::map<std::string, std::string> aicoreSpec;
+    std::map<std::string, std::string> intrinsics;
+    GetPlatFormInfos(kZeroCorePlatformJson, socInfos, aicoreSpec, intrinsics);
+    fe::PlatFormInfos platformInfo;
+    ASSERT_TRUE(platformInfo.Init());
+    struct ForeachSinCompileInfo {
+    } compileInfo;
+
+    gert::StorageShape xS = MakeStorageShape({4, 4});
+    gert::StorageShape yS = MakeStorageShape({4, 4});
+    auto param = gert::TilingData::CreateCap(4096);
+    ASSERT_NE(param, nullptr);
+    auto wsHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(wsHolder.get());
+    auto holder = gert::TilingContextFaker()
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1}, {1})
+                      .InputShapes({&xS})
+                      .OutputShapes({&yS})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+    auto* tilingContext = holder.GetContext<gert::TilingContext>();
+    tilingContext->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    tilingContext->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_FAILED);
+    // Inner GetPlatformInfo check owns the first (internal) report; the outer wrapper must
+    // not add a second ErrorManager entry after the WITHOUT_REPORT remediation.
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}

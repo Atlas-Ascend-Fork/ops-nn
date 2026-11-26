@@ -196,8 +196,12 @@ static ge::graphStatus InferShape4GnTrainingUpdate(gert::InferShapeContext* cont
     if (!sum_unknown_rank) {
         if (sum_shape->GetDimNum() != 5 ||
             (!IsUnknownRankShape(square_sum_shape) && square_sum_shape->GetDimNum() != 5)) {
-            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("GnTrainingUpdate", "sum/square_sum", "-",
-                                                     "sum/square_sum must be 5D");
+            const std::string actualRanks = std::to_string(sum_shape->GetDimNum()) + "D, " +
+                                            (IsUnknownRankShape(square_sum_shape) ?
+                                                 std::string("unknown rank (-2)") :
+                                                 std::to_string(square_sum_shape->GetDimNum()) + "D");
+            OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON("GnTrainingUpdate", "sum, square_sum", actualRanks.c_str(),
+                                                      "sum and square_sum must be 5D when their ranks are known");
             return ge::GRAPH_FAILED;
         }
         if (!DimsMatch(square_sum_shape, sum_shape)) {

@@ -145,7 +145,7 @@ static ge::graphStatus ForeachSinTilingFunc(gert::TilingContext* context)
     uint64_t ubSize = 0;
     int64_t maxCoreNum = 0;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, maxCoreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo failed"), return ge::GRAPH_FAILED);
 
     auto computeNodeInfo = context->GetComputeNodeInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfo);

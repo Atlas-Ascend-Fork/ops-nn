@@ -23,8 +23,11 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <string>
 #include <vector>
 #include <gtest/gtest.h>
+#include "base/err_mgr.h"
 #include "log/log.h"
 #include "register/op_impl_registry.h"
 #include "platform/platform_infos_def.h"
@@ -47,12 +50,16 @@ constexpr uint64_t UB_SIZE = 245760; // 240 KB (Ascend950)
 constexpr bool NORMAL_LAYOUT = false;
 constexpr bool REVERSED_LAYOUT = true;
 
+// 匿名命名空间隔离：本仓多个 UT 文件定义同名不同布局结构体，全局作用域下其隐式
+// 构造函数为 weak 符号会被链接器串台（ODR），内部链接保证各 TU 用自身定义。
+namespace {
 struct TilingRunResult {
     ge::graphStatus status = ge::GRAPH_FAILED;
     uint64_t tilingKey = 0;
     NormalizeBBoxTilingData tilingData{};
     bool tilingDataValid = false;
 };
+} // namespace
 
 // Build a StorageShape from a dim vector (origin == storage).
 gert::StorageShape MakeShape(const std::vector<int64_t>& dims)
@@ -855,4 +862,82 @@ TEST_F(NormalizeBBoxTiling, tiling_fail_dtype_int64)
 {
     auto r = RunTiling({2, 8, 4}, {2, 3}, NORMAL_LAYOUT, ge::DT_INT64);
     EXPECT_EQ(r.status, ge::GRAPH_FAILED);
+}
+
+// ---------------------------------------------------------------------------
+// 错误码整改负向用例：GetShapeAttrsInfo 三个 int64 溢出防护分支的正式宏（EZ0026）
+// 与 NormalizeBBoxTilingFunc 的 WITHOUT_REPORT 包装失败分支。
+// ---------------------------------------------------------------------------
+namespace {
+bool DrainNormalizeBboxFirstError(std::string& errorId, std::map<std::string, std::string>& fields)
+{
+    auto errors = error_message::GetErrMgrRawErrorMessages();
+    if (errors.size() != 1U) {
+        return false;
+    }
+    errorId = std::string(errors.front().error_id.get());
+    for (size_t i = 0; i < errors.front().args_key.size(); ++i) {
+        fields.emplace(std::string(errors.front().args_key[i].get()), std::string(errors.front().args_value[i].get()));
+    }
+    return true;
+}
+} // namespace
+
+// batch*num 溢出 int64：batch=2^33, num=2^31
+TEST_F(NormalizeBBoxTiling, batch_times_num_overflow_reports_ez0026)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    constexpr int64_t kBatch = 8589934592LL; // 2^33
+    constexpr int64_t kNum = 2147483648LL;   // 2^31
+    auto r = RunTiling({kBatch, kNum, 4}, {kBatch, 3}, NORMAL_LAYOUT, ge::DT_FLOAT);
+    EXPECT_EQ(r.status, ge::GRAPH_FAILED);
+    std::string errorId;
+    std::map<std::string, std::string> fields;
+    ASSERT_TRUE(DrainNormalizeBboxFirstError(errorId, fields));
+    EXPECT_EQ(errorId, "EZ0026");
+    EXPECT_EQ(fields.at("param_name"), "boxes");
+    EXPECT_EQ(fields.at("incorrect_value"), "batch=8589934592, num=2147483648");
+    EXPECT_EQ(fields.at("reason"), "batch*num exceeds int64 range");
+    EXPECT_FALSE(fields.at("op_name").empty());
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+// batch*num*4 溢出 int64（batch*num 本身不溢出）：batch=2^31, num=2^30
+TEST_F(NormalizeBBoxTiling, boxes_element_count_overflow_reports_ez0026)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    constexpr int64_t kBatch = 2147483648LL; // 2^31
+    constexpr int64_t kNum = 1073741824LL;   // 2^30
+    auto r = RunTiling({kBatch, kNum, 4}, {kBatch, 3}, NORMAL_LAYOUT, ge::DT_FLOAT);
+    EXPECT_EQ(r.status, ge::GRAPH_FAILED);
+    std::string errorId;
+    std::map<std::string, std::string> fields;
+    ASSERT_TRUE(DrainNormalizeBboxFirstError(errorId, fields));
+    EXPECT_EQ(errorId, "EZ0026");
+    EXPECT_EQ(fields.at("param_name"), "boxes");
+    EXPECT_EQ(fields.at("incorrect_value"), "batch=2147483648, num=1073741824");
+    EXPECT_EQ(fields.at("reason"), "boxes element count (batch*num*4) exceeds int64 range");
+    EXPECT_FALSE(fields.at("op_name").empty());
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+// shape_hw 元素数溢出 int64（num=0 使前两检查放行）：batch=2^61, num=0
+TEST_F(NormalizeBBoxTiling, shape_hw_element_count_overflow_reports_ez0026)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    constexpr int64_t kBatch = 4000000000000000000LL; // > int64max/3，num=0 使前两检查放行
+    auto r = RunTiling({kBatch, 0, 4}, {kBatch, 3}, NORMAL_LAYOUT, ge::DT_FLOAT);
+    EXPECT_EQ(r.status, ge::GRAPH_FAILED);
+    std::string errorId;
+    std::map<std::string, std::string> fields;
+    ASSERT_TRUE(DrainNormalizeBboxFirstError(errorId, fields));
+    EXPECT_EQ(errorId, "EZ0026");
+    EXPECT_EQ(fields.at("param_name"), "shape_hw");
+    EXPECT_EQ(fields.at("incorrect_value"), "batch=4000000000000000000");
+    EXPECT_EQ(fields.at("reason"), "shape_hw element count (batch*3) exceeds int64 range");
+    EXPECT_FALSE(fields.at("op_name").empty());
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
 }

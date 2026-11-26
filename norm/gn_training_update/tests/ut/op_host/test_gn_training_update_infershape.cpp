@@ -18,11 +18,46 @@
 #include "infershape_test_util.h"
 #include "ut_op_common.h"
 #include "log/log.h"
+#include "base/err_mgr.h"
+#include <map>
 #include "../../../op_graph/gn_training_update_proto.h"
+
+static void CheckRankPairFirstError(ge::Operator& op, const std::string& actualRanks)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+    Runtime2TestParam param{{"num_groups"}};
+    EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_FAILED);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors.front().error_id, nullptr);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), "EZ0013");
+    ASSERT_EQ(errors.front().args_key.size(), 4U);
+    ASSERT_EQ(errors.front().args_value.size(), 4U);
+    std::map<std::string, std::string> actual;
+    for (size_t i = 0; i < errors.front().args_key.size(); ++i) {
+        ASSERT_NE(errors.front().args_key[i], nullptr);
+        ASSERT_NE(errors.front().args_value[i], nullptr);
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[i].get(), errors.front().args_value[i].get()).second);
+    }
+    const std::map<std::string, std::string> expected = {
+        {"param_names", "sum, square_sum"},
+        {"op_name", "GnTrainingUpdate"},
+        {"incorrect_dims", actualRanks},
+        {"reason", "sum and square_sum must be 5D when their ranks are known"}};
+    EXPECT_EQ(actual, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
 
 class GnTrainingUpdateInferShape : public testing::Test {
 protected:
-    static void SetUpTestCase() { std::cout << "GnTrainingUpdate Proto Test SetUp" << std::endl; }
+    static void SetUpTestCase()
+    {
+        // Pull the existing opbase log.cpp registration object into this UT; this is not a negative error test.
+        EXPECT_EQ(Ops::Base::ToString(ge::DT_INT32), "DT_INT32");
+        std::cout << "GnTrainingUpdate Proto Test SetUp" << std::endl;
+    }
 
     static void TearDownTestCase() { std::cout << "GnTrainingUpdate Proto Test TearDown" << std::endl; }
 };
@@ -85,8 +120,7 @@ TEST_F(GnTrainingUpdateInferShape, unknown_rank_x_rejects_illegal_sum)
     op.UpdateInputDesc("square_sum", create_desc({2, 2, 1, 1}, ge::DT_FLOAT));
     op.SetAttr("num_groups", (int64_t)2);
 
-    Runtime2TestParam param{{"num_groups"}};
-    EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_FAILED);
+    CheckRankPairFirstError(op, "4D, 4D");
 }
 
 // GEIR.03：x 未知 rank + sum 合法 → 通过，统计量输出取 sum 形状
@@ -102,4 +136,24 @@ TEST_F(GnTrainingUpdateInferShape, unknown_rank_x_valid_sum_success)
     EXPECT_EQ(InferShapeTest(op, param), ge::GRAPH_SUCCESS);
     EXPECT_EQ(op.GetOutputDesc(1).GetShape().GetDims(), std::vector<int64_t>({2, 2, 1, 1, 1}));
     EXPECT_EQ(op.GetOutputDesc(2).GetShape().GetDims(), std::vector<int64_t>({2, 2, 1, 1, 1}));
+}
+
+TEST_F(GnTrainingUpdateInferShape, square_sum_rank_three_reports_actual_pair)
+{
+    ge::op::GNTrainingUpdate op;
+    op.UpdateInputDesc("x", create_desc({2, 4, 2, 3}, ge::DT_FLOAT));
+    op.UpdateInputDesc("sum", create_desc({2, 2, 1, 1, 1}, ge::DT_FLOAT));
+    op.UpdateInputDesc("square_sum", create_desc({2, 2, 1}, ge::DT_FLOAT));
+    op.SetAttr("num_groups", static_cast<int64_t>(2));
+    CheckRankPairFirstError(op, "5D, 3D");
+}
+
+TEST_F(GnTrainingUpdateInferShape, illegal_sum_with_unknown_square_sum_reports_unknown_rank)
+{
+    ge::op::GNTrainingUpdate op;
+    op.UpdateInputDesc("x", create_desc({-2}, ge::DT_FLOAT));
+    op.UpdateInputDesc("sum", create_desc({2, 2, 1, 1}, ge::DT_FLOAT));
+    op.UpdateInputDesc("square_sum", create_desc({-2}, ge::DT_FLOAT));
+    op.SetAttr("num_groups", static_cast<int64_t>(2));
+    CheckRankPairFirstError(op, "4D, unknown rank (-2)");
 }

@@ -44,6 +44,9 @@ protected:
 // 内部兜底码字面量误判为需要治理的上报候选。
 static const std::string kInternalErrorCode = std::string("EZ") + "9999";
 
+// 匿名命名空间隔离：本仓多个 UT 文件定义同名不同布局结构体，全局作用域下其隐式
+// 构造函数为 weak 符号会被链接器串台（ODR），内部链接保证各 TU 用自身定义。
+namespace {
 struct TilingCase {
     std::vector<int64_t> xDim = {4, 4};
     std::vector<int64_t> yDim = {4, 4};
@@ -54,6 +57,7 @@ struct TilingCase {
     uint64_t ubSize = 253952;
     uint64_t coreCount = 64;
 };
+} // namespace
 
 static gert::StorageShape ToStorageShape(const std::vector<int64_t>& dims)
 {
@@ -199,7 +203,7 @@ TEST_F(ForeachLog10Arch35TilingTest, rejects_unsupported_input_dtype_single_erro
     TilingCase test;
     test.inputDt = ge::DT_DOUBLE;
     test.outputDt = ge::DT_DOUBLE;
-    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
+    RunCase(test, ge::GRAPH_FAILED, 0, "EZ0020");
 }
 
 TEST_F(ForeachLog10Arch35TilingTest, rejects_excessive_rank_single_error)
@@ -207,7 +211,7 @@ TEST_F(ForeachLog10Arch35TilingTest, rejects_excessive_rank_single_error)
     TilingCase test;
     test.xDim = {1, 1, 1, 1, 1, 1, 1, 1, 1};
     test.yDim = test.xDim;
-    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
+    RunCase(test, ge::GRAPH_FAILED, 0, "EZ0012");
 }
 
 TEST_F(ForeachLog10Arch35TilingTest, rejects_negative_dimension_single_error)
@@ -215,7 +219,7 @@ TEST_F(ForeachLog10Arch35TilingTest, rejects_negative_dimension_single_error)
     TilingCase test;
     test.xDim = {4, -1};
     test.yDim = test.xDim;
-    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
+    RunCase(test, ge::GRAPH_FAILED, 0, "EZ0009");
 }
 
 TEST_F(ForeachLog10Arch35TilingTest, rejects_empty_tensorlist_single_error)
@@ -223,7 +227,7 @@ TEST_F(ForeachLog10Arch35TilingTest, rejects_empty_tensorlist_single_error)
     TilingCase test;
     test.tensorCount = 0;
     test.outputCount = 0;
-    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
+    RunCase(test, ge::GRAPH_FAILED, 0, "EZ0023");
 }
 
 TEST_F(ForeachLog10Arch35TilingTest, rejects_mismatched_output_count_single_error)
@@ -231,5 +235,5 @@ TEST_F(ForeachLog10Arch35TilingTest, rejects_mismatched_output_count_single_erro
     TilingCase test;
     test.tensorCount = 2;
     test.outputCount = 1;
-    RunCase(test, ge::GRAPH_FAILED, 0, kInternalErrorCode);
+    RunCase(test, ge::GRAPH_FAILED, 0, "EZ0037");
 }

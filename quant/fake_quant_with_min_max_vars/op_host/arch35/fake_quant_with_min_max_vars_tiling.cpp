@@ -118,10 +118,8 @@ static ge::graphStatus CheckScalarInputShape(gert::TilingContext* context)
         OP_CHECK_NULL_WITH_CONTEXT(context, input);
         auto shape = input->GetStorageShape();
         if (shape.GetDimNum() != 1 || shape.GetDim(0) != 1) {
-            OP_LOGE(context,
-                    "FakeQuantWithMinMaxVars: scalar input '%s' (input index %zu) must have shape (1,), "
-                    "but got dimNum=%zu dims=[%s]",
-                    scalarInputNames[i], i + 1, shape.GetDimNum(), DescribeShape(shape).c_str());
+            OP_LOGE_FOR_INVALID_SHAPE(context->GetNodeName(), scalarInputNames[i],
+                                      ("[" + DescribeShape(shape) + "]").c_str(), "[1]");
             return ge::GRAPH_FAILED;
         }
     }
@@ -167,7 +165,8 @@ static ge::graphStatus FakeQuantWithMinMaxVarsTilingFunc(gert::TilingContext* co
     // 2.5 min/max scalar shape check — must run before the empty-tensor fast
     // path below so that an x-only-empty input with invalid min/max is still
     // rejected instead of silently skipping the kernel launch.
-    OP_CHECK_IF(CheckScalarInputShape(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "CheckScalarInputShape error"),
+    OP_CHECK_IF(CheckScalarInputShape(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "CheckScalarInputShape error; preserve the helper first error"),
                 return ge::GRAPH_FAILED);
 
     // 3. Workspace size

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
 #include "error_util.h"
 #include "log/log.h"
 #include "register/op_impl_registry.h"
@@ -52,6 +53,9 @@ int64_t FloorAlign(int64_t value, int64_t factor) { return factor <= 0 ? value :
 
 bool IsOneElementTensorShape(const gert::Shape& shape) { return shape.GetShapeSize() == 1; }
 
+// 原型输入 2..5 的稳定参数名，供正式错误码上报使用
+constexpr const char* SCALAR_INPUT_NAMES[4] = {"eps", "beta1", "clip_threshold", "sum_square_u"};
+
 ge::graphStatus SetTilingData(gert::TilingContext* context, const ApplyCamePart3TilingData& data)
 {
     auto* raw = context->GetRawTilingData();
@@ -76,32 +80,42 @@ ge::graphStatus CheckInputParams(const gert::TilingContext* context, const gert:
     OP_TILING_CHECK(
         uShape.GetDimNum() != 2 || mShape.GetDimNum() != 2 || uShape.GetDim(0) <= 0 || uShape.GetDim(1) <= 0 ||
             mShape != uShape,
-        VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "u and m must be equal non-empty rank-2 shapes"),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "u, m", (Ops::Base::ToString(uShape) + ", " + Ops::Base::ToString(mShape)).c_str(),
+            "u and m must be equal non-empty rank-2 shapes"),
         return ge::GRAPH_FAILED);
     const int64_t n = uShape.GetDim(0);
     const int64_t m = uShape.GetDim(1);
     constexpr int64_t kMaxTensorBytes = std::numeric_limits<int64_t>::max();
-    OP_TILING_CHECK(
-        n > kMaxTensorBytes / m || n * m > kMaxTensorBytes / kFp32Bytes,
-        VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "ApplyCamePart3 tensor byte size overflows"),
-        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(n > kMaxTensorBytes / m || n * m > kMaxTensorBytes / kFp32Bytes,
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        context->GetNodeName(), "u", (std::to_string(n) + " x " + std::to_string(m)).c_str(),
+                        "The shape size of u overflows the maximum supported tensor byte size"),
+                    return ge::GRAPH_FAILED);
     for (int32_t i = 2; i <= 5; ++i) {
         const auto* shape = context->GetInputShape(i);
         OPS_CHECK_NULL_WITH_CONTEXT(context, shape);
-        OP_TILING_CHECK(!IsOneElementTensorShape(shape->GetStorageShape()),
-                        VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "scalar input must have one element"),
-                        return ge::GRAPH_FAILED);
+        OP_TILING_CHECK(
+            !IsOneElementTensorShape(shape->GetStorageShape()),
+            OP_LOGE_FOR_INVALID_SHAPESIZE(context->GetNodeName(), SCALAR_INPUT_NAMES[i - 2],
+                                          std::to_string(shape->GetStorageShape().GetShapeSize()).c_str(), "1"),
+            return ge::GRAPH_FAILED);
     }
-    OP_TILING_CHECK(uDesc->GetDataType() != ge::DT_FLOAT ||
-                        (mDesc->GetDataType() != ge::DT_FLOAT && mDesc->GetDataType() != ge::DT_FLOAT16 &&
-                         mDesc->GetDataType() != ge::DT_BF16),
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "unsupported ApplyCamePart3 dtype"),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        uDesc->GetDataType() != ge::DT_FLOAT ||
+            (mDesc->GetDataType() != ge::DT_FLOAT && mDesc->GetDataType() != ge::DT_FLOAT16 &&
+             mDesc->GetDataType() != ge::DT_BF16),
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context->GetNodeName(), "u, m",
+            (Ops::Base::ToString(uDesc->GetDataType()) + " and " + Ops::Base::ToString(mDesc->GetDataType())).c_str(),
+            "u must be float32, and m must be float32, float16 or bfloat16"),
+        return ge::GRAPH_FAILED);
     for (int32_t i = 2; i <= 5; ++i) {
         const auto* scalarDesc = context->GetInputDesc(i);
         OPS_CHECK_NULL_WITH_CONTEXT(context, scalarDesc);
         OP_TILING_CHECK(scalarDesc->GetDataType() != ge::DT_FLOAT,
-                        VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "scalar inputs must be float32"),
+                        OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), SCALAR_INPUT_NAMES[i - 2],
+                                                  Ops::Base::ToString(scalarDesc->GetDataType()).c_str(), "DT_FLOAT"),
                         return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -117,15 +131,18 @@ ge::graphStatus ParseAttributes(const gert::TilingContext* context, ApplyCamePar
     const auto* globalShape = context->GetOptionalInputShape(kGlobalShapeIndex);
     if (globalShape != nullptr) {
         const auto& globalShapeStorage = globalShape->GetStorageShape();
-        OP_TILING_CHECK(
-            globalShapeStorage.GetDimNum() != 1 || globalShapeStorage.GetDim(0) != 2,
-            VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "global_shape must be a 1D tensor with 2 elements"),
-            return ge::GRAPH_FAILED);
+        OP_TILING_CHECK(globalShapeStorage.GetDimNum() != 1 || globalShapeStorage.GetDim(0) != 2,
+                        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                            context->GetNodeName(), "global_shape", Ops::Base::ToString(globalShapeStorage).c_str(),
+                            "The parameter must be a 1-D tensor with exactly 2 elements"),
+                        return ge::GRAPH_FAILED);
         const auto* globalShapeDesc = context->GetInputDesc(kGlobalShapeIndex);
         OPS_CHECK_NULL_WITH_CONTEXT(context, globalShapeDesc);
-        OP_TILING_CHECK(globalShapeDesc->GetDataType() != ge::DT_INT64,
-                        VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "global_shape must be int64"),
-                        return ge::GRAPH_FAILED);
+        OP_TILING_CHECK(
+            globalShapeDesc->GetDataType() != ge::DT_INT64,
+            OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "global_shape",
+                                      Ops::Base::ToString(globalShapeDesc->GetDataType()).c_str(), "DT_INT64"),
+            return ge::GRAPH_FAILED);
         data.isGlobalShape = 1;
     }
     return ge::GRAPH_SUCCESS;
@@ -259,18 +276,17 @@ ge::graphStatus TilingApplyCamePart3(gert::TilingContext* context)
     const auto uShape = uShapePtr->GetStorageShape();
     const auto mShape = mShapePtr->GetStorageShape();
     OP_TILING_CHECK(CheckInputParams(context, uDesc, mDesc, uShape, mShape) != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "ApplyCamePart3 input check failed"),
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "ApplyCamePart3 input check failed"),
                     return ge::GRAPH_FAILED);
     OP_TILING_CHECK(ParseAttributes(context, data) != ge::GRAPH_SUCCESS,
-                    VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "ApplyCamePart3 attribute check failed"),
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "ApplyCamePart3 attribute check failed"),
                     return ge::GRAPH_FAILED);
 
     data.curN = uShape.GetDim(0);
     data.curM = uShape.GetDim(1);
-    OP_TILING_CHECK(
-        ComputeTileShape(context, data, mDesc) != ge::GRAPH_SUCCESS,
-        VECTOR_INNER_ERR_REPORT_TILIING(context->GetNodeName(), "ApplyCamePart3 tile shape calculation failed"),
-        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(ComputeTileShape(context, data, mDesc) != ge::GRAPH_SUCCESS,
+                    OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "ApplyCamePart3 tile shape calculation failed"),
+                    return ge::GRAPH_FAILED);
     size_t* workspace = context->GetWorkspaceSizes(1);
     OPS_CHECK_NULL_WITH_CONTEXT(context, workspace);
     auto platform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());

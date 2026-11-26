@@ -105,3 +105,85 @@ TEST_F(ForeachPowListTilingTest, foreach_pow_list_bfloat16)
 {
     DoCase({4, 4}, ge::DT_BF16, GET_TPL_TILING_KEY(FOREACH_POW_LIST_TPL_SCH_MODE_BFLOAT16));
 }
+
+// ---------------------------------------------------------------------------
+// Error-code remediation negative test: the tensor-num upper bound rejects the
+// list with a single formal EZ0037 first error instead of the SDK-rejected
+// EZ0022 registration.
+// ---------------------------------------------------------------------------
+#include <map>
+#include <string>
+#include "base/err_mgr.h"
+
+namespace {
+void ExpectSingleRawError(const char* expectedCode, const std::map<std::string, std::string>& expectedMap)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), expectedCode);
+    std::map<std::string, std::string> actual;
+    for (size_t j = 0; j < errors.front().args_key.size(); ++j) {
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[j].get(), errors.front().args_value[j].get()).second);
+    }
+    EXPECT_EQ(actual, expectedMap);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+} // namespace
+
+TEST_F(ForeachPowListTilingTest, tensor_num_over_limit_reports_single_formal_error)
+{
+    fe::PlatFormInfos pf;
+    std::map<std::string, std::string> soc, ai, intr;
+    GetPlatFormInfos(R"({"hardware_info":{"UB_SIZE":253952,"CORE_NUM":64}})", soc, ai, intr);
+    ASSERT_TRUE(pf.Init());
+
+    struct ForeachPowListCompileInfo {
+    } ci;
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("ForeachPowList");
+    ASSERT_NE(opImpl, nullptr);
+    ASSERT_NE(opImpl->tiling, nullptr);
+
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+
+    // x1 carries 257 tensors while the tensor num is capped at 256; the check
+    // fires before the per-tensor accumulation loop.
+    const uint32_t overLimit = 257U;
+    std::vector<gert::StorageShape> xShapes(overLimit * 2, {{1}, {1}});
+    std::vector<gert::StorageShape> yShapes(overLimit, {{1}, {1}});
+    std::vector<gert::StorageShape*> xShapeRefs;
+    std::vector<gert::StorageShape*> yShapeRefs;
+    for (auto& shape : xShapes) {
+        xShapeRefs.push_back(&shape);
+    }
+    for (auto& shape : yShapes) {
+        yShapeRefs.push_back(&shape);
+    }
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsh = gert::ContinuousVector::Create<size_t>(4096);
+    auto th = gert::TilingContextFaker()
+                  .SetOpType("ForeachPowList")
+                  .NodeIoNum(2, 1)
+                  .IrInstanceNum({overLimit, overLimit}, {overLimit})
+                  .InputShapes(xShapeRefs)
+                  .OutputShapes(yShapeRefs)
+                  .CompileInfo(&ci)
+                  .PlatformInfo(reinterpret_cast<char*>(&pf))
+                  .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .TilingData(param.get())
+                  .Workspace(reinterpret_cast<gert::ContinuousVector*>(wsh.get()))
+                  .Build();
+    auto* ctx = th.GetContext<gert::TilingContext>();
+    ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc);
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", ai);
+    ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
+
+    EXPECT_EQ(opImpl->tiling(ctx), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0037", {{"param_name", "x1"},
+                                    {"op_name", "ForeachPowList"},
+                                    {"reason", "x1 has 257 tensors, exceeding the maximum tensor num 256"}});
+}

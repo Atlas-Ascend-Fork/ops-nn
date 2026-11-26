@@ -164,7 +164,7 @@ ge::graphStatus IndexNoConBroadcastTiling::GetShapeAttrsInfo()
         return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(GetTensorInfo(xShape_, xStride_, NOCON_BC_IN_X_IDX, false) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "get x tensor info failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "get x tensor info failed"), return ge::GRAPH_FAILED);
     inputDimNum_ = xShape_.GetDimNum();
     auto const inShape = context_->GetInputShape(NOCON_BC_IN_X_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, inShape);
@@ -181,7 +181,7 @@ ge::graphStatus IndexNoConBroadcastTiling::GetShapeAttrsInfo()
     }
 
     OP_CHECK_IF(GetTensorInfo(yShape_, yStride_, NOCON_BC_OUT_Y_IDX, true) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "get y tensor info failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "get y tensor info failed"), return ge::GRAPH_FAILED);
     auto const outputSize = context_->GetOutputShape(NOCON_BC_OUT_Y_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, outputSize);
     outputLength_ = outputSize->GetStorageShape().GetShapeSize();

@@ -550,22 +550,22 @@ static ge::graphStatus TilingFuncWtsArq(gert::TilingContext* context)
     uint64_t ubSize = 0;
     int64_t coreNum = 0;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     int64_t typeSize = 0;
     int64_t numBits = 8;
     bool offsetFlag = false;
     OP_CHECK_IF(CheckDtypeAndAttrs(context, typeSize, numBits, offsetFlag) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "CheckDtypeAndAttrs error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CheckDtypeAndAttrs error"), return ge::GRAPH_FAILED);
 
     std::vector<std::vector<int64_t>> inputShapes;
     std::vector<int64_t> outputShape;
     OP_CHECK_IF(GetInputShapes(context, inputShapes, outputShape) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "GetInputShapes error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GetInputShapes error"), return ge::GRAPH_FAILED);
 
     int64_t wElems = 0;
     OP_CHECK_IF(CheckShapes(context, inputShapes, outputShape, wElems) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "CheckShapes error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CheckShapes error"), return ge::GRAPH_FAILED);
 
     // workspace: pure elementwise + copy-in broadcast, no GM buffer needed
     size_t* workspaces = context->GetWorkspaceSizes(WORKSPACE_NUM);

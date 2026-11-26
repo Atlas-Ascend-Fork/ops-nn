@@ -2255,3 +2255,174 @@ TEST_F(IndexTiling, Index_AC_tiling_simd_eight_indices)
 
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
 }
+
+// ---------------------------------------------------------------------------
+// 错误码整改负向用例：indices 需要广播且 indexedSizes 无 const 数据时，
+// IndexBroadcastTiling::UpdateTilingData 返回 0，其失败出口以
+// OP_LOGE_WITHOUT_REPORT 包装（下层不再重复上报），tiling 返回 GRAPH_FAILED。
+// 覆盖 index_tiling_broadcast.cpp 的 WITHOUT_REPORT 失败分支。
+// ---------------------------------------------------------------------------
+TEST_F(IndexTiling, Index_BC_tiling_without_const_indexed_sizes_fails)
+{
+    string compile_info_string = R"({
+                                        "hardware_info": {
+                                            "BT_SIZE": 0,
+                                            "load3d_constraints": "1",
+                                            "Intrinsic_fix_pipe_l0c2out": false,
+                                            "Intrinsic_data_move_l12ub": true,
+                                            "Intrinsic_data_move_l0c2ub": true,
+                                            "Intrinsic_data_move_out2l1_nd2nz": false,
+                                            "UB_SIZE": 196608,
+                                            "L2_SIZE": 33554432,
+                                            "L1_SIZE": 524288,
+                                            "L0A_SIZE": 65536,
+                                            "L0B_SIZE": 65536,
+                                            "L0C_SIZE": 131072,
+                                            "CORE_NUM": 64
+                                        }
+                                    })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+
+    // platform info
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    // compile info
+    optiling::IndexCompileInfo compile_info;
+
+    std::string op_type("Index");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+
+    // tilingFunc simulate
+    auto param = gert::TilingData::CreateCap(4096);
+    ASSERT_NE(param, nullptr);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    gert::StorageShape x = {{4, 6, 8, 5}, {4, 6, 8, 5}};
+    gert::StorageShape indexedSizes = {{4}, {4}};
+    gert::StorageShape indexedStrides = {{4}, {4}};
+    gert::StorageShape indices0 = {{3, 1}, {3, 1}};
+    gert::StorageShape indices1 = {{1, 4}, {1, 4}};
+    gert::StorageShape y = {{4, 3, 4, 5}, {4, 3, 4, 5}};
+    std::map<std::string, std::string> soc_version_infos = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+
+    // 关键：不提供 indexedSizes 的 const 数据（GetConstIntToShape 失败）
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(5, 1)
+                      .IrInstanceNum({1, 1, 1, 2})
+                      .InputShapes({&x, &indexedSizes, &indexedStrides, &indices0, &indices1})
+                      .OutputShapes({&y})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", soc_version_infos);
+
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+}
+
+// ---------------------------------------------------------------------------
+// 错误码整改负向用例：indices 需要广播且 x 为携带非连续 view 描述的输入、
+// x 的 stride 维数与 shape 维数不一致时，IndexNoConBroadcastTiling::GetTensorInfo
+// 内部以 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON 首报 EZ0012，外层失败出口改为
+// OP_LOGE_WITHOUT_REPORT 包装（不重复上报），注册 tiling 入口返回 GRAPH_FAILED。
+// 覆盖 index_tiling_nocon_broadcast.cpp 的 WITHOUT_REPORT 失败分支（x 侧）。
+// ---------------------------------------------------------------------------
+TEST_F(IndexTiling, Index_NoConBC_tiling_view_x_stride_dim_mismatch_fails)
+{
+    string compile_info_string = R"({
+                                        "hardware_info": {
+                                            "BT_SIZE": 0,
+                                            "load3d_constraints": "1",
+                                            "Intrinsic_fix_pipe_l0c2out": false,
+                                            "Intrinsic_data_move_l12ub": true,
+                                            "Intrinsic_data_move_l0c2ub": true,
+                                            "Intrinsic_data_move_out2l1_nd2nz": false,
+                                            "UB_SIZE": 196608,
+                                            "L2_SIZE": 33554432,
+                                            "L1_SIZE": 524288,
+                                            "L0A_SIZE": 65536,
+                                            "L0B_SIZE": 65536,
+                                            "L0C_SIZE": 131072,
+                                            "CORE_NUM": 64
+                                        }
+                                    })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+
+    // platform info
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    // compile info
+    optiling::IndexCompileInfo compile_info;
+
+    std::string op_type("Index");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+
+    auto param = gert::TilingData::CreateCap(4096);
+    ASSERT_NE(param, nullptr);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    std::map<std::string, std::string> soc_version_infos = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+
+    // 关键：x 是 view tensor（TensorV2），stride 维数(3) != shape 维数(2)
+    gert::TensorV2 x({{4, 8}, {4, 8}}, {ge::FORMAT_ND, ge::FORMAT_ND, gert::ExpandDimsType()},
+                     gert::TensorPlacement::kOnHost, ge::DT_FLOAT, nullptr, nullptr);
+    x.MutableStride() = gert::Stride({32, 4, 1});
+    gert::TensorV2 indexedSizes({{4}, {4}}, {ge::FORMAT_ND, ge::FORMAT_ND, gert::ExpandDimsType()},
+                                gert::TensorPlacement::kOnHost, ge::DT_INT64, nullptr, nullptr);
+    gert::TensorV2 indexedStrides({{4}, {4}}, {ge::FORMAT_ND, ge::FORMAT_ND, gert::ExpandDimsType()},
+                                  gert::TensorPlacement::kOnHost, ge::DT_INT64, nullptr, nullptr);
+    // 两个形状不同的 indices 触发广播路径，使 no_continuous(0) 主动让位
+    gert::TensorV2 indices0({{3, 1}, {3, 1}}, {ge::FORMAT_ND, ge::FORMAT_ND, gert::ExpandDimsType()},
+                            gert::TensorPlacement::kOnHost, ge::DT_INT64, nullptr, nullptr);
+    gert::TensorV2 indices1({{1, 4}, {1, 4}}, {ge::FORMAT_ND, ge::FORMAT_ND, gert::ExpandDimsType()},
+                            gert::TensorPlacement::kOnHost, ge::DT_INT64, nullptr, nullptr);
+    gert::StorageShape y = {{4, 3, 4, 5}, {4, 3, 4, 5}};
+
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(5, 1)
+                      .IrInstanceNum({1, 1, 1, 2})
+                      .InputTensors({&x, &indexedSizes, &indexedStrides, &indices0, &indices1})
+                      .OutputShapes({&y})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", soc_version_infos);
+
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+}

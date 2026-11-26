@@ -215,11 +215,20 @@ static ge::graphStatus ParseAxesTensor(gert::TilingContext* context, EuclideanNo
     std::set<int64_t> seen;
     auto pushOne = [&](int64_t v, int64_t idx) -> ge::graphStatus {
         OP_CHECK_IF(v < -xRank || v >= xRank,
-                    OP_LOGE(context, "axes[%ld]=%ld out of range [-%ld, %ld)", idx, v, xRank, xRank),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "axes", std::to_string(v).c_str(),
+                        ("axes[" + std::to_string(idx) + "] must be in [-" + std::to_string(xRank) + ", " +
+                         std::to_string(xRank) + ") for input rank " + std::to_string(xRank))
+                            .c_str()),
                     return ge::GRAPH_FAILED);
         const int64_t norm = (v < 0) ? (v + xRank) : v;
-        OP_CHECK_IF(!seen.insert(norm).second,
-                    OP_LOGE(context, "duplicate axis %ld in axes (input idx=%ld)", norm, idx), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            !seen.insert(norm).second,
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "axes", std::to_string(v).c_str(),
+                                                  ("axes[" + std::to_string(idx) + "] normalizes to duplicate axis " +
+                                                   std::to_string(norm) + " for input rank " + std::to_string(xRank))
+                                                      .c_str()),
+            return ge::GRAPH_FAILED);
         ctx.reduceAxes.push_back(norm);
         return ge::GRAPH_SUCCESS;
     };

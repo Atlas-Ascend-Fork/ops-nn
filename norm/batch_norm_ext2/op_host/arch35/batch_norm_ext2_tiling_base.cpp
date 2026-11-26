@@ -316,7 +316,10 @@ ge::graphStatus BatchNormExt2TilingBase::GetPlatformInfo()
 // infer
 ge::graphStatus BatchNormExt2TilingInferBase::GetShapeAttrsInfo()
 {
-    OP_CHECK_IF(GetAttrsAndCheckValid() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "Get attrs failed"),
+    OP_CHECK_IF(GetAttrsAndCheckValid() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(
+                    context_->GetNodeName(),
+                    "stage=GetShapeAttrsInfo callee=GetAttrsAndCheckValid rc=GRAPH_FAILED; preserve first error"),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(isTraining_, OP_LOGI(context_, "This node only support infer."), return ge::GRAPH_PARAM_INVALID);
@@ -349,7 +352,10 @@ ge::graphStatus BatchNormExt2TilingInferBase::GetShapeAttrsInfo()
 // training
 ge::graphStatus BatchNormExt2RegbaseTilingBase::GetShapeAttrsInfo()
 {
-    OP_CHECK_IF(GetAttrsAndCheckValid() != ge::GRAPH_SUCCESS, OP_LOGE(context_->GetNodeName(), "Get attrs failed"),
+    OP_CHECK_IF(GetAttrsAndCheckValid() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(
+                    context_->GetNodeName(),
+                    "stage=GetShapeAttrsInfo callee=GetAttrsAndCheckValid rc=GRAPH_FAILED; preserve first error"),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(!isTraining_, OP_LOGI(context_, "This node only support training."), return ge::GRAPH_PARAM_INVALID);

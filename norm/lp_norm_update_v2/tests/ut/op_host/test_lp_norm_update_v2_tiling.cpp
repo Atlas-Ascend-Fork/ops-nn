@@ -18,6 +18,8 @@
 #include <vector>
 
 #include "log/log.h"
+#include "base/err_mgr.h"
+#include "graph/utils/type_utils.h"
 #include "platform/platform_infos_def.h"
 #include "ut_op_util.h"
 #include "kernel_run_context_facker.h"
@@ -121,6 +123,31 @@ TilingResult RunTiling(const std::vector<int64_t>& shape, ge::DataType dtype, fl
     return result;
 }
 
+void BeginParameterErrorCapture()
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+void CheckSingleParameterError(const std::string& code, const std::map<std::string, std::string>& expected)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors.front().error_id, nullptr);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), code);
+    ASSERT_EQ(errors.front().args_key.size(), 4U);
+    ASSERT_EQ(errors.front().args_value.size(), 4U);
+    std::map<std::string, std::string> actual;
+    for (size_t i = 0; i < errors.front().args_key.size(); ++i) {
+        ASSERT_NE(errors.front().args_key[i], nullptr);
+        ASSERT_NE(errors.front().args_value[i], nullptr);
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[i].get(), errors.front().args_value[i].get()).second);
+    }
+    EXPECT_EQ(actual, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
 constexpr float kIntSentinelMax = static_cast<float>(std::numeric_limits<int32_t>::max());
 constexpr float kIntSentinelMin = static_cast<float>(std::numeric_limits<int32_t>::min());
 constexpr float kFltMax = std::numeric_limits<float>::max();
@@ -194,8 +221,12 @@ TEST_F(LpNormUpdateV2TilingTest, invalid_shapes_rejected)
     auto overflow = RunTiling({std::numeric_limits<int64_t>::max(), 2}, ge::DT_FLOAT, 2.0f, 0.0f);
     EXPECT_EQ(overflow.status, ge::GRAPH_FAILED);
 
+    BeginParameterErrorCapture();
     auto rankNine = RunTiling({1, 1, 1, 1, 1, 1, 1, 1, 1}, ge::DT_FLOAT, 2.0f, 0.0f);
     EXPECT_EQ(rankNine.status, ge::GRAPH_FAILED);
+    CheckSingleParameterError(
+        "EZ0012",
+        {{"param_name", "x"}, {"op_name", "fakeOp"}, {"incorrect_dim", "9D"}, {"reason", "rank must not exceed 8"}});
 
     auto unknownRank = RunTiling({-2}, ge::DT_FLOAT, 2.0f, 0.0f);
     EXPECT_EQ(unknownRank.status, ge::GRAPH_FAILED);
@@ -265,4 +296,15 @@ TEST_F(LpNormUpdateV2TilingTest, nan_p_uses_pow_branch)
     EXPECT_EQ(result.status, ge::GRAPH_SUCCESS);
     EXPECT_EQ(result.tilingKey, 2);
     EXPECT_TRUE(std::isnan(result.data.invP));
+}
+
+TEST_F(LpNormUpdateV2TilingTest, int32_input_reports_single_dtype_error)
+{
+    BeginParameterErrorCapture();
+    auto result = RunTiling({4}, ge::DT_INT32, 2.0f, 0.0f);
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    CheckSingleParameterError("EZ0020", {{"param_name", "x"},
+                                         {"op_name", "fakeOp"},
+                                         {"incorrect_dtype", ge::TypeUtils::DataTypeToSerialString(ge::DT_INT32)},
+                                         {"reason", "supported dtypes are FLOAT16, FLOAT and BF16"}});
 }

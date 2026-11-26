@@ -303,7 +303,11 @@ void IndexPutV2SimdTiling::DoUBTiling()
 ge::graphStatus IndexPutV2SimdTiling::DoOpTiling()
 {
     auto curIndexShape = context_->GetDynamicInputShape(INDICES_IDX, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(context_, curIndexShape);
+    OP_CHECK_IF(curIndexShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "indices",
+                    "the indices input is invalid: no shape is accessible for the first indices tensor"),
+                return ge::GRAPH_FAILED);
     auto const indexSizeVal = curIndexShape->GetStorageShape();
     indexedLength_ = indexSizeVal.GetShapeSize();
 

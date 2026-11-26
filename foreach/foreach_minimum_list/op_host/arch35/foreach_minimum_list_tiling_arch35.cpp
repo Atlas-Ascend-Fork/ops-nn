@@ -73,8 +73,12 @@ static ge::graphStatus ForeachMinimumListTilingFunc(gert::TilingContext* context
                 OP_LOGE_WITHOUT_REPORT(context, "set tiling data error"), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(tensorNum > MAX_TENSOR_NUM,
-                OP_LOGE_FOR_INVALID_TENSORNUM(context->GetNodeName(), "x1", static_cast<int64_t>(tensorNum),
-                                              ("within the range [0, " + std::to_string(MAX_TENSOR_NUM) + "]").c_str()),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x1",
+                                                         ("x1 has " + std::to_string(tensorNum) +
+                                                          " tensors, but the tensor num must be within the range "
+                                                          "[0, " +
+                                                          std::to_string(MAX_TENSOR_NUM) + "]")
+                                                             .c_str()),
                 return ge::GRAPH_FAILED);
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto x1ShapePtr = context->GetDynamicInputShape(INPUT_IDX_0, i);

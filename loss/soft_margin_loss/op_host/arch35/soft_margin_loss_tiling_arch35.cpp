@@ -126,11 +126,13 @@ ge::graphStatus SoftMarginLossTiling::TilingEle()
     if (this->outputDtype == ge::DT_FLOAT16 || this->outputDtype == ge::DT_BF16) {
         OP_CHECK_IF(eleBaseTiling.DoTiling<SoftMarginLoss::SoftMarginLossOp<half>::OpDag>(tiling->baseTiling) !=
                         ge::GRAPH_SUCCESS,
-                    OP_LOGE(tilingContext->GetNodeName(), "do tiling failed for fp16"), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "do tiling failed for fp16"),
+                    return ge::GRAPH_FAILED);
     } else if (this->outputDtype == ge::DT_FLOAT) {
         OP_CHECK_IF(eleBaseTiling.DoTiling<SoftMarginLoss::SoftMarginLossOp<float>::OpDag>(tiling->baseTiling) !=
                         ge::GRAPH_SUCCESS,
-                    OP_LOGE(tilingContext->GetNodeName(), "do tiling failed for fp32"), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "do tiling failed for fp32"),
+                    return ge::GRAPH_FAILED);
     } else {
         OP_LOGE_FOR_INVALID_DTYPE(tilingContext->GetNodeName(), "output_z", ToString(this->outputDtype).c_str(),
                                   "FLOAT, FLOAT16 or BF16");
@@ -143,7 +145,8 @@ ge::graphStatus SoftMarginLossTiling::TilingReduce(const SoftMarginLossCompileIn
 {
     ReduceOpInputParam opInput;
     OP_CHECK_IF((ReduceOpTmpl::GetInputParam(tilingContext, opInput, 0) == ge::GRAPH_FAILED),
-                OP_LOGE(tilingContext->GetNodeName(), "ReduceOp get self input failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "ReduceOp get self input failed"),
+                return ge::GRAPH_FAILED);
     opInput.axes.resize(opInput.shape.size());
     for (size_t i = 0; i < opInput.shape.size(); i++) {
         opInput.axes[i] = i;
@@ -153,24 +156,28 @@ ge::graphStatus SoftMarginLossTiling::TilingReduce(const SoftMarginLossCompileIn
             OP_CHECK_IF((Tiling4ReduceOp<SoftMarginLoss::SoftMarginLossSumDag<half, float>::OpDag>(
                              tilingContext, opInput, key.ReduceTiling, &compileInfo->opInfo, &tiling->reduceTiling) ==
                          ge::GRAPH_FAILED),
-                        OP_LOGE(tilingContext->GetNodeName(), "SoftMarginLoss Tiling failed"), return ge::GRAPH_FAILED);
+                        OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "SoftMarginLoss Tiling failed"),
+                        return ge::GRAPH_FAILED);
         } else {
             OP_CHECK_IF((Tiling4ReduceOp<SoftMarginLoss::SoftMarginLossMeanDag<half, float>::OpDag>(
                              tilingContext, opInput, key.ReduceTiling, &compileInfo->opInfo, &tiling->reduceTiling) ==
                          ge::GRAPH_FAILED),
-                        OP_LOGE(tilingContext->GetNodeName(), "SoftMarginLoss Tiling failed"), return ge::GRAPH_FAILED);
+                        OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "SoftMarginLoss Tiling failed"),
+                        return ge::GRAPH_FAILED);
         }
     } else {
         if (this->reduction == REDUCTION_SUM) {
             OP_CHECK_IF((Tiling4ReduceOp<SoftMarginLoss::SoftMarginLossSumDag<float, float>::OpDag>(
                              tilingContext, opInput, key.ReduceTiling, &compileInfo->opInfo, &tiling->reduceTiling) ==
                          ge::GRAPH_FAILED),
-                        OP_LOGE(tilingContext->GetNodeName(), "SoftMarginLoss Tiling failed"), return ge::GRAPH_FAILED);
+                        OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "SoftMarginLoss Tiling failed"),
+                        return ge::GRAPH_FAILED);
         } else {
             OP_CHECK_IF((Tiling4ReduceOp<SoftMarginLoss::SoftMarginLossMeanDag<float, float>::OpDag>(
                              tilingContext, opInput, key.ReduceTiling, &compileInfo->opInfo, &tiling->reduceTiling) ==
                          ge::GRAPH_FAILED),
-                        OP_LOGE(tilingContext->GetNodeName(), "SoftMarginLoss Tiling failed"), return ge::GRAPH_FAILED);
+                        OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "SoftMarginLoss Tiling failed"),
+                        return ge::GRAPH_FAILED);
         }
     }
     return ge::GRAPH_SUCCESS;
@@ -178,8 +185,8 @@ ge::graphStatus SoftMarginLossTiling::TilingReduce(const SoftMarginLossCompileIn
 
 ge::graphStatus SoftMarginLossTiling::RunTiling(const SoftMarginLossCompileInfo* compileInfo)
 {
-    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED, OP_LOGE(tilingContext->GetNodeName(), "check shape failed"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckShape() == ge::GRAPH_FAILED,
+                OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "check shape failed"), return ge::GRAPH_FAILED);
     auto attrs = tilingContext->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext, attrs);
     const char* reductionPtr = attrs->GetAttrPointer<char>(0);
@@ -196,10 +203,12 @@ ge::graphStatus SoftMarginLossTiling::RunTiling(const SoftMarginLossCompileInfo*
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext, tiling);
     if (reductionStr == "none") {
         OP_CHECK_IF(TilingEle() != ge::GRAPH_SUCCESS,
-                    OP_LOGE(tilingContext->GetNodeName(), "do tiling failed for elewise"), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "do tiling failed for elewise"),
+                    return ge::GRAPH_FAILED);
     } else if (reductionStr == "mean" || reductionStr == "sum") {
         OP_CHECK_IF(TilingReduce(compileInfo) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(tilingContext->GetNodeName(), "do tiling failed for reduce"), return ge::GRAPH_FAILED);
+                    OP_LOGE_WITHOUT_REPORT(tilingContext->GetNodeName(), "do tiling failed for reduce"),
+                    return ge::GRAPH_FAILED);
     } else {
         OP_LOGE_FOR_INVALID_VALUE(tilingContext->GetNodeName(), "reduction", reductionStr.c_str(), "none, sum or mean");
         return ge::GRAPH_FAILED;

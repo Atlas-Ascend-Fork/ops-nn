@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "log/log.h"
+#include "base/err_mgr.h"
 #include "kernel_run_context_facker.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
@@ -191,6 +192,89 @@ protected:
 // ────────────────────────────────────────────────────────────────────────────
 // 用例 1：fp32 输入，shape=(4, 64)，axes=[1]，keep_dims=false → tiling success
 // ────────────────────────────────────────────────────────────────────────────
+static void CheckAxesReport(const std::vector<int32_t>& axes, ge::graphStatus expected, const std::string& actual,
+                            const std::string& reason)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+    fe::PlatFormInfos platformInfo;
+    map<string, string> socInfos, aicoreSpec, intrinsics;
+    SetupPlatform(platformInfo, socInfos, aicoreSpec, intrinsics);
+    EuclideanNormCompileInfoForTest compileInfo;
+    gert::KernelRunContextHolder kernelHolder;
+    SetupKernelHolder(platformInfo, compileInfo, socInfos, aicoreSpec, intrinsics, kernelHolder);
+    gert::StorageShape xShape = {{4, 64}, {4, 64}};
+    gert::StorageShape yShape = {{64}, {64}};
+    gert::StorageShape axesShape = {{static_cast<int64_t>(axes.size())}, {static_cast<int64_t>(axes.size())}};
+    std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> consts;
+    consts.emplace_back(1U, MakeAxesConstTensor(axes));
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("EuclideanNorm")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&xShape, &axesShape})
+                      .OutputShapes({&yShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"keep_dims", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .ConstInput(consts)
+                      .TilingData(param.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(wsHolder.get()))
+                      .Build();
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("EuclideanNorm");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->tiling, nullptr);
+    EXPECT_EQ(impl->tiling(holder.GetContext<gert::TilingContext>()), expected);
+    auto messages = error_message::GetErrMgrRawErrorMessages();
+    if (expected == ge::GRAPH_SUCCESS) {
+        EXPECT_TRUE(messages.empty());
+        return;
+    }
+    ASSERT_EQ(messages.size(), 1U);
+    const auto& message = messages.front();
+    ASSERT_NE(message.error_id, nullptr);
+    EXPECT_EQ(std::string(message.error_id.get()), "EZ0026");
+    ASSERT_EQ(message.args_key.size(), 4U);
+    ASSERT_EQ(message.args_value.size(), 4U);
+    std::map<std::string, std::string> arguments;
+    for (size_t i = 0; i < message.args_key.size(); ++i) {
+        ASSERT_NE(message.args_key[i], nullptr);
+        ASSERT_NE(message.args_value[i], nullptr);
+        EXPECT_TRUE(arguments.emplace(message.args_key[i].get(), message.args_value[i].get()).second);
+    }
+    EXPECT_EQ(arguments.at("param_name"), "axes");
+    EXPECT_FALSE(arguments.at("op_name").empty());
+    EXPECT_EQ(arguments.at("incorrect_value"), actual);
+    EXPECT_EQ(arguments.at("reason"), reason);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+TEST_F(EuclideanNormTiling, axes_positive_out_of_range_reports_formal_error)
+{
+    CheckAxesReport({2}, ge::GRAPH_FAILED, "2", "axes[0] must be in [-2, 2) for input rank 2");
+}
+
+TEST_F(EuclideanNormTiling, axes_negative_out_of_range_reports_formal_error)
+{
+    CheckAxesReport({-3}, ge::GRAPH_FAILED, "-3", "axes[0] must be in [-2, 2) for input rank 2");
+}
+
+TEST_F(EuclideanNormTiling, axes_normalized_duplicate_reports_original_value)
+{
+    CheckAxesReport({1, -1}, ge::GRAPH_FAILED, "-1", "axes[1] normalizes to duplicate axis 1 for input rank 2");
+}
+
+TEST_F(EuclideanNormTiling, axes_negative_lower_boundary_remains_valid)
+{
+    CheckAxesReport({-2}, ge::GRAPH_SUCCESS, "", "");
+}
+
 TEST_F(EuclideanNormTiling, tiling_fp32_2d_reduce_last)
 {
     fe::PlatFormInfos platformInfo;

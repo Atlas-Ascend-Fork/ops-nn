@@ -23,8 +23,11 @@
 
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <string>
 #include <vector>
 
+#include "base/err_mgr.h"
 #include "index/tensor_scatter_sub/op_kernel/arch35/tensor_scatter_sub_tiling_data.h"
 #include "ut_op_util.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -434,4 +437,74 @@ TEST_F(TestTensorScatterSubTiling, tensor_scatter_sub_x_even_negative_dims_posit
 {
     auto result = DoTensorScatterSubTilingCase({-1, -1, 4}, {1, 3}, {1}, ge::DT_FLOAT, ge::DT_INT32);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+}
+
+// 负向用例：updates dtype 与 x dtype 不匹配。根因层（ValidateDtype）应产出唯一 EZ0020 正式首错，
+// 外层调度器只补日志不重复上报（一次故障一个 ErrorManager 首错）。
+TEST_F(TestTensorScatterSubTiling, tensor_scatter_sub_updates_dtype_mismatch_single_formal_error)
+{
+    fe::PlatFormInfos platFormInfo;
+    map<string, string> socInfos;
+    map<string, string> aicoreSpec;
+    map<string, string> intrinsics;
+    map<string, string> socVersion = {{"Short_SoC_version", "ASCEND950"}};
+    InitPlatForm(platFormInfo, socInfos, aicoreSpec, intrinsics, socVersion);
+
+    std::string opType("TensorScatterSub");
+    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspaceSizeHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(workspaceSizeHolder.get());
+
+    gert::StorageShape xStorage = {{4, 5, 6}, {4, 5, 6}};
+    gert::StorageShape indicesStorage = {{3, 1}, {3, 1}};
+    gert::StorageShape updatesStorage = {{3, 5, 6}, {3, 5, 6}};
+    TensorScatterSubUtCompileInfo compileInfo;
+
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(opType)
+                      .NodeIoNum(3, 1)
+                      .IrInstanceNum({1, 1, 1})
+                      .InputShapes({&xStorage, &indicesStorage, &updatesStorage})
+                      .OutputShapes({&xStorage})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platFormInfo))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND) // updates dtype mismatch
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+    gert::TilingContext* tilingContext = holder.GetContext<gert::TilingContext>();
+    tilingContext->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    tilingContext->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    tilingContext->GetPlatformInfo()->SetPlatformRes("version", socVersion);
+
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+    EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_FAILED);
+    const auto messages = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(messages.size(), 1U);
+    const auto& message = messages.front();
+    ASSERT_NE(message.error_id, nullptr);
+    EXPECT_EQ(std::string(message.error_id.get()), "EZ0020");
+    ASSERT_EQ(message.args_key.size(), 4U);
+    ASSERT_EQ(message.args_value.size(), 4U);
+    std::map<std::string, std::string> arguments;
+    for (size_t i = 0; i < message.args_key.size(); ++i) {
+        ASSERT_NE(message.args_key[i], nullptr);
+        ASSERT_NE(message.args_value[i], nullptr);
+        EXPECT_TRUE(arguments.emplace(message.args_key[i].get(), message.args_value[i].get()).second);
+    }
+    const std::map<std::string, std::string> expected = {{"param_name", "updates"},
+                                                         {"op_name", tilingContext->GetNodeName()},
+                                                         {"incorrect_dtype", "DT_FLOAT16"},
+                                                         {"reason", "updates dtype must match x dtype DT_FLOAT"}};
+    EXPECT_EQ(arguments, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
 }

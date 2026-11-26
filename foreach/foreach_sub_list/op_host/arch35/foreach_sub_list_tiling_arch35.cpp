@@ -74,12 +74,16 @@ static ge::graphStatus CheckInputCompatibility(gert::TilingContext* context, uin
     auto x2InstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(INPUT_IDX_X2);
     OP_CHECK_NULL_WITH_CONTEXT(context, x2InstanceInfoPtr);
     OP_CHECK_IF(x2InstanceInfoPtr->GetInstanceNum() != tensorNum,
-                OP_LOGE(context, "x1 and x2 must contain the same number of tensors, but got %lu and %lu", tensorNum,
-                        x2InstanceInfoPtr->GetInstanceNum()),
+                OP_LOGE_FOR_INVALID_TENSORNUMS_WITH_REASON(
+                    context->GetNodeName(), "x1, x2",
+                    (std::to_string(tensorNum) + " and " + std::to_string(x2InstanceInfoPtr->GetInstanceNum())).c_str(),
+                    "x1 and x2 must contain the same number of tensors"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(context->GetComputeNodeOutputNum() != tensorNum,
-                OP_LOGE(context, "x1 and y must contain the same number of tensors, but got %lu and %zu", tensorNum,
-                        context->GetComputeNodeOutputNum()),
+                OP_LOGE_FOR_INVALID_TENSORNUMS_WITH_REASON(
+                    context->GetNodeName(), "x1, y",
+                    (std::to_string(tensorNum) + " and " + std::to_string(context->GetComputeNodeOutputNum())).c_str(),
+                    "x1 and y must contain the same number of tensors"),
                 return ge::GRAPH_FAILED);
 
     for (uint64_t i = 0; i < tensorNum; i++) {
@@ -97,9 +101,15 @@ static ge::graphStatus CheckInputCompatibility(gert::TilingContext* context, uin
         auto x2Shape = context->GetDynamicInputShape(INPUT_IDX_X2, i);
         OP_CHECK_NULL_WITH_CONTEXT(context, x1Shape);
         OP_CHECK_NULL_WITH_CONTEXT(context, x2Shape);
-        OP_CHECK_IF(x1Shape->GetStorageShape() != x2Shape->GetStorageShape(),
-                    OP_LOGE(context, "x1[%lu] and x2[%lu] must have the same storage shape", i, i),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            x1Shape->GetStorageShape() != x2Shape->GetStorageShape(),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), ("x1[" + std::to_string(i) + "], x2[" + std::to_string(i) + "]").c_str(),
+                (Ops::Base::ToString(x1Shape->GetStorageShape()) + ", " +
+                 Ops::Base::ToString(x2Shape->GetStorageShape()))
+                    .c_str(),
+                "corresponding tensor-list members must have equal storage shapes"),
+            return ge::GRAPH_FAILED);
         OP_CHECK_IF(x1Shape->GetStorageShape().GetDimNum() > MAX_DIM_NUM ||
                         x2Shape->GetStorageShape().GetDimNum() > MAX_DIM_NUM,
                     OP_LOGE(context, "x1[%lu] and x2[%lu] must have at most %u dimensions", i, i, MAX_DIM_NUM),
@@ -113,16 +123,30 @@ static ge::graphStatus CheckInputCompatibility(gert::TilingContext* context, uin
         OP_CHECK_IF(outputDesc == nullptr || outputShape == nullptr,
                     OP_LOGE(context, "output %lu desc or shape is null", i), return ge::GRAPH_FAILED);
         OP_CHECK_IF(outputDesc->GetDataType() != inputDtype,
-                    OP_LOGE(context, "y[%lu] dtype must be %d, but got %d", i, static_cast<int32_t>(inputDtype),
-                            static_cast<int32_t>(outputDesc->GetDataType())),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                        context->GetNodeName(), ("y[" + std::to_string(i) + "]").c_str(),
+                        Ops::Base::ToString(outputDesc->GetDataType()).c_str(),
+                        "y[i] must have the same dtype as the corresponding x1[i]/x2[i] members"),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(outputShape->GetStorageShape().GetDimNum() > MAX_DIM_NUM,
-                    OP_LOGE(context, "y[%lu] must have at most %u dimensions", i, MAX_DIM_NUM),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            outputShape->GetStorageShape().GetDimNum() > MAX_DIM_NUM,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), ("y[" + std::to_string(i) + "]").c_str(),
+                                                     std::to_string(outputShape->GetStorageShape().GetDimNum()).c_str(),
+                                                     "y[i] must have at most 8 dimensions"),
+            return ge::GRAPH_FAILED);
         OP_CHECK_IF(HasNegativeDim(outputShape->GetStorageShape()),
-                    OP_LOGE(context, "y[%lu] must have concrete non-negative dimensions", i), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        context->GetNodeName(), ("y[" + std::to_string(i) + "]").c_str(),
+                        std::to_string(outputShape->GetStorageShape().GetShapeSize()).c_str(),
+                        "y[i] must have concrete non-negative dimensions"),
+                    return ge::GRAPH_FAILED);
         OP_CHECK_IF(outputShape->GetStorageShape() != x1Shape->GetStorageShape(),
-                    OP_LOGE(context, "y[%lu] must have the same storage shape as x1[%lu]", i, i),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), ("y[" + std::to_string(i) + "]").c_str(),
+                        Ops::Base::ToString(outputShape->GetStorageShape()).c_str(),
+                        ("y[" + std::to_string(i) + "] must have the same storage shape as x1[" + std::to_string(i) +
+                         "]:" + Ops::Base::ToString(x1Shape->GetStorageShape()))
+                            .c_str()),
                     return ge::GRAPH_FAILED);
     }
 
@@ -130,21 +154,31 @@ static ge::graphStatus CheckInputCompatibility(gert::TilingContext* context, uin
     OP_CHECK_NULL_WITH_CONTEXT(context, alphaDesc);
     ge::DataType expectedAlphaDtype = GetExpectedAlphaDtype(inputDtype);
     OP_CHECK_IF(alphaDesc->GetDataType() != expectedAlphaDtype,
-                OP_LOGE(context, "alpha dtype must be %d when x1/x2 dtype is %d, but got %d",
-                        static_cast<int32_t>(expectedAlphaDtype), static_cast<int32_t>(inputDtype),
-                        static_cast<int32_t>(alphaDesc->GetDataType())),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    context->GetNodeName(), "alpha", Ops::Base::ToString(alphaDesc->GetDataType()).c_str(),
+                    "the dtype of alpha must be the same as x1/x2 for FLOAT16/FLOAT/INT32, FLOAT when x1/x2 is "
+                    "BF16, and INT32 when x1/x2 is INT16/INT8/UINT8"),
                 return ge::GRAPH_FAILED);
 
     auto alphaShape = context->GetRequiredInputShape(INPUT_IDX_ALPHA);
     OP_CHECK_NULL_WITH_CONTEXT(context, alphaShape);
     OP_CHECK_IF(alphaShape->GetStorageShape().GetDimNum() > MAX_DIM_NUM,
-                OP_LOGE(context, "alpha must have at most %u dimensions", MAX_DIM_NUM), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(HasNegativeDim(alphaShape->GetStorageShape()),
-                OP_LOGE(context, "alpha must have concrete non-negative dimensions"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(alphaShape->GetStorageShape().GetShapeSize() != 1,
-                OP_LOGE(context, "alpha must contain exactly one element, but got %ld",
-                        alphaShape->GetStorageShape().GetShapeSize()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "alpha", std::to_string(alphaShape->GetStorageShape().GetDimNum()).c_str(),
+                    "alpha must have at most 8 dimensions"),
                 return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        HasNegativeDim(alphaShape->GetStorageShape()),
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "alpha",
+                                                  std::to_string(alphaShape->GetStorageShape().GetShapeSize()).c_str(),
+                                                  "alpha must have concrete non-negative dimensions"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        alphaShape->GetStorageShape().GetShapeSize() != 1,
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "alpha",
+                                                  std::to_string(alphaShape->GetStorageShape().GetShapeSize()).c_str(),
+                                                  "alpha must contain exactly one element"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -166,7 +200,7 @@ static ge::graphStatus ForeachSubListTilingFunc(gert::TilingContext* context)
     uint64_t ubSize;
     int64_t coreNum;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     auto computeNodeInfoPtr = context->GetComputeNodeInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfoPtr);
@@ -181,7 +215,7 @@ static ge::graphStatus ForeachSubListTilingFunc(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     ge::DataType dataType = inputDesc->GetDataType();
     OP_CHECK_IF(CheckInputCompatibility(context, tensorNum, dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "input compatibility check failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "input compatibility check failed"), return ge::GRAPH_FAILED);
 
     ForeachSubListTilingData* tiling = context->GetTilingData<ForeachSubListTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
@@ -196,9 +230,14 @@ static ge::graphStatus ForeachSubListTilingFunc(gert::TilingContext* context)
         OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
         auto storageShape = shapePtr->GetStorageShape();
         int64_t numel = storageShape.GetShapeSize();
-        OP_CHECK_IF(numel < 0 || totalElements > std::numeric_limits<int64_t>::max() - numel,
-                    OP_LOGE(context, "tensor element count is negative or totalElements overflows at tensor %lu", i),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            numel < 0 || totalElements > std::numeric_limits<int64_t>::max() - numel,
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                context->GetNodeName(), ("x1[" + std::to_string(i) + "]").c_str(), std::to_string(numel).c_str(),
+                ("The tensor element count must be non-negative, and adding it to the preceding total " +
+                 std::to_string(totalElements) + " must not exceed INT64_MAX")
+                    .c_str()),
+            return ge::GRAPH_FAILED);
         tiling->tensorStarts[i] = totalElements;
         totalElements += numel;
     }
@@ -260,7 +299,8 @@ static ge::graphStatus ForeachSubListTilingFunc(gert::TilingContext* context)
     } else if (dataType == ge::DT_UINT8) {
         tilingKey = GET_TPL_TILING_KEY(FOREACH_SUB_LIST_TPL_SCH_MODE_UINT8);
     } else {
-        OP_LOGE(context, "unsupported dtype for foreach_sub_list");
+        OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "x1", Ops::Base::ToString(dataType).c_str(),
+                                  "float, float16, bfloat16, int32, int16, int8 or uint8");
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(tilingKey);

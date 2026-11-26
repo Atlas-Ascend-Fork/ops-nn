@@ -15,6 +15,8 @@
 #include "array_ops.h"
 #include <gtest/gtest.h>
 #include "log/log.h"
+#include "base/err_mgr.h"
+#include "graph/utils/type_utils.h"
 #include "register/op_impl_registry.h"
 #include "op_host/tiling_templates_registry.h"
 #include "platform/platform_infos_def.h"
@@ -978,4 +980,121 @@ TEST_F(MaskedSoftmaxWithRelPosBiasTiling, B_tiling_310p_20)
     gert::StorageShape y_shape = {{B, W, N, S1, S2}, {B, W, N, S1, S2}};
     test310PTiling(x_shape, atten_mask_shape, bias_shape, y_shape, 2.0, false, 203);
     test310PTiling(x_shape, atten_mask_shape, bias_shape, y_shape, 1.0, false, 204);
+}
+
+namespace {
+void CheckIndependentDtypes(bool hasMask, ge::DataType xType, ge::DataType maskType, ge::DataType biasType,
+                            ge::DataType yType, const std::string& code,
+                            const std::map<std::string, std::string>& expectedFields)
+{
+    gert::StorageShape xShape = {{2, 2, 16, 16}, {2, 2, 16, 16}};
+    gert::StorageShape maskShape = {{1, 16, 16}, {1, 16, 16}};
+    gert::StorageShape biasShape = {{2, 16, 16}, {2, 16, 16}};
+    gert::StorageShape yShape = xShape;
+    const std::string compileInfoStr =
+        R"({"hardware_info":{"UB_SIZE":196352,"L2_SIZE":33554432,"L1_SIZE":524032,"L0A_SIZE":65536,"L0B_SIZE":65536,"L0C_SIZE":131072,"CORE_NUM":24,"cube_core_cnt":24,"vector_core_cnt":48,"core_type_list":"CubeCore,VectorCore"}})";
+    std::map<std::string, std::string> socInfos;
+    std::map<std::string, std::string> aicoreSpec;
+    std::map<std::string, std::string> intrinsics;
+    GetPlatFormInfos(compileInfoStr.c_str(), socInfos, aicoreSpec, intrinsics);
+    fe::PlatFormInfos platformInfo;
+    ASSERT_TRUE(platformInfo.Init());
+    platformInfo.SetPlatformRes("SoCInfo", socInfos);
+    platformInfo.SetPlatformRes("AICoreSpec", aicoreSpec);
+    platformInfo.SetCoreNumByCoreType("AICore");
+    platformInfo.SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    struct CompileInfo {
+    } compileInfo;
+    auto data = gert::TilingData::CreateCap(4096);
+    auto workspace = gert::ContinuousVector::Create<size_t>(4096);
+    ASSERT_NE(data, nullptr);
+    ASSERT_NE(workspace, nullptr);
+    auto faker = gert::TilingContextFaker();
+    faker.SetOpType("MaskedSoftmaxWithRelPosBias")
+        .NodeIoNum(hasMask ? 3 : 2, 1)
+        .IrInstanceNum({1, hasMask ? 1U : 0U, 1})
+        .InputShapes(hasMask ? std::vector<gert::StorageShape*>{&xShape, &maskShape, &biasShape} :
+                               std::vector<gert::StorageShape*>{&xShape, &biasShape})
+        .OutputShapes({&yShape})
+        .CompileInfo(&compileInfo)
+        .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+        .NodeInputTd(0, xType, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(0, yType, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeAttrs({{"scale_value", Ops::NN::AnyValue::CreateFrom<float>(1.0f)},
+                    {"inner_precision_mode", Ops::NN::AnyValue::CreateFrom<int64_t>(0)}})
+        .TilingData(data.get())
+        .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()));
+    if (hasMask) {
+        faker.NodeInputTd(1, maskType, ge::FORMAT_ND, ge::FORMAT_ND);
+        faker.NodeInputTd(2, biasType, ge::FORMAT_ND, ge::FORMAT_ND);
+    } else {
+        faker.NodeInputTd(1, biasType, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    auto holder = faker.Build();
+    auto context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(context, nullptr);
+    ASSERT_NE(context->GetRequiredInputDesc(2), nullptr);
+    EXPECT_EQ(context->GetRequiredInputDesc(2)->GetDataType(), biasType);
+    if (hasMask) {
+        ASSERT_NE(context->GetOptionalInputDesc(1), nullptr);
+        EXPECT_EQ(context->GetOptionalInputDesc(1)->GetDataType(), maskType);
+    } else {
+        EXPECT_EQ(context->GetOptionalInputDesc(1), nullptr);
+    }
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+    EXPECT_EQ(Ops::NN::Optiling::TilingRegistry::GetInstance().DoTilingImpl(context), ge::GRAPH_FAILED);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors.front().error_id, nullptr);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), code);
+    ASSERT_EQ(errors.front().args_key.size(), 4U);
+    ASSERT_EQ(errors.front().args_value.size(), 4U);
+    std::map<std::string, std::string> actual;
+    for (size_t i = 0; i < errors.front().args_key.size(); ++i) {
+        ASSERT_NE(errors.front().args_key[i], nullptr);
+        ASSERT_NE(errors.front().args_value[i], nullptr);
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[i].get(), errors.front().args_value[i].get()).second);
+    }
+    auto expected = expectedFields;
+    expected.emplace("op_name", "MaskedSoftmaxWithRelPosBias");
+    EXPECT_EQ(actual, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+} // namespace
+
+TEST_F(MaskedSoftmaxWithRelPosBiasTiling, int32_x_reports_single_dtype_error_without_mask)
+{
+    CheckIndependentDtypes(false, ge::DT_INT32, ge::DT_FLOAT, ge::DT_INT32, ge::DT_INT32, "EZ0020",
+                           {{"param_name", "x"},
+                            {"incorrect_dtype", ge::TypeUtils::DataTypeToSerialString(ge::DT_INT32)},
+                            {"reason", "supported dtypes are FLOAT16, BF16 and FLOAT"}});
+}
+
+TEST_F(MaskedSoftmaxWithRelPosBiasTiling, bias_mismatch_reports_single_relation_without_mask)
+{
+    CheckIndependentDtypes(false, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_FLOAT, "EZ0021",
+                           {{"param_names", "x, relative_pos_bias"},
+                            {"incorrect_dtypes", ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT) + ", " +
+                                                     ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT16)},
+                            {"reason", "relative_pos_bias dtype must match x"}});
+}
+
+TEST_F(MaskedSoftmaxWithRelPosBiasTiling, mask_mismatch_reports_single_relation_with_present_mask)
+{
+    CheckIndependentDtypes(true, ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT, "EZ0021",
+                           {{"param_names", "x, atten_mask"},
+                            {"incorrect_dtypes", ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT) + ", " +
+                                                     ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT16)},
+                            {"reason", "atten_mask dtype must match x"}});
+}
+
+TEST_F(MaskedSoftmaxWithRelPosBiasTiling, y_mismatch_reports_single_relation_without_mask)
+{
+    CheckIndependentDtypes(false, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT16, "EZ0021",
+                           {{"param_names", "x, y"},
+                            {"incorrect_dtypes", ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT) + ", " +
+                                                     ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT16)},
+                            {"reason", "y dtype must match x"}});
 }

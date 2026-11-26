@@ -21,6 +21,8 @@
 #include <gtest/gtest.h>
 
 #include "log/log.h"
+#include "base/err_mgr.h"
+#include "graph/utils/type_utils.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -368,4 +370,86 @@ TEST_F(ForeachMaximumListTilingTest, test_tiling_bf16_001)
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, TILING_KEY_BF16);
+}
+namespace {
+void CheckMemberRelationFirstError(bool shapeMismatch)
+{
+    gert::StorageShape x1Shape = {{4, 4}, {4, 4}};
+    gert::StorageShape x2Shape = shapeMismatch ? gert::StorageShape{{4, 5}, {4, 5}} : x1Shape;
+    gert::StorageShape yShape = x1Shape;
+    const std::string compileInfoString =
+        R"({"hardware_info":{"BT_SIZE":0,"UB_SIZE":262144,"L2_SIZE":33554432,"L1_SIZE":524288,"L0A_SIZE":65536,"L0B_SIZE":65536,"L0C_SIZE":131072,"CORE_NUM":64}})";
+    std::map<std::string, std::string> socInfos;
+    std::map<std::string, std::string> aicoreSpec;
+    std::map<std::string, std::string> intrinsics;
+    GetPlatFormInfos(compileInfoString.c_str(), socInfos, aicoreSpec, intrinsics);
+    fe::PlatFormInfos platform;
+    ASSERT_TRUE(platform.Init());
+    platform.SetPlatformRes("SoCInfo", socInfos);
+    platform.SetPlatformRes("AICoreSpec", aicoreSpec);
+    platform.SetCoreNumByCoreType("AICore");
+    platform.SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    struct CompileInfo {
+    } compileInfo;
+    auto data = gert::TilingData::CreateCap(4096);
+    auto workspace = gert::ContinuousVector::Create<size_t>(4096);
+    ASSERT_NE(data, nullptr);
+    ASSERT_NE(workspace, nullptr);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("ForeachMaximumList")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&x1Shape, &x2Shape})
+                      .OutputShapes({&yShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform))
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, shapeMismatch ? ge::DT_FLOAT : ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .TilingData(data.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()))
+                      .Build();
+    auto context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(context, nullptr);
+    auto impl = gert::OpImplRegistry::GetInstance().GetOpImpl("ForeachMaximumList");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->tiling, nullptr);
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+    EXPECT_EQ(impl->tiling(context), ge::GRAPH_FAILED);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors.front().error_id, nullptr);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), shapeMismatch ? "EZ0010" : "EZ0021");
+    ASSERT_EQ(errors.front().args_key.size(), 4U);
+    ASSERT_EQ(errors.front().args_value.size(), 4U);
+    std::map<std::string, std::string> actual;
+    for (size_t i = 0; i < errors.front().args_key.size(); ++i) {
+        ASSERT_NE(errors.front().args_key[i], nullptr);
+        ASSERT_NE(errors.front().args_value[i], nullptr);
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[i].get(), errors.front().args_value[i].get()).second);
+    }
+    const std::map<std::string, std::string> expected = {
+        {"param_names", "x1[0], x2[0]"},
+        {"op_name", "ForeachMaximumList"},
+        {shapeMismatch ? "incorrect_shapes" : "incorrect_dtypes",
+         shapeMismatch ? "[4, 4], [4, 5]" :
+                         ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT) + ", " +
+                             ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT16)},
+        {"reason", shapeMismatch ? "corresponding tensor-list members must have equal storage shapes" :
+                                   "corresponding tensor-list members must have the same dtype"}};
+    EXPECT_EQ(actual, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+} // namespace
+
+TEST_F(ForeachMaximumListTilingTest, member_shape_mismatch_reports_single_formal_error)
+{
+    CheckMemberRelationFirstError(true);
+}
+
+TEST_F(ForeachMaximumListTilingTest, member_dtype_mismatch_reports_single_formal_error)
+{
+    CheckMemberRelationFirstError(false);
 }

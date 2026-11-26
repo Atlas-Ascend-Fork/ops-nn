@@ -33,6 +33,9 @@ protected:
     static void TearDownTestCase() { std::cout << "ForeachMaximumScalarTilingTest TearDown" << std::endl; }
 };
 
+// 匿名命名空间隔离：本仓多个 UT 文件定义同名不同布局结构体，全局作用域下其隐式
+// 构造函数为 weak 符号会被链接器串台（ODR），内部链接保证各 TU 用自身定义。
+namespace {
 struct TilingCase {
     gert::StorageShape xShape = {{4, 4}, {4, 4}};
     gert::StorageShape yShape = {{4, 4}, {4, 4}};
@@ -52,8 +55,9 @@ struct TilingCase {
     uint64_t ubSize = 253952;
     uint32_t coreCount = 64;
 };
+} // namespace
 
-static void RunCase(TilingCase test, ge::graphStatus expectedStatus, uint64_t expectKey = 0,
+static void RunCase(const TilingCase& test, ge::graphStatus expectedStatus, uint64_t expectKey = 0,
                     const char* expectedError = nullptr, const char* expectedParam = nullptr,
                     const std::map<std::string, std::string>& expectedArgs = {})
 {
@@ -85,11 +89,11 @@ static void RunCase(TilingCase test, ge::graphStatus expectedStatus, uint64_t ex
     kh.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
     ASSERT_EQ(tilingParseFn(kh.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
-    std::vector<void*> inputShapes(test.tensorCount, &test.xShape);
+    std::vector<void*> inputShapes(test.tensorCount, const_cast<gert::StorageShape*>(&test.xShape));
     if (test.scalarCount != 0) {
-        inputShapes.push_back(&test.scalarShape);
+        inputShapes.push_back(const_cast<gert::StorageShape*>(&test.scalarShape));
     }
-    std::vector<gert::StorageShape*> outputShapes(test.outputCount, &test.yShape);
+    std::vector<gert::StorageShape*> outputShapes(test.outputCount, const_cast<gert::StorageShape*>(&test.yShape));
     auto param = gert::TilingData::CreateCap(4096);
     auto wsh = gert::ContinuousVector::Create<size_t>(4096);
     gert::TilingContextFaker faker;

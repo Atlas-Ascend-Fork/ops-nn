@@ -92,7 +92,7 @@ static ge::graphStatus SparseApplyAdadeltaTilingFunc(gert::TilingContext* contex
     uint64_t ubSize = 0;
     int64_t coreNum = 0;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     auto varInput = context->GetInputShape(IDX_VAR);
     OP_CHECK_NULL_WITH_CONTEXT(context, varInput);
@@ -253,10 +253,10 @@ static ge::graphStatus SparseApplyAdadeltaTilingFunc(gert::TilingContext* contex
     int64_t needCoreNum = std::max(std::min(calcCoreNum, coreNum), static_cast<int64_t>(1));
     context->SetBlockDim(static_cast<uint32_t>(needCoreNum));
 
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(SetLocalMemory(context, ubSize) != ge::GRAPH_SUCCESS, OP_LOGE(context, "SetLocalMemory error"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(SetLocalMemory(context, ubSize) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "SetLocalMemory error"), return ge::GRAPH_FAILED);
 
     context->SetTilingKey(GET_TPL_TILING_KEY((indicesDType == 0) ? TILING_KEY_IDX_INT32 : TILING_KEY_IDX_INT64));
     return ge::GRAPH_SUCCESS;

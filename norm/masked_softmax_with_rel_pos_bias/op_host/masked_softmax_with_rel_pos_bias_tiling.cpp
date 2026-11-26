@@ -438,33 +438,37 @@ ge::graphStatus MaskedSoftmaxWithRelPosBiasBaseTiling::GetTensorDims()
 ge::graphStatus MaskedSoftmaxWithRelPosBiasBaseTiling::CheckDtypeConsistency()
 {
     if (dataType != ge::DT_FLOAT16 && dataType != ge::DT_BF16 && dataType != ge::DT_FLOAT) {
-        OP_LOGE(context_, "Do tiling failed, x dtype not support, x dtype is %d.", static_cast<int32_t>(dataType));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context_->GetNodeName(), "x", Ops::Base::ToString(dataType).c_str(),
+                                              "supported dtypes are FLOAT16, BF16 and FLOAT");
         return ge::GRAPH_FAILED;
     }
     if (existAtten) {
         auto attDesc = context_->GetOptionalInputDesc(ATTEN_INPUT_INDEX);
         OP_CHECK_NULL_WITH_CONTEXT(context_, attDesc);
         if (attDesc->GetDataType() != dataType) {
-            OP_LOGE(context_,
-                    "Do tiling failed, atten_mask dtype must be same as x dtype, atten dtype is %d, x dtype "
-                    "is %d.",
-                    static_cast<int32_t>(attDesc->GetDataType()), static_cast<int32_t>(dataType));
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context_->GetNodeName(), "x, atten_mask",
+                (Ops::Base::ToString(dataType) + ", " + Ops::Base::ToString(attDesc->GetDataType())).c_str(),
+                "atten_mask dtype must match x");
             return ge::GRAPH_FAILED;
         }
     }
     auto biasDesc = context_->GetRequiredInputDesc(BIAS_INPUT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, biasDesc);
     if (biasDesc->GetDataType() != dataType) {
-        OP_LOGE(context_,
-                "Do tiling failed, relative_pos_bias dtype must be same as x dtype, bias dtype is %d, x dtype is %d.",
-                static_cast<int32_t>(biasDesc->GetDataType()), static_cast<int32_t>(dataType));
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context_->GetNodeName(), "x, relative_pos_bias",
+            (Ops::Base::ToString(dataType) + ", " + Ops::Base::ToString(biasDesc->GetDataType())).c_str(),
+            "relative_pos_bias dtype must match x");
         return ge::GRAPH_FAILED;
     }
     auto yDesc = context_->GetOutputDesc(Y_OUTPUT_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context_, yDesc);
     if (yDesc->GetDataType() != dataType) {
-        OP_LOGE(context_, "Do tiling failed, y dtype must be same as x dtype, y dtype is %d, x dtype is %d.",
-                static_cast<int32_t>(yDesc->GetDataType()), static_cast<int32_t>(dataType));
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context_->GetNodeName(), "x, y",
+            (Ops::Base::ToString(dataType) + ", " + Ops::Base::ToString(yDesc->GetDataType())).c_str(),
+            "y dtype must match x");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

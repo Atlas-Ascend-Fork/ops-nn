@@ -129,7 +129,7 @@ bool IndexTilingSimd::MergeInputAxis()
 bool IndexTilingSimd::IsCapable()
 {
     if (!MergeInputAxis()) {
-        OP_LOGE(context_->GetNodeName(), "merge input shape error!");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "merge input shape error!");
         return false;
     }
     if (mergeInputShapeDim_ == 0) {

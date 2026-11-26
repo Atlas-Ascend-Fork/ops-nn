@@ -56,11 +56,16 @@ ge::graphStatus ForeachReduceRegbaseTiling::GetShapeAttrsInfo()
         return ge::GRAPH_FAILED;
     };
     totalTensorCount_ = anchorInstanceInfo->GetInstanceNum();
-    OP_CHECK_IF(
-        totalTensorCount_ > MAX_TENSOR_CONT_950 || totalTensorCount_ <= 0,
-        OP_LOGE_FOR_INVALID_TENSORNUM(context_->GetNodeName(), "x", static_cast<int64_t>(totalTensorCount_),
-                                      ("within the range [1, " + std::to_string(MAX_TENSOR_CONT_950) + "]").c_str()),
-        return ge::GRAPH_FAILED);
+    // EZ0022 (OP_LOGE_FOR_INVALID_TENSORNUM) is rejected by the SDK error registry at runtime
+    // and produces no ErrorManager output; report the tensor-count violation through the
+    // parameter-argument formal code instead.
+    OP_CHECK_IF(totalTensorCount_ > MAX_TENSOR_CONT_950 || totalTensorCount_ <= 0,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context_->GetNodeName(), "x",
+                    ("the tensor num " + std::to_string(totalTensorCount_) +
+                     " is invalid; it must be within the range [1, " + std::to_string(MAX_TENSOR_CONT_950) + "]")
+                        .c_str()),
+                return ge::GRAPH_FAILED);
     totalDataCount_ = 0;
     dataType_ = ge::DT_UNDEFINED;
     maxTensorNumPerCore_ = 0;

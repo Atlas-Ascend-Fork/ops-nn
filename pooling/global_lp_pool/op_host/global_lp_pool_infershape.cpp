@@ -11,6 +11,7 @@
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "graph/types.h"
 #include "util/shape_util.h"
+#include "log/log.h"
 #include <vector>
 
 using namespace ge;
@@ -40,6 +41,8 @@ ge::graphStatus GlobalLpPoolInferShape(gert::InferShapeContext* context)
 
     int64_t rank = static_cast<int64_t>(xShape->GetDimNum());
     if (rank != 4 && rank != 5) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "x", std::to_string(rank).c_str(),
+                                     "4 (NCHW) or 5 (NCD0D1D2)");
         return ge::GRAPH_FAILED;
     }
 

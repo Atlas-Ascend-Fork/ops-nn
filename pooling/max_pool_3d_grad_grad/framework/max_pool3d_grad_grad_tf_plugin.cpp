@@ -36,7 +36,8 @@ static Status ParseParamsMaxPool3DGradGrad(const ge::Operator& op_src, ge::Opera
     if (padding == "SAME") {
         padList = {1, 1, 1, 1, 1, 1};
     } else if (padding != "VALID") {
-        OP_LOGE("MaxPool3DGradGrad", "unsupported TF padding [%s], only SAME and VALID are defined.", padding.c_str());
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("MaxPool3DGradGrad", "padding", padding,
+                                              "only SAME and VALID are defined for TF padding");
         return FAILED;
     }
     (void)op.SetAttr("pads", padList);
