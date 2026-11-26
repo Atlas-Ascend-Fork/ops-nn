@@ -25,7 +25,7 @@
 
 ## Function
 
-Description: Performs backward computation of [aclnnPrelu](../../p_relu/docs/aclnnPrelu.md).
+Description: Performs backward computation of [aclnnPrelu](../../p_relu/docs/aclnnPrelu_en.md).
 
 The formula for gradInput is as follows:
 
