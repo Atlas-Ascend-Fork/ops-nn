@@ -64,13 +64,20 @@ bool MaxPool3DGradTilingBase::CheckInputShape()
     const gert::StorageShape* origXShape = context_->GetInputShape(ORIG_X_INDEX);
     const gert::StorageShape* origYShape = context_->GetInputShape(ORIG_Y_INDEX);
     const gert::StorageShape* gradsShape = context_->GetInputShape(GRADS_INDEX);
+    if (origXShape == nullptr || origYShape == nullptr || gradsShape == nullptr) {
+        return false;
+    }
     size_t origXDimNum = Ops::Base::EnsureNotScalar(origXShape->GetStorageShape()).GetDimNum();
     size_t origYDimNum = Ops::Base::EnsureNotScalar(origYShape->GetStorageShape()).GetDimNum();
     size_t gradsDimNum = Ops::Base::EnsureNotScalar(gradsShape->GetStorageShape()).GetDimNum();
     auto attrs = context_->GetAttrs();
-    OP_CHECK_NULL_WITH_CONTEXT(context_, attrs);
+    if (attrs == nullptr) {
+        return false;
+    }
     const char* data_format = attrs->GetAttrPointer<char>(DATA_FORMAT_ATTR_INDEX);
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, data_format);
+    if (data_format == nullptr) {
+        return false;
+    }
     std::string data_formatStr = data_format;
 
     if (!(data_formatStr == "NCDHW" || data_formatStr == "NDHWC")) {
