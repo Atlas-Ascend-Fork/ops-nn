@@ -11,12 +11,15 @@
 # ----------------------------------------------------------------------------
 
 import torch
+import torch_npu
+
 from atk.configs.dataset_config import InputDataset
 from atk.configs.results_config import TaskResult
 from atk.tasks.api_execute import register
 from atk.tasks.api_execute.base_api import BaseApi
 from atk.tasks.api_execute.aclnn_base_api import AclnnBaseApi
 from atk.tasks.backends.lib_interface.acl_wrapper import TensorPtr
+
 
 @register("execute_quant_matmul_v3")
 class quantMatmulApi(BaseApi):
@@ -43,12 +46,19 @@ class quantMatmulApi(BaseApi):
 
         return output
 
+
 @register("execute_aclnn_quant_matmul_v3")
 class aclnnQuantMatmulV3Api(AclnnBaseApi):
     def __init__(self, task_result: TaskResult, backend):
         super(aclnnQuantMatmulV3Api, self).__init__(task_result, backend)
 
     def init_by_input_data(self, input_data: InputDataset):
+        x1 = input_data.kwargs["x1"]
+        if x1.dtype == torch.int32:
+            input_data.kwargs["x1"] = torch_npu.npu_convert_weight_to_int4pack(x1.npu())
+        x2 = input_data.kwargs["x2"]
+        if x2.dtype == torch.int32:
+            input_data.kwargs["x2"] = torch_npu.npu_convert_weight_to_int4pack(x2.npu())
 
         input_data.kwargs["offset"] = TensorPtr()
         input_data.kwargs["bias"] = TensorPtr()

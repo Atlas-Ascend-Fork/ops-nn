@@ -72,7 +72,7 @@ __aicore__ inline void QbmmInt4ToInt8Preprocess::Init(GM_ADDR x1In, GM_ADDR x2In
     // ---- core assignment by m:n ratio ----
     uint64_t totalCores = GetBlockNum();
     if ASCEND_IS_AIV {
-        totalCores = totalCores * NUM_2;
+        totalCores = totalCores * GetTaskRation();
     }
     uint64_t coresForX1 = (totalCores * batchC * m + (batchC * m + n) / NUM_2) / (batchC * m + n);
     if (coresForX1 < 1)

@@ -31,9 +31,9 @@ using Ops::NN::FormatString;
 
 const std::vector<ge::DataType>& QuantBatchMatmulV3CheckerArch9201::GetLegalInputDtypes() const
 {
-    static const std::vector<ge::DataType> legalInputDtypes = {ge::DT_INT8,        ge::DT_FLOAT8_E4M3FN,
-                                                               ge::DT_FLOAT8_E5M2, ge::DT_HIFLOAT8,
-                                                               ge::DT_FLOAT4_E2M1, Ops::NN::DT_HIFLOAT4};
+    static const std::vector<ge::DataType> legalInputDtypes = {
+        ge::DT_INT4,     ge::DT_INT8,        ge::DT_FLOAT8_E4M3FN, ge::DT_FLOAT8_E5M2,
+        ge::DT_HIFLOAT8, ge::DT_FLOAT4_E2M1, Ops::NN::DT_HIFLOAT4};
     return legalInputDtypes;
 }
 
@@ -46,7 +46,7 @@ const std::vector<ge::DataType>& QuantBatchMatmulV3CheckerArch9201::GetLegalOutp
 
 const char* QuantBatchMatmulV3CheckerArch9201::GetLegalInputDtypesDesc() const
 {
-    return "INT8/FLOAT8_E4M3FN/FLOAT8_E5M2/HIFLOAT8/FLOAT4_E2M1/HIFLOAT4";
+    return "INT4/INT8/FLOAT8_E4M3FN/FLOAT8_E5M2/HIFLOAT8/FLOAT4_E2M1/HIFLOAT4";
 }
 
 const char* QuantBatchMatmulV3CheckerArch9201::GetLegalOutputDtypesDesc() const
