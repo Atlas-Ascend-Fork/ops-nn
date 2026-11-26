@@ -8,5 +8,11 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 if ((UT_TEST_ALL OR OP_KERNEL_UT) AND NOT UT_DONE)
-    AddOpTestCase(turbo_quant "ascend910B1" "")
+    if("ascend950" IN_LIST ASCEND_COMPUTE_UNIT OR "ascend950pr_9599" IN_LIST ASCEND_COMPUTE_UNIT)
+        # The 950 op-kernel UT exercises the arch35 (regbase) implementation branch; the flat
+        # 910b suite runs against it too, so its golden asserts cover both kernels.
+        AddOpTestCase(turbo_quant "ascend950pr_9599" "")
+    else()
+        AddOpTestCase(turbo_quant "ascend910B1" "")
+    endif()
 endif()

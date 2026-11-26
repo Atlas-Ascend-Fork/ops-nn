@@ -1,0 +1,11 @@
+testcase_name,api_name,tensor_dtypes,tensor_formats,tensor_view_shapes,input_data_ranges,output_tensor_indexes,absolute_precision
+aclnnTurboQuant_fp32_ND_n1,aclnnTurboQuant,"('float32', 'float32', 'uint8', 'float16')","('ND',)","((1, 512),(16,),(1, 256),(1,))","((-5, 5), (-0.2, 0.2))","(2, 3)",0.0001
+aclnnTurboQuant_fp32_ND_n15,aclnnTurboQuant,"('float32', 'float32', 'uint8', 'float16')","('ND',)","((15, 512),(16,),(15, 256),(15,))","((-5, 5), (-0.2, 0.2))","(2, 3)",0.0001
+aclnnTurboQuant_fp32_ND_n16,aclnnTurboQuant,"('float32', 'float32', 'uint8', 'float16')","('ND',)","((16, 512),(16,),(16, 256),(16,))","((-5, 5), (-0.2, 0.2))","(2, 3)",0.0001
+aclnnTurboQuant_fp32_ND_n17,aclnnTurboQuant,"('float32', 'float32', 'uint8', 'float16')","('ND',)","((17, 512),(16,),(17, 256),(17,))","((-5, 5), (-0.2, 0.2))","(2, 3)",0.0001
+aclnnTurboQuant_fp32_ND_n255,aclnnTurboQuant,"('float32', 'float32', 'uint8', 'float16')","('ND',)","((255, 512),(16,),(255, 256),(255,))","((-5, 5), (-0.2, 0.2))","(2, 3)",0.0001
+aclnnTurboQuant_fp32_ND_n256,aclnnTurboQuant,"('float32', 'float32', 'uint8', 'float16')","('ND',)","((256, 512),(16,),(256, 256),(256,))","((-5, 5), (-0.2, 0.2))","(2, 3)",0.0001
+aclnnTurboQuant_fp32_ND_n257,aclnnTurboQuant,"('float32', 'float32', 'uint8', 'float16')","('ND',)","((257, 512),(16,),(257, 256),(257,))","((-5, 5), (-0.2, 0.2))","(2, 3)",0.0001
+aclnnTurboQuant_fp32_ND_n512,aclnnTurboQuant,"('float32', 'float32', 'uint8', 'float16')","('ND',)","((512, 512),(16,),(512, 256),(512,))","((-5, 5), (-0.2, 0.2))","(2, 3)",0.0001
+aclnnTurboQuant_fp32_ND_n4096,aclnnTurboQuant,"('float32', 'float32', 'uint8', 'float16')","('ND',)","((4096, 512),(16,),(4096, 256),(4096,))","((-5, 5), (-0.2, 0.2))","(2, 3)",0.0001
+aclnnTurboQuant_fp32_ND_n32768,aclnnTurboQuant,"('float32', 'float32', 'uint8', 'float16')","('ND',)","((32768, 512),(16,),(32768, 256),(32768,))","((-5, 5), (-0.2, 0.2))","(2, 3)",0.0001

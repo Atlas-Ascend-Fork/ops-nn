@@ -18,6 +18,7 @@
 #include <string>
 
 #include "graph/utils/type_utils.h"
+#include "op_host/tiling_util.h"
 #include "util/shape_util.h"
 
 namespace optiling {
@@ -103,8 +104,16 @@ static ge::graphStatus TilingFuncForTurboQuant(gert::TilingContext* context)
                                               "failed to query the UB size");
         return ge::GRAPH_FAILED;
     }
-    int64_t budget = static_cast<int64_t>(ubSize) - TqFixedBytes(headDim) - TQ_UB_RESERVE;
-    int64_t bytesPerToken = TqBytesPerToken(headDim, packedBytes);
+    // The ascend950 (arch35/regbase) kernel keeps the compare/select chain and the int4 pack in
+    // vector registers, so its per-token UB footprint is inQ + nibble staging + the packed y row,
+    // not the six-buffer model of the flat kernels. The split logic is shared; only the budget
+    // model and the batch cap differ.
+    bool useRegbase = Ops::NN::OpTiling::IsRegbaseSocVersion(context);
+    int64_t batchCap = useRegbase ? TQ_REGBASE_MAX_TOKENS_PER_BATCH : TQ_MAX_TOKENS_PER_BATCH;
+    int64_t fixedBytes = useRegbase ? TqRegbaseFixedBytes(batchCap) : TqFixedBytes(headDim);
+    int64_t bytesPerToken = useRegbase ? TqRegbaseBytesPerToken(headDim, packedBytes) :
+                                         TqBytesPerToken(headDim, packedBytes);
+    int64_t budget = static_cast<int64_t>(ubSize) - fixedBytes - TQ_UB_RESERVE;
     int64_t maxByUb = (budget > 0 && bytesPerToken > 0) ? budget / bytesPerToken : 1;
 
     // Batching only pays off up to what a core actually owns; below that it would idle cores instead.
@@ -112,8 +121,8 @@ static ge::graphStatus TilingFuncForTurboQuant(gert::TilingContext* context)
     if (tokensPerBatch > maxByUb) {
         tokensPerBatch = maxByUb;
     }
-    if (tokensPerBatch > TQ_MAX_TOKENS_PER_BATCH) {
-        tokensPerBatch = TQ_MAX_TOKENS_PER_BATCH;
+    if (tokensPerBatch > batchCap) {
+        tokensPerBatch = batchCap;
     }
     if (tokensPerBatch < 1) {
         tokensPerBatch = 1;

@@ -41,6 +41,9 @@ constexpr int64_t TQ_MAX_TOKENS_PER_BATCH = 12;
 constexpr int64_t TQ_NORM_SLOT_FLOATS = 16;
 constexpr int64_t TQ_UB_RESERVE = 1024;
 
+// Batch cap of the arch35/regbase kernel. Must stay <= MAX_TOKENS_PER_BATCH in its kernel header.
+constexpr int64_t TQ_REGBASE_MAX_TOKENS_PER_BATCH = 24;
+
 inline int64_t TqAlign64(int64_t value) { return (value + TQ_SLOT_ALIGN - 1) / TQ_SLOT_ALIGN * TQ_SLOT_ALIGN; }
 
 // UB held per token in a batch: inQ + u + nib + tmp + sel + one, plus y, the half staging
@@ -57,6 +60,21 @@ inline int64_t TqFixedBytes(int64_t headDim)
     return TqAlign64(headDim * static_cast<int64_t>(sizeof(float))) +
            TqAlign64(TQ_N_CENT * static_cast<int64_t>(sizeof(float))) +
            TqAlign64(TQ_MAX_TOKENS_PER_BATCH * TQ_NORM_SLOT_FLOATS * static_cast<int64_t>(sizeof(float)));
+}
+
+// ascend950 (arch35/regbase): compute runs on vector registers, so the per-token UB footprint is
+// the input queue + the nibble staging area + the packed y row, not the classic six-buffer
+// round-trip model of the flat kernels.
+inline int64_t TqRegbaseBytesPerToken(int64_t headDim, int64_t packedBytes)
+{
+    return TqAlign64(headDim * static_cast<int64_t>(sizeof(float))) * 2 + TqAlign64(packedBytes);
+}
+
+// ascend950 fixed UB: the norm slots, the codebook and the 64B-strided fp16 scale staging.
+inline int64_t TqRegbaseFixedBytes(int64_t maxBatch)
+{
+    return TqAlign64(maxBatch * TQ_NORM_SLOT_FLOATS * static_cast<int64_t>(sizeof(float))) +
+           TqAlign64(TQ_N_CENT * static_cast<int64_t>(sizeof(float))) + TqAlign64(maxBatch * TQ_SLOT_ALIGN);
 }
 
 BEGIN_TILING_DATA_DEF(TurboQuantTilingData)

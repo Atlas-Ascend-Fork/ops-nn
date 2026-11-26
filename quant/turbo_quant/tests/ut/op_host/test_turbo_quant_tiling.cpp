@@ -56,9 +56,17 @@ struct TilingResult {
 
 static TilingResult RunTiling(int64_t numTokens, int64_t headDim, int64_t centCount,
                               ge::DataType latentDtype = ge::DT_FLOAT, ge::DataType centroidsDtype = ge::DT_FLOAT,
-                              size_t centRank = 1)
+                              size_t centRank = 1, bool useRegbase = false)
 {
-    string compile_info_string = R"({
+    string compile_info_string = useRegbase ? R"({
+        "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                          "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true,
+                          "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
+                          "UB_SIZE": 245760, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                          "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                          "CORE_NUM": 64}
+                          })" :
+                                              R"({
         "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
                           "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true,
                           "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
@@ -69,7 +77,16 @@ static TilingResult RunTiling(int64_t numTokens, int64_t headDim, int64_t centCo
     map<string, string> soc_infos;
     map<string, string> aicore_spec;
     map<string, string> intrinsics;
-    map<string, string> soc_versions = {{"Short_SoC_version", "Ascend910B"}, {"NpuArch", "2201"}};
+    // Braced-init-lists are not valid conditional-operator operands; assign per branch instead.
+    map<string, string> soc_versions;
+    map<string, string> npuarchs;
+    if (useRegbase) {
+        soc_versions = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+        npuarchs = {{"NpuArch", "3510"}};
+    } else {
+        soc_versions = {{"Short_SoC_version", "Ascend910B"}, {"NpuArch", "2201"}};
+        npuarchs = {{"NpuArch", "2201"}};
+    }
 
     GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
 
@@ -95,6 +112,7 @@ static TilingResult RunTiling(int64_t numTokens, int64_t headDim, int64_t centCo
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
                                                                                             intrinsics);
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", soc_versions);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", npuarchs);
     EXPECT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
     gert::StorageShape latentShape = {{numTokens, headDim}, {numTokens, headDim}};
@@ -130,6 +148,7 @@ static TilingResult RunTiling(int64_t numTokens, int64_t headDim, int64_t centCo
     tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
     tiling_context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("version", npuarchs);
 
     TilingResult result{};
     result.status = tiling_func(tiling_context);
@@ -147,7 +166,8 @@ static TilingResult RunTiling(int64_t numTokens, int64_t headDim, int64_t centCo
 }
 
 // Every token owns one core slot; the split must cover all tokens without over-allocating cores.
-static void ExpectValidSplit(const TilingResult& r, int64_t numTokens)
+static void ExpectValidSplit(const TilingResult& r, int64_t numTokens,
+                             uint32_t batchCap = static_cast<uint32_t>(optiling::TQ_MAX_TOKENS_PER_BATCH))
 {
     EXPECT_EQ(r.status, ge::GRAPH_SUCCESS);
     EXPECT_EQ(r.fields[IDX_NUM_TOKENS], static_cast<uint32_t>(numTokens));
@@ -161,7 +181,7 @@ static void ExpectValidSplit(const TilingResult& r, int64_t numTokens)
               static_cast<uint64_t>(numTokens < 1 ? 1 : numTokens));
     // batching never exceeds what a core owns (that would idle cores) nor the UB-derived cap
     EXPECT_GE(r.fields[IDX_TOKENS_PER_BATCH], 1U);
-    EXPECT_LE(r.fields[IDX_TOKENS_PER_BATCH], static_cast<uint32_t>(optiling::TQ_MAX_TOKENS_PER_BATCH));
+    EXPECT_LE(r.fields[IDX_TOKENS_PER_BATCH], batchCap);
     EXPECT_LE(r.fields[IDX_TOKENS_PER_BATCH], r.fields[IDX_TOKENS_PER_CORE]);
 }
 
@@ -239,4 +259,29 @@ TEST_F(TurboQuantTiling, token_count_overflows_tiling_field)
 {
     const int64_t tooManyTokens = static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) + 1;
     EXPECT_EQ(RunTiling(tooManyTokens, 512, 16).status, ge::GRAPH_FAILED);
+}
+
+// ---- ascend950 (arch35/regbase): same split logic, register-resident UB model, cap 24 ----
+
+TEST_F(TurboQuantTiling, regbase_single_token)
+{
+    TilingResult r = RunTiling(1, 512, 16, ge::DT_FLOAT, ge::DT_FLOAT, 1, true);
+    ExpectValidSplit(r, 1, static_cast<uint32_t>(optiling::TQ_REGBASE_MAX_TOKENS_PER_BATCH));
+    EXPECT_EQ(r.fields[IDX_TOKENS_PER_BATCH], 1U);
+}
+
+// prefill-shaped work saturates the regbase cap of 24, not the flat-kernel cap of 12.
+TEST_F(TurboQuantTiling, regbase_prefill_saturates_batch)
+{
+    TilingResult r = RunTiling(2048, 512, 16, ge::DT_FLOAT, ge::DT_FLOAT, 1, true);
+    ExpectValidSplit(r, 2048, static_cast<uint32_t>(optiling::TQ_REGBASE_MAX_TOKENS_PER_BATCH));
+    EXPECT_EQ(r.fields[IDX_TOKENS_PER_BATCH], static_cast<uint32_t>(optiling::TQ_REGBASE_MAX_TOKENS_PER_BATCH));
+}
+
+// in between, the batch tracks what a core actually owns
+TEST_F(TurboQuantTiling, regbase_batch_tracks_tokens_per_core)
+{
+    TilingResult r = RunTiling(128, 512, 16, ge::DT_FLOAT, ge::DT_FLOAT, 1, true);
+    ExpectValidSplit(r, 128, static_cast<uint32_t>(optiling::TQ_REGBASE_MAX_TOKENS_PER_BATCH));
+    EXPECT_EQ(r.fields[IDX_TOKENS_PER_BATCH], r.fields[IDX_TOKENS_PER_CORE]);
 }

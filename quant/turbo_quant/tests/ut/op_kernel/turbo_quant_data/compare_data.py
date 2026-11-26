@@ -7,6 +7,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+import os
 import sys
 
 import numpy as np
@@ -47,10 +48,15 @@ def main():
     # The scale is compared bit for bit when it is finite. Non-finite norms only have to agree on
     # the IEEE class: a quiet NaN's payload is not architecturally fixed (hardware emits 0x7FFF where
     # numpy emits 0x7E00), and the CPU simulator's scalar fp32->fp16 cast saturates non-finite values to
-    # FP16_MAX (0x7BFF) instead of propagating them, which hardware does not do.
+    # FP16_MAX (0x7BFF) instead of propagating them, which hardware does not do. The arch35 (regbase)
+    # kernel narrows the scale with a VECTOR cast, whose simulator artifact drops the non-finite
+    # payload to 0x0000 instead; UT runs (always on the simulator) mark themselves with
+    # TQ_UT_SIMULATOR=1 so both artifacts are accepted there, while hardware runs (example driver)
+    # keep the strict IEEE-class check.
     got_norm = got_scale.reshape(-1)
     exp_norm = exp_scale.reshape(-1)
     FP16_MAX = np.float16(65504.0)
+    sim_ut = os.environ.get("TQ_UT_SIMULATOR") == "1"
 
     if got_norm.size != exp_norm.size:
         print(
@@ -64,11 +70,17 @@ def main():
             if g.view(np.uint16) != e.view(np.uint16):
                 bad.append((i, g, e, "finite norm must match bit for bit"))
         elif np.isnan(e):
-            if not (np.isnan(g) or g == FP16_MAX):
-                bad.append((i, g, e, "expected NaN (or the simulator's FP16_MAX)"))
+            ok = np.isnan(g) or g == FP16_MAX or (sim_ut and g.view(np.uint16) == 0)
+            if not ok:
+                bad.append(
+                    (i, g, e, "expected NaN (or the simulator's FP16_MAX / 0x0000)")
+                )
         else:  # +-inf
-            if not (np.isinf(g) or g == FP16_MAX):
-                bad.append((i, g, e, "expected INF (or the simulator's FP16_MAX)"))
+            ok = np.isinf(g) or g == FP16_MAX or (sim_ut and g.view(np.uint16) == 0)
+            if not ok:
+                bad.append(
+                    (i, g, e, "expected INF (or the simulator's FP16_MAX / 0x0000)")
+                )
     if bad:
         print(f"[FAILED] {len(bad)} scale mismatches")
         for i, g, e, why in bad[:16]:
