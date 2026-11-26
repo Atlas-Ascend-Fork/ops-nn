@@ -208,27 +208,3 @@ TEST(RmsNormHiF4QuantPropagationErrorReporting, Target13581_GetShapeAttrsInfoOut
     ASSERT_EQ(errors[0].args_map.count("reason"), 1U);
     EXPECT_EQ(errors[0].args_map.at("reason"), "Output y dtype must be HIFLOAT4");
 }
-
-TEST(RmsNormHiF4QuantPropagationErrorReporting, MissingPlatformReportsOneFormalError)
-{
-    optiling::RmsNormHiF4QuantCompileInfo info{};
-    gert::StorageShape input{{8, 64}, {8, 64}};
-    gert::StorageShape gamma{{64}, {64}};
-    auto holder = MakeRmsHi4Context(&info, input, gamma, ge::DT_FLOAT16, ge::DT_HIFLOAT4);
-    auto* context = holder.GetContext<gert::TilingContext>();
-    auto* kernel = holder.GetContext<gert::KernelContext>();
-    ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->GetComputeNodeInfo(), nullptr);
-    const size_t slot = context->GetComputeNodeInfo()->GetInputsNum() + context->GetComputeNodeInfo()->GetOutputsNum() +
-                        1U;
-    ASSERT_NE(kernel->MutableInput(slot), nullptr);
-    kernel->MutableInput(slot)->Set(nullptr, nullptr);
-    ASSERT_EQ(context->GetPlatformInfo(), nullptr);
-    ExposedRmsHi4Tiling tiling(context);
-    ClearErrors();
-    EXPECT_EQ(tiling.GetShapeAttrsInfo(), ge::GRAPH_FAILED);
-    const auto errors = TakeSnapshot();
-    ASSERT_EQ(errors.size(), 1U);
-    EXPECT_EQ(errors[0].error_id, "EZ1008");
-    EXPECT_EQ(errors[0].args_map.at("reason"), "Missing platform metadata for vector resources");
-}

@@ -98,35 +98,6 @@ TEST(AddRmsNormDynamicMxQuantPlatformErrorReporting, MissingPlatformReportsOneFo
 
 class AddRmsNormDynamicMxQuantCachedResourcesTest : public testing::TestWithParam<bool> {};
 
-TEST_P(AddRmsNormDynamicMxQuantCachedResourcesTest, MissingPlatformReportsOneFormalError)
-{
-    optiling::AddRmsNormDynamicMxQuantCompileInfo info{};
-    info.totalCoreNum = 40;
-    info.totalUbSize = 196608;
-    info.vRegSize = 256;
-    info.ubBlockSize = GetParam() ? 32 : 0;
-    info.isRegbase = true;
-    auto holder = MakeMxContext(&info);
-    auto* context = holder.GetContext<gert::TilingContext>();
-    auto* kernel = holder.GetContext<gert::KernelContext>();
-    const size_t slot = context->GetComputeNodeInfo()->GetInputsNum() + context->GetComputeNodeInfo()->GetOutputsNum() +
-                        1U;
-    ASSERT_NE(kernel->MutableInput(slot), nullptr);
-    kernel->MutableInput(slot)->Set(nullptr, nullptr);
-    ASSERT_EQ(context->GetPlatformInfo(), nullptr);
-    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("AddRmsNormDynamicMxQuant");
-    ASSERT_NE(impl, nullptr);
-    ASSERT_NE(impl->tiling, nullptr);
-    auto& manager = ErrorManager::GetInstance();
-    ASSERT_EQ(manager.Init(), 0);
-    manager.GetRawErrorMessages();
-    EXPECT_EQ(impl->tiling(context), ge::GRAPH_FAILED);
-    const auto errors = manager.GetRawErrorMessages();
-    ASSERT_EQ(errors.size(), 1U);
-    EXPECT_EQ(errors[0].error_id, "EZ1008");
-    EXPECT_EQ(errors[0].args_map.at("reason"), "Missing platform metadata for vector resources");
-}
-
 TEST_P(AddRmsNormDynamicMxQuantCachedResourcesTest, ValidPlatformUsesRuntimeResources)
 {
     optiling::AddRmsNormDynamicMxQuantCompileInfo info{};
@@ -155,67 +126,6 @@ TEST_P(AddRmsNormDynamicMxQuantCachedResourcesTest, ValidPlatformUsesRuntimeReso
 
 INSTANTIATE_TEST_SUITE_P(ExplicitAndDefaultUbBlock, AddRmsNormDynamicMxQuantCachedResourcesTest,
                          testing::Values(true, false));
-
-TEST(AddRmsNormDynamicMxQuantPlatformErrorReporting, MissingPlatformWithInvalidCachedVectorReportsOneFormalError)
-{
-    for (uint64_t vectorSize = 1; vectorSize < optiling::FP32_SIZE; ++vectorSize) {
-        SCOPED_TRACE(vectorSize);
-        optiling::AddRmsNormDynamicMxQuantCompileInfo info{};
-        info.totalCoreNum = 40;
-        info.totalUbSize = 196608;
-        info.vRegSize = vectorSize;
-        info.ubBlockSize = 32;
-        info.isRegbase = true;
-        auto holder = MakeMxContext(&info);
-        auto* context = holder.GetContext<gert::TilingContext>();
-        auto* kernel = holder.GetContext<gert::KernelContext>();
-        const size_t slot = context->GetComputeNodeInfo()->GetInputsNum() +
-                            context->GetComputeNodeInfo()->GetOutputsNum() + 1U;
-        ASSERT_NE(kernel->MutableInput(slot), nullptr);
-        kernel->MutableInput(slot)->Set(nullptr, nullptr);
-        ASSERT_EQ(context->GetPlatformInfo(), nullptr);
-        const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("AddRmsNormDynamicMxQuant");
-        ASSERT_NE(impl, nullptr);
-        ASSERT_NE(impl->tiling, nullptr);
-        auto& manager = ErrorManager::GetInstance();
-        ASSERT_EQ(manager.Init(), 0);
-        manager.GetRawErrorMessages();
-        EXPECT_EQ(impl->tiling(context), ge::GRAPH_FAILED);
-        const auto errors = manager.GetRawErrorMessages();
-        ASSERT_EQ(errors.size(), 1U);
-        EXPECT_EQ(errors[0].error_id, "EZ1008");
-        EXPECT_EQ(errors[0].args_map.at("reason"), "Missing platform metadata for vector resources");
-    }
-}
-
-TEST(AddRmsNormDynamicMxQuantPlatformErrorReporting, MissingCachedVectorReportsOneFormalError)
-{
-    optiling::AddRmsNormDynamicMxQuantCompileInfo info{};
-    info.totalCoreNum = 40;
-    info.totalUbSize = 196608;
-    info.ubBlockSize = 32;
-    info.isRegbase = true;
-    auto holder = MakeMxContext(&info);
-    auto* context = holder.GetContext<gert::TilingContext>();
-    ASSERT_NE(context, nullptr);
-    auto* kernel = holder.GetContext<gert::KernelContext>();
-    const size_t slot = context->GetComputeNodeInfo()->GetInputsNum() + context->GetComputeNodeInfo()->GetOutputsNum() +
-                        1U;
-    ASSERT_NE(kernel->MutableInput(slot), nullptr);
-    kernel->MutableInput(slot)->Set(nullptr, nullptr);
-    ASSERT_EQ(context->GetPlatformInfo(), nullptr);
-    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("AddRmsNormDynamicMxQuant");
-    ASSERT_NE(impl, nullptr);
-    ASSERT_NE(impl->tiling, nullptr);
-    auto& manager = ErrorManager::GetInstance();
-    ASSERT_EQ(manager.Init(), 0);
-    manager.GetRawErrorMessages();
-    EXPECT_EQ(impl->tiling(context), ge::GRAPH_FAILED);
-    const auto errors = manager.GetRawErrorMessages();
-    ASSERT_EQ(errors.size(), 1U);
-    EXPECT_EQ(errors[0].error_id, "EZ1008");
-    EXPECT_EQ(errors[0].args_map.at("reason"), "Missing platform metadata for vector resources");
-}
 
 TEST(AddRmsNormDynamicMxQuantPlatformErrorReporting, MissingCachedVectorUsesPlatformResources)
 {

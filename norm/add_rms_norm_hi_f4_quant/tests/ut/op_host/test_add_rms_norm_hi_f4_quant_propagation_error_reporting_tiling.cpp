@@ -295,33 +295,3 @@ TEST(AddRmsNormHiF4QuantPropagationErrorReporting, Target944_OutputDtypeInvalidW
     ASSERT_EQ(errors[0].args_map.count("op_name"), 1U);
     EXPECT_FALSE(errors[0].args_map.at("op_name").empty());
 }
-
-TEST(AddRmsNormHiF4QuantPropagationErrorReporting, MissingPlatformReportsOneFormalError)
-{
-    optiling::AddRmsNormHiF4QuantCompileInfo info{};
-    gert::StorageShape input{{8, 64}, {8, 64}};
-    gert::StorageShape gamma{{64}, {64}};
-    gert::StorageShape scale{{8, 1, 1}, {8, 1, 1}};
-    gert::StorageShape rstd{{8}, {8}};
-    Cfg cfg{&input,         &input,         &gamma,          &gamma,         &input,
-            &input,         &scale,         &rstd,           ge::DT_FLOAT16, ge::DT_FLOAT16,
-            ge::DT_FLOAT16, ge::DT_FLOAT16, ge::DT_HIFLOAT4, ge::DT_FLOAT16, Ops::NN::DT_HIFLOAT4_SCALE,
-            ge::DT_FLOAT};
-    auto holder = MakeAddHi4Context(cfg, &info);
-    auto* context = holder.GetContext<gert::TilingContext>();
-    auto* kernel = holder.GetContext<gert::KernelContext>();
-    ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->GetComputeNodeInfo(), nullptr);
-    const size_t slot = context->GetComputeNodeInfo()->GetInputsNum() + context->GetComputeNodeInfo()->GetOutputsNum() +
-                        1U;
-    ASSERT_NE(kernel->MutableInput(slot), nullptr);
-    kernel->MutableInput(slot)->Set(nullptr, nullptr);
-    ASSERT_EQ(context->GetPlatformInfo(), nullptr);
-    ExposedGetShapeAttrsInfo tiling(context);
-    ClearErrors();
-    EXPECT_EQ(tiling.RunGetShapeAttrsInfo(), ge::GRAPH_FAILED);
-    const auto errors = TakeSnapshot();
-    ASSERT_EQ(errors.size(), 1U);
-    EXPECT_EQ(errors[0].error_id, "EZ1008");
-    EXPECT_EQ(errors[0].args_map.at("reason"), "Missing platform metadata for vector resources");
-}

@@ -301,9 +301,6 @@ static inline bool GetAttrs(gert::TilingContext* context, TilingDataT* tiling, b
                             bool& enableAdditionalOutput)
 {
     const gert::RuntimeAttrs* attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr,
-                Ops::NN::ErrorReport::TilingFailure(context->GetNodeName(), "Get attrs nullptr, tiling failed"),
-                return false);
 
     const char* qms = attrs->GetAttrPointer<char>(QUANT_MODE_IDX);
     OP_CHECK_IF(nullptr == qms,

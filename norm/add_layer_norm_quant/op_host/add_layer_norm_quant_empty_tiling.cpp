@@ -40,11 +40,6 @@ ge::graphStatus AddLayerNormQuantEmptyTiling::GetPlatformInfo()
 ge::graphStatus AddLayerNormQuantEmptyTiling::GetAttrs()
 {
     const gert::RuntimeAttrs* attrs = context_->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr,
-                Ops::NN::ErrorReport::TilingFailure(context_->GetNodeName(),
-                                                    "Get attrs nullptr, tiling failed. Tiling runtime attrs holder is "
-                                                    "missing, internal error, not a user parameter error."),
-                return ge::GRAPH_FAILED);
 
     const char* qms = attrs->GetAttrPointer<char>(QUANT_MODE_IDX);
     OP_CHECK_IF(

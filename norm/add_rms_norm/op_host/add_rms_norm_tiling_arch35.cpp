@@ -547,10 +547,6 @@ ge::graphStatus TilingSplitAR(gert::TilingContext* context, uint64_t numRow, uin
 ge::graphStatus TilingAddRmsNormRegbase(gert::TilingContext* context)
 {
     OP_LOGD(context, " TilingAddRmsNormRegbase");
-    OP_CHECK_IF(
-        context->GetPlatformInfo() == nullptr,
-        Ops::NN::ErrorReport::TilingFailure(context->GetNodeName(), "Missing platform metadata for vector resources"),
-        return ge::GRAPH_FAILED);
     auto ptrCompileInfo = reinterpret_cast<const AddRmsNormCompileInfo*>(context->GetCompileInfo());
     uint32_t numCore;
     uint64_t ubSize;

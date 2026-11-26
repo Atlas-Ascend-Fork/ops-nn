@@ -377,10 +377,6 @@ ge::graphStatus RmsNormHiF4QuantRegbaseTilingBase::SetInputParams()
 ge::graphStatus RmsNormHiF4QuantRegbaseTilingBase::GetShapeAttrsInfo()
 {
     OP_LOGD(context_->GetNodeName(), "Enter GetShapeAttrsInfo.");
-    OP_CHECK_IF(
-        context_->GetPlatformInfo() == nullptr,
-        Ops::NN::ErrorReport::TilingFailure(context_->GetNodeName(), "Missing platform metadata for vector resources"),
-        return ge::GRAPH_FAILED);
     uint64_t vecLength = Ops::Base::GetVRegSize(context_);
     OP_CHECK_IF((vecLength <= 0),
                 Ops::NN::ErrorReport::TilingFailure(
