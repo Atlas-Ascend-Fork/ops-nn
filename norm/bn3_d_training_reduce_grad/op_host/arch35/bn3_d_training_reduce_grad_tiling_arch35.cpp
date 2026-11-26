@@ -183,6 +183,111 @@ bool MultiCoreSplit(const std::vector<int64_t>& maxBroShape, const SplitResult& 
     return true;
 }
 
+// SplitTileElems(shape, split) — 单个主 tile 的元素数 = aI × Π_{d>axis} shape[d]
+
+int64_t SplitTileElems(const std::vector<int64_t>& shape, const SplitResult& split)
+{
+    int64_t inner = 1;
+    for (int64_t d = split.axis + 1; d < static_cast<int64_t>(shape.size()); d++)
+        inner *= shape[d];
+    return split.aI * inner;
+}
+
+// CoreMaxLoad(totalTiles, numCores, tileElems) — 单核最大元素数
+
+// 与 kernel GetCoreRange 的连续区间分配一致：每核 tilesMain 个 tile，前 coresTail
+// 个核各多 1 个。末块（aITail < aI）在 flat 序里恒为最后一块，只会落在"少一个
+// tile"的末核上（不抬高最大负载），故最大负载按主块长度 × 每核 tile 数上界估算。
+
+int64_t CoreMaxLoad(int64_t totalTiles, int64_t numCores, int64_t tileElems)
+{
+    if (numCores <= 0)
+        return 0;
+    const int64_t tilesMain = totalTiles / numCores;
+    const int64_t coresTail = totalTiles % numCores;
+    return (tilesMain + ((coresTail > 0) ? 1 : 0)) * tileElems;
+}
+
+// RefineSplitForParallelism(maxBroShape, perBufElems, maxCores, split, multicore)
+//   — 容量型切分的并行度细化（尾块/余数负载均衡）
+
+// 触发条件（缺一不可，保证既有形状完全不受影响）：
+//   1) 整张量装不进单 buffer（totalElems > perBufElems）——容量型切分；
+//      整张量单 tile 是既有设计契约（单核、aO=1），不细化；
+//   2) MultiCoreSplit 后 totalTiles < maxCores——存在空闲核。
+// 满足时在 [ceil(totalElems/maxCores), perBufElems] 内枚举 (切分轴 k, aI)，按
+//   "单核最大负载最小 → 同负载取核数更多" 选优：tile 元素数不小于理想均分
+//   （不产生比必要更碎的 tile / 更多的每 tile 固定开销），且让 totalTiles 尽量
+//   贴近或整除 maxCores，余数（coresTail）引起的长尾被压到最小。
+// 未命中更优解时保持 FindSplitAxis + MultiCoreSplit 原结果（bit 级不变）。
+
+bool RefineSplitForParallelism(const std::vector<int64_t>& maxBroShape, int64_t perBufElems, int64_t maxCores,
+                               SplitResult& split, MultiCoreResult& multicore)
+{
+    const int64_t rank = static_cast<int64_t>(maxBroShape.size());
+    if (rank <= 0 || perBufElems <= 0 || maxCores <= 1)
+        return false;
+
+    int64_t totalElems = 1;
+    for (int64_t d = 0; d < rank; d++)
+        totalElems *= maxBroShape[d];
+    if (totalElems <= perBufElems) // 整张量装得下 → 单 tile 契约，不细化
+        return false;
+    if (multicore.totalTiles >= maxCores || multicore.numCores <= 0) // 已满核
+        return false;
+
+    const int64_t targetTile = (totalElems + maxCores - 1) / maxCores; // 理想单核元素数
+    int64_t bestLoad = CoreMaxLoad(multicore.totalTiles, multicore.numCores, SplitTileElems(maxBroShape, split));
+    SplitResult bestSplit = split;
+    MultiCoreResult bestMc = multicore;
+
+    for (int64_t k = 0; k < rank; k++) {
+        int64_t inner = 1;
+        for (int64_t d = k + 1; d < rank; d++)
+            inner *= maxBroShape[d];
+        if (inner > perBufElems) // 内轴本身已超单 buffer，不能在该轴细分
+            continue;
+        int64_t outer = 1;
+        for (int64_t d = 0; d < k; d++)
+            outer *= maxBroShape[d];
+
+        int64_t aILo = (targetTile + inner - 1) / inner; // tileElems ≥ targetTile
+        if (aILo < 1)
+            aILo = 1;
+        int64_t aIHi = perBufElems / inner; // tileElems ≤ perBufElems
+        if (aIHi > maxBroShape[k])
+            aIHi = maxBroShape[k];
+
+        for (int64_t aI = aILo; aI <= aIHi; aI++) {
+            const int64_t tileElems = aI * inner;
+            const int64_t aO = (maxBroShape[k] + aI - 1) / aI;
+            const int64_t totalTiles = outer * aO;
+            const int64_t numCores = (totalTiles < maxCores) ? totalTiles : maxCores;
+            const int64_t load = CoreMaxLoad(totalTiles, numCores, tileElems);
+            const bool better = (load < bestLoad) || (load == bestLoad && numCores > bestMc.numCores);
+            if (!better)
+                continue;
+
+            bestLoad = load;
+            bestSplit.axis = k;
+            bestSplit.aI = aI;
+            bestSplit.aO = aO;
+            const int64_t rem = maxBroShape[k] % aI;
+            bestSplit.aITail = (rem == 0) ? aI : rem;
+            bestMc.numCores = numCores;
+            bestMc.totalTiles = totalTiles;
+            bestMc.tilesMain = totalTiles / numCores;
+            bestMc.coresTail = totalTiles % numCores;
+        }
+    }
+
+    if (bestSplit.axis == split.axis && bestSplit.aI == split.aI) // 无更优解 → 保持原样
+        return false;
+    split = bestSplit;
+    multicore = bestMc;
+    return true;
+}
+
 // PrecomputeStrides(s, strides) — GM stride 预计算
 
 // 行主序 stride：size-1 轴（广播轴 / 补 1 轴）stride=0 —— 参数张量经通道轴
@@ -366,6 +471,10 @@ void ComputeBranch0Tiling(const Branch0TilingInputs& in, BN3DTrainingReduceGradT
     const int64_t perBufElems = in.perBufBytes / static_cast<int64_t>(sizeof(float));
     bn3_d_training_reduce_grad::FindSplitAxis(maxBroShape, perBufElems, out.split);
     bn3_d_training_reduce_grad::MultiCoreSplit(maxBroShape, out.split, in.coreNum, out.multicore);
+    // 并行度细化：仅当容量型切分后 totalTiles < coreNum 时提升切分粒度，
+    // 满载形状（如大 NDHWC 用例）保持原 tiling 不变。
+    bn3_d_training_reduce_grad::RefineSplitForParallelism(maxBroShape, perBufElems, in.coreNum, out.split,
+                                                          out.multicore);
 
     // ===== stride 预计算 =====
     std::vector<std::vector<int64_t>> inStrides(MAX_INPUT_SLOTS), outStrides(MAX_OUTPUT_SLOTS);
@@ -440,6 +549,10 @@ void ComputeBranch1Tiling(const Branch1TilingInputs& in, BN3DTrainingReduceGradT
     const int64_t perBufElems = in.perBufBytes / static_cast<int64_t>(sizeof(float));
     bn3_d_training_reduce_grad::FindSplitAxis(maxBroShape, perBufElems, out.split);
     bn3_d_training_reduce_grad::MultiCoreSplit(maxBroShape, out.split, in.coreNum, out.multicore);
+    // 并行度细化：仅当容量型切分后 totalTiles < coreNum 时提升切分粒度，
+    // 满载形状（如大 NDHWC 用例）保持原 tiling 不变。
+    bn3_d_training_reduce_grad::RefineSplitForParallelism(maxBroShape, perBufElems, in.coreNum, out.split,
+                                                          out.multicore);
 
     // ===== stride 预计算 =====
     std::vector<std::vector<int64_t>> inStrides(MAX_INPUT_SLOTS), outStrides(MAX_OUTPUT_SLOTS);

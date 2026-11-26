@@ -114,14 +114,55 @@ __aicore__ inline int64_t CalcOutputTransferCount(const int64_t* normalShape, in
 // count ≤ perBufElems = 16384 → uint32 无溢出;
 // LoadAlign/StoreAlign 要求 32B 对齐: TBuf 槽位 perBufBytes=(UB/P)&~31 对齐,
 // off = i×64×4 恒 32B 倍数。
-// 链长核对: ChainS=2 / ChainA1=3 / ChainA2=2 / ChainB=2 / ChainC=2, 全部 ≤ 7。
+// 链长核对: ChainS=6（含 0 ULP 守卫的 2 次 Sqrt + Select）/ ChainA1=3 / ChainA2=2 / ChainB=2
+//   / ChainC=2, 全部 ≤ 7。
 
-// ChainSVF: s = sqrt(bv + eps)  [Adds + Sqrt, 链长 2; dst==src 原地, unary 合法, epsilon_guard]
+// ===========================================================================
+// 标量因子（s = sqrt(bv+eps) 等）的正确舍入（0 ULP）模式
+//
+// 背景：intrinsic Sqrt 在非精确平方根输入上带 ~1 ULP 近似误差，且该误差是
+//   **逐通道常量**（同一通道内 t ULP − b ULP 近似为常数，L1_484 实测 ch25≈1.4 /
+//   ch112≈2.05 / ch94≈4.24），不会随元素增多而互相抵消。大值域用例（输出 ~4e4）
+//   上它以「通道常量因子」的形式整体平移 y，使大值域 rmse 比值随种子在 1.2~2.5
+//   抖动（门限 1.5）。改走 0 ULP 正确舍入后（CPU 40 seed 扫描预期 0.60~1.01，
+//   实测 L1_484 seed 1..5：2.469/1.345/1.576/1.818/1.851 → 0.996/1.186/1.114/
+//   1.297/1.349，5/5 PASS）。
+//
+// 0 ULP sqrt 只支持**有界正 radicand**：套件里 359/595 条用例喂负 bv（sqrt 得
+//   NaN），另有 bv = -eps 附近的 0 radicand 与 ±Inf 极端值，这些必须保持既有
+//   NaN/Inf 传播语义完全不变。故用 Compare + Select 守卫（范式同
+//   bn_inference/op_kernel/arch35/bn_inference_common.h:350-367）：仅当
+//   0 < radicand ≤ FP32_MAX×0.25 时走 0 ULP，其余落 **intrinsic Sqrt**（全域指令，
+//   即改动前的原路径 —— 守卫域外的行为与改动前逐位一致，且比再引入一条软 sqrt
+//   序列便宜：s 在非驻留 tile 里是逐元素计算的，两条软序列会把 ~14 条指令/元素的
+//   开销加到大值域用例上）。
+// ===========================================================================
+static constexpr float kPreciseSqrtMaxRadicand = 3.4028234663852886e38f * 0.25f; // FP32_MAX / 4
+static constexpr AscendC::Reg::SqrtSpecificMode kSqrtPreciseMode = {AscendC::Reg::MaskMergeMode::ZEROING, false,
+                                                                    AscendC::SqrtAlgo::PRECISION_0ULP_FTZ_FALSE};
+
+// 除法同理只用在**真有逐通道寄存器驻留**的地方：Pass1 快路里 r = 1/s 每 cb 算一次
+//   （正确舍入 0 ULP，范式同 bn_inference_common.h:163-176 的倒数除法说明），逐元素
+//   只剩乘法；ProcessTiles 的 s 已按元素广播（每 64 lane 一条向量除法，没有可省的
+//   重复），换 0 ULP 软除法既无收益、实测还让 L1_484 的 rmse 比值按种子 +0.11 左右，
+//   故两条链保持 intrinsic Div（详见 ChainA2VF / ChainCVF 注释）。
+static constexpr AscendC::Reg::DivSpecificMode kDivPreciseMode = {AscendC::Reg::MaskMergeMode::ZEROING, false,
+                                                                  AscendC::DivAlgo::PRECISION_0ULP_FTZ_FALSE};
+// 1/s 的 0 ULP 域下界：s 为次正规数/0 时 1/s 的牛顿序列内部会先越界，回落 intrinsic
+static constexpr float kFp32MinNormal = 1.1754943508222875e-38f; // FLT_MIN
+static constexpr float kFp32Max = 3.4028234663852886e38f;        // FP32_MAX
+
+// ChainSVF: s = sqrt(bv + eps)  [Adds + 2×Compare + Sqrt×2 + Select, 链长 6; dst==src 原地]
+//   守卫：radicand ∈ (0, FP32_MAX/4] → 0 ULP 正确舍入；其余（负/零/NaN/±Inf/超大）
+//   → intrinsic Sqrt（改动前的原路径，NaN/Inf 传播与溢出语义逐位不变）。
+//   **无 epsilon_guard 之类的数值保护**：ε 只由 Add 加入 radicand，kernel 不对 eps 做
+//   任何下限夹取，语义完全由调用方传入的 TilingData epsilon 决定（旧注释里的
+//   "epsilon_guard" 并不存在，勿据此假设）。
 template <typename T>
 __simd_vf__ inline void ChainSVF(__ubuf__ T* dst, __ubuf__ T* src, T eps, int64_t count, uint16_t repeat)
 {
-    AscendC::Reg::RegTensor<T> rDst;
-    AscendC::Reg::MaskReg mask;
+    AscendC::Reg::RegTensor<T> rDst, rPrec;
+    AscendC::Reg::MaskReg mask, mPos, mRange;
     constexpr uint32_t VL = 256 / sizeof(T); // = 64
     uint32_t remaining = static_cast<uint32_t>(count);
     for (uint16_t i = 0; i < repeat; ++i) {
@@ -129,7 +170,12 @@ __simd_vf__ inline void ChainSVF(__ubuf__ T* dst, __ubuf__ T* src, T eps, int64_
         mask = AscendC::Reg::UpdateMask<T>(remaining); // remaining 自动递减, 不可再手动递减
         AscendC::Reg::LoadAlign(rDst, src + off);
         AscendC::Reg::Adds(rDst, rDst, eps, mask); // bv + eps（ε 经参数传入, 禁止使用固定值）
-        AscendC::Reg::Sqrt(rDst, rDst, mask);      // sqrt(...)
+        // 0 ULP 路径只对有界正 radicand 生效，其余走全域指令后 Select 回填
+        AscendC::Reg::Compares<T, AscendC::CMPMODE::GT>(mPos, rDst, T(0), mask);
+        AscendC::Reg::Compares<T, AscendC::CMPMODE::LE>(mRange, rDst, T(kPreciseSqrtMaxRadicand), mPos);
+        AscendC::Reg::Sqrt<T, &kSqrtPreciseMode>(rPrec, rDst, mRange); // 正确舍入（0 ULP）
+        AscendC::Reg::Sqrt(rDst, rDst, mask);                          // 全域回落（intrinsic：负 → NaN）
+        AscendC::Reg::Select(rDst, rPrec, rDst, mRange);               // mask 置位取 src0
         AscendC::Reg::StoreAlign(dst + off, rDst, mask);
     }
 }
@@ -157,6 +203,10 @@ __simd_vf__ inline void ChainA1VF(__ubuf__ T* dst, __ubuf__ T* x, __ubuf__ T* bm
 }
 
 // ChainA2VF: t1 = grads - t_a / s  [Div + Sub, 链长 2; ÷s 在括号内、先于 grads−, 顺序 2]
+//   ÷s 保持 intrinsic：ProcessTiles 的 s 已按元素广播（每 64 lane 一条向量除法），
+//   改 0 ULP 软除法没有逐通道寄存器复用可省，且实测让 L1_484 的 rmse 比值按种子
+//   +0.11 左右（种子 1: 0.996→1.114、种子 2: 1.186→1.291），故该路径不做模式替换；
+//   逐通道因数只在 Pass1 快路（真有逐通道寄存器驻留）外提为 1/s。
 template <typename T>
 __simd_vf__ inline void ChainA2VF(__ubuf__ T* dst, __ubuf__ T* grads, __ubuf__ T* tA, __ubuf__ T* s, int64_t count,
                                   uint16_t repeat)
@@ -177,7 +227,38 @@ __simd_vf__ inline void ChainA2VF(__ubuf__ T* dst, __ubuf__ T* grads, __ubuf__ T
     }
 }
 
-// ChainBVF: t2 = t1 - do * inv_num  [Muls + Sub, 链长 2]
+// ChainBCVF（M2 合并链）: corr = t_a/s + do·inv_num → t2 = g - corr  [Div+Muls+Add+Sub, 链长 4]
+//   运算结构与三方/golden 对齐：两个修正量先在**小量级**上相加（只舍入一次），再一次性
+//   从满量级的 g 里减掉。原 A2/B 两链是「g − t_a/s」再「− do·inv」，两次满量级减法各
+//   舍入一次；逐 op 消融（L1_271 seed 1）显示 `g − t_a/s` 这一步是唯一主导项：
+//   基线 1.7014 → 只把该步精确化 0.7589；只把 `t2 − do·inv` 精确化 1.3028；两次除法
+//   精确化 1.7014（除法位置贡献为零，故不用 0 ULP 除法）。
+//   ⚠ 仅用于快速路径（tile 内无 ±Inf/NaN）；完整/suspect 路径保持 A2/B/C 原序不变，
+//   因为 FlagVF3 的 t1SameDo 与 FixVF 的分类依赖原中间量 t1。
+template <typename T>
+__simd_vf__ inline void ChainBCVF(__ubuf__ T* dst, __ubuf__ T* g, __ubuf__ T* tA, __ubuf__ T* do_, __ubuf__ T* s,
+                                  T invNum, int64_t count, uint16_t repeat)
+{
+    AscendC::Reg::RegTensor<T> rG, rTa, rDo, rS, rTmp, rDst;
+    AscendC::Reg::MaskReg mask;
+    constexpr uint32_t VL = 256 / sizeof(T);
+    uint32_t remaining = static_cast<uint32_t>(count);
+    for (uint16_t i = 0; i < repeat; ++i) {
+        int32_t off = static_cast<int32_t>(i) * static_cast<int32_t>(VL);
+        mask = AscendC::Reg::UpdateMask<T>(remaining);
+        AscendC::Reg::LoadAlign(rG, g + off);
+        AscendC::Reg::LoadAlign(rTa, tA + off);
+        AscendC::Reg::LoadAlign(rDo, do_ + off);
+        AscendC::Reg::LoadAlign(rS, s + off);
+        AscendC::Reg::Div(rTmp, rTa, rS, mask);      // t_a / s
+        AscendC::Reg::Muls(rDst, rDo, invNum, mask); // do * inv_num
+        AscendC::Reg::Add(rDst, rTmp, rDst, mask);   // corr = t_a/s + do*inv（小量级相加，一次舍入）
+        AscendC::Reg::Sub(rDst, rG, rDst, mask);     // t2 = g - corr（唯一一次满量级减法）
+        AscendC::Reg::StoreAlign(dst + off, rDst, mask);
+    }
+}
+
+// ChainBVF: t2 = t1 - do * inv_num  [Muls + Sub, 链长 2]（仅 suspect/完整路径使用）
 template <typename T>
 __simd_vf__ inline void ChainBVF(__ubuf__ T* dst, __ubuf__ T* t1, __ubuf__ T* do_, T invNum, int64_t count,
                                  uint16_t repeat)
@@ -197,7 +278,10 @@ __simd_vf__ inline void ChainBVF(__ubuf__ T* dst, __ubuf__ T* t1, __ubuf__ T* do
     }
 }
 
-// ChainCVF: y = t2 * sc / s  [Mul + Div, 链长 2]
+// ChainCVF（M2）: y = t2 · (sc/s)  [Div + Mul, 链长 2(+守卫)]
+//   先把逐通道标量因子 `sc/s` 算出来再乘，与三方 `(g − corr)·(sc/s)` 的运算序一致。
+//   ⚠ `sc/s` 必须**正确舍入**并带域守卫（同 Pass1VF）：实测给该因子注入 ±1 ULP 会让
+//   L1_271 的比值从 ~1.0 升到 2.0~2.9 直接 FAIL。s = 0/次正规/±Inf/NaN 时回落 intrinsic。
 template <typename T>
 __simd_vf__ inline void ChainCVF(__ubuf__ T* dst, __ubuf__ T* t2, __ubuf__ T* sc, __ubuf__ T* s, int64_t count,
                                  uint16_t repeat)
@@ -213,7 +297,7 @@ __simd_vf__ inline void ChainCVF(__ubuf__ T* dst, __ubuf__ T* t2, __ubuf__ T* sc
         AscendC::Reg::LoadAlign(rSc, sc + off);
         AscendC::Reg::LoadAlign(rS, s + off);
         AscendC::Reg::Mul(rTmp, rT2, rSc, mask); // t2 * sc
-        AscendC::Reg::Div(rDst, rTmp, rS, mask); // (t2*sc)/s
+        AscendC::Reg::Div(rDst, rTmp, rS, mask); // (t2*sc)/s（与 golden 同序）
         AscendC::Reg::StoreAlign(dst + off, rDst, mask);
     }
 }
@@ -628,13 +712,20 @@ __simd_vf__ inline void SuspectCheckVF(__ubuf__ T* g, __ubuf__ T* s, __ubuf__ T*
 //   - 块枚举按 (w, cb): 块 (w, cb) 覆盖 tile 内局部 [(w·C + cb·64), +min(64, C−cb·64))
 //     元素（mask 截尾；C 为最内维保证块不跨行周期）；
 //   - 每个 cb 的 5 个参数值装载进寄存器后跨全部 w 复用 → 参数零逐元素流量；
-//   - s = sqrt(bv+eps) 每 cb 仅算一次（与逐元素计算逐位一致）。
-// 数值: 与 Stage-1 快速路径同运算序（Sub/Mul/Muls/Div/Sub/Muls/Sub/Mul/Div），
-//   每元素输入相同 → 结果逐位一致；|g|/|params|/s 幅值累积进 scratch（跨 tile
-//   由调用方维护），kernel 末尾统一判定 suspect → 回退 ProcessTiles() 全量重算。
+//   - s = sqrt(bv+eps) 与 r = 1/s 每 cb 仅算一次（0 ULP 正确舍入，见 kSqrtPreciseMode /
+//     kDivPreciseMode）：通道内的标量因子在寄存器里跨全部 w 复用，逐元素只剩乘法。
+// 数值（M2r）: 与 ProcessTiles 快速路径同款结构对齐三方：
+//   corr = t_a·(1/s) + do·inv_num  →  t2 = g − corr  →  y = t2·(sc/s)
+//   两个修正量先在小量级上相加（一次舍入），再一次性从满量级 g 减去；逐通道标量因子
+//   1/s 与 sc/s 都是每 cb 一次、0 ULP 正确舍入（见 kDivPreciseMode，带 s 域守卫），
+//   通道内跨全部 w 复用，逐元素只剩乘法。旧的「(t2·sc)·(1/s)」把两次除法误差叠在
+//   逐通道常量因子上，是 L1_271 类大值域用例的主要误差源。
+//   两条路径共用同一 s（同守卫、同模式）与同一 |g|/|params|/s 幅值累积进 scratch
+//   （跨 tile 由调用方维护），kernel 末尾统一判定 suspect → 回退 ProcessTiles() 全量重算。
 //
-// 寄存器预算: 参数 5 + 工作约 8 + 累积 2 ≈ 15 个向量寄存器，远低于 VF 上限。
-// 链长: 每 (w, cb) 块 13 op（含 b16 cast），单块内顺序依赖与既有链一致。
+// 寄存器预算: 参数 5 + 工作约 8 + 逐通道因子 2（rOne/rR）+ rSPrec + 累积 2 ≈ 18 个
+//   向量寄存器，远低于 VF 上限。
+// 链长: 每 (w, cb) 块 8 op（含 b16 cast 为 10），单块内顺序依赖与既有链一致。
 // ===========================================================================
 template <typename T>
 __simd_vf__ inline void Pass1VF(__ubuf__ T* g, __ubuf__ T* x, __ubuf__ T* y, __ubuf__ float* params, int64_t wCnt,
@@ -642,12 +733,13 @@ __simd_vf__ inline void Pass1VF(__ubuf__ T* g, __ubuf__ T* x, __ubuf__ T* y, __u
 {
     constexpr bool kIsB16 = !std::is_same_v<T, float>;
     (void)params;
-    AscendC::Reg::RegTensor<float> rBm, rDs, rDo, rSc, rBv, rS;
+    AscendC::Reg::RegTensor<float> rBm, rDs, rDo, rSc, rBv, rS, rSPrec;
     AscendC::Reg::RegTensor<float> rGf, rXf, rTa, rT1, rT2, rTmp, rYf;
+    AscendC::Reg::RegTensor<float> rOne, rR; // 逐通道倒数 1/s（每 cb 一次）
     AscendC::Reg::RegTensor<float> rP1, rP2; // 参数幅值检查专用（不动原始参数寄存器）
     AscendC::Reg::RegTensor<T> rGB16, rXB16, rYB16;
     AscendC::Reg::RegTensor<float> rAcc, rRed;
-    AscendC::Reg::MaskReg mask;
+    AscendC::Reg::MaskReg mask, mPos, mRange, mSafe;
     // 跨 tile 幅值累积: lane0 持有当前最大值（首 tile 置 0，其余从 scratch 续）
     // scratch 写侧仅写 lane0（DIST_FIRST_ELEMENT_B32, 4B），读侧必须只消费 4B：
     // DIST_NORM 默认读满 256B，会读入 lane1..63 的未初始化 UB → 改用 DIST_BRC_B32
@@ -669,7 +761,23 @@ __simd_vf__ inline void Pass1VF(__ubuf__ T* g, __ubuf__ T* x, __ubuf__ T* y, __u
         AscendC::Reg::LoadAlign(rSc, params + 3 * C + cb * 64); // sc
         AscendC::Reg::LoadAlign(rBv, params + 4 * C + cb * 64); // bv
         AscendC::Reg::Adds(rBv, rBv, eps, mask);                // bv + eps
-        AscendC::Reg::Sqrt(rS, rBv, mask);                      // s（每 cb 一次）
+        // s 与 ChainSVF 同一守卫与模式（0 ULP 正确舍入，逐通道常量因子不再带 1 ULP 误差）
+        AscendC::Reg::Compares<float, AscendC::CMPMODE::GT>(mPos, rBv, 0.0f, mask);
+        AscendC::Reg::Compares<float, AscendC::CMPMODE::LE>(mRange, rBv, kPreciseSqrtMaxRadicand, mPos);
+        AscendC::Reg::Sqrt<float, &kSqrtPreciseMode>(rSPrec, rBv, mRange);
+        AscendC::Reg::Sqrt(rS, rBv, mask);            // 全域回落（intrinsic，与改动前逐位一致）
+        AscendC::Reg::Select(rS, rSPrec, rS, mRange); // s（每 cb 一次）
+        // ---- 逐通道倒数外提 r = 1/s（每 cb 一次，0 ULP 正确舍入）----
+        // 通道内全部元素共用这个标量因子：一次正确舍入的 1/s 取代逐元素两次除法，
+        // 既去掉 intrinsic 除法的 ~1 ULP 逐通道常量误差，也省掉两遍软除法序列。
+        // s 为有限正规正数时才走 0 ULP（软除牛顿序列在 0 / 次正规 / 极大商下会先越界），
+        // 其余（s=0 → +Inf、s 次正规、s=NaN/±Inf）回落 intrinsic，分类语义不变。
+        AscendC::Reg::Duplicate(rOne, 1.0f, mask);
+        AscendC::Reg::Compares<float, AscendC::CMPMODE::GE>(mSafe, rS, kFp32MinNormal, mask);
+        AscendC::Reg::Compares<float, AscendC::CMPMODE::LE>(mSafe, rS, kFp32Max, mSafe);
+        AscendC::Reg::Div<float, &kDivPreciseMode>(rR, rOne, rS, mSafe); // 1/s（正确舍入 0 ULP）
+        AscendC::Reg::Div(rTmp, rOne, rS, mask);                         // 全域回落的倒数
+        AscendC::Reg::Select(rR, rR, rTmp, mSafe);
         // 参数幅值保守累积（|bm|/|ds|/|do|/|sc|/s → 独立寄存器, 原参数保持原值）
         AscendC::Reg::Abs(rP1, rBm, mask);
         AscendC::Reg::Abs(rP2, rDs, mask);
@@ -692,16 +800,16 @@ __simd_vf__ inline void Pass1VF(__ubuf__ T* g, __ubuf__ T* x, __ubuf__ T* y, __u
                 AscendC::Reg::LoadAlign(rGf, g + off);
                 AscendC::Reg::LoadAlign(rXf, x + off);
             }
-            AscendC::Reg::Sub(rTa, rXf, rBm, mask);      // x - bm
-            AscendC::Reg::Mul(rTa, rTa, rDs, mask);      // * ds
-            AscendC::Reg::Muls(rTa, rTa, invNum, mask);  // * inv_num
-            AscendC::Reg::Div(rTmp, rTa, rS, mask);      // t_a / s
-            AscendC::Reg::Sub(rT1, rGf, rTmp, mask);     // t1 = g - t_a/s
-            AscendC::Reg::Muls(rTmp, rDo, invNum, mask); // do * inv_num
-            AscendC::Reg::Sub(rT2, rT1, rTmp, mask);     // t2 = t1 - do*inv
-            AscendC::Reg::Mul(rTmp, rT2, rSc, mask);     // t2 * sc
-            AscendC::Reg::Div(rYf, rTmp, rS, mask);      // y_f32 = (t2*sc)/s
-            AscendC::Reg::Abs(rTmp, rGf, mask);          // |g| 累积
+            AscendC::Reg::Sub(rTa, rXf, rBm, mask);     // x - bm
+            AscendC::Reg::Mul(rTa, rTa, rDs, mask);     // * ds
+            AscendC::Reg::Muls(rTa, rTa, invNum, mask); // * inv_num
+            AscendC::Reg::Mul(rT1, rTa, rR, mask);      // t_a * (1/s)
+            AscendC::Reg::Muls(rT2, rDo, invNum, mask); // do * inv_num
+            AscendC::Reg::Add(rT1, rT1, rT2, mask);     // corr = t_a/s + do*inv（小量级合并，一次舍入）
+            AscendC::Reg::Sub(rT2, rGf, rT1, mask);     // t2 = g - corr（唯一一次满量级减法）
+            AscendC::Reg::Mul(rTmp, rT2, rSc, mask);    // t2 * sc
+            AscendC::Reg::Mul(rYf, rTmp, rR, mask);     // y_f32 = (t2*sc)·(1/s)
+            AscendC::Reg::Abs(rTmp, rGf, mask);         // |g| 累积
             AscendC::Reg::Max(rAcc, rAcc, rTmp, mAll);
             if constexpr (kIsB16) {
                 AscendC::Reg::Cast<T, float, kCastTraitF32ToB16>(rYB16, rYf, mask);
@@ -779,6 +887,8 @@ private:
     __aicore__ inline void CopyInBrcImpl(const int64_t* coord, const AscendC::GlobalTensor<DT>* gmArr,
                                          const AscendC::MultiCopyParams<DT, ND>* nddmaArr, const int64_t* outerIters,
                                          int64_t groupIdx, int64_t gmSlot, int slot, int64_t aISeg);
+    // ---- Stage-1 参数驻留（Init 自推导, 见 Init 尾部）----
+    bool paramsResident_ = false; // 5 参数广播向量跨 tile 恒定 → 只搬一次, 常驻 S2..S6
     // ---- Stage-2 pass1 状态（Init 自推导, 见 Init 尾部）----
     bool p1Enabled_ = false; // NDHWC 且 C ∈ [12, perBufBytes/20] 且 C 不参与切分
     bool p1Suspect_ = false; // pass1/passN 末尾幅值判定 → 回退 ProcessTiles
@@ -838,6 +948,21 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::Init(GM_ADDR input
                 p1C_ = C;
                 constexpr int64_t kCBlockElems = 64; // Pass1 c-block 大小：64 通道元素/块
                 p1CB_ = (C + (kCBlockElems - 1)) / kCBlockElems;
+            }
+        }
+    }
+    // ---- Stage-1 参数驻留判定（全 kernel 侧判定, 无 TilingData 变更）----
+    //   5 参数（diff_scale/diff_offset/scale/batch_mean/batch_variance）的广播向量
+    //   只随 UB 内轴（d > split.axis）变化: 若它们在 split 轴及更外层的 GM stride
+    //   全为 0, 则每个 tile 的广播向量逐元素相同（split 轴 src stride=0 → 各行相同）,
+    //   可只搬一次常驻, tile 循环里省掉 5 次 DMA（MTE2 流量 24B/元素 → 4B/元素）。
+    //   尾块（aITail<aI）是该满长向量的前缀 → 按 count 前缀读取即正确。
+    paramsResident_ = true;
+    for (int s = IN_DIFF_SCALE; s <= IN_BATCH_VARIANCE && paramsResident_; s++) {
+        for (int64_t d = 0; d <= td_->split.axis; d++) {
+            if (td_->inputStrides[s][d] != 0) {
+                paramsResident_ = false;
+                break;
             }
         }
     }
@@ -938,12 +1063,30 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::Process()
 //        → MTE3 y）。tile 枚举/多核分区与 ProcessTiles 完全一致（同一 GetCoreRange
 //        与 flat→coord 映射），仅搬运方式不同: 数据为 1D 连续拷（无 NDDMA 广播），
 //        参数整存于 S3（5 段 C 长度, 每 tile 复用）。
-// slot 布局: S0=g(T) / S1=x(T) / S2=y(T) / S3=params(5×C×4B)
+// slot 布局: g/x 双缓冲 —— 槽0 = S0=g(T) / S1=x(T)，槽1 = S4=g(T) / S5=x(T)；
+//            y 亦双缓冲 —— 槽0=S2 / 槽1=S6（S7 不占用）；S3=params(5×C×4B)
+// 流水: 每轮先发射 tile flat+1 的 MTE2 搬入到另一槽，再等本 tile 的 MTE2_V 旗做 V
+//        —— MTE2 搬入与 V 段计算落在不同管道上并行, 打破「搬完才算、算完才搬」的串行
+//        （四管道 ratio 之和 ≈1.08 即该串行的量化表现）。
+// WAR 契约（双缓冲必须同时满足, 否则会读到下一 tile 的数据）:
+//   1) 预取写另一槽 ↔ 上轮 V 读该槽: V 对 MTE2 的唯一可见链是
+//      「V_MTE3 → MTE3 CopyOut → MTE3_MTE2」, 故预取必须排在 WaitFlag<MTE3_MTE2> 之后;
+//   2) V 写 y 槽 ↔ 上轮 CopyOut 读该槽: 单缓冲时该 WAR 无任何事件可约束（V 等的是
+//      MTE2_V, MTE3_MTE2 只拦 MTE2 管道）, 故 y 必须与 g/x 同步双缓冲——复用间隔变成
+//      2 轮, 复用点自然落在「MTE3_MTE2 等待 → 预取 MTE2 → MTE2_V」链之后。
+// UB 预算: Init 已按 PHYS_NODES=8 分配 8 份 perBufBytes, Pass1 原先只用 4 份;
+//        两个第二槽直接复用闲置的 S4/S5 与 S6 → 双缓冲零 UB 增量, 无需改 perBufBytes / tiling。
 // ===========================================================================
 template <typename T, int64_t RANK>
 __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::Pass1()
 {
-    int32_t evMTE2toV = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE2_V));
+    // 双缓冲事件: MTE2→V 每槽一套 id。FetchEventID 对同一事件类型恒返回首个空闲 id
+    // （取不到两枚），故用 AllocEventID 显式占两枚，使两槽的搬入完成旗互不串用。
+    // V→MTE3 / MTE3→MTE2 / V→S 仍单套: 写回侧保持单缓冲, 「末轮置一枚 MTE3_MTE2」的
+    // 回退契约（ProcessTiles(true) 首 tile 等待同一 id）与单 id 语义完全不变。
+    int32_t evMTE2toV[2];
+    evMTE2toV[0] = static_cast<int32_t>(GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE2_V>());
+    evMTE2toV[1] = static_cast<int32_t>(GetTPipePtr()->AllocEventID<AscendC::HardEvent::MTE2_V>());
     int32_t evVtoMTE3 = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::V_MTE3));
     int32_t evMTE3toMTE2 = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE3_MTE2));
     int32_t evVtoS = static_cast<int32_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::V_S));
@@ -951,59 +1094,105 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::Pass1()
     int64_t start, end;
     GetCoreRange(AscendC::GetBlockIdx(), td_->multicore.tilesMain, td_->multicore.coresTail, start, end);
     p1Suspect_ = false;
-    if (start >= end)
-        return; // 本核无 tile（分区与 ProcessTiles 一致, 无需回退）
+    if (start >= end) {
+        // 本核无 tile（分区与 ProcessTiles 一致, 无需回退）; 归还双缓冲事件 id
+        GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE2_V>(evMTE2toV[0]);
+        GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE2_V>(evMTE2toV[1]);
+        return;
+    }
 
-    constexpr int S0 = 0, S1 = 1, S2 = 2, S3 = 3;
+    // 槽位: g/x 双缓冲 (S0/S1 ↔ S4/S5); y 亦双缓冲 (S2 ↔ S6); S3 = 5 参数
+    //   y 必须双缓冲: 单缓冲时「V(flat) 写 y ↔ CopyOut(flat−1) 读 y」的 WAR 在本流水里
+    //   没有任何事件可约束——V 等的是 MTE2_V（预取旗）, 而 MTE3_MTE2 只拦 MTE2 管道,
+    //   标量/ V 管道都不等上一轮 CopyOut。双缓冲后同一 y 槽的复用间隔变成 2 轮,
+    //   恰好落在「MTE3_MTE2 等待 → 预取 MTE2 → MTE2_V」这条链之后, 自动有序。
+    constexpr int S0 = 0, S1 = 1, S2 = 2, S3 = 3, S4 = 4, S5 = 5, S6 = 6;
 
     int64_t innerCount = 1;
     for (int64_t d = td_->split.axis + 1; d < RANK; d++)
         innerCount *= td_->maxBroShape[d];
+
+    // ===== 预取首 tile → 槽 0（含 5 参数: tile 不变量, 只搬这一次）=====
+    {
+        int64_t count = GetUBSplitRange(start % td_->split.aO, td_->split.aO, td_->split.aI, td_->split.aITail) *
+                        innerCount;
+        int64_t coord0[MAX_RANK] = {};
+        FlatToEffectiveCoord(start, td_->maxBroShape, RANK, td_->split.axis, td_->split.aI, td_->split.aO, coord0);
+        Pass1CopyIn(gmIn_[0], CalcInputOffset(coord0, td_->inputStrides[IN_GRADS], RANK), S0, count); // grads
+        Pass1CopyIn(gmIn_[1], CalcInputOffset(coord0, td_->inputStrides[IN_X], RANK), S1, count);     // x
+        // 5 参数 C 长度原始向量 → S3（bm|ds|do|sc|bv 顺序与 Pass1VF 布局一致）
+        constexpr int P_BM = 3, P_DS = 0, P_DO = 1, P_SC = 2, P_BV = 4; // gmParam_ 组内序
+        Pass1CopyIn(gmParam_[P_BM], 0, S3, p1C_, 0 * p1C_);
+        Pass1CopyIn(gmParam_[P_DS], 0, S3, p1C_, 1 * p1C_);
+        Pass1CopyIn(gmParam_[P_DO], 0, S3, p1C_, 2 * p1C_);
+        Pass1CopyIn(gmParam_[P_SC], 0, S3, p1C_, 3 * p1C_);
+        Pass1CopyIn(gmParam_[P_BV], 0, S3, p1C_, 4 * p1C_);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV[0]);
+    }
 
     int64_t coord[MAX_RANK] = {};
     for (int64_t flat = start; flat < end; flat++) {
         int64_t aISeg = GetUBSplitRange(flat % td_->split.aO, td_->split.aO, td_->split.aI, td_->split.aITail);
         int64_t count = aISeg * innerCount; // 本 tile 元素数（C 的整倍数）
         FlatToEffectiveCoord(flat, td_->maxBroShape, RANK, td_->split.axis, td_->split.aI, td_->split.aO, coord);
+        int slot = static_cast<int>((flat - start) & 1); // 本轮 V 消费的槽
+        int gCur = (slot == 0) ? S0 : S4;
+        int xCur = (slot == 0) ? S1 : S5;
+        int yCur = (slot == 0) ? S2 : S6;
+        int gNxt = (slot == 0) ? S4 : S0;
+        int xNxt = (slot == 0) ? S5 : S1;
 
-        // 跨轮 WAR: 上轮 CopyOut(MTE3) 读毕 → 本轮 CopyIn(MTE2) 可覆写（首轮跳过）
+        // 跨轮 WAR: 上轮 CopyOut(MTE3) 读毕 → 本轮 MTE2 预取可覆写另一槽;
+        //   同时该 CopyOut 的完成意味着上轮 V 已整体排空（V_MTE3 链）。
+        //   y 槽由双缓冲（S2/S6）隔开一轮, 复用点落在本链之后, 无需额外事件。
+        //   （首轮无上轮, 跳过）
         if (flat != start)
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(evMTE3toMTE2);
 
-        // ===== MTE2: 数据 2 拷（1D 连续, 无广播）+ 参数 5 段（仅首 tile, 复用至后续 tile）=====
-        int64_t gOff = CalcInputOffset(coord, td_->inputStrides[IN_GRADS], RANK);
-        int64_t xOff = CalcInputOffset(coord, td_->inputStrides[IN_X], RANK);
-        int64_t wCnt = count / p1C_;
-        Pass1CopyIn(gmIn_[0], gOff, S0, count); // grads
-        Pass1CopyIn(gmIn_[1], xOff, S1, count); // x
-        if (flat == start) {
-            // 5 参数 C 长度原始向量 → S3（bm|ds|do|sc|bv 顺序与 Pass1VF 布局一致）
-            constexpr int P_BM = 3, P_DS = 0, P_DO = 1, P_SC = 2, P_BV = 4; // gmParam_ 组内序
-            Pass1CopyIn(gmParam_[P_BM], 0, S3, p1C_, 0 * p1C_);
-            Pass1CopyIn(gmParam_[P_DS], 0, S3, p1C_, 1 * p1C_);
-            Pass1CopyIn(gmParam_[P_DO], 0, S3, p1C_, 2 * p1C_);
-            Pass1CopyIn(gmParam_[P_SC], 0, S3, p1C_, 3 * p1C_);
-            Pass1CopyIn(gmParam_[P_BV], 0, S3, p1C_, 4 * p1C_);
+        // ===== MTE2 预取 tile flat+1 → 另一槽 =====
+        // WAR 约束: 另一槽上一次的消费者是 tile flat−1 的 V。V 段对 MTE2 的唯一可见链是
+        //   「V_MTE3 → MTE3 CopyOut → MTE3_MTE2」——标量并不等待 V 排空, 因此预取必须
+        //   排在上面那次 MTE3_MTE2 等待之后; 若提前到等待之前发射, 预取 DMA 会覆写
+        //   tile flat−1 的 V 仍在读的槽（Pass1VF 的 (w, cb) 块枚举要扫 CB 遍, 读侧比
+        //   搬侧慢得多, 必然被追上）。放到此处仍与本轮 V 段重叠（本轮数据已由上一轮
+        //   预取就绪）。末 tile 无预取。
+        if (flat + 1 < end) {
+            int64_t coordN[MAX_RANK] = {};
+            FlatToEffectiveCoord(flat + 1, td_->maxBroShape, RANK, td_->split.axis, td_->split.aI, td_->split.aO,
+                                 coordN);
+            int64_t countN = GetUBSplitRange((flat + 1) % td_->split.aO, td_->split.aO, td_->split.aI,
+                                             td_->split.aITail) *
+                             innerCount;
+            Pass1CopyIn(gmIn_[0], CalcInputOffset(coordN, td_->inputStrides[IN_GRADS], RANK), gNxt, countN); // grads
+            Pass1CopyIn(gmIn_[1], CalcInputOffset(coordN, td_->inputStrides[IN_X], RANK), xNxt, countN);     // x
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV[slot ^ 1]);
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
+
+        // 本轮 tile 数据就绪（本槽独立的 MTE2_V 旗, 不与另一槽的在途搬入串用）
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV[slot]);
 
         // ===== V: Pass1VF —— (w, cb) 块枚举 + 寄存器参数, 幅值累积进 scratch =====
-        asc_vf_call<Pass1VF<T>>(
-            (__ubuf__ T*)buf_[S0].template Get<T>().GetPhyAddr(), (__ubuf__ T*)buf_[S1].template Get<T>().GetPhyAddr(),
-            (__ubuf__ T*)buf_[S2].template Get<T>().GetPhyAddr(),
-            (__ubuf__ float*)buf_[S3].template Get<float>().GetPhyAddr(), wCnt, p1C_, p1CB_, invNum_, eps_,
-            (__ubuf__ float*)scratchBuf_.template Get<float>().GetPhyAddr(), flat == start);
+        int64_t wCnt = count / p1C_;
+        asc_vf_call<Pass1VF<T>>((__ubuf__ T*)buf_[gCur].template Get<T>().GetPhyAddr(),
+                                (__ubuf__ T*)buf_[xCur].template Get<T>().GetPhyAddr(),
+                                (__ubuf__ T*)buf_[yCur].template Get<T>().GetPhyAddr(),
+                                (__ubuf__ float*)buf_[S3].template Get<float>().GetPhyAddr(), wCnt, p1C_, p1CB_,
+                                invNum_, eps_, (__ubuf__ float*)scratchBuf_.template Get<float>().GetPhyAddr(),
+                                flat == start);
 
         AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(evVtoMTE3);
         AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(evVtoMTE3);
 
         // ===== MTE3: y 搬出（cnt 计算与 ProcessTiles 同源）=====
-        CopyOutOne(coord, S2, aISeg);
+        CopyOutOne(coord, yCur, aISeg);
 
         // 跨轮 WAR 置位（末轮亦置: 供回退 ProcessTiles 首 tile 等待）
         AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(evMTE3toMTE2);
     }
+
+    // 双缓冲事件归还（两槽 MTE2_V 旗均已配对消费, 不会与回退 ProcessTiles 争用 id）
+    GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE2_V>(evMTE2toV[0]);
+    GetTPipePtr()->ReleaseEventID<AscendC::HardEvent::MTE2_V>(evMTE2toV[1]);
 
     // ===== 末尾幅值判定: scratch（跨 tile 累积的 max(|g|,|params|,s)）→ 标量 =====
     AscendC::SetFlag<AscendC::HardEvent::V_S>(evVtoS);
@@ -1034,6 +1223,8 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::Pass1CopyIn(const 
 // ===========================================================================
 // ProcessTiles: Stage-1 tile 流水线（批量 CopyIn + suspect 二选一计算段）
 //   pass1Ran: Pass1 已执行且写过 y → 首 tile 需等待 Pass1 末尾的 MTE3_MTE2 置位
+//   参数驻留（paramsResident_）: 5 参数广播向量跨 tile 恒定 → 只搬一次常驻 S2..S6,
+//   s=sqrt(bv+eps) 也只算一次; tile 循环内 MTE2 只剩 x/g 两拷。
 // ===========================================================================
 template <typename T, int64_t RANK>
 __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::ProcessTiles(bool pass1Ran)
@@ -1052,6 +1243,38 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::ProcessTiles(bool 
     for (int64_t d = td_->split.axis + 1; d < RANK; d++)
         innerCount *= td_->maxBroShape[d];
 
+    // ===== 工作槽方案 =====
+    // 非驻留模式: 沿用原方案（参数槽即工作槽: t_a→bm / t2→do / y→sc）。
+    // 驻留模式: S2..S6 常驻 bm/ds/s/do/sc 只读, 工作槽只能落在「每轮都被 MTE2 重新
+    //   刷新的」流式输入槽 x(S0)/g(S1) 上 —— 这样链内/链间只剩 RAW 与同指令原地覆写,
+    //   与原实现同构; 且 y 落 S1 时「上轮 CopyOut(MTE3) 读 y」与「本轮 V 写 y」之间
+    //   有 MTE3_MTE2 → 下轮 MTE2 刷新 → MTE2_V 这条链兜底。
+    //   禁止把 t_a/y 放到 S7: S7 不被 MTE2 刷新, 上轮 CopyOut(MTE3) 读 S7 与本轮
+    //   ChainA1(V) 写 S7 之间没有任何事件可依（MTE3_MTE2 只拦 MTE2 管道）, 构成
+    //   跨管道 WAR 竞争。
+    int wTa, wT1, wT2, wY; // 快速路径: t_a / t1 / t2 / y_f32 槽
+    int sTa, sT2, sY;      // 完整路径（suspect）: t_a / t2 / y_f32 槽
+    if constexpr (std::is_same_v<T, float>) {
+        wTa = paramsResident_ ? S0 : S2; // 原地覆写 x 槽（逐元素原地安全）
+        wT1 = S1;                        // 原地覆写 g 槽
+        wT2 = paramsResident_ ? S1 : S5; // t1 已死 → 原地
+        wY = paramsResident_ ? S1 : S6;  // t2 已死 → 原地
+        sTa = paramsResident_ ? S0 : S2; // 原地覆写 x 槽（逐元素原地安全）
+        sT2 = paramsResident_ ? S0 : S5; // t_a 已死
+        sY = paramsResident_ ? S1 : S6;  // t1 已死
+    } else {
+        wTa = paramsResident_ ? S1 : S2;
+        wT1 = paramsResident_ ? S0 : S7;
+        wT2 = paramsResident_ ? S1 : S5;
+        wY = paramsResident_ ? S7 : S6;
+        sTa = paramsResident_ ? S1 : S2; // x_f32 槽原地
+        sT2 = paramsResident_ ? S1 : S5;
+        sY = paramsResident_ ? S7 : S6;
+    }
+    // 驻留模式按满 tile 长度搬一次：尾块消费该向量的前缀
+    const int64_t fullCount = td_->split.aI * innerCount;
+    const uint16_t fullRepeat = AscendC::CeilDivision(fullCount, VL_F32);
+
     int64_t coord[MAX_RANK] = {};
     for (int64_t flat = start; flat < end; flat++) {
         int64_t aISeg = GetUBSplitRange(flat % td_->split.aO, td_->split.aO, td_->split.aI, td_->split.aITail);
@@ -1064,23 +1287,41 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::ProcessTiles(bool 
         if (flat != start || pass1Ran)
             AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(evMTE3toMTE2);
 
-        // ===== MTE2 批量搬入: 7 输入一次到位（数据 2 + 参数 5, NDDMA 随路广播）=====
+        // ===== MTE2 搬入: 数据 2 拷恒定; 参数 5 拷驻留模式下仅首 tile 搬一次 =====
         CopyInData(coord, IN_X, S0, aISeg);
         CopyInData(coord, IN_GRADS, S1, aISeg);
-        CopyInParam(coord, IN_BATCH_MEAN, S2, aISeg);
-        CopyInParam(coord, IN_DIFF_SCALE, S3, aISeg);
-        CopyInParam(coord, IN_BATCH_VARIANCE, S4, aISeg);
-        CopyInParam(coord, IN_DIFF_OFFSET, S5, aISeg);
-        CopyInParam(coord, IN_SCALE, S6, aISeg);
+        if (!paramsResident_) {
+            CopyInParam(coord, IN_BATCH_MEAN, S2, aISeg);
+            CopyInParam(coord, IN_DIFF_SCALE, S3, aISeg);
+            CopyInParam(coord, IN_BATCH_VARIANCE, S4, aISeg);
+            CopyInParam(coord, IN_DIFF_OFFSET, S5, aISeg);
+            CopyInParam(coord, IN_SCALE, S6, aISeg);
+        } else if (flat == start) {
+            // 广播向量长度取满 tile（aI 段, ≤ perBufBytes）; 之后 tile 不再重复 DMA
+            CopyInParam(coord, IN_BATCH_MEAN, S2, td_->split.aI);
+            CopyInParam(coord, IN_DIFF_SCALE, S3, td_->split.aI);
+            CopyInParam(coord, IN_BATCH_VARIANCE, S4, td_->split.aI);
+            CopyInParam(coord, IN_DIFF_OFFSET, S5, td_->split.aI);
+            CopyInParam(coord, IN_SCALE, S6, td_->split.aI);
+        }
         AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
         AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(evMTE2toV);
 
-        // 编译期 dtype 分派
-        if constexpr (std::is_same_v<T, float>) {
-            // ===== fp32 路径: ChainS 原地 S4（bv→s）→ suspect 判定 → 二选一计算段 =====
+        // ===== s = sqrt(bv + eps): 驻留模式只算首 tile 一次（s 亦跨 tile 不变）=====
+        if (paramsResident_) {
+            if (flat == start)
+                asc_vf_call<ChainSVF<float>>((__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(),
+                                             (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), eps_,
+                                             fullCount, fullRepeat);
+        } else {
             asc_vf_call<ChainSVF<float>>((__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(),
                                          (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), eps_, count,
                                          repeat);
+        }
+
+        // 编译期 dtype 分派
+        if constexpr (std::is_same_v<T, float>) {
+            // ===== fp32 路径: s 已就绪（S4）→ suspect 判定 → 二选一计算段 =====
             asc_vf_call<SuspectCheckVF<float>>((__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(),
                                                (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(),
                                                (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
@@ -1092,38 +1333,37 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::ProcessTiles(bool 
             AscendC::WaitFlag<AscendC::HardEvent::V_S>(evVtoS);
             const bool suspect = !(scratchBuf_.template Get<float>().GetValue(0) <= kSuspectThreshold);
             if (!suspect) {
-                // -- 快速路径: 5 条数学链, 全原地覆写死参数槽 --
-                // t_a = (x - bm) * ds * inv_num → S2（覆写 bm）
-                asc_vf_call<ChainA1VF<float>>((__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
+                // -- 快速路径: 5 条数学链（工作槽随驻留模式选取, 见 wTa/wT1/wT2/wY）--
+                // t_a = (x - bm) * ds * inv_num → wTa
+                asc_vf_call<ChainA1VF<float>>((__ubuf__ float*)buf_[wTa].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S0].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S3].template Get<float>().GetPhyAddr(), invNum_,
                                               count, repeat);
-                // t1 = grads - t_a/s → S1（覆写 g）
-                asc_vf_call<ChainA2VF<float>>((__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(),
+                // t2 = g - (t_a/s + do*inv_num) → wT2（M2：两修正量先合并再一次减）
+                asc_vf_call<ChainBCVF<float>>((__ubuf__ float*)buf_[wT2].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(),
-                                              (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
-                                              (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), count,
-                                              repeat);
-                // t2 = t1 - do * inv_num → S5（覆写 do）
-                asc_vf_call<ChainBVF<float>>((__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
-                                             (__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(),
-                                             (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(), invNum_,
-                                             count, repeat);
-                // y = (t2 * sc) / s → S6（覆写 sc）
-                asc_vf_call<ChainCVF<float>>((__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
-                                             (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
+                                              (__ubuf__ float*)buf_[wTa].template Get<float>().GetPhyAddr(),
+                                              (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
+                                              (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), invNum_,
+                                              count, repeat);
+                // y = t2 * (sc/s) → wY（sc/s 正确舍入 + 域守卫）
+                asc_vf_call<ChainCVF<float>>((__ubuf__ float*)buf_[wY].template Get<float>().GetPhyAddr(),
+                                             (__ubuf__ float*)buf_[wT2].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), count,
                                              repeat);
             } else {
-                // -- 完整路径（原实现同构: Flag 链 + 5 链 + Fix, flags 驻 S7）--
+                // -- 完整路径（Flag 链 + 5 链 + Fix, flags 驻 S7; 工作槽见 sTa/sT2/sY）--
                 asc_vf_call<FlagVF1<float>>((__ubuf__ int32_t*)buf_[S7].template Get<int32_t>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S0].template Get<float>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S3].template Get<float>().GetPhyAddr(), count,
                                             repeat);
-                asc_vf_call<ChainA1VF<float>>((__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
+                // 跨链 WAR 栅栏：ChainA1 写 sTa 槽（上一链 FlagVF1 读过该槽）
+                if (paramsResident_)
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                asc_vf_call<ChainA1VF<float>>((__ubuf__ float*)buf_[sTa].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S0].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S3].template Get<float>().GetPhyAddr(), invNum_,
@@ -1132,11 +1372,11 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::ProcessTiles(bool 
                                             (__ubuf__ int32_t*)buf_[S7].template Get<int32_t>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(),
-                                            (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(), count,
+                                            (__ubuf__ float*)buf_[sTa].template Get<float>().GetPhyAddr(), count,
                                             repeat);
                 asc_vf_call<ChainA2VF<float>>((__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(),
-                                              (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
+                                              (__ubuf__ float*)buf_[sTa].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), count,
                                               repeat);
                 asc_vf_call<FlagVF3<float>>((__ubuf__ int32_t*)buf_[S7].template Get<int32_t>().GetPhyAddr(),
@@ -1144,7 +1384,10 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::ProcessTiles(bool 
                                             (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(), count,
                                             repeat);
-                asc_vf_call<ChainBVF<float>>((__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
+                // 跨链 WAR 栅栏：ChainB 写 sT2 槽（FlagVF2/ChainA2 读过该槽的 t_a）
+                if (paramsResident_)
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                asc_vf_call<ChainBVF<float>>((__ubuf__ float*)buf_[sT2].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(), invNum_,
                                              count, repeat);
@@ -1152,30 +1395,30 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::ProcessTiles(bool 
                                             (__ubuf__ int32_t*)buf_[S7].template Get<int32_t>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(), count,
                                             repeat);
-                asc_vf_call<ChainCVF<float>>((__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
-                                             (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
+                // 跨链 WAR 栅栏：ChainC 写 sY 槽（上两链读到过）
+                if (paramsResident_)
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                asc_vf_call<ChainCVF<float>>((__ubuf__ float*)buf_[sY].template Get<float>().GetPhyAddr(),
+                                             (__ubuf__ float*)buf_[sT2].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), count,
                                              repeat);
-                asc_vf_call<FixVF<float>>((__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
-                                          (__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
+                asc_vf_call<FixVF<float>>((__ubuf__ float*)buf_[sY].template Get<float>().GetPhyAddr(),
+                                          (__ubuf__ float*)buf_[sY].template Get<float>().GetPhyAddr(),
                                           (__ubuf__ int32_t*)buf_[S7].template Get<int32_t>().GetPhyAddr(), count,
                                           repeat);
             }
             // RAW: V 写毕 → MTE3 可读
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(evVtoMTE3);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(evVtoMTE3);
-            // CopyOut y（f32 路径 y_f32 驻 S6）
-            CopyOutOne(coord, S6, aISeg);
+            // CopyOut y（f32 路径: 快速 y_f32@wY / 完整 y_f32@sY）
+            CopyOutOne(coord, suspect ? sY : wY, aISeg);
         } else {
-            // ===== fp16/bf16 路径: CastUp g → S7; ChainS 原地 S4; suspect 判定; 二选一 =====
+            // ===== fp16/bf16 路径: CastUp g → S7; s 已就绪（S4）; suspect 判定; 二选一 =====
             // （T=half 与 T=bfloat16_t 共用同一分支）
             asc_vf_call<CastUpVF<T>>((__ubuf__ float*)buf_[S7].template Get<float>().GetPhyAddr(),
                                      (__ubuf__ T*)buf_[S1].template Get<T>().GetPhyAddr(), count,
                                      repeat); // g_T@S1 → g_f32@S7（S1 随即让位）
-            asc_vf_call<ChainSVF<float>>((__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(),
-                                         (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), eps_, count,
-                                         repeat);
             asc_vf_call<SuspectCheckVF<float>>((__ubuf__ float*)buf_[S7].template Get<float>().GetPhyAddr(),
                                                (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(),
                                                (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
@@ -1187,41 +1430,47 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::ProcessTiles(bool 
             AscendC::WaitFlag<AscendC::HardEvent::V_S>(evVtoS);
             const bool suspect = !(scratchBuf_.template Get<float>().GetValue(0) <= kSuspectThreshold);
             if (!suspect) {
+                if (paramsResident_)
+                    AscendC::PipeBarrier<PIPE_ALL>();
                 // -- 快速路径: x 升位融合进 A1（免 x_f32 物化）; flags/修复链整体跳过 --
-                // t_a = (cast(x) - bm) * ds * inv_num → S2（覆写 bm）
-                asc_vf_call<ChainA1FusedVF<T>>((__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
+                // t_a = (cast(x) - bm) * ds * inv_num → wTa
+                asc_vf_call<ChainA1FusedVF<T>>((__ubuf__ float*)buf_[wTa].template Get<float>().GetPhyAddr(),
                                                (__ubuf__ T*)buf_[S0].template Get<T>().GetPhyAddr(),
                                                (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
                                                (__ubuf__ float*)buf_[S3].template Get<float>().GetPhyAddr(), invNum_,
                                                count, repeat);
-                // t1 = g_f32 - t_a/s → S7（覆写 g_f32）
-                asc_vf_call<ChainA2VF<float>>((__ubuf__ float*)buf_[S7].template Get<float>().GetPhyAddr(),
+                if (paramsResident_)
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                // t2 = g_f32 - (t_a/s + do*inv_num) → wT2（M2 合并链）
+                asc_vf_call<ChainBCVF<float>>((__ubuf__ float*)buf_[wT2].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S7].template Get<float>().GetPhyAddr(),
-                                              (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
-                                              (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), count,
-                                              repeat);
-                // t2 = t1 - do * inv_num → S5（覆写 do）
-                asc_vf_call<ChainBVF<float>>((__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
-                                             (__ubuf__ float*)buf_[S7].template Get<float>().GetPhyAddr(),
-                                             (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(), invNum_,
-                                             count, repeat);
-                // y_f32 = (t2 * sc) / s → S6（覆写 sc）
-                asc_vf_call<ChainCVF<float>>((__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
-                                             (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
+                                              (__ubuf__ float*)buf_[wTa].template Get<float>().GetPhyAddr(),
+                                              (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
+                                              (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), invNum_,
+                                              count, repeat);
+                if (paramsResident_)
+                    AscendC::PipeBarrier<PIPE_ALL>();
+                // y_f32 = t2 * (sc/s) → wY（M2：sc/s 正确舍入 + 域守卫）
+                asc_vf_call<ChainCVF<float>>((__ubuf__ float*)buf_[wY].template Get<float>().GetPhyAddr(),
+                                             (__ubuf__ float*)buf_[wT2].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), count,
                                              repeat);
             } else {
+                // 跨链 WAR 栅栏：下面的 CastUp 覆写 S1（前一维 CastUp 的 g_T 源槽）
+                AscendC::PipeBarrier<PIPE_ALL>();
                 // -- 完整路径: x 升位物化至 S1（S0 让位 flags）; Flag 链 + 5 链 + Fix --
                 asc_vf_call<CastUpVF<T>>((__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(),
                                          (__ubuf__ T*)buf_[S0].template Get<T>().GetPhyAddr(), count,
                                          repeat); // x_T@S0 → x_f32@S1（S0 让位 flags）
+                // 跨链 WAR 栅栏：FlagVF1 写 S0（上一链 x_T 的源槽）
+                AscendC::PipeBarrier<PIPE_ALL>();
                 asc_vf_call<FlagVF1<float>>((__ubuf__ int32_t*)buf_[S0].template Get<int32_t>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S3].template Get<float>().GetPhyAddr(), count,
                                             repeat);
-                asc_vf_call<ChainA1VF<float>>((__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
+                asc_vf_call<ChainA1VF<float>>((__ubuf__ float*)buf_[sTa].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S1].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S3].template Get<float>().GetPhyAddr(), invNum_,
@@ -1230,11 +1479,11 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::ProcessTiles(bool 
                                             (__ubuf__ int32_t*)buf_[S0].template Get<int32_t>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S7].template Get<float>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(),
-                                            (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(), count,
+                                            (__ubuf__ float*)buf_[sTa].template Get<float>().GetPhyAddr(), count,
                                             repeat);
                 asc_vf_call<ChainA2VF<float>>((__ubuf__ float*)buf_[S7].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S7].template Get<float>().GetPhyAddr(),
-                                              (__ubuf__ float*)buf_[S2].template Get<float>().GetPhyAddr(),
+                                              (__ubuf__ float*)buf_[sTa].template Get<float>().GetPhyAddr(),
                                               (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), count,
                                               repeat);
                 asc_vf_call<FlagVF3<float>>((__ubuf__ int32_t*)buf_[S0].template Get<int32_t>().GetPhyAddr(),
@@ -1242,7 +1491,7 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::ProcessTiles(bool 
                                             (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S7].template Get<float>().GetPhyAddr(), count,
                                             repeat);
-                asc_vf_call<ChainBVF<float>>((__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
+                asc_vf_call<ChainBVF<float>>((__ubuf__ float*)buf_[sT2].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S7].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(), invNum_,
                                              count, repeat);
@@ -1250,24 +1499,31 @@ __aicore__ inline void BN3DTrainingReduceGradKernel<T, RANK>::ProcessTiles(bool 
                                             (__ubuf__ int32_t*)buf_[S0].template Get<int32_t>().GetPhyAddr(),
                                             (__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(), count,
                                             repeat);
-                asc_vf_call<ChainCVF<float>>((__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
-                                             (__ubuf__ float*)buf_[S5].template Get<float>().GetPhyAddr(),
+                // 跨链 WAR 栅栏：ChainC 写 sY 槽（上两链读到过）
+                AscendC::PipeBarrier<PIPE_ALL>();
+                asc_vf_call<ChainCVF<float>>((__ubuf__ float*)buf_[sY].template Get<float>().GetPhyAddr(),
+                                             (__ubuf__ float*)buf_[sT2].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
                                              (__ubuf__ float*)buf_[S4].template Get<float>().GetPhyAddr(), count,
                                              repeat);
-                asc_vf_call<FixVF<float>>((__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
-                                          (__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(),
+                asc_vf_call<FixVF<float>>((__ubuf__ float*)buf_[sY].template Get<float>().GetPhyAddr(),
+                                          (__ubuf__ float*)buf_[sY].template Get<float>().GetPhyAddr(),
                                           (__ubuf__ int32_t*)buf_[S0].template Get<int32_t>().GetPhyAddr(), count,
                                           repeat);
             }
-            // y(T) 回落: y_f32@S6 → S0（f16 fast: x_T 已耗; suspect: flags 已耗）
-            asc_vf_call<CastDownVF<T>>((__ubuf__ T*)buf_[S0].template Get<T>().GetPhyAddr(),
-                                       (__ubuf__ float*)buf_[S6].template Get<float>().GetPhyAddr(), count, repeat);
+            if (paramsResident_ || suspect)
+                AscendC::PipeBarrier<PIPE_ALL>();
+            // y(T) 回落: y_f32 → y_T（快速 y_T 恒 S0; 完整路径驻留时落 g 槽 S1, 否则 S0）
+            const int y16Slot = suspect ? (paramsResident_ ? S1 : S0) : S0;
+            const int yf32Slot = suspect ? sY : wY;
+            asc_vf_call<CastDownVF<T>>((__ubuf__ T*)buf_[y16Slot].template Get<T>().GetPhyAddr(),
+                                       (__ubuf__ float*)buf_[yf32Slot].template Get<float>().GetPhyAddr(), count,
+                                       repeat);
             // RAW: V 写毕 → MTE3 可读
             AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(evVtoMTE3);
             AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(evVtoMTE3);
-            // CopyOut y（b16 路径 y_T 驻 S0）
-            CopyOutOne(coord, S0, aISeg);
+            // CopyOut y（b16 路径 y_T 槽见 y16Slot）
+            CopyOutOne(coord, y16Slot, aISeg);
         }
 
         // 跨轮 WAR: 本轮 CopyOut(MTE3) 读毕 → 下轮 CopyIn(MTE2) 可覆写（末轮跳过）
