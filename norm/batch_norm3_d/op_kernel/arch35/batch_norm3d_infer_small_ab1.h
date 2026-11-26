@@ -85,7 +85,7 @@ public:
         pipe_->InitBuffer(betaFp32Buf_, alignedParamCacheLen * sizeof(float));
         pipe_->InitBuffer(gammaFp32Buf_, alignedParamCacheLen * sizeof(float));
         pipe_->InitBuffer(meanFp32Buf_, alignedParamCacheLen * sizeof(float));
-        pipe_->InitBuffer(rstdFp32Buf_, alignedParamCacheLen * sizeof(float) * (IsSameType<T, float>::value ? 2 : 1));
+        pipe_->InitBuffer(rstdFp32Buf_, alignedParamCacheLen * sizeof(float) * (UseCompensatedInference<T> ? 2 : 1));
     }
 
     __aicore__ inline void Process()
@@ -295,7 +295,7 @@ private:
             DataCopy(betaFp32Local, beta, pregMask);
             DataCopy(meanFp32Local, mean, pregMask);
             DataCopy(rstdFp32Local, rstd, pregMask);
-            if constexpr (IsSameType<T, float>::value) {
+            if constexpr (UseCompensatedInference<T>) {
                 DataCopy(rstdFp32Local + AlignUp(GetSmallAB1ParamCacheElemLen(), VL_FP32), rstdLow, pregMask);
             }
         }
@@ -328,7 +328,7 @@ private:
             DataCopy<float, LoadDist::DIST_NORM>(beta, betaFp32Local);
             DataCopy<float, LoadDist::DIST_NORM>(mean, meanFp32Local);
             DataCopy<float, LoadDist::DIST_NORM>(rstd, rstdFp32Local);
-            if constexpr (IsSameType<T, float>::value) {
+            if constexpr (UseCompensatedInference<T>) {
                 DataCopy<float, LoadDist::DIST_NORM>(rstdLow,
                                                      rstdFp32Local + AlignUp(GetSmallAB1ParamCacheElemLen(), VL_FP32));
             }

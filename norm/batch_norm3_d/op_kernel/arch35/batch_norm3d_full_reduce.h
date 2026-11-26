@@ -339,6 +339,7 @@ private:
         int64_t calcNum = this->r1 * this->r0;
         float n = static_cast<float>(1) / static_cast<float>(this->powerOfTwoForR);
         float nCorrectionFactor = static_cast<float>(this->powerOfTwoForR) / static_cast<float>(calcNum);
+        float scaledCount = static_cast<float>(calcNum) * n;
         uint32_t xyUbOffset = this->r1r0Align;
         __VEC_SCOPE__
         {
@@ -361,7 +362,11 @@ private:
 
                 Muls(mean_sum, x, n, pregLoop);
                 ReduceSum(mean, mean_sum, pregLoop);
-                Muls(mean, mean, nCorrectionFactor, pregMerge);
+                // Dividing by the power-of-two scaled count preserves exact means.
+                // A rounded reciprocal can change zero * infinity into infinity.
+                RegTensor<float> divisor;
+                Duplicate(divisor, scaledCount, pregMerge);
+                Div(mean, mean, divisor, pregMerge);
 
                 // save mean
                 DataCopy<float, StoreDist::DIST_FIRST_ELEMENT_B32>(((__local_mem__ float*)batchMeanInUb + k), mean,
@@ -387,6 +392,7 @@ private:
         int64_t reduceNum = this->r1 * this->r0;
         float n = static_cast<float>(1) / static_cast<float>(this->powerOfTwoForR);
         float nCorrectionFactor = static_cast<float>(this->powerOfTwoForR) / static_cast<float>(reduceNum);
+        float scaledCount = static_cast<float>(reduceNum) * n;
         uint32_t xyUbOffset = this->r1r0Align;
 
         uint32_t binaryAddQuotientOffset = this->binaryAddQuotient;
@@ -476,7 +482,9 @@ private:
                     pregLoop = UpdateMask<float>(sreg2);
                     DataCopy(mean_sum, ((__local_mem__ float*)binaryAddTensorAddr));
                     ReduceSum(mean, mean_sum, pregLoop);
-                    Muls(mean, mean, nCorrectionFactor, pregMerge);
+                    RegTensor<float> divisor;
+                    Duplicate(divisor, scaledCount, pregMerge);
+                    Div(mean, mean, divisor, pregMerge);
                 }
 
                 // batch mean

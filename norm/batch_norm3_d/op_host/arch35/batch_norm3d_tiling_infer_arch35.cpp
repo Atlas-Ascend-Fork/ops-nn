@@ -80,8 +80,18 @@ ge::graphStatus BatchNorm3DInferTiling::DoOpTiling()
     int64_t minSmallAB1B0Len = std::max<int64_t>(1, static_cast<int64_t>(aicoreParams_.blockDim)) *
                                MIN_SMALL_AB1_B0_CORE_FACTOR;
 
-    if (fusedALen_ > 0 && fusedB1Len_ > 0 && fusedALen_ * fusedB1Len_ <= SMALL_AB1_FACTOR_LIMIT &&
-        fusedB0Len_ > minSmallAB1B0Len) {
+    // Short spatial rows fit in UB together. Vectorize across channels.
+    const bool packedChannels = xDtype_ == ge::DT_FLOAT && fusedB1Len_ >= 2 && fusedB1Len_ <= 8 &&
+                                fusedALen_ >= 4 * vlFp32_;
+    if (packedChannels) {
+        aInner = std::min<int64_t>(4 * vlFp32_, fusedALen_);
+        const int64_t budget = aicoreParams_.ubSize / DOUBLE_BUFFER / FLOAT32_BYTES;
+        b0Inner = std::min(fusedB0Len_, (budget / aInner - SMALL_SHAPE_NUM) / (BIG_SHAPE_NUM * fusedB1Len_));
+        OP_CHECK_IF(b0Inner < 1, OP_LOGE(context_, "Insufficient UB for packed channels"), return ge::GRAPH_FAILED);
+        b0Outer = CeilDiv(fusedB0Len_, b0Inner);
+        aOuter = CeilDiv(fusedALen_, aInner);
+    } else if (fusedALen_ > 0 && fusedB1Len_ > 0 && fusedALen_ * fusedB1Len_ <= SMALL_AB1_FACTOR_LIMIT &&
+               fusedB0Len_ > minSmallAB1B0Len) {
         isSmallAB1Mode_ = true;
         aInner = fusedALen_;
         b1Inner = 1;
@@ -92,7 +102,8 @@ ge::graphStatus BatchNorm3DInferTiling::DoOpTiling()
         int64_t abLen = fusedALen_ * fusedB1Len_;
         int64_t paramCacheElemLen = (vlFp32_ / abLen) * abLen;
         int64_t alignedParamCacheLen = CeilDiv(paramCacheElemLen, vlFp32_) * vlFp32_;
-        int64_t cacheBufferCount = SMALL_AB1_CACHE_BUFFER_NUM + (xDtype_ == ge::DT_FLOAT ? 1 : 0);
+        int64_t cacheBufferCount = SMALL_AB1_CACHE_BUFFER_NUM +
+                                   ((xDtype_ == ge::DT_FLOAT || xDtype_ == ge::DT_FLOAT16) ? 1 : 0);
         int64_t smallAB1CacheBytes = cacheBufferCount * alignedParamCacheLen * FLOAT32_BYTES;
         int64_t meanVarOutBytes = MEAN_VAR_OUTPUT_COUNT *
                                   AlignUp(FLOAT32_BYTES * aInner, static_cast<int64_t>(blockSize_));
@@ -155,7 +166,7 @@ ge::graphStatus BatchNorm3DInferTiling::DoOpTiling()
 
     int64_t tileBlockB0Tail = fusedB0Len_ - b0Inner * (b0Outer - 1);
     int64_t tileBlockATail = fusedALen_ - aInner * (aOuter - 1);
-    int64_t tileBlockB1Len = isSmallAB1Mode_ ? fusedB1Len_ : b1Inner * aTileBase_;
+    int64_t tileBlockB1Len = (isSmallAB1Mode_ || packedChannels) ? fusedB1Len_ : b1Inner * aTileBase_;
     int64_t tileBlockB1Tail = fusedB1Len_ - tileBlockB1Len * (b1Outer - 1);
 
     tilingData_.totalTiles = totalTiles;
