@@ -27,6 +27,8 @@
 
 namespace SoftmaxV2Ops {
 using namespace AscendC;
+using AscendC::Reg::AddrReg;
+using AscendC::Reg::CreateAddrReg;
 using AscendC::Reg::LoadAlign;
 using AscendC::Reg::Move;
 using AscendC::Reg::Reduce;
@@ -58,9 +60,9 @@ private:
     __aicore__ inline void CopyInX(const LocalTensor<T_in>& xInUb, int64_t ubA, int64_t offset);
     __aicore__ inline void CopyOutY(const LocalTensor<T_out>& yOutUb, int64_t ubA, int64_t offset);
     __aicore__ inline void LoadTensorForDtypeTIn(__ubuf__ T_in* src, AscendC::Reg::RegTensor<float>& dst,
-                                                 AscendC::Reg::MaskReg& preg, uint32_t offset);
+                                                 AscendC::Reg::MaskReg& preg, const AddrReg& srcOffset);
     __aicore__ inline void StoreTensorForDtypeTOut(__ubuf__ T_out* dst, AscendC::Reg::RegTensor<float>& src,
-                                                   AscendC::Reg::MaskReg& preg, uint32_t offset);
+                                                   AscendC::Reg::MaskReg& preg, const AddrReg& dstOffset);
 
 private:
     /* global memory address */
@@ -145,12 +147,13 @@ template <typename T_in, typename T_out>
 __aicore__ inline void SoftmaxV2AR<T_in, T_out>::FirstNormCompute(int64_t ubA, __ubuf__ T_in* xInAddr,
                                                                   __ubuf__ float* xTmpLocalAddr)
 {
-    int64_t rAligned = tl_->rAligned;
-    int64_t ubActualR = tl_->r;
+    uint32_t rAligned = static_cast<uint32_t>(tl_->rAligned);
+    uint32_t ubActualR = static_cast<uint32_t>(tl_->r);
     uint16_t ubActualA = static_cast<uint16_t>(ubA);
-    int64_t tailUbBlockSize = tl_->r - VL_FP32 * (tl_->rLoopCount - 1);
     uint16_t rLoopCount = static_cast<uint16_t>(tl_->rLoopCount);
     uint16_t rLoopCountTmp = rLoopCount - 1;
+    uint32_t tailUbBlockSize = ubActualR - VL_FP32 * rLoopCountTmp;
+    __ubuf__ T_in* xTailAddr = xInAddr + VL_FP32 * static_cast<uint32_t>(rLoopCountTmp);
 
     __VEC_SCOPE__
     {
@@ -160,30 +163,33 @@ __aicore__ inline void SoftmaxV2AR<T_in, T_out>::FirstNormCompute(int64_t ubA, _
         AscendC::Reg::RegTensor<float> vreg3;
         AscendC::Reg::RegTensor<float> vreg4;
         AscendC::Reg::RegTensor<float> vreg5;
+        AscendC::Reg::RegTensor<float> vregInf;
 
         AscendC::Reg::MaskReg maskTail;
         AscendC::Reg::MaskReg maskSub;
-        AscendC::Reg::MaskReg maskMax;
         AscendC::Reg::MaskReg maskAll;
 
         uint32_t sreg0 = tailUbBlockSize;
         uint32_t sreg1 = VL_FP32;
         maskTail = AscendC::Reg::UpdateMask<uint32_t>(sreg0);
         maskAll = AscendC::Reg::UpdateMask<uint32_t>(sreg1);
+        AscendC::Reg::Duplicate(vregInf, static_cast<float>(-INFINITY), maskAll);
 
         for (uint16_t k = 0; k < ubActualA; k++) {
-            uint32_t tailAddrPtr = k * rAligned + VL_FP32 * (rLoopCount - 1);
-            AscendC::Reg::Duplicate(vreg0, static_cast<float>(-INFINITY), maskAll);
-            LoadTensorForDtypeTIn(xInAddr, vreg1, maskTail, tailAddrPtr);
+            AddrReg inTailOffset = CreateAddrReg<T_in>(k, rAligned);
+            AscendC::Reg::Move<float, AscendC::Reg::MaskMergeMode::MERGING>(vreg0, vregInf, maskAll);
+            LoadTensorForDtypeTIn(xTailAddr, vreg1, maskTail, inTailOffset);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+            AscendC::Reg::Max<float, AscendC::Reg::MaskMergeMode::MERGING>(vreg0, vreg0, vreg1, maskTail);
+#else
             AscendC::Reg::Max(vreg1, vreg0, vreg1, maskTail);
             AscendC::Reg::Move<float, AscendC::Reg::MaskMergeMode::MERGING>(vreg0, vreg1, maskTail);
+#endif
 
-            uint32_t sreg2 = static_cast<uint32_t>(ubActualR - tailUbBlockSize);
             for (uint16_t i = 0; i < rLoopCountTmp; i++) {
-                maskMax = AscendC::Reg::UpdateMask<float>(sreg2);
-                uint32_t addrPtr = i * VL_FP32 + k * rAligned;
-                LoadTensorForDtypeTIn(xInAddr, vreg1, maskMax, addrPtr);
-                AscendC::Reg::Max(vreg0, vreg0, vreg1, maskMax);
+                AddrReg inOffset = CreateAddrReg<T_in>(k, rAligned, i, VL_FP32);
+                LoadTensorForDtypeTIn(xInAddr, vreg1, maskAll, inOffset);
+                AscendC::Reg::Max(vreg0, vreg0, vreg1, maskAll);
             }
             AscendC::Reg::Reduce<AscendC::Reg::ReduceType::MAX>(vreg2, vreg0, maskAll);
             AscendC::Reg::Duplicate(vreg3, vreg2, maskAll);
@@ -192,11 +198,13 @@ __aicore__ inline void SoftmaxV2AR<T_in, T_out>::FirstNormCompute(int64_t ubA, _
             uint32_t sreg3 = ubActualR;
             for (uint16_t i = 0; i < rLoopCount; i++) {
                 maskSub = AscendC::Reg::UpdateMask<float>(sreg3);
-                uint32_t addrPtr = i * VL_FP32 + k * rAligned;
-                LoadTensorForDtypeTIn(xInAddr, vreg1, maskSub, addrPtr);
+                // 搬入和搬出各用一个 AddrReg：地址相同，但 element 宽度分别是 T_in 和 float
+                AddrReg inOffset = CreateAddrReg<T_in>(k, rAligned, i, VL_FP32);
+                AddrReg tmpOffset = CreateAddrReg<float>(k, rAligned, i, VL_FP32);
+                LoadTensorForDtypeTIn(xInAddr, vreg1, maskSub, inOffset);
                 AscendC::Reg::Sub(vreg4, vreg1, vreg3, maskSub);
                 AscendC::Reg::Exp(vreg5, vreg4, maskSub);
-                AscendC::Reg::StoreAlign(((__ubuf__ float*)xTmpLocalAddr + addrPtr), vreg5, maskSub);
+                StoreAlign<float, AscendC::Reg::StoreDist::DIST_NORM>(xTmpLocalAddr, vreg5, tmpOffset, maskSub);
             }
         }
     }
@@ -223,6 +231,7 @@ __aicore__ inline void SoftmaxV2AR<T_in, T_out>::SecondNormComputePost(const Loc
     uint16_t rLoopCount = tl_->rLoopCount;
     uint16_t oriR = tl_->r;
     uint16_t oriRAligned = tl_->rAligned;
+    uint32_t sumStride = static_cast<uint32_t>(stride);
 
     if (rSize <= VL_FP32) {
         __ubuf__ T_out* dst = (__ubuf__ T_out*)dstTensor.GetPhyAddr();
@@ -237,16 +246,18 @@ __aicore__ inline void SoftmaxV2AR<T_in, T_out>::SecondNormComputePost(const Loc
             AscendC::Reg::MaskReg pFull = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
             AscendC::Reg::MaskReg maskOri;
             for (uint16_t i = 0; i < loopTimes; ++i) {
-                LoadAlign(aReg, (__ubuf__ float*)src + i * static_cast<uint32_t>(stride));
+                AddrReg sumOffset = CreateAddrReg<float>(i, sumStride);
+                LoadAlign(aReg, src, sumOffset);
                 Reduce<AscendC::Reg::ReduceType::SUM>(bReg, aReg, pMask);
                 Duplicate(cReg, bReg, pFull);
                 uint32_t sreg0 = static_cast<uint32_t>(oriR);
                 for (uint16_t j = 0; j < rLoopCount; ++j) {
                     maskOri = AscendC::Reg::UpdateMask<float>(sreg0);
-                    uint32_t addrPtr = j * VL_FP32 + i * oriRAligned;
-                    LoadAlign(dReg, ((__ubuf__ float*)oriSrc + addrPtr));
+                    AddrReg dataOffset = CreateAddrReg<float>(i, oriRAligned, j, VL_FP32);
+                    AddrReg outOffset = CreateAddrReg<T_out>(i, oriRAligned, j, VL_FP32);
+                    LoadAlign(dReg, oriSrc, dataOffset);
                     Div(dReg, dReg, cReg, maskOri);
-                    StoreTensorForDtypeTOut(dst, dReg, maskOri, addrPtr);
+                    StoreTensorForDtypeTOut(dst, dReg, maskOri, outOffset);
                 }
             }
         }
@@ -264,8 +275,9 @@ __aicore__ inline void SoftmaxV2AR<T_in, T_out>::SecondNormComputePost(const Loc
             AscendC::Reg::MaskReg pFull = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
             AscendC::Reg::MaskReg maskOri;
             for (uint16_t i = 0; i < loopTimes; ++i) {
-                LoadAlign(aReg, (__ubuf__ float*)src0 + i * static_cast<uint32_t>(stride));
-                LoadAlign(bReg, (__ubuf__ float*)src1 + i * static_cast<uint32_t>(stride));
+                AddrReg sumOffset = CreateAddrReg<float>(i, sumStride);
+                LoadAlign(aReg, src0, sumOffset);
+                LoadAlign(bReg, src1, sumOffset);
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
                 Add<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, aReg, bReg, pMask);
 #else
@@ -277,10 +289,11 @@ __aicore__ inline void SoftmaxV2AR<T_in, T_out>::SecondNormComputePost(const Loc
                 uint32_t sreg0 = static_cast<uint32_t>(oriR);
                 for (uint16_t j = 0; j < rLoopCount; ++j) {
                     maskOri = AscendC::Reg::UpdateMask<float>(sreg0);
-                    uint32_t addrPtr = j * VL_FP32 + i * oriRAligned;
-                    LoadAlign(eReg, ((__ubuf__ float*)oriSrc + addrPtr));
+                    AddrReg dataOffset = CreateAddrReg<float>(i, oriRAligned, j, VL_FP32);
+                    AddrReg outOffset = CreateAddrReg<T_out>(i, oriRAligned, j, VL_FP32);
+                    LoadAlign(eReg, oriSrc, dataOffset);
                     Div(eReg, eReg, dReg, maskOri);
-                    StoreTensorForDtypeTOut(dst, eReg, maskOri, addrPtr);
+                    StoreTensorForDtypeTOut(dst, eReg, maskOri, outOffset);
                 }
             }
         }
@@ -333,17 +346,21 @@ __aicore__ inline void SoftmaxV2AR<T_in, T_out>::SecondNormCompute(const LocalTe
     __ubuf__ float* tailSrcB = (__ubuf__ float*)srcTensor.GetPhyAddr() + tailSrcBOffset;
     __ubuf__ float* unFoldSrc = (__ubuf__ float*)srcTensor.GetPhyAddr() + unFoldSrcOffset;
 
+    // 每行搬出 foldPoint 个元素，行尾 Post 再补 (outerLoopDstStride - foldPoint)，
+    // 指针就自己落到下一行行首，省掉每行的行首地址计算
+    int32_t rowJump = static_cast<int32_t>(outerLoopDstStride) - static_cast<int32_t>(foldPoint);
+
     __VEC_SCOPE__
     {
         AscendC::Reg::MaskReg pFull = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
         AscendC::Reg::UnalignRegForStore UReg;
 
         for (uint16_t i = 0; i < outerLoopTimes; ++i) {
-            dst = (__ubuf__ float*)reduceSumTempTensor.GetPhyAddr() + i * outerLoopDstStride;
             for (uint16_t j = 0; j < mainFoldLoopTimes; ++j) {
                 AscendC::Reg::RegTensor<float> aReg, bReg, cReg, dReg;
-                LoadAlign(aReg, (__ubuf__ float*)foldSrcA + i * outerLoopStride + j * innerLoopStride);
-                LoadAlign(bReg, (__ubuf__ float*)foldSrcB + i * outerLoopStride + j * innerLoopStride);
+                AddrReg srcOffset = CreateAddrReg<float>(i, outerLoopStride, j, innerLoopStride);
+                LoadAlign(aReg, foldSrcA, srcOffset);
+                LoadAlign(bReg, foldSrcB, srcOffset);
                 Add<float, AscendC::Reg::MaskMergeMode::ZEROING>(cReg, aReg, bReg, pFull);
                 Reduce<AscendC::Reg::ReduceType::SUM>(dReg, cReg, pFull);
                 AscendC::Reg::StoreUnAlign((__ubuf__ float*&)dst, dReg, UReg, 1);
@@ -352,8 +369,9 @@ __aicore__ inline void SoftmaxV2AR<T_in, T_out>::SecondNormCompute(const LocalTe
                 uint32_t count = static_cast<uint32_t>(tailFoldElemCount);
                 AscendC::Reg::RegTensor<float> aReg, bReg, cReg;
                 AscendC::Reg::MaskReg pMask = AscendC::Reg::UpdateMask<float>(count);
-                LoadAlign(aReg, (__ubuf__ float*)tailSrcA + i * outerLoopStride + j * innerLoopStride);
-                LoadAlign(bReg, (__ubuf__ float*)tailSrcB + i * outerLoopStride + j * innerLoopStride);
+                AddrReg srcOffset = CreateAddrReg<float>(i, outerLoopStride, j, innerLoopStride);
+                LoadAlign(aReg, tailSrcA, srcOffset);
+                LoadAlign(bReg, tailSrcB, srcOffset);
 #if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
                 Add<float, AscendC::Reg::MaskMergeMode::MERGING>(aReg, aReg, bReg, pMask);
 #else
@@ -365,11 +383,12 @@ __aicore__ inline void SoftmaxV2AR<T_in, T_out>::SecondNormCompute(const LocalTe
             }
             for (uint16_t j = 0; j < unFoldLoopTimes; ++j) {
                 AscendC::Reg::RegTensor<float> aReg, bReg;
-                LoadAlign(aReg, (__ubuf__ float*)unFoldSrc + i * outerLoopStride + j * innerLoopStride);
+                AddrReg srcOffset = CreateAddrReg<float>(i, outerLoopStride, j, innerLoopStride);
+                LoadAlign(aReg, unFoldSrc, srcOffset);
                 Reduce<AscendC::Reg::ReduceType::SUM>(bReg, aReg, pFull);
                 AscendC::Reg::StoreUnAlign((__ubuf__ float*&)dst, bReg, UReg, 1);
             }
-            AscendC::Reg::StoreUnAlignPost((__ubuf__ float*&)dst, UReg, 0);
+            AscendC::Reg::StoreUnAlignPost((__ubuf__ float*&)dst, UReg, rowJump);
         }
     }
     SecondNormComputePost(dstTensor, reduceSumTempTensor, srcTensor, aSize, foldPoint, outerLoopDstStride);
@@ -378,13 +397,14 @@ __aicore__ inline void SoftmaxV2AR<T_in, T_out>::SecondNormCompute(const LocalTe
 template <typename T_in, typename T_out>
 __aicore__ inline void SoftmaxV2AR<T_in, T_out>::LoadTensorForDtypeTIn(__ubuf__ T_in* src,
                                                                        AscendC::Reg::RegTensor<float>& dst,
-                                                                       AscendC::Reg::MaskReg& preg, uint32_t offset)
+                                                                       AscendC::Reg::MaskReg& preg,
+                                                                       const AddrReg& srcOffset)
 {
     if constexpr (IsSameType<T_in, float>::value) {
-        LoadAlign<float, AscendC::Reg::LoadDist::DIST_NORM>(dst, src + offset);
+        LoadAlign<float, AscendC::Reg::LoadDist::DIST_NORM>(dst, src, srcOffset);
     } else {
         AscendC::Reg::RegTensor<T_in> xFp16;
-        LoadAlign<T_in, AscendC::Reg::LoadDist::DIST_UNPACK_B16>(xFp16, src + offset);
+        LoadAlign<T_in, AscendC::Reg::LoadDist::DIST_UNPACK_B16>(xFp16, src, srcOffset);
         Cast<float, T_in, castTraitFp16ToFp32>(dst, xFp16, preg);
     }
 }
@@ -392,14 +412,15 @@ __aicore__ inline void SoftmaxV2AR<T_in, T_out>::LoadTensorForDtypeTIn(__ubuf__ 
 template <typename T_in, typename T_out>
 __aicore__ inline void SoftmaxV2AR<T_in, T_out>::StoreTensorForDtypeTOut(__ubuf__ T_out* dst,
                                                                          AscendC::Reg::RegTensor<float>& src,
-                                                                         AscendC::Reg::MaskReg& preg, uint32_t offset)
+                                                                         AscendC::Reg::MaskReg& preg,
+                                                                         const AddrReg& dstOffset)
 {
     if constexpr (IsSameType<T_out, float>::value) {
-        StoreAlign<T_out, AscendC::Reg::StoreDist::DIST_NORM>(dst + offset, src, preg);
+        StoreAlign<T_out, AscendC::Reg::StoreDist::DIST_NORM>(dst, src, dstOffset, preg);
     } else {
         AscendC::Reg::RegTensor<T_out> xFp16;
         Cast<T_out, float, castTraitFp32ToFp16>(xFp16, src, preg);
-        StoreAlign<T_out, AscendC::Reg::StoreDist::DIST_PACK_B32>(dst + offset, xFp16, preg);
+        StoreAlign<T_out, AscendC::Reg::StoreDist::DIST_PACK_B32>(dst, xFp16, dstOffset, preg);
     }
 }
 
