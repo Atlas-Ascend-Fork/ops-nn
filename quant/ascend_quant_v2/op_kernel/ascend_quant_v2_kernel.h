@@ -41,6 +41,9 @@ protected:
     __aicore__ inline void MoveOutY(LocalTensor<int8_t>& outLocal, GlobalTensor<int8_t>& outGm,
                                     LocalTensor<int8_t>& outTempLocal, AscendQuantV2TilingData& runTilingData,
                                     int64_t yN, int64_t yLen, int64_t yOutOffset);
+#if defined(__DAV_M200__)
+    __aicore__ inline int64_t GetTailBorrowLen(const AscendQuantV2TilingData& runTilingData, int64_t lenLoopTail);
+#endif
     __aicore__ inline int64_t CeilAlign(int64_t a, int64_t b);
 
 protected:
@@ -271,6 +274,22 @@ __aicore__ inline void AscendQuantV2Base<T>::MoveOutY(LocalTensor<int8_t>& outLo
     }
 #endif
 }
+
+#if defined(__DAV_M200__)
+// M200的DataCopy按32B DataBlock粒度搬出GM，列切分(blockAxis!=0)时尾块列数不足32无法安全写出：
+// 尾迭代把列范围前移补齐到32列，走fast path整块写出且32B块止于行尾；借用列与所有权核写入相同值
+// (MTE直写无cache，同值重叠写幂等)。约束：列切分尾块列起点>=blockFactor>=64、dim1>=65，
+// borrow<=31，前移不会越过x/scale/y的行首。
+template <typename T>
+__aicore__ inline int64_t AscendQuantV2Base<T>::GetTailBorrowLen(const AscendQuantV2TilingData& runTilingData,
+                                                                 int64_t lenLoopTail)
+{
+    if (runTilingData.blockAxis != 0 && lenLoopTail > 0 && lenLoopTail < BLOCK_SIZE) {
+        return BLOCK_SIZE - lenLoopTail;
+    }
+    return 0;
+}
+#endif
 
 template <typename T>
 __aicore__ inline int64_t AscendQuantV2Base<T>::CeilAlign(int64_t a, int64_t b)

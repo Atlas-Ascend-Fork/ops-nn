@@ -77,8 +77,14 @@ public:
             FreeScaleAndOffset();
         }
         if (lenLoopTail != 0) {
+#if defined(__DAV_M200__)
+            int64_t tailBorrow = this->GetTailBorrowLen(tilingData_, lenLoopTail);
+            CopyInScaleAndOffset(lenLoopTail + tailBorrow, gmSOffset_ + lenLoopNum * tilingData_.baseLen - tailBorrow);
+            CopyXAndCompute(lenLoopTail + tailBorrow, gmXOffset_ + lenLoopNum * tilingData_.baseLen - tailBorrow);
+#else
             CopyInScaleAndOffset(lenLoopTail, gmSOffset_ + lenLoopNum * tilingData_.baseLen);
             CopyXAndCompute(lenLoopTail, gmXOffset_ + lenLoopNum * tilingData_.baseLen);
+#endif
             FreeScaleAndOffset();
         }
     }
@@ -298,7 +304,12 @@ public:
         }
         if (lenLoopTail != 0) {
             CopyInScaleAndOffset();
+#if defined(__DAV_M200__)
+            int64_t tailBorrow = this->GetTailBorrowLen(tilingData_, lenLoopTail);
+            CopyXAndCompute(lenLoopTail + tailBorrow, gmXOffset_ + lenLoopNum * tilingData_.baseLen - tailBorrow);
+#else
             CopyXAndCompute(lenLoopTail, gmXOffset_ + lenLoopNum * tilingData_.baseLen);
+#endif
         }
     }
 
