@@ -1,0 +1,2 @@
+testcase_name,op_name,op_type,input_shapes,input_dtypes,output_shapes,output_dtypes,attributes,input_data_ranges
+lpnorm_geir_scalar_keepdim,lp_norm_reduce,LpNormReduce,"((),)","('float16',)","((),)","('float16',)","{'p':2,'keepdim':True}","((-2,-2),)"

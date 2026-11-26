@@ -194,7 +194,15 @@ static ge::graphStatus GetShapeAndDtype(gert::TilingContext* context, LpNormRedu
 {
     auto xShapePtr = context->GetInputShape(INPUT_X_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xShapePtr);
-    const gert::Shape& xS = xShapePtr->GetStorageShape();
+    const gert::Shape& xS = xShapePtr->GetOriginShape();
+    const gert::Shape& storageShape = xShapePtr->GetStorageShape();
+    // GE may store a logical scalar as [1]. Axis normalization must still use rank zero.
+    const bool materializedScalar = xS.GetDimNum() == 0 && storageShape.GetDimNum() == 1 && storageShape.GetDim(0) == 1;
+    OP_CHECK_IF(
+        !materializedScalar && storageShape != xS,
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", "",
+                                              "ND storage shape must match the logical shape; a scalar may use [1]"),
+        return ge::GRAPH_FAILED);
     const size_t rank = xS.GetDimNum();
     // 本算子 rank ∈ [0,8]（批 b-5 对齐 canndev/changwei rank 0-8：rank-0 标量 +
     // 空 axes = 单元素全归约，A/R 规整第 4 步自动补 [A1,R1]；rank-0 + 非空 axes
