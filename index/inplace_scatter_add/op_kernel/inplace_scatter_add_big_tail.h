@@ -125,12 +125,12 @@ public:
         auto posIdxLocalTensor = this->allUbLocal.template ReinterpretCast<uint32_t>()[indexNumsAligned];
         auto updatesLocal = this->allUbLocal[updatesUbStart];
         uint32_t leftUbSizeAligned = (leftUbSize / ASCENDC_SORT_NUMS) * ASCENDC_SORT_NUMS;
-        uint32_t mteTimes = this->N / leftUbSizeAligned;
+        uint64_t mteTimes = this->N / leftUbSizeAligned;
         uint32_t mteLeft = this->N - mteTimes * leftUbSizeAligned;
         for (uint32_t i = 0; i < indexNums; i++) {
             uint32_t indexValue = this->indicesLocal.GetValue(i);
             uint32_t posIdxValue = posIdxLocalTensor.GetValue(i);
-            for (uint32_t j = 0; j < mteTimes; j++) {
+            for (uint64_t j = 0; j < mteTimes; j++) {
                 DataCopyExtParams copyParams{1, static_cast<uint32_t>(leftUbSizeAligned * sizeof(VT)), 0, 0, 0};
                 DataCopyPadExtParams<VT> padParams{true, 0, 0, 0};
                 DataCopyPad(updatesLocal, this->updatesGm[posIdxValue * this->N + j * leftUbSizeAligned], copyParams,

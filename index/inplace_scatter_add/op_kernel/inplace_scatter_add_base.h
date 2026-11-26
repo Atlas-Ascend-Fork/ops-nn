@@ -129,9 +129,9 @@ public:
 public:
     uint32_t ubSize = 0;
     uint32_t M = 0;
-    uint32_t N = 0;
+    uint64_t N = 0;
     uint32_t K = 0;
-    uint32_t NAligned = 0;
+    uint64_t NAligned = 0;
     uint32_t frontCoreNum = 0;
     uint32_t tailCoreNum = 0;
     uint32_t frontCoreIndicesNum = 0;

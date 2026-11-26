@@ -19,6 +19,7 @@
 #include "log/log.h"
 #include "platform/platform_infos_def.h"
 #include "tiling/platform/platform_ascendc.h"
+#include <cinttypes>
 #include <vector>
 
 namespace optiling {
@@ -39,9 +40,9 @@ constexpr int32_t BIT_MOVE = 2;
 
 struct TilingDataStructInplaceScatterAdd {
     uint32_t M = 0;
-    uint32_t N = 0;
+    uint64_t N = 0;
     uint32_t K = 0;
-    uint32_t NAligned = 0;
+    uint64_t NAligned = 0;
     uint32_t frontCoreNum = 0;
     uint32_t tailCoreNum = 0;
     uint32_t frontCoreIndicesNum = 0;
@@ -79,9 +80,9 @@ uint64_t InplaceScatterAddTilingOp::GetDTypeSize(ge::DataType dataType) const
 void InplaceScatterAddTilingOp::TilingDataPrint() const
 {
     OP_LOGD(context, "M: %d.", tilingData.M);
-    OP_LOGD(context, "N: %d.", tilingData.N);
+    OP_LOGD(context, "N: %" PRIu64 ".", tilingData.N);
     OP_LOGD(context, "K: %d.", tilingData.K);
-    OP_LOGD(context, "NAligned: %d.", tilingData.NAligned);
+    OP_LOGD(context, "NAligned: %" PRIu64 ".", tilingData.NAligned);
     OP_LOGD(context, "frontCoreNum: %d.", tilingData.frontCoreNum);
     OP_LOGD(context, "tailCoreNum: %d.", tilingData.tailCoreNum);
     OP_LOGD(context, "frontCoreIndicesNum: %d.", tilingData.frontCoreIndicesNum);

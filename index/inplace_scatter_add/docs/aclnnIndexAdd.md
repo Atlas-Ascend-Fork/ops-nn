@@ -259,8 +259,6 @@ aclnnStatus aclnnIndexAdd(
   - 期望index取值范围在[0, self.shape[dim])范围内；接口第一段不校验index的取值范围，负值索引在kernel侧被守卫静默跳过（不参与累加），越界索引行为未定义（经InplaceIndexAdd路径执行时可能触发执行期异常）。
 - 空Tensor
   - source为空Tensor时，接口将self拷贝至out（不进行累加）；self为空Tensor时，out为空Tensor。
-- 容量限制
-  - 算子32位快速路径要求计算涉及的元素规模不超过uint32表示域（2^32-1），超出时自动路由至64位实现，功能结果一致；实际可支持的张量规模上限取决于数据类型与Device内存。
 
 ## 调用示例
 

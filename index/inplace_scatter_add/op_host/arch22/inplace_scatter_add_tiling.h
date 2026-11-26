@@ -20,9 +20,9 @@
 namespace optiling {
 BEGIN_TILING_DATA_DEF(InplaceScatterAddTilingData)
 TILING_DATA_FIELD_DEF(uint32_t, M);
-TILING_DATA_FIELD_DEF(uint32_t, N);
+TILING_DATA_FIELD_DEF(uint64_t, N);
 TILING_DATA_FIELD_DEF(uint32_t, K);
-TILING_DATA_FIELD_DEF(uint32_t, NAligned);
+TILING_DATA_FIELD_DEF(uint64_t, NAligned);
 TILING_DATA_FIELD_DEF(uint32_t, frontCoreNum);
 TILING_DATA_FIELD_DEF(uint32_t, tailCoreNum);
 TILING_DATA_FIELD_DEF(uint32_t, frontCoreIndicesNum);
