@@ -1014,7 +1014,7 @@ TEST_F(Dav9201PingpongProbe, UsesExplicitL0TilePlanForMultiRoundCases)
     ASSERT_TRUE(tiling.ApplyMxL0CPingpongPlan());
     EXPECT_EQ(tiling.GetKernelType(), static_cast<uint64_t>(optiling::QMMKernelType::NO_VEC_EPILOGUE_WITH_MMAPI));
 
-    // 每核多轮且基块可规划：显式 L0 tile 规划生效（mL0 != 0 并开启 L0C 双缓冲）。
+    // 每核多轮且基块可规划：显式 L0 tile 规划生效，保留上游选择的 L0C 缓冲数。
     tiling.adaptiveWin_.totalWinCnt = 2U;
     const auto multiRound = optiling::GetMxL0CPingpongEligibility(tiling.inputParams_, tiling.compileInfo_, true,
                                                                   tiling.adaptiveWin_.totalWinCnt);
@@ -1026,9 +1026,13 @@ TEST_F(Dav9201PingpongProbe, UsesExplicitL0TilePlanForMultiRoundCases)
     cube.kBL1 = 256U;
     tiling.compileInfo_.l0aSize = tiling.compileInfo_.l0bSize = 64UL * 1024UL;
     tiling.compileInfo_.l0cSize = 256UL * 1024UL;
+    cube.dbL0C = 1U;
+    cube.baseK = 64U;
     ASSERT_TRUE(tiling.ApplyMxL0CPingpongPlan());
-    EXPECT_NE(tiling.tilingData_.adaptiveSlidingWin.mL0, 0U);
-    EXPECT_EQ(cube.dbL0C, optiling::qmmv3_tiling_const::DOUBLE_BUFFER_NUM);
+    EXPECT_EQ(tiling.tilingData_.adaptiveSlidingWin.mL0, 128U);
+    EXPECT_EQ(tiling.tilingData_.adaptiveSlidingWin.nL0, 128U);
+    EXPECT_EQ(cube.baseK, 128U);
+    EXPECT_EQ(cube.dbL0C, 1U);
     EXPECT_EQ(tiling.GetKernelType(),
               static_cast<uint64_t>(optiling::QMMKernelType::NO_VEC_EPILOGUE_WITH_MMAPI_MX_L0C_PINGPONG));
 
