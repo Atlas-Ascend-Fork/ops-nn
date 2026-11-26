@@ -668,6 +668,7 @@ __aicore__ inline void FusedMatMulArch35(GM_ADDR x1GM, GM_ADDR x2GM, GM_ADDR bia
 #include "../mat_mul_v3/mat_mul_base_kernel.h"
 #include "../mat_mul_v3/mat_mul_unaligned_base_kernel.h"
 #include "../mat_mul_v3/mat_mul_l1_full_load.h"
+#include "../mat_mul_v3/mat_mul_optimized_fixpipe_algorithm.h"
 #include "../batch_mat_mul_v3/batch_mat_mul_v3.h"
 #include "../batch_mat_mul_v3/batch_mat_mul_v3_tiling_data.h"
 #include "fused_matmul_tiling_key.h"
@@ -739,6 +740,72 @@ constexpr MatmulConfig MM_CFG_MULTI_BATCH_OUT_RELU = WithFixpipeRelu(MM_CFG_MULT
             op.Process();                                                                          \
         } else {                                                                                   \
             using aType = MatmulType<AscendC::TPosition::GM, format_x1, DTYPE_X1, true>;           \
+            using bType = MatmulType<AscendC::TPosition::GM, format_x2, DTYPE_X2, true>;           \
+            templateClass<aType, bType, cType, biasType, __VA_ARGS__> op;                          \
+            op.Init(x1GM, x2GM, yGM, biasGM, x3GM, user, &tilingData, &pipe);                      \
+            op.Process();                                                                          \
+        }                                                                                          \
+    } while (0)
+
+#define FMM_MM_IMPL_A(templateClass, aFormat, ...)                                                 \
+    do {                                                                                           \
+        using cType = MatmulType<AscendC::TPosition::GM, format_y, DTYPE_Y>;                       \
+        using biasType = MatmulType<AscendC::TPosition::GM, CubeFormat::ND, DTYPE_BIAS>;           \
+        TPipe pipe;                                                                                \
+        __gm__ uint8_t* user = GetUserWorkspace(workspaceGM);                                      \
+        if (tilingData.matmulRunInfo.transA == 0 && tilingData.matmulRunInfo.transB == 0) {        \
+            using aType = MatmulType<AscendC::TPosition::GM, aFormat, DTYPE_X1, false>;            \
+            using bType = MatmulType<AscendC::TPosition::GM, format_x2, DTYPE_X2, false>;          \
+            templateClass<aType, bType, cType, biasType, __VA_ARGS__> op;                          \
+            op.Init(x1GM, x2GM, yGM, biasGM, x3GM, user, &tilingData, &pipe);                      \
+            op.Process();                                                                          \
+        } else if (tilingData.matmulRunInfo.transA == 1 && tilingData.matmulRunInfo.transB == 0) { \
+            using aType = MatmulType<AscendC::TPosition::GM, aFormat, DTYPE_X1, true>;             \
+            using bType = MatmulType<AscendC::TPosition::GM, format_x2, DTYPE_X2, false>;          \
+            templateClass<aType, bType, cType, biasType, __VA_ARGS__> op;                          \
+            op.Init(x1GM, x2GM, yGM, biasGM, x3GM, user, &tilingData, &pipe);                      \
+            op.Process();                                                                          \
+        } else if (tilingData.matmulRunInfo.transA == 0 && tilingData.matmulRunInfo.transB == 1) { \
+            using aType = MatmulType<AscendC::TPosition::GM, aFormat, DTYPE_X1, false>;            \
+            using bType = MatmulType<AscendC::TPosition::GM, format_x2, DTYPE_X2, true>;           \
+            templateClass<aType, bType, cType, biasType, __VA_ARGS__> op;                          \
+            op.Init(x1GM, x2GM, yGM, biasGM, x3GM, user, &tilingData, &pipe);                      \
+            op.Process();                                                                          \
+        } else {                                                                                   \
+            using aType = MatmulType<AscendC::TPosition::GM, aFormat, DTYPE_X1, true>;             \
+            using bType = MatmulType<AscendC::TPosition::GM, format_x2, DTYPE_X2, true>;           \
+            templateClass<aType, bType, cType, biasType, __VA_ARGS__> op;                          \
+            op.Init(x1GM, x2GM, yGM, biasGM, x3GM, user, &tilingData, &pipe);                      \
+            op.Process();                                                                          \
+        }                                                                                          \
+    } while (0)
+
+#define FMM_MM_IMPL_C(templateClass, aFormat, cFormat, ...)                                        \
+    do {                                                                                           \
+        using cType = MatmulType<AscendC::TPosition::GM, cFormat, DTYPE_Y>;                        \
+        using biasType = MatmulType<AscendC::TPosition::GM, CubeFormat::ND, DTYPE_BIAS>;           \
+        TPipe pipe;                                                                                \
+        __gm__ uint8_t* user = GetUserWorkspace(workspaceGM);                                      \
+        if (tilingData.matmulRunInfo.transA == 0 && tilingData.matmulRunInfo.transB == 0) {        \
+            using aType = MatmulType<AscendC::TPosition::GM, aFormat, DTYPE_X1, false>;            \
+            using bType = MatmulType<AscendC::TPosition::GM, format_x2, DTYPE_X2, false>;          \
+            templateClass<aType, bType, cType, biasType, __VA_ARGS__> op;                          \
+            op.Init(x1GM, x2GM, yGM, biasGM, x3GM, user, &tilingData, &pipe);                      \
+            op.Process();                                                                          \
+        } else if (tilingData.matmulRunInfo.transA == 1 && tilingData.matmulRunInfo.transB == 0) { \
+            using aType = MatmulType<AscendC::TPosition::GM, aFormat, DTYPE_X1, true>;             \
+            using bType = MatmulType<AscendC::TPosition::GM, format_x2, DTYPE_X2, false>;          \
+            templateClass<aType, bType, cType, biasType, __VA_ARGS__> op;                          \
+            op.Init(x1GM, x2GM, yGM, biasGM, x3GM, user, &tilingData, &pipe);                      \
+            op.Process();                                                                          \
+        } else if (tilingData.matmulRunInfo.transA == 0 && tilingData.matmulRunInfo.transB == 1) { \
+            using aType = MatmulType<AscendC::TPosition::GM, aFormat, DTYPE_X1, false>;            \
+            using bType = MatmulType<AscendC::TPosition::GM, format_x2, DTYPE_X2, true>;           \
+            templateClass<aType, bType, cType, biasType, __VA_ARGS__> op;                          \
+            op.Init(x1GM, x2GM, yGM, biasGM, x3GM, user, &tilingData, &pipe);                      \
+            op.Process();                                                                          \
+        } else {                                                                                   \
+            using aType = MatmulType<AscendC::TPosition::GM, aFormat, DTYPE_X1, true>;             \
             using bType = MatmulType<AscendC::TPosition::GM, format_x2, DTYPE_X2, true>;           \
             templateClass<aType, bType, cType, biasType, __VA_ARGS__> op;                          \
             op.Init(x1GM, x2GM, yGM, biasGM, x3GM, user, &tilingData, &pipe);                      \
@@ -823,23 +890,47 @@ __aicore__ inline void FusedMatMulA2(GM_ADDR x1GM, GM_ADDR x2GM, GM_ADDR biasGM,
 {
     REGISTER_TILING_DEFAULT(MatmulTilingData);
     REGISTER_TILING_FOR_TILINGKEY("IS_BATCH == 1", BatchMatmulTilingData);
-    if constexpr (IS_BATCH == FMM_A2_IS_MM && SPLITCOREMODE == FMM_MM_BASE_SPLIT_K && FIXOPTI == FMM_MM_BASE_FIXOPTI &&
-                  MIXND2NZ == FMM_MM_MIXND2NZ_FALSE && SPECIALOPT == FMM_MM_K_NOT_SHIFT &&
-                  FP32ADDMM == FMM_FP32_ADDMM_DISABLE) {
+    if constexpr (IS_BATCH == FMM_A2_IS_MM && FP32ADDMM == FMM_FP32_ADDMM_DISABLE) {
         GET_TILING_DATA_WITH_STRUCT(MatmulTilingData, tilingData, tilingGM);
-        if constexpr (LOADMODE == FMM_MM_BASE_FULLLOAD) {
-            FMM_MM_IMPL(MatmulBaseKernel, MatmulBaseBlock, MM_CFG_NO_PRELOAD_RELU);
-        } else if constexpr (LOADMODE == FMM_MM_AL1_FULLLOAD) {
-            FMM_MM_IMPL(MatmulBaseKernelAL1FullLoad, MatmulBaseBlock, MM_CFG_MDL_RELU);
-        } else if constexpr (LOADMODE == FMM_MM_BL1_FULLLOAD) {
-            FMM_MM_IMPL(MatmulBaseKernelBL1FullLoad, MatmulBaseBlock, MM_CFG_NO_PRELOAD_RELU);
+        if constexpr (SPLITCOREMODE == FMM_MM_BASE_SPLIT_K && FIXOPTI == FMM_MM_BASE_FIXOPTI &&
+                      MIXND2NZ == FMM_MM_MIXND2NZ_FALSE && SPECIALOPT == FMM_MM_K_NOT_SHIFT) {
+            if constexpr (LOADMODE == FMM_MM_BASE_FULLLOAD) {
+                FMM_MM_IMPL(MatmulBaseKernel, MatmulBaseBlock, MM_CFG_NO_PRELOAD_RELU);
+#if defined(ORIG_DTYPE_X1) && defined(DT_FLOAT) && ORIG_DTYPE_X1 == DT_FLOAT
+            } else if constexpr (LOADMODE == FMM_MM_AL1_FULLLOAD) {
+                FMM_MM_IMPL(MatmulBaseKernelAL1FullLoad, MatmulBaseBlock, MM_CFG_MDL_RELU);
+#endif
+            } else if constexpr (LOADMODE == FMM_MM_BL1_FULLLOAD) {
+                FMM_MM_IMPL(MatmulBaseKernelBL1FullLoad, MatmulBaseBlock, MM_CFG_NO_PRELOAD_RELU);
+            }
+        } else if constexpr (LOADMODE == FMM_MM_BASE_FULLLOAD && SPLITCOREMODE == FMM_MM_BASE_SPLIT_K &&
+                             FIXOPTI == FMM_MM_BASE_FIXOPTI && MIXND2NZ == FMM_MM_MIXND2NZ_TRUE &&
+                             SPECIALOPT == FMM_MM_K_NOT_SHIFT) {
+            FMM_MM_IMPL(MatmulBaseUnAlignedKernel, MatmulBaseBlock, MM_CFG_NO_PRELOAD_RELU);
+        } else if constexpr (LOADMODE == FMM_MM_BL1_FULLLOAD && SPLITCOREMODE == FMM_MM_BASE_SPLIT_K &&
+                             FIXOPTI == FMM_MM_BASE_FIXOPTI && MIXND2NZ == FMM_MM_MIXND2NZ_TRUE &&
+                             SPECIALOPT == FMM_MM_K_NOT_SHIFT) {
+            FMM_MM_IMPL(MatmulBaseUnAlignedKernelBL1FullLoad, MatmulBaseBlock, MM_CFG_NO_PRELOAD_RELU,
+                        MatmulCallBackFunc<nullptr, nullptr, CopyBL1<format_x2>>);
+        } else if constexpr (LOADMODE == FMM_MM_BL1_FULLLOAD && SPLITCOREMODE == FMM_MM_BASE_SPLIT_K &&
+                             FIXOPTI == FMM_MM_BASE_ENABLE_ALIGNOUT && MIXND2NZ == FMM_MM_MIXND2NZ_FALSE &&
+                             SPECIALOPT == FMM_MM_K_NOT_SHIFT) {
+            FMM_MM_IMPL_A(MatmulBaseUnalignedNKernel, format_x1, MatmulBaseBlock, MM_CFG_NO_PRELOAD_RELU,
+                          MatmulCallBackFunc<nullptr, nullptr, CopyBL1<format_x2>>);
+        } else if constexpr (LOADMODE == FMM_MM_BL1_FULLLOAD && SPLITCOREMODE == FMM_MM_BASE_SPLIT_K &&
+                             FIXOPTI == FMM_MM_BASE_ENABLE_ALIGNOUT && MIXND2NZ == FMM_MM_MIXND2NZ_TRUE &&
+                             SPECIALOPT == FMM_MM_K_NOT_SHIFT) {
+            FMM_MM_IMPL_A(MatmulBaseAToNZWithBL1FixpipeKernel, CubeFormat::NZ, MatmulBaseBlock, MM_CFG_NO_PRELOAD_RELU,
+                          MatmulCallBackFunc<nullptr, nullptr, CopyBL1<format_x2>>);
+#if defined(ORIG_DTYPE_X1) && defined(DT_FLOAT) && ORIG_DTYPE_X1 == DT_FLOAT
+        } else if constexpr (LOADMODE == FMM_MM_BL1_FULLLOAD && SPLITCOREMODE == FMM_MM_BASE_SPLIT_K &&
+                             FIXOPTI == FMM_MM_VEC_NZ2ND_UNALIGNOUT && MIXND2NZ == FMM_MM_MIXND2NZ_FALSE &&
+                             SPECIALOPT == FMM_MM_K_NOT_SHIFT) {
+            FMM_MM_IMPL_C(MatmulBaseUnalignedNKernel, format_x1, CubeFormat::NZ, MatmulBaseBlock,
+                          MM_CFG_NO_PRELOAD_RELU, MatmulCallBackFunc<nullptr, nullptr, CopyBL1<format_x2>>,
+                          FIXPIPE_OPT_SELECT::VEC_NZ2ND_UNALIGNOUT);
+#endif
         }
-    } else if constexpr (IS_BATCH == FMM_A2_IS_MM && SPLITCOREMODE == FMM_MM_BASE_SPLIT_K &&
-                         FIXOPTI == FMM_MM_BASE_FIXOPTI && MIXND2NZ == FMM_MM_MIXND2NZ_TRUE &&
-                         SPECIALOPT == FMM_MM_K_NOT_SHIFT && FP32ADDMM == FMM_FP32_ADDMM_DISABLE &&
-                         LOADMODE == FMM_MM_BASE_FULLLOAD) {
-        GET_TILING_DATA_WITH_STRUCT(MatmulTilingData, tilingData, tilingGM);
-        FMM_MM_IMPL(MatmulBaseUnAlignedKernel, MatmulBaseBlock, MM_CFG_NO_PRELOAD_RELU);
     } else if constexpr (IS_BATCH == FMM_A2_IS_BATCH && BMM_L1_FULL == FMM_BMM_L1_FULL_FALSE) {
         GET_TILING_DATA_WITH_STRUCT(BatchMatmulTilingData, tilingData, tilingGM);
         if constexpr (BMM_MULTI == FMM_BMM_MULTI_FALSE && BMM_OUT == FMM_BMM_OUT_FALSE &&

@@ -42,14 +42,29 @@ public:
         // MatmulV3BaseTiling encodes GET_TPL_TILING_KEY with MatMulV3's 6-field schema.
         // FusedMatMul kernels are compiled with 12 fields, so re-pack here.
         auto* self = const_cast<FusedMatMulReluTiling*>(this);
-        return GET_TPL_TILING_KEY(
-            static_cast<uint64_t>(tilingEnable_.tilingEnableFullLoad),
-            static_cast<uint64_t>(tilingEnable_.tilingEnableSplitCore),
-            static_cast<uint64_t>(tilingEnable_.tilingEnableFixOpti), static_cast<uint64_t>(self->GetMixNd2nzType()),
-            static_cast<uint64_t>(tilingEnable_.tilingEnableSpecialOpti), static_cast<uint64_t>(FMM_FP32_ADDMM_DISABLE),
-            static_cast<uint64_t>(FMM_A2_IS_MM), static_cast<uint64_t>(FMM_BMM_L1_FULL_FALSE),
-            static_cast<uint64_t>(FMM_BMM_MULTI_FALSE), static_cast<uint64_t>(FMM_BMM_LOAD_BASE),
-            static_cast<uint64_t>(FMM_BMM_OUT_FALSE), static_cast<uint64_t>(FMM_BMM_MIX_FALSE));
+        uint64_t loadMode = static_cast<uint64_t>(tilingEnable_.tilingEnableFullLoad);
+        uint64_t splitCore = static_cast<uint64_t>(tilingEnable_.tilingEnableSplitCore);
+        uint64_t fixOpti = static_cast<uint64_t>(tilingEnable_.tilingEnableFixOpti);
+        uint64_t mixNd2nz = static_cast<uint64_t>(self->GetMixNd2nzType());
+        uint64_t specialOpti = static_cast<uint64_t>(tilingEnable_.tilingEnableSpecialOpti);
+        // No AL1+nd2nz kernel. Same unaligned path as BASE+nd2nz.
+        if (loadMode == static_cast<uint64_t>(FMM_MM_AL1_FULLLOAD) &&
+            mixNd2nz == static_cast<uint64_t>(FMM_MM_MIXND2NZ_TRUE)) {
+            loadMode = static_cast<uint64_t>(FMM_MM_BASE_FULLLOAD);
+        }
+        // K shift is only set from the MatMulV3 AOE bank, which FusedMatMul skips.
+        if (specialOpti == static_cast<uint64_t>(FMM_MM_K_SHIFT)) {
+            specialOpti = static_cast<uint64_t>(FMM_MM_K_NOT_SHIFT);
+            loadMode = static_cast<uint64_t>(FMM_MM_BASE_FULLLOAD);
+            splitCore = static_cast<uint64_t>(FMM_MM_BASE_SPLIT_K);
+            fixOpti = static_cast<uint64_t>(FMM_MM_BASE_FIXOPTI);
+            mixNd2nz = static_cast<uint64_t>(FMM_MM_MIXND2NZ_FALSE);
+        }
+        return GET_TPL_TILING_KEY(loadMode, splitCore, fixOpti, mixNd2nz, specialOpti,
+                                  static_cast<uint64_t>(FMM_FP32_ADDMM_DISABLE), static_cast<uint64_t>(FMM_A2_IS_MM),
+                                  static_cast<uint64_t>(FMM_BMM_L1_FULL_FALSE),
+                                  static_cast<uint64_t>(FMM_BMM_MULTI_FALSE), static_cast<uint64_t>(FMM_BMM_LOAD_BASE),
+                                  static_cast<uint64_t>(FMM_BMM_OUT_FALSE), static_cast<uint64_t>(FMM_BMM_MIX_FALSE));
     }
 };
 

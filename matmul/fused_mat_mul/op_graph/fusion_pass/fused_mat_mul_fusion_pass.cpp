@@ -234,11 +234,25 @@ MatmulReplacementInputs CreateMatmulReplacementInputs(EsGraphBuilder& builder, i
     return inputs;
 }
 
+// BatchMatMul has no bias anchor. Probing index 2 on it makes GE log an error for a missing
+// anchor. MatMul / MatMulV2 / MatMulV3 and BatchMatMulV2 / BatchMatMulV3 declare that optional input.
+bool HasBiasInput(const GNode& matmulNode)
+{
+    AscendString nodeType;
+    if (matmulNode.GetType(nodeType) != GRAPH_SUCCESS) {
+        return false;
+    }
+    return nodeType == kOpTypeMatMul || nodeType == kOpTypeMatMulV2 || nodeType == kOpTypeMatMulV3 ||
+           nodeType == kOpTypeBatchMatMulV2 || nodeType == kOpTypeBatchMatMulV3;
+}
+
 // The fused node's inputs inherit the matmul input descs, shared by both replace functions.
+// Stop at x2 when the IR has no bias anchor: GetInputDesc(2) on BatchMatMul makes GE log an error.
 void InheritMatmulInputDescs(GNode& fusedMatMulNode, const GNode& matmulNode)
 {
     TensorDesc matmulInputDesc;
-    for (int64_t inputIdx = 0; inputIdx <= kBiasInputIdx; inputIdx++) {
+    const int64_t lastInputIdx = HasBiasInput(matmulNode) ? kBiasInputIdx : kX2InputIdx;
+    for (int64_t inputIdx = 0; inputIdx <= lastInputIdx; inputIdx++) {
         if (matmulNode.GetInputDesc(inputIdx, matmulInputDesc) == GRAPH_SUCCESS) {
             fusedMatMulNode.UpdateInputDesc(inputIdx, matmulInputDesc);
         }
@@ -460,7 +474,8 @@ bool CheckMatmulBiasShape(const GNode& matmulNode, bool isDav3510)
 // replace functions re-resolve it from the graph.
 bool CheckMatmulCommon(const GNode& matmulNode, bool isDav3510)
 {
-    const bool hasBias = matmulNode.GetInDataNodesAndPortIndexs(kBiasInputIdx).first != nullptr;
+    const bool hasBias = HasBiasInput(matmulNode) &&
+                         matmulNode.GetInDataNodesAndPortIndexs(kBiasInputIdx).first != nullptr;
     if (hasBias && !CheckMatmulBiasShape(matmulNode, isDav3510)) {
         OPS_LOG_D(kPassName, "Matmul bias shape not supported, no fusion.");
         return false;
@@ -628,7 +643,8 @@ Status ReplaceDirectWithFusedMatMul(GNode& matmulNode, const GNodePtr& reluNode,
                                 GetEnableHf32FromMatmul(matmulNode, &passContext) :
                                 false;
 
-    const bool hasBias = matmulNode.GetInDataNodesAndPortIndexs(kBiasInputIdx).first != nullptr;
+    const bool hasBias = HasBiasInput(matmulNode) &&
+                         matmulNode.GetInDataNodesAndPortIndexs(kBiasInputIdx).first != nullptr;
 
     TensorDesc x1Desc;
     TensorDesc x2Desc;
@@ -1203,7 +1219,8 @@ Status ReplacePostCubeWithFusedMatMul(GraphPtr& graph, GNode& matmulNode, const 
     FUSION_PASS_CHECK(fusedOpType.empty(), OPS_LOG_E(kPassName, "Fusion op list is not supported by FusedMatMul."),
                       return FAILED);
 
-    const bool hasBias = matmulNode.GetInDataNodesAndPortIndexs(kBiasInputIdx).first != nullptr;
+    const bool hasBias = HasBiasInput(matmulNode) &&
+                         matmulNode.GetInDataNodesAndPortIndexs(kBiasInputIdx).first != nullptr;
     const bool hasX3 = (fusedOpType == kFusedOpTypeQuant) || (fusedOpType == kFusedOpTypeReluQuant);
 
     bool transX1 = false;

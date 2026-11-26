@@ -83,6 +83,7 @@ namespace {
 
 constexpr char kOpTypeFusedMatMul[] = "FusedMatMul";
 constexpr char kOpTypeMatMulV3[] = "MatMulV3";
+constexpr char kOpTypeBatchMatMul[] = "BatchMatMul";
 constexpr char kOpTypeBatchMatMulV3[] = "BatchMatMulV3";
 constexpr char kOpTypeRelu[] = "Relu";
 constexpr char kOpTypeAscendQuant[] = "AscendQuant";
@@ -214,6 +215,55 @@ std::shared_ptr<Graph> BuildMatmulReluGraph(const MatmulReluGraphParam& param)
     GNode reluNode = *reluOut.GetProducer();
     SetNodeInputDesc(reluNode, 0, param.yDims, param.dtype);
     SetNodeOutputDesc(reluNode, param.yDims, param.dtype);
+
+    return graphBuilder.BuildAndReset({reluOut});
+}
+
+// BatchMatMul IR declares only x1/x2. The node must not grow a bias anchor just to be fused.
+std::shared_ptr<Graph> BuildBatchMatMulReluGraph()
+{
+    const DataType dtype = DT_FLOAT16;
+    const std::vector<int64_t> x1Dims = {2, 8, 16};
+    const std::vector<int64_t> x2Dims = {2, 16, 32};
+    const std::vector<int64_t> yDims = {2, 8, 32};
+
+    auto graphBuilder = es::EsGraphBuilder("fused_mat_mul_batch_matmul_relu_test_graph");
+    auto x1 = graphBuilder.CreateInput(0, "x1", dtype, FORMAT_ND, x1Dims);
+    auto x2 = graphBuilder.CreateInput(1, "x2", dtype, FORMAT_ND, x2Dims);
+
+    auto* graph = graphBuilder.GetCGraphBuilder()->GetGraph();
+    auto bmmNode = es::CompliantNodeBuilder(graph)
+                       .OpType(kOpTypeBatchMatMul)
+                       .Name(kOpTypeBatchMatMul)
+                       .IrDefInputs({
+                           {"x1", es::CompliantNodeBuilder::kEsIrInputRequired, ""},
+                           {"x2", es::CompliantNodeBuilder::kEsIrInputRequired, ""},
+                       })
+                       .IrDefOutputs({{"y", es::CompliantNodeBuilder::kEsIrOutputRequired, ""}})
+                       .IrDefAttrs({
+                           {"adj_x1", es::CompliantNodeBuilder::kEsAttrRequired, "Bool", CreateFrom(false)},
+                           {"adj_x2", es::CompliantNodeBuilder::kEsAttrRequired, "Bool", CreateFrom(false)},
+                       })
+                       .Build();
+    if (AddEdgeAndUpdatePeerDesc(*graph, *x1.GetProducer(), x1.GetProducerOutIndex(), bmmNode, 0) != GRAPH_SUCCESS ||
+        AddEdgeAndUpdatePeerDesc(*graph, *x2.GetProducer(), x2.GetProducerOutIndex(), bmmNode, 1) != GRAPH_SUCCESS) {
+        return nullptr;
+    }
+    auto* yHolder = graphBuilder.GetCGraphBuilder()->GetTensorHolderFromNode(bmmNode, 0);
+    auto bmmOut = es::EsTensorHolder(yHolder);
+    auto reluOut = MakeReluNode(graphBuilder, bmmOut);
+
+    SetNodeOutputDesc(*x1.GetProducer(), x1Dims, dtype);
+    SetNodeOutputDesc(*x2.GetProducer(), x2Dims, dtype);
+
+    GNode matmulNode = *bmmOut.GetProducer();
+    SetNodeInputDesc(matmulNode, 0, x1Dims, dtype);
+    SetNodeInputDesc(matmulNode, 1, x2Dims, dtype);
+    SetNodeOutputDesc(matmulNode, yDims, dtype);
+
+    GNode reluNode = *reluOut.GetProducer();
+    SetNodeInputDesc(reluNode, 0, yDims, dtype);
+    SetNodeOutputDesc(reluNode, yDims, dtype);
 
     return graphBuilder.BuildAndReset({reluOut});
 }
@@ -623,6 +673,23 @@ TEST_F(FusedMatMulFusionPassTest, matmulFp16ReluA2A3DirectFusionSuccess)
     EXPECT_EQ(status, SUCCESS);
     EXPECT_EQ(CountNodesByType(graph, kOpTypeFusedMatMul), 1);
     EXPECT_EQ(CountNodesByType(graph, kOpTypeMatMulV3), 0);
+    EXPECT_EQ(CountNodesByType(graph, kOpTypeRelu), 0);
+    GNodePtr fusedMatMul = FindNodeByType(graph, kOpTypeFusedMatMul);
+    ASSERT_NE(fusedMatMul, nullptr);
+    EXPECT_EQ(GetFusedOpTypeAttr(fusedMatMul), kFusedOpTypeRelu);
+}
+
+// BatchMatMul has no bias input. A2/A3 direct fusion must still succeed without probing index 2.
+TEST_F(FusedMatMulFusionPassTest, batchMatMulNoBiasA2A3DirectFusionSuccess)
+{
+    SetA2A3DirectPlatform();
+    std::shared_ptr<Graph> graph = BuildBatchMatMulReluGraph();
+    ASSERT_NE(graph, nullptr);
+
+    Status status = RunFusedMatMulFusionPass(graph);
+    EXPECT_EQ(status, SUCCESS);
+    EXPECT_EQ(CountNodesByType(graph, kOpTypeFusedMatMul), 1);
+    EXPECT_EQ(CountNodesByType(graph, kOpTypeBatchMatMul), 0);
     EXPECT_EQ(CountNodesByType(graph, kOpTypeRelu), 0);
     GNodePtr fusedMatMul = FindNodeByType(graph, kOpTypeFusedMatMul);
     ASSERT_NE(fusedMatMul, nullptr);

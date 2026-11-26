@@ -1963,6 +1963,11 @@ bool MatmulV3BaseTiling::DoBL1FullloadWithFixpipeTiling()
 
 bool MatmulV3BaseTiling::DoAL1FullLoadTiling()
 {
+    // FusedMatMul AL1 kernel is compiled only for MIXND2NZ=FALSE.
+    if (context_->GetNodeType() != nullptr && strcmp(context_->GetNodeType(), "FusedMatMul") == 0 &&
+        GetMixNd2nzType() != MixNd2NzType::NO_ND2NZ) {
+        return false;
+    }
     // only support fp32, and resreict transpose attrs as network cases
     if (!compileInfo_.supportL0c2out || args_.aType != ge::DT_FLOAT || args_.isATrans || !args_.isBTrans ||
         SupportForceGrpAccForFp32()) {
@@ -2547,6 +2552,10 @@ bool MatmulV3BaseTiling::CheckSingleCoreSplitKEdgeCases(const MatmulV3RunInfo& t
 
 bool MatmulV3BaseTiling::DoSingleCoreSplitKTiling()
 {
+    // Split-K reduces partial sums. FixPipe ReLU would run before that reduction.
+    if (context_->GetNodeType() != nullptr && strcmp(context_->GetNodeType(), "FusedMatMul") == 0) {
+        return false;
+    }
     if (!compileInfo_.supportL0c2out || compileInfo_.supportL12BtBf16 || !IsSupportSingleCoreSplitK()) {
         OP_LOGI(args_.opName, "MatMulV3 tiling not support SingleCoreSplitK.");
         return false;
@@ -2751,6 +2760,10 @@ void MatmulV3BaseTiling::OptCoreNumsDeterministicMultiCoreSplitK()
 
 bool MatmulV3BaseTiling::DoDeterministicMultiCoreSplitKTiling()
 {
+    // Split-K reduces partial sums. FixPipe ReLU would run before that reduction.
+    if (context_->GetNodeType() != nullptr && strcmp(context_->GetNodeType(), "FusedMatMul") == 0) {
+        return false;
+    }
     if (compileInfo_.supportL12BtBf16 || !SupportMultiSplitK()) {
         return false;
     }

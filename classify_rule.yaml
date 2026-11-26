@@ -1208,8 +1208,6 @@ matmul-c@ops-nn:
         - ops/ops-nn/matmul/trans_mat_mul_weight/examples/
         - ops/ops-nn/matmul/transpose_batch_mat_mul/tests/
         - ops/ops-nn/matmul/transpose_batch_mat_mul/examples/
-        - ops/ops-nn/matmul/batch_mat_mul/examples/
-        - ops/ops-nn/matmul/batch_mat_mul/tests/
         - ops/ops-nn/matmul/weight_quant_batch_matmul/tests/
         - ops/ops-nn/matmul/weight_quant_batch_matmul/examples/
         - ops/ops-nn/matmul/weight_quant_batch_matmul_v2/tests/
