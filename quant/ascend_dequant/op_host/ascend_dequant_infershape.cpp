@@ -16,68 +16,29 @@
 // ROLE: OP_IMPL InferShape / InferDataType V2 for AscendDequant.
 //   InferShape keeps the legacy behaviour: y.shape is x.shape, with no extra
 //   graph-mode rejection (dtype / rank / broadcast / declared y are validated
-//   by tiling on the real shapes). InferDataType maps the attr `dtype` to the
-//   output data type (0 -> float32, 1 -> float16).
+//   by tiling on the real shapes). InferShapeRange copies x's shape range.
+//   InferDataType / InferFormat live in op_graph/ascend_dequant_graph_infer.cpp.
 //
 // =============================================================================
 
 #include <cstdint>
 #include <string>
 
-#include "exe_graph/runtime/infer_datatype_context.h" // InferDataTypeContext (V2)
-#include "exe_graph/runtime/infer_shape_context.h"    // InferShapeContext, gert::Shape
-#include "exe_graph/runtime/runtime_attrs.h"          // gert::RuntimeAttrs
-#include "graph/tensor.h"                             // ge::TensorDesc, ge::Shape
-#include "graph/types.h"                              // ge::DataType constants
-#include "op_common/log/log.h"                        // OP_CHECK_NULL_WITH_CONTEXT, OP_LOGE_FOR_*
-#include "register/op_impl_registry.h"                // IMPL_OP_INFERSHAPE macro
+#include "exe_graph/runtime/infer_shape_context.h"       // InferShapeContext, gert::Shape
+#include "exe_graph/runtime/infer_shape_range_context.h" // InferShapeRangeContext
+#include "graph/tensor.h"                                // ge::TensorDesc, ge::Shape
+#include "graph/types.h"                                 // ge::DataType constants
+#include "op_common/log/log.h"                           // OP_CHECK_NULL_WITH_CONTEXT, OP_LOGE_FOR_*
+#include "register/op_impl_registry.h"                   // IMPL_OP_INFERSHAPE macro
 
 using namespace ge;
 
 namespace ops {
 
-namespace ascend_dequant_graph {
-
-constexpr int64_t kRankMin = 1;
-constexpr int64_t kRankMax = 8;
-constexpr int64_t kAttrDtypeFloat32 = 0; // y = float32（proto 缺省）
-constexpr int64_t kAttrDtypeFloat16 = 1; // y = float16
-constexpr int64_t kAttrDtypeDefault = kAttrDtypeFloat32;
-
-// attr dtype 合法值域（InferShape / InferDataType / tiling 共用同一判据与措辞）
-inline const char* DtypeAttrRangeReason() { return "attribute dtype must be 0 (float32) or 1 (float16)"; }
-
-inline bool IsSupportedDtypeAttr(int64_t dtypeAttr)
-{
-    return dtypeAttr == kAttrDtypeFloat32 || dtypeAttr == kAttrDtypeFloat16;
-}
-
-// attr dtype -> 声明的 y 数据类型（调用前需保证 IsSupportedDtypeAttr 成立）
-inline ge::DataType OutputDtypeForAttr(int64_t dtypeAttr)
-{
-    return dtypeAttr == kAttrDtypeFloat32 ? ge::DT_FLOAT : ge::DT_FLOAT16;
-}
-
-// attr dtype 值域校验与映射。成功时 *expectedY 为 attr 推出的 y 数据类型。
-inline ge::graphStatus DtypeAttrToOutput(const char* entityName, int64_t dtypeAttr, ge::DataType& expectedY)
-{
-    const std::string entity(entityName == nullptr ? "AscendDequant" : entityName);
-    if (!IsSupportedDtypeAttr(dtypeAttr)) {
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(entity.c_str(), "dtype", std::to_string(dtypeAttr).c_str(),
-                                              DtypeAttrRangeReason());
-        return ge::GRAPH_FAILED;
-    }
-    expectedY = OutputDtypeForAttr(dtypeAttr);
-    return ge::GRAPH_SUCCESS;
-}
-
-} // namespace ascend_dequant_graph
-
 namespace {
 
 constexpr size_t X_IDX = 0;
 constexpr size_t Y_IDX = 0;
-constexpr size_t ATTR_IDX_DTYPE = 2;
 
 } // namespace
 
@@ -98,34 +59,33 @@ static ge::graphStatus InferShape4AscendDequant(gert::InferShapeContext* context
     OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
 
     *yShape = *xShape;
+    OP_LOGD(context->GetNodeName(), "[AscendDequant][InferShape] y.shape = x.shape, rank=%zu", xShape->GetDimNum());
     return ge::GRAPH_SUCCESS;
 }
 
 // ---------------------------------------------------------------------------
-// InferDataTypeForAscendDequant(context) — y dtype follows attr `dtype`
-//   0 -> float32 (proto default), 1 -> float16.
-//
-//   The output dtype is unknown at this point, so only the attribute value range
-//   is validated.
+// InferShapeRangeForAscendDequant(context) — 复刻老版 OneInOneOutDynamicInfer 对动态
+//   shape 的处理：y 的 shape range 直接取自 x（老版还会 MakeUpShapeRange 补全，缺省区间
+//   即 shape 本身，拷贝上下界等价）。
 // ---------------------------------------------------------------------------
-static ge::graphStatus InferDataTypeForAscendDequant(gert::InferDataTypeContext* context)
+static ge::graphStatus InferShapeRangeForAscendDequant(gert::InferShapeRangeContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE_FOR_INVALID_GRAPH_NODE("AscendDequant", "InferDataType context is nullptr");
+        OP_LOGE_FOR_INVALID_GRAPH_NODE("AscendDequant", "InferShapeRange context is nullptr");
         return ge::GRAPH_FAILED;
     }
-    const gert::RuntimeAttrs* attrs = context->GetAttrs();
-    const int64_t* dtypePtr = (attrs == nullptr) ? nullptr : attrs->GetInt(ATTR_IDX_DTYPE);
-    const int64_t dtypeAttr = (dtypePtr == nullptr) ? ascend_dequant_graph::kAttrDtypeDefault : *dtypePtr;
-    ge::DataType expectedDtype = ge::DT_UNDEFINED;
-    if (ascend_dequant_graph::DtypeAttrToOutput(context->GetNodeName(), dtypeAttr, expectedDtype) !=
-        ge::GRAPH_SUCCESS) {
-        return ge::GRAPH_FAILED;
-    }
-    context->SetOutputDataType(Y_IDX, expectedDtype);
+    const gert::Range<gert::Shape>* xRange = context->GetInputShapeRange(X_IDX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, xRange);
+    gert::Range<gert::Shape>* yRange = context->GetOutputShapeRange(Y_IDX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, yRange);
+    *yRange->GetMin() = *xRange->GetMin();
+    *yRange->GetMax() = *xRange->GetMax();
+    OP_LOGD(context->GetNodeName(), "[AscendDequant][InferShapeRange] y range = x range, rank=%zu",
+            xRange->GetMin()->GetDimNum());
     return ge::GRAPH_SUCCESS;
 }
 
-// IMPL_OP_INFERSHAPE(AscendDequant).InferShape(func).InferDataType(func) — V2 registration.
-IMPL_OP_INFERSHAPE(AscendDequant).InferShape(InferShape4AscendDequant).InferDataType(InferDataTypeForAscendDequant);
+// InferShape / InferShapeRange 注册在本文件；InferDataType / InferFormat 见
+// op_graph/ascend_dequant_graph_infer.cpp（图构建期需要，随 op_graph 编进 op_proto 库）。
+IMPL_OP_INFERSHAPE(AscendDequant).InferShape(InferShape4AscendDequant).InferShapeRange(InferShapeRangeForAscendDequant);
 } // namespace ops

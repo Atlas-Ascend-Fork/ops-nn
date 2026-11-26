@@ -89,35 +89,6 @@ ge::graphStatus RunInferShape(const InferCase& c, std::vector<int64_t>& outShape
     return ret;
 }
 
-ge::graphStatus RunInferDataType(int64_t dtypeAttr, ge::DataType& outDtype)
-{
-    const auto* impl = GetImpl();
-    if (impl == nullptr || impl->infer_datatype == nullptr) {
-        return ge::GRAPH_FAILED;
-    }
-    ge::DataType xDtype = ge::DT_INT32;
-    ge::DataType scaleDtype = ge::DT_UINT64;
-    ge::DataType yDtype = ge::DT_FLOAT16;
-    auto holder = gert::InferDataTypeContextFaker()
-                      .IrInputNum(2)
-                      .NodeIoNum(2, 1)
-                      .NodeInputTd(0, xDtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeInputTd(1, scaleDtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeOutputTd(0, yDtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .InputDataTypes({&xDtype, &scaleDtype})
-                      .OutputDataTypes({&yDtype})
-                      .NodeAttrs({{"sqrt_mode", Ops::NN::AnyValue::CreateFrom<bool>(false)},
-                                  {"relu_flag", Ops::NN::AnyValue::CreateFrom<bool>(false)},
-                                  {"dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(dtypeAttr)}})
-                      .Build();
-    auto* ctx = holder.GetContext<gert::InferDataTypeContext>();
-    const ge::graphStatus ret = impl->infer_datatype(ctx);
-    if (ret == ge::GRAPH_SUCCESS) {
-        outDtype = ctx->GetOutputDataType(0);
-    }
-    return ret;
-}
-
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -177,10 +148,6 @@ TEST_F(AscendDequantInfershapeTest, InfershapeRank2PerChannel)
     std::vector<int64_t> out;
     ASSERT_EQ(RunInferShape(c, out), ge::GRAPH_SUCCESS);
     EXPECT_EQ(out, (std::vector<int64_t>{2, 3}));
-
-    ge::DataType dt = ge::DT_UNDEFINED;
-    ASSERT_EQ(RunInferDataType(1, dt), ge::GRAPH_SUCCESS);
-    EXPECT_EQ(dt, ge::DT_FLOAT16);
 }
 
 TEST_F(AscendDequantInfershapeTest, InfershapeRank1PerTensor)
@@ -322,10 +289,6 @@ TEST_F(AscendDequantInfershapeTest, InfershapeFloat32AttrUint64Scale)
     std::vector<int64_t> out;
     ASSERT_EQ(RunInferShape(c, out), ge::GRAPH_SUCCESS);
     EXPECT_EQ(out, (std::vector<int64_t>{4, 8}));
-
-    ge::DataType dt = ge::DT_UNDEFINED;
-    ASSERT_EQ(RunInferDataType(0, dt), ge::GRAPH_SUCCESS);
-    EXPECT_EQ(dt, ge::DT_FLOAT);
 }
 
 // dtype=1 -> float16 output with the uint64 deq_scale.
@@ -361,32 +324,6 @@ TEST_F(AscendDequantInfershapeTest, InfershapePassThroughIgnoresScaleDtype)
     c2.yDtype = ge::DT_FLOAT;
     ASSERT_EQ(RunInferShape(c2, out), ge::GRAPH_SUCCESS);
     EXPECT_EQ(out, (std::vector<int64_t>{4, 8}));
-}
-
-TEST_F(AscendDequantInfershapeTest, InferdatatypeDtype0And1)
-{
-    ge::DataType dt = ge::DT_UNDEFINED;
-    ASSERT_EQ(RunInferDataType(0, dt), ge::GRAPH_SUCCESS);
-    EXPECT_EQ(dt, ge::DT_FLOAT);
-    dt = ge::DT_UNDEFINED;
-    ASSERT_EQ(RunInferDataType(1, dt), ge::GRAPH_SUCCESS);
-    EXPECT_EQ(dt, ge::DT_FLOAT16);
-}
-
-TEST_F(AscendDequantInfershapeTest, InfershapePassThroughAllowsOutOfRangeDtypeAttr)
-{
-    InferCase c;
-    c.xShape = {2, 3};
-    c.scaleShape = {3};
-    c.dtypeAttr = 2;
-    c.yDtype = ge::DT_FLOAT;
-    std::vector<int64_t> out;
-    ASSERT_EQ(RunInferShape(c, out), ge::GRAPH_SUCCESS);
-    EXPECT_EQ(out, (std::vector<int64_t>{2, 3}));
-
-    // dtype 推导仍校验属性值域
-    ge::DataType dt = ge::DT_UNDEFINED;
-    EXPECT_EQ(RunInferDataType(2, dt), ge::GRAPH_FAILED);
 }
 
 TEST_F(AscendDequantInfershapeTest, InfershapePassThroughIgnoresDeclaredYDtype)
