@@ -33,13 +33,24 @@ English | [简体中文](./README.md)
   temp_i = cast\_to\_x\_type(x_i / level0\_scale_i), \space i\space from\space 1\space to\space level0\_block\_size
   $$
 
-  $$
-  shared\_exp_i = floor(log_2(max_i(|temp_i|))) - emax
-  $$
-
-  $$
-  level1\_scale_i = 2^{shared\_exp_i}
-  $$
+  - The calculation algorithm of level1_scale_i is specified by scale_alg:
+    - When scale_alg is 0 (OCP Microscaling Formats (Mx) Specification):
+      $$
+      shared\_exp_i = floor(log_2(max_i(|temp_i|))) - emax
+      $$
+      $$
+      level1\_scale_i = 2^{shared\_exp_i}
+      $$
+    - When scale_alg is 1 (ceil rounding algorithm):
+      $$
+      S_{fp32} = \frac{max_i(|temp_i|)}{Amax(DType)}
+      $$
+      where $Amax(DType)$ is the maximum value 6 of FLOAT4_E2M1. The unbiased exponent of $S_{fp32}$ is rounded up (the exponent is incremented by 1 when $S_{fp32}$ is a normal number with a non-zero mantissa, or a subnormal number with a mantissa greater than 0.5), and $level1\_scale_i = 2^{E_{int}}$.
+    - When scale_alg is 2 (Dynamic Dtype Range algorithm):
+      $$
+      S_{fp32} = \frac{max_i(|temp_i|)}{Amax(DType)}
+      $$
+      where $Amax(DType)$ is the value of dst_type_max. When dst_type_max is 0, the maximum value 6 of FLOAT4_E2M1 is used. When dst_type_max is 0, 6, or 7, the exponent is rounded up by the BF16 high-mantissa-bit carry method; for other values, the exponent is incremented by 1 only when $S_{fp32}$ is a normal number with a non-zero mantissa. $level1\_scale_i = 2^{E_{int}}$.
 
   $$
   y_i = cast\_to\_FP4\_E2M1(temp_i/level1\_scale_i, round\_mode), \space i\space from\space 1\space to\space level1\_block\_size
@@ -109,6 +120,20 @@ English | [简体中文](./README.md)
       <td>-</td>
     </tr>
     <tr>
+      <td>scale_alg</td>
+      <td>Optional attribute</td>
+      <td><ul><li>Indicates the calculation method of level1_scale;</li><li>Values 0, 1, and 2 are supported, indicating the OCP Microscaling Formats (Mx) Specification, the ceil rounding algorithm, and the Dynamic Dtype Range algorithm, respectively;</li><li>The default value is 0.</li></ul></td>
+      <td>INT64</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>dst_type_max</td>
+      <td>Optional attribute</td>
+      <td><ul><li>Indicates the maximum value of the destination data type, corresponding to Amax(DType) in the formula;</li><li>Effective only when scale_alg is 2. Values 0.0 and 6.0-12.0 are supported. When the value is 0.0, the maximum value 6 of FLOAT4_E2M1 is used;</li><li>The default value is 0.0.</li></ul></td>
+      <td>FLOAT</td>
+      <td>-</td>
+    </tr>
+    <tr>
       <td>y</td>
       <td>Output</td>
       <td><ul><li>Indicates the result corresponding to the quantized input x, corresponding to <em>y</em><sub>i</sub> in the formula;</li><li>The shape is the same as that of input x.</li></ul></td>
@@ -140,10 +165,15 @@ English | [简体中文](./README.md)
     - level1_scale.shape[-2] = (ceil(x.shape[-1] / level1_block_size) + 2 - 1) / 2.
     - level1_scale.shape[-1] = 2.
     - The other dimensions are the same as those of input x.
+- scale_alg constraints:
+    - scale_alg supports values 0, 1, and 2.
+    - dst_type_max is effective only when scale_alg is 2. When scale_alg is not 2, dst_type_max must be 0.0.
+    - dst_type_max supports 0.0 or 6.0-12.0.
 
 ## Invocation Description
 
 | Invocation method   | Sample code           | Description                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| aclnn interface  | [test_aclnn_dynamic_dual_level_mx_quant](examples/arch35/test_aclnn_dynamic_dual_level_mx_quant.cpp) | Invokes the DynamicDualLevelMxQuant operator through the [aclnnDynamicDualLevelMxQuant](docs/aclnnDynamicDualLevelMxQuant_en.md) interface. |
+| aclnn interface (V1)  | [test_aclnn_dynamic_dual_level_mx_quant](examples/arch35/test_aclnn_dynamic_dual_level_mx_quant.cpp) | Invokes the DynamicDualLevelMxQuant operator through the [aclnnDynamicDualLevelMxQuant](docs/aclnnDynamicDualLevelMxQuant_en.md) interface; scale_alg defaults to 0 when it is not provided. |
+| aclnn interface (V2)  | [test_aclnn_dynamic_dual_level_mx_quant_v2](examples/arch35/test_aclnn_dynamic_dual_level_mx_quant_v2.cpp) | Invokes the DynamicDualLevelMxQuant operator through the [aclnnDynamicDualLevelMxQuantV2](docs/aclnnDynamicDualLevelMxQuantV2_en.md) interface; supports scale_alg values 0, 1, and 2. |
 | Graph mode | -  | Invokes the DynamicDualLevelMxQuant operator through the [operator IR](op_graph/dynamic_dual_level_mx_quant_proto.h) graph construction method.         |

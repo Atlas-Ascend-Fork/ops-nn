@@ -59,6 +59,9 @@ struct DynamicDualLevelMxQuantTilingParam {
     int64_t tailAlignNum = 0;
     int64_t copyMethod = 0;
     int64_t needSmoothScale = 0;
+    int64_t scaleAlg = 0;
+    float dstTypeMax = 0.0f;
+    float invDstTypeMax = 0.0f;
     int64_t workspaceSize = 0;
 };
 
@@ -74,8 +77,8 @@ enum class RoundModeList {
 
 class DynamicDualLevelMxQuantTiling {
 public:
-    explicit DynamicDualLevelMxQuantTiling(gert::TilingContext* context) : context_(context){};
-    ~DynamicDualLevelMxQuantTiling(){};
+    explicit DynamicDualLevelMxQuantTiling(gert::TilingContext* context) : context_(context) {};
+    ~DynamicDualLevelMxQuantTiling() {};
     ge::graphStatus DoTiling();
 
 private:

@@ -9,7 +9,7 @@
  */
 
 /*!
- * \file dynamic_dual_level_mx_quant_struct.h
+ * \file dynamic_dual_level_mx_quant_tiling_data.h
  * \brief
  */
 
@@ -45,6 +45,9 @@ struct DynamicDualLevelMxQuantTilingData {
     int64_t tailAlignNum = 0;          // 尾核尾块补齐个数 0-整除，1-128，2-256，3-384，4-512
     int64_t copyMethod = 0;            // 核内搬入模式 0-多行搬入，1-单行搬入
     int64_t needSmoothScale = 0;       // 是否需要进行smooth scale
+    int64_t scaleAlg = 0;              // level1_scale计算算法 0-OCP，1-ceil向上取整，2-DynamicDtypeRange
+    float dstTypeMax = 0.0; // 目标数据类型最大值(scaleAlg=2时由用户指定)，0表示使用FP4_E2M1最大值
+    float invDstTypeMax = 0.0; // 1/dstTypeMax，scaleAlg=1时为1/FP4_E2M1_MAX
 };
 
 #endif // OPS_QUANT_DYNAMIC_DUAL_LEVEL_MX_QUANT_TILING_DATA_H

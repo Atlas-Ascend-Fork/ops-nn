@@ -35,6 +35,12 @@ namespace ge {
 * Defaults and only supports 512.
 * @li level1_block_size: An optional int, specifying the block size of mx quantization.
 * Defaults and only supports 32.
+* @li scale_alg: An optional int. The algorithm for level1_scale calculation. Defaults to 0.
+* Support OCP Microscaling Formats (Mx) Specification (0), Ceil rounding algorithm (1)
+* or Dynamic Dtype Range (2).
+* @li dst_type_max: An optional float. The max value of the destination data type used for
+* level1_scale calculation. Defaults to 0, which means the max value of FLOAT4_E2M1.
+* Effective only when scale_alg=2.
 
 * @par Outputs:
 * @li y: Quantized output tensor. It has the same shape and rank as input x.
@@ -46,7 +52,7 @@ namespace ge {
 * - level1_scale tensor is padded with zeros to ensure its size along the quantized axis is even.
 
 * @par Third-party framework compatibility
-* It is a custom operator. It has no corresponding operator in Caffe, ONNX, TensorFlow, or PyTorch.
+* It is a custom operator and is not provided by third-party frameworks.
 */
 REG_OP(DynamicDualLevelMxQuant)
     .INPUT(x, TensorType({DT_FLOAT16, DT_BF16}))
@@ -57,6 +63,8 @@ REG_OP(DynamicDualLevelMxQuant)
     .ATTR(round_mode, String, "rint")
     .ATTR(level0_block_size, Int, 512)
     .ATTR(level1_block_size, Int, 32)
+    .ATTR(scale_alg, Int, 0)
+    .ATTR(dst_type_max, Float, 0.0)
     .OP_END_FACTORY_REG(DynamicDualLevelMxQuant)
 } // namespace ge
 

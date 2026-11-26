@@ -55,6 +55,8 @@ def _load_op_module(*names):
 
 _load_op_module("mx_to_block_mx_quant")
 
+_load_op_module("dynamic_dual_level_mx_quant")
+
 _load_op_module("dequant_situ_quant")
 
 _load_op_module("situ_mx_quant")
@@ -73,6 +75,7 @@ __all__ = [
     name
     for name in (
         "mx_to_block_mx_quant",
+        "dynamic_dual_level_mx_quant",
         "dequant_situ_quant",
         "situ_mx_quant",
         "swiglu_hi_f4_quant",

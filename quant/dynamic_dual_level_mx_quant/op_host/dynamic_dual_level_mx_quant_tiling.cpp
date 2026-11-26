@@ -13,6 +13,8 @@
  * \brief
  */
 
+#include <cmath>
+
 #include "dynamic_dual_level_mx_quant_tiling.h"
 #include "op_common/op_host/util/platform_util.h"
 #include "error_util.h"
@@ -29,6 +31,8 @@ namespace optiling {
 constexpr int64_t INDEX_ATTR_ROUND_MODE = 0;
 constexpr int64_t INDEX_ATTR_LEVEL0_BLOCK_SIZE = 1;
 constexpr int64_t INDEX_ATTR_LEVEL1_BLOCK_SIZE = 2;
+constexpr int64_t INDEX_ATTR_SCALE_ALG = 3;
+constexpr int64_t INDEX_ATTR_DST_TYPE_MAX = 4;
 constexpr int64_t N_BUFFER = 2;
 constexpr int64_t DIGIT_ONE = 1;
 constexpr int64_t DIGIT_TWO = 2;
@@ -42,6 +46,12 @@ constexpr int64_t BYTES_OF_INPUT_TYPE = 2;
 constexpr int64_t RESERVED_UB_SIZE = 1024;
 constexpr int64_t COPY_SINGLE_ROW = 1;
 constexpr int64_t COPY_MULTIPLE_ROW = 0;
+constexpr int64_t SCALE_ALG_OCP = 0;
+constexpr int64_t SCALE_ALG_CEIL = 1;
+constexpr int64_t SCALE_ALG_DYNAMIC = 2;
+constexpr float FP4_E2M1_MAX_FLOAT = 6.0;
+constexpr float DST_TYPE_MAX_MIN = 6.0;
+constexpr float DST_TYPE_MAX_UPPER = 12.0;
 
 const std::set<ge::DataType> INPUT_SUPPORT_DTYPE_SET = {ge::DT_FLOAT16, ge::DT_BF16};
 const std::set<ge::DataType> Y_SUPPORT_DTYPE_FP4_SET = {ge::DT_FLOAT4_E2M1};
@@ -100,6 +110,49 @@ ge::graphStatus DynamicDualLevelMxQuantTiling::GetAttr()
         GetAndValidateAttr(attrs, INDEX_ATTR_LEVEL1_BLOCK_SIZE, tilingParams.level1BlockSize, DEFAULT_LEVEL1_BLOCK_SIZE,
                            "level1_block_size", "level1_block_size should be 32") != ge::GRAPH_SUCCESS,
         OP_LOGE(context_->GetNodeName(), "level1_block_size is invalid, please check."), return ge::GRAPH_FAILED);
+
+    // scale_alg is optional; when it is not provided (V1 interface or graph mode), use the default OCP algorithm.
+    auto* attrScaleAlg = attrs->GetAttrPointer<int64_t>(INDEX_ATTR_SCALE_ALG);
+    tilingParams.scaleAlg = attrScaleAlg != nullptr ? static_cast<int64_t>(*attrScaleAlg) : SCALE_ALG_OCP;
+    OP_CHECK_IF(tilingParams.scaleAlg != SCALE_ALG_OCP && tilingParams.scaleAlg != SCALE_ALG_CEIL &&
+                    tilingParams.scaleAlg != SCALE_ALG_DYNAMIC,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "scale_alg",
+                                                      std::to_string(tilingParams.scaleAlg).c_str(),
+                                                      "The value of scale_alg must be 0, 1, or 2"),
+                return ge::GRAPH_FAILED);
+
+    // dst_type_max is optional; when it is not provided, 0 means using the FLOAT4_E2M1 maximum.
+    auto* attrDstTypeMax = attrs->GetAttrPointer<float>(INDEX_ATTR_DST_TYPE_MAX);
+    tilingParams.dstTypeMax = attrDstTypeMax != nullptr ? static_cast<float>(*attrDstTypeMax) : 0.0f;
+    OP_CHECK_IF(!std::isfinite(tilingParams.dstTypeMax),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "dst_type_max",
+                                                      std::to_string(tilingParams.dstTypeMax).c_str(),
+                                                      "The value of dst_type_max must be finite"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tilingParams.dstTypeMax != 0.0f && tilingParams.scaleAlg != SCALE_ALG_DYNAMIC,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "dst_type_max",
+                                                      std::to_string(tilingParams.dstTypeMax).c_str(),
+                                                      "A non-zero dst_type_max requires scale_alg to be 2"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(tilingParams.dstTypeMax < 0.0f ||
+                    (tilingParams.dstTypeMax > 0.0f && tilingParams.dstTypeMax < DST_TYPE_MAX_MIN) ||
+                    tilingParams.dstTypeMax > DST_TYPE_MAX_UPPER,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "dst_type_max",
+                                                      std::to_string(tilingParams.dstTypeMax).c_str(),
+                                                      "The value of dst_type_max must be 0 or in the range [6, 12]"),
+                return ge::GRAPH_FAILED);
+
+    if (tilingParams.scaleAlg == SCALE_ALG_OCP) {
+        tilingParams.dstTypeMax = 0.0f;
+        tilingParams.invDstTypeMax = 0.0f;
+    } else if (tilingParams.scaleAlg == SCALE_ALG_CEIL) {
+        // ceil向上取整算法：Amax(DType)固定为FLOAT4_E2M1的最大值
+        tilingParams.invDstTypeMax = 1.0f / FP4_E2M1_MAX_FLOAT;
+    } else {
+        // DynamicDtypeRange算法：Amax(DType)由外部用户指定，0表示使用FLOAT4_E2M1最大值
+        tilingParams.dstTypeMax = tilingParams.dstTypeMax == 0.0f ? FP4_E2M1_MAX_FLOAT : tilingParams.dstTypeMax;
+        tilingParams.invDstTypeMax = 1.0f / tilingParams.dstTypeMax;
+    }
 
     return ge::GRAPH_SUCCESS;
 }
@@ -199,7 +252,6 @@ ge::graphStatus DynamicDualLevelMxQuantTiling::CheckSmoothScaleDtypeShape()
     auto x = context_->GetInputTensor(0);
     OP_CHECK_NULL_WITH_CONTEXT(context_, x);
     auto xDtype = x->GetDataType();
-    auto xShape = x->GetStorageShape();
     auto smoothScale = context_->GetOptionalInputTensor(1);
     if (smoothScale != nullptr) {
         auto smoothScaleDtype = smoothScale->GetDataType();
@@ -505,6 +557,9 @@ void DynamicDualLevelMxQuantTiling::SetTilingData()
     tilingData->tailAlignNum = tilingParams.tailAlignNum;
     tilingData->copyMethod = tilingParams.copyMethod;
     tilingData->needSmoothScale = tilingParams.needSmoothScale;
+    tilingData->scaleAlg = tilingParams.scaleAlg;
+    tilingData->dstTypeMax = tilingParams.dstTypeMax;
+    tilingData->invDstTypeMax = tilingParams.invDstTypeMax;
 }
 
 void DynamicDualLevelMxQuantTiling::PrintTilingData()
@@ -517,7 +572,8 @@ void DynamicDualLevelMxQuantTiling::PrintTilingData()
         "colTileNum: %ld, normalTileRowBlockNum: %ld, normalTileColBlockNum: %ld, "
         "tailTileRowBlockNum: %ld, tailTileColBlockNum: %ld, normalTileRowSize: %ld, "
         "tailTileRowSize: %ld, normalTileRowLoopNum: %ld, normalTileColLoopNum: %ld, tailTileRowLoopNum: %ld, "
-        "tailTileColLoopNum: %ld, ubFactor: %ld, tailAlignNum: %ld, copyMethod: %ld, needSmoothScale: %ld",
+        "tailTileColLoopNum: %ld, ubFactor: %ld, tailAlignNum: %ld, copyMethod: %ld, needSmoothScale: %ld, "
+        "scaleAlg: %ld, dstTypeMax: %f, invDstTypeMax: %f",
         tilingData->tilingKey, tilingData->totalCoreNum, tilingData->usedCoreNum, tilingData->roundMode,
         tilingData->level0BlockSize, tilingData->level1BlockSize, tilingData->rowSize, tilingData->colSize,
         tilingData->blockSizeRow, tilingData->blockSizeCol, tilingData->rowBlockNum, tilingData->colBlockNum,
@@ -525,7 +581,8 @@ void DynamicDualLevelMxQuantTiling::PrintTilingData()
         tilingData->normalTileColBlockNum, tilingData->tailTileRowBlockNum, tilingData->tailTileColBlockNum,
         tilingData->normalTileRowSize, tilingData->tailTileRowSize, tilingData->normalTileRowLoopNum,
         tilingData->normalTileColLoopNum, tilingData->tailTileRowLoopNum, tilingData->tailTileColLoopNum,
-        tilingData->ubFactor, tilingData->tailAlignNum, tilingData->copyMethod, tilingData->needSmoothScale);
+        tilingData->ubFactor, tilingData->tailAlignNum, tilingData->copyMethod, tilingData->needSmoothScale,
+        tilingData->scaleAlg, tilingData->dstTypeMax, tilingData->invDstTypeMax);
 }
 
 static ge::graphStatus TilingForDynamicDualLevelMxQuant(gert::TilingContext* context)

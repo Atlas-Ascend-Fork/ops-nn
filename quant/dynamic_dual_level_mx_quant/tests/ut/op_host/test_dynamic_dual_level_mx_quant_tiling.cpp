@@ -14,6 +14,7 @@
  */
 
 #include <iostream>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -54,8 +55,9 @@ static string to_string(void* buf, size_t size)
 static void ExecuteTestCase(ge::DataType xDtype, ge::DataType yDtype, ge::DataType level0ScaleDtype,
                             ge::DataType level1ScaleDtype, gert::StorageShape shape,
                             gert::StorageShape level0ScaleShape, gert::StorageShape level1ScaleShape, string roundMode,
-                            int64_t level0Scale, int64_t level1Scale, string expectTilingData,
-                            ge::graphStatus status = ge::GRAPH_SUCCESS)
+                            int64_t level0Scale, int64_t level1Scale, string expectTilingData, int64_t scaleAlg = 0,
+                            float dstTypeMax = 0.0f, ge::graphStatus status = ge::GRAPH_SUCCESS,
+                            bool setScaleAlgAttr = true)
 {
     string compile_info_string = R"({
         "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
@@ -105,6 +107,14 @@ static void ExecuteTestCase(ge::DataType xDtype, ge::DataType yDtype, ge::DataTy
     auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
     ASSERT_NE(param, nullptr);
     string_view sv(reinterpret_cast<const char*>(&platform_info), sizeof(platform_info));
+    std::vector<std::pair<std::string, Ops::NN::AnyValue>> attrs = {
+        {"round_mode", Ops::NN::AnyValue::CreateFrom<string>(roundMode)},
+        {"level0_block_size", Ops::NN::AnyValue::CreateFrom<int64_t>(level0Scale)},
+        {"level1_block_size", Ops::NN::AnyValue::CreateFrom<int64_t>(level1Scale)}};
+    if (setScaleAlgAttr) {
+        attrs.emplace_back("scale_alg", Ops::NN::AnyValue::CreateFrom<int64_t>(scaleAlg));
+        attrs.emplace_back("dst_type_max", Ops::NN::AnyValue::CreateFrom<float>(dstTypeMax));
+    }
     auto holder = gert::TilingContextFaker()
                       .NodeIoNum(1, 3)
                       .IrInstanceNum({1})
@@ -116,9 +126,7 @@ static void ExecuteTestCase(ge::DataType xDtype, ge::DataType yDtype, ge::DataTy
                       .NodeOutputTd(0, yDtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(1, level0ScaleDtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(2, level1ScaleDtype, ge::FORMAT_ND, ge::FORMAT_ND)
-                      .NodeAttrs({{"round_mode", Ops::NN::AnyValue::CreateFrom<string>(roundMode)},
-                                  {"level0_scale", Ops::NN::AnyValue::CreateFrom<int64_t>(level0Scale)},
-                                  {"level1_scale", Ops::NN::AnyValue::CreateFrom<int64_t>(level1Scale)}})
+                      .NodeAttrs(attrs)
                       .TilingData(param.get())
                       .Workspace(ws_size)
                       .Build();
@@ -147,8 +155,8 @@ static void ExecuteTestCase(ge::DataType xDtype, ge::DataType yDtype, ge::DataTy
 static void ExecuteTestCaseFailed(ge::DataType xDtype, ge::DataType yDtype, ge::DataType level0ScaleDtype,
                                   ge::DataType level1ScaleDtype, gert::StorageShape shape,
                                   gert::StorageShape level0ScaleShape, gert::StorageShape level1ScaleShape,
-                                  string roundMode, int64_t level0Scale, int64_t level1Scale,
-                                  ge::graphStatus status = ge::GRAPH_SUCCESS)
+                                  string roundMode, int64_t level0Scale, int64_t level1Scale, int64_t scaleAlg = 0,
+                                  float dstTypeMax = 0.0f, ge::graphStatus status = ge::GRAPH_SUCCESS)
 {
     string compile_info_string = R"({
         "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
@@ -212,8 +220,10 @@ static void ExecuteTestCaseFailed(ge::DataType xDtype, ge::DataType yDtype, ge::
                       .NodeOutputTd(1, level0ScaleDtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(2, level1ScaleDtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeAttrs({{"round_mode", Ops::NN::AnyValue::CreateFrom<string>(roundMode)},
-                                  {"level0_scale", Ops::NN::AnyValue::CreateFrom<int64_t>(level0Scale)},
-                                  {"level1_scale", Ops::NN::AnyValue::CreateFrom<int64_t>(level1Scale)}})
+                                  {"level0_block_size", Ops::NN::AnyValue::CreateFrom<int64_t>(level0Scale)},
+                                  {"level1_block_size", Ops::NN::AnyValue::CreateFrom<int64_t>(level1Scale)},
+                                  {"scale_alg", Ops::NN::AnyValue::CreateFrom<int64_t>(scaleAlg)},
+                                  {"dst_type_max", Ops::NN::AnyValue::CreateFrom<float>(dstTypeMax)}})
                       .TilingData(param.get())
                       .Workspace(ws_size)
                       .Build();
@@ -237,10 +247,120 @@ TEST_F(DynamicDualLevelMxQuantTiling, DynamicDualLevelMxQuant_roundMode_rint)
     string roundMode = "rint";
     int64_t level0BlockSize = 512;
     int64_t level1BlockSize = 32;
-    string expectTilingData = "0 64 64 4 512 32 512 128 512 1 1 128 1 64 1 2 1 2 512 512 1 1 1 1 67 0 0 0 ";
+    string expectTilingData = "0 64 64 4 512 32 512 128 512 1 1 128 1 64 1 2 1 2 512 512 1 1 1 1 67 0 0 0 0 0 ";
 
     ExecuteTestCase(ge::DT_FLOAT16, ge::DT_FLOAT4_E2M1, ge::DT_FLOAT, ge::DT_FLOAT8_E8M0, shape, scale1Shape,
                     scale2Shape, roundMode, level0BlockSize, level1BlockSize, expectTilingData);
+}
+
+TEST_F(DynamicDualLevelMxQuantTiling, DynamicDualLevelMxQuant_default_attrs)
+{
+    gert::StorageShape shape = {{128, 512}, {128, 512}};
+    gert::StorageShape scale1Shape = {{128, 1}, {128, 1}};
+    gert::StorageShape scale2Shape = {{128, 8, 2}, {128, 8, 2}};
+    string roundMode = "rint";
+    int64_t level0BlockSize = 512;
+    int64_t level1BlockSize = 32;
+    string expectTilingData = "0 64 64 4 512 32 512 128 512 1 1 128 1 64 1 2 1 2 512 512 1 1 1 1 67 0 0 0 0 0 ";
+
+    // scale_alg and dst_type_max are not provided: they fall back to 0 and 0.0 respectively.
+    ExecuteTestCase(ge::DT_FLOAT16, ge::DT_FLOAT4_E2M1, ge::DT_FLOAT, ge::DT_FLOAT8_E8M0, shape, scale1Shape,
+                    scale2Shape, roundMode, level0BlockSize, level1BlockSize, expectTilingData, 0, 0.0f,
+                    ge::GRAPH_SUCCESS, false);
+}
+
+TEST_F(DynamicDualLevelMxQuantTiling, DynamicDualLevelMxQuant_scaleAlg_1)
+{
+    gert::StorageShape shape = {{128, 512}, {128, 512}};
+    gert::StorageShape scale1Shape = {{128, 1}, {128, 1}};
+    gert::StorageShape scale2Shape = {{128, 8, 2}, {128, 8, 2}};
+    string roundMode = "rint";
+    int64_t level0BlockSize = 512;
+    int64_t level1BlockSize = 32;
+    int64_t scaleAlg = 1;
+    string expectTilingData = "0 64 64 4 512 32 512 128 512 1 1 128 1 64 1 2 1 2 512 512 1 1 1 1 67 0 0 0 1 "
+                              "4479580430789509120 ";
+
+    ExecuteTestCase(ge::DT_FLOAT16, ge::DT_FLOAT4_E2M1, ge::DT_FLOAT, ge::DT_FLOAT8_E8M0, shape, scale1Shape,
+                    scale2Shape, roundMode, level0BlockSize, level1BlockSize, expectTilingData, scaleAlg);
+}
+
+TEST_F(DynamicDualLevelMxQuantTiling, DynamicDualLevelMxQuant_scaleAlg_2)
+{
+    gert::StorageShape shape = {{128, 512}, {128, 512}};
+    gert::StorageShape scale1Shape = {{128, 1}, {128, 1}};
+    gert::StorageShape scale2Shape = {{128, 8, 2}, {128, 8, 2}};
+    string roundMode = "rint";
+    int64_t level0BlockSize = 512;
+    int64_t level1BlockSize = 32;
+    int64_t scaleAlg = 2;
+    float dstTypeMax = 8.0f;
+    string expectTilingData = "0 64 64 4 512 32 512 128 512 1 1 128 1 64 1 2 1 2 512 512 1 1 1 1 67 0 0 0 2 "
+                              "4467570831442051072 ";
+
+    ExecuteTestCase(ge::DT_FLOAT16, ge::DT_FLOAT4_E2M1, ge::DT_FLOAT, ge::DT_FLOAT8_E8M0, shape, scale1Shape,
+                    scale2Shape, roundMode, level0BlockSize, level1BlockSize, expectTilingData, scaleAlg, dstTypeMax);
+}
+
+TEST_F(DynamicDualLevelMxQuantTiling, DynamicDualLevelMxQuant_scaleAlg_2_default_max)
+{
+    gert::StorageShape shape = {{128, 512}, {128, 512}};
+    gert::StorageShape scale1Shape = {{128, 1}, {128, 1}};
+    gert::StorageShape scale2Shape = {{128, 8, 2}, {128, 8, 2}};
+    string roundMode = "rint";
+    int64_t level0BlockSize = 512;
+    int64_t level1BlockSize = 32;
+    int64_t scaleAlg = 2;
+    float dstTypeMax = 0.0f;
+    string expectTilingData = "0 64 64 4 512 32 512 128 512 1 1 128 1 64 1 2 1 2 512 512 1 1 1 1 67 0 0 0 2 "
+                              "4479580431875833856 ";
+
+    ExecuteTestCase(ge::DT_FLOAT16, ge::DT_FLOAT4_E2M1, ge::DT_FLOAT, ge::DT_FLOAT8_E8M0, shape, scale1Shape,
+                    scale2Shape, roundMode, level0BlockSize, level1BlockSize, expectTilingData, scaleAlg, dstTypeMax);
+}
+
+TEST_F(DynamicDualLevelMxQuantTiling, DynamicDualLevelMxQuant_scaleAlg_invalid)
+{
+    gert::StorageShape shape = {{128, 512}, {128, 512}};
+    gert::StorageShape scale1Shape = {{128, 1}, {128, 1}};
+    gert::StorageShape scale2Shape = {{128, 8, 2}, {128, 8, 2}};
+    string roundMode = "rint";
+    int64_t level0BlockSize = 512;
+    int64_t level1BlockSize = 32;
+    int64_t scaleAlg = 3;
+
+    ExecuteTestCaseFailed(ge::DT_FLOAT16, ge::DT_FLOAT4_E2M1, ge::DT_FLOAT, ge::DT_FLOAT8_E8M0, shape, scale1Shape,
+                          scale2Shape, roundMode, level0BlockSize, level1BlockSize, scaleAlg);
+}
+
+TEST_F(DynamicDualLevelMxQuantTiling, DynamicDualLevelMxQuant_dstTypeMax_invalid_scaleAlg)
+{
+    gert::StorageShape shape = {{128, 512}, {128, 512}};
+    gert::StorageShape scale1Shape = {{128, 1}, {128, 1}};
+    gert::StorageShape scale2Shape = {{128, 8, 2}, {128, 8, 2}};
+    string roundMode = "rint";
+    int64_t level0BlockSize = 512;
+    int64_t level1BlockSize = 32;
+    int64_t scaleAlg = 0;
+    float dstTypeMax = 6.0f;
+
+    ExecuteTestCaseFailed(ge::DT_FLOAT16, ge::DT_FLOAT4_E2M1, ge::DT_FLOAT, ge::DT_FLOAT8_E8M0, shape, scale1Shape,
+                          scale2Shape, roundMode, level0BlockSize, level1BlockSize, scaleAlg, dstTypeMax);
+}
+
+TEST_F(DynamicDualLevelMxQuantTiling, DynamicDualLevelMxQuant_dstTypeMax_invalid_range)
+{
+    gert::StorageShape shape = {{128, 512}, {128, 512}};
+    gert::StorageShape scale1Shape = {{128, 1}, {128, 1}};
+    gert::StorageShape scale2Shape = {{128, 8, 2}, {128, 8, 2}};
+    string roundMode = "rint";
+    int64_t level0BlockSize = 512;
+    int64_t level1BlockSize = 32;
+    int64_t scaleAlg = 2;
+    float dstTypeMax = 3.0f;
+
+    ExecuteTestCaseFailed(ge::DT_FLOAT16, ge::DT_FLOAT4_E2M1, ge::DT_FLOAT, ge::DT_FLOAT8_E8M0, shape, scale1Shape,
+                          scale2Shape, roundMode, level0BlockSize, level1BlockSize, scaleAlg, dstTypeMax);
 }
 
 TEST_F(DynamicDualLevelMxQuantTiling, DynamicDualLevelMxQuant_shape_failed1)

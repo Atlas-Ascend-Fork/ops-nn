@@ -31,13 +31,24 @@
   temp_i = cast\_to\_x\_type(x_i / level0\_scale_i), \space i\space from\space 1\space to\space level0\_block\_size
   $$
 
-  $$
-  shared\_exp_i = floor(log_2(max_i(|temp_i|))) - emax
-  $$
-
-  $$
-  level1\_scale_i = 2^{shared\_exp_i}
-  $$
+  - level1_scale_i的计算算法由scale_alg指定：
+    - 当scale_alg为0时（OCP Microscaling Formats (Mx) Specification）：
+      $$
+      shared\_exp_i = floor(log_2(max_i(|temp_i|))) - emax
+      $$
+      $$
+      level1\_scale_i = 2^{shared\_exp_i}
+      $$
+    - 当scale_alg为1时（ceil向上取整算法）：
+      $$
+      S_{fp32} = \frac{max_i(|temp_i|)}{Amax(DType)}
+      $$
+      其中$Amax(DType)$为FLOAT4_E2M1的最大值6，对$S_{fp32}$的无偏指数向上取整（正规数且尾数大于0，或非正规数且尾数大于0.5时指数加1），$level1\_scale_i = 2^{E_{int}}$。
+    - 当scale_alg为2时（Dynamic Dtype Range算法）：
+      $$
+      S_{fp32} = \frac{max_i(|temp_i|)}{Amax(DType)}
+      $$
+      其中$Amax(DType)$为dst_type_max传入值，dst_type_max为0时使用FLOAT4_E2M1的最大值6。dst_type_max为0/6/7时按BF16尾数高位进位方式向上取整，其它取值时仅正规数且尾数大于0时指数加1，$level1\_scale_i = 2^{E_{int}}$。
 
   $$
   y_i = cast\_to\_FP4\_E2M1(temp_i/level1\_scale_i, round\_mode), \space i\space from\space 1\space to\space level1\_block\_size
@@ -107,6 +118,20 @@
       <td>-</td>
     </tr>
     <tr>
+      <td>scale_alg</td>
+      <td>可选属性</td>
+      <td><ul><li>表示level1_scale的计算方法；</li><li>支持取值0、1和2，分别表示OCP Microscaling Formats (Mx) Specification、ceil向上取整算法和Dynamic Dtype Range算法；</li><li>默认值为0。</li></ul></td>
+      <td>INT64</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>dst_type_max</td>
+      <td>可选属性</td>
+      <td><ul><li>表示目标数据类型的最大值，对应公式中的Amax(DType)；</li><li>仅在scale_alg为2时生效，支持取值0.0和6.0-12.0，取值为0.0时使用FLOAT4_E2M1的最大值6；</li><li>默认值为0.0。</li></ul></td>
+      <td>FLOAT</td>
+      <td>-</td>
+    </tr>
+    <tr>
       <td>y</td>
       <td>输出</td>
       <td><ul><li>表示输入x量化后的对应结果，对应公式中的<em>y</em><sub>i</sub>；</li><li>shape和输入x一致。</li></ul></td>
@@ -138,10 +163,15 @@
     - level1_scale.shape[-2] = (ceil(x.shape[-1] / level1_block_size) + 2 - 1) / 2。
     - level1_scale.shape[-1] = 2。
     - 其他维度与输入x一致。
+- scale_alg约束说明：
+    - scale_alg支持取值0、1、2。
+    - dst_type_max仅在scale_alg为2时生效；scale_alg不为2时dst_type_max必须为0.0。
+    - dst_type_max支持取值0.0或6.0-12.0。
 
 ## 调用说明
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
-| aclnn接口  | [test_aclnn_dynamic_dual_level_mx_quant](examples/arch35/test_aclnn_dynamic_dual_level_mx_quant.cpp) | 通过[aclnnDynamicDualLevelMxQuant](docs/aclnnDynamicDualLevelMxQuant.md)接口方式调用DynamicDualLevelMxQuant算子。 |
+| aclnn接口(V1)  | [test_aclnn_dynamic_dual_level_mx_quant](examples/arch35/test_aclnn_dynamic_dual_level_mx_quant.cpp) | 通过[aclnnDynamicDualLevelMxQuant](docs/aclnnDynamicDualLevelMxQuant.md)接口方式调用DynamicDualLevelMxQuant算子，不提供scale_alg时按默认值0处理。 |
+| aclnn接口(V2)  | [test_aclnn_dynamic_dual_level_mx_quant_v2](examples/arch35/test_aclnn_dynamic_dual_level_mx_quant_v2.cpp) | 通过[aclnnDynamicDualLevelMxQuantV2](docs/aclnnDynamicDualLevelMxQuantV2.md)接口方式调用DynamicDualLevelMxQuant算子，支持scale_alg取值0、1、2。 |
 | 图模式 | -  | 通过[算子IR](op_graph/dynamic_dual_level_mx_quant_proto.h)构图方式调用DynamicDualLevelMxQuant算子。         |

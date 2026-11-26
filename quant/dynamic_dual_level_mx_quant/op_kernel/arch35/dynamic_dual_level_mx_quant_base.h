@@ -9,7 +9,7 @@
  */
 
 /*!
- * \file dynamic_mx_quant_with_dual_axis_base.h
+ * \file dynamic_dual_level_mx_quant_base.h
  * \brief
  */
 
@@ -54,6 +54,17 @@ constexpr int32_t NEG_ONE = -1;
 constexpr int32_t NEG_ZERO = 0x80000000;
 constexpr int16_t SHR_NUM_FOR_FP32 = 23;
 
+// 向上取整算法相关常量 (scaleAlg=1, ceil向上取整 / scaleAlg=2, DynamicDtypeRange)
+constexpr uint32_t MAN_MASK_FLOAT = 0x007fffff;       // FP32尾数掩码 (23位尾数)
+constexpr uint32_t NUMBER_ZERO_U32 = 0x00000000;      // uint32零常量
+constexpr uint32_t NUMBER_TWO_FIVE_FOUR = 0x000000fe; // 254, FP32指数上界
+constexpr uint32_t NUMBER_HALF_U32 = 0x00400000;      // FP32尾数的一半 (2^22)
+// DynamicDtypeRange默认算法相关常量 (scaleAlg=2, dstTypeMax=6/7)
+constexpr uint16_t ADD_VALUE_FOR_BF16_MAN1 = 0x003f; // dstTypeMax=6时BF16尾数进位值
+constexpr uint16_t ADD_VALUE_FOR_BF16_MAN2 = 0x001f; // dstTypeMax=7时BF16尾数进位值
+constexpr float DST_TYPE_MAX_SIX = 6.0f;
+constexpr float DST_TYPE_MAX_SEVEN = 7.0f;
+
 template <typename xDtype, AscendC::RoundMode roundMode, bool needSmoothScale>
 class DynamicDualLevelMxQuantBase {
 public:
@@ -81,6 +92,18 @@ private:
     __simd_vf__ inline void ComputeLevel1Scale(int64_t loopNum, __ubuf__ xDtype* xTmpUbAddr,
                                                __ubuf__ uint8_t* level1ScaleUbAddr,
                                                __ubuf__ uint16_t* level1ScaleReciprocalUbAddr);
+    // ceil向上取整算法 (scaleAlg=1)
+    __simd_vf__ inline void ComputeLevel1ScaleCeilAlg(int64_t loopNum, __ubuf__ xDtype* xTmpUbAddr,
+                                                      __ubuf__ uint8_t* level1ScaleUbAddr,
+                                                      __ubuf__ uint16_t* level1ScaleReciprocalUbAddr);
+    // DynamicDtypeRange默认算法 (scaleAlg=2, dstTypeMax=6/7)
+    __simd_vf__ inline void ComputeLevel1ScaleDynamicDefault(int64_t loopNum, __ubuf__ xDtype* xTmpUbAddr,
+                                                             __ubuf__ uint8_t* level1ScaleUbAddr,
+                                                             __ubuf__ uint16_t* level1ScaleReciprocalUbAddr);
+    // DynamicDtypeRange自定义算法 (scaleAlg=2, 用户指定max_value)
+    __simd_vf__ inline void ComputeLevel1ScaleDynamic(int64_t loopNum, __ubuf__ xDtype* xTmpUbAddr,
+                                                      __ubuf__ uint8_t* level1ScaleUbAddr,
+                                                      __ubuf__ uint16_t* level1ScaleReciprocalUbAddr);
     __simd_vf__ inline void ComputeY(int64_t loopNum, __ubuf__ xDtype* xTmpUbAddr, __ubuf__ uint8_t* yAddr,
                                      __ubuf__ uint16_t* level1ScaleReciprocalUbAddr);
     __simd_callee__ inline void ComputeFP4FromHalf(Reg::RegTensor<float>& Reg);
@@ -92,6 +115,8 @@ protected:
         Reg::RegLayout::ONE, Reg::SatMode::UNKNOWN, Reg::MaskMergeMode::ZEROING, AscendC::RoundMode::UNKNOWN};
     static constexpr Reg::CastTrait castTraitHalf2BF16 = {Reg::RegLayout::UNKNOWN, Reg::SatMode::UNKNOWN,
                                                           Reg::MaskMergeMode::ZEROING, AscendC::RoundMode::CAST_TRUNC};
+    static constexpr Reg::CastTrait castTraitHalf2BF16Rint = {
+        Reg::RegLayout::UNKNOWN, Reg::SatMode::UNKNOWN, Reg::MaskMergeMode::ZEROING, AscendC::RoundMode::CAST_RINT};
     static constexpr Reg::CastTrait castTraitBF16toFp4 = {Reg::RegLayout::ZERO, Reg::SatMode::SAT,
                                                           Reg::MaskMergeMode::ZEROING, roundMode};
     static constexpr Reg::CastTrait castTraitFp32toBF16 = {Reg::RegLayout::ZERO, Reg::SatMode::NO_SAT,
@@ -133,6 +158,10 @@ private:
     int64_t level1BlockRowNum_ = 0;
     int64_t isRowTail_ = 0;
     int64_t isColTail_ = 0;
+    int64_t scaleAlg_ = 0;
+    float dstTypeMax_ = 0.0f;
+    float invDstTypeMax_ = 0.0f;
+    uint16_t addValueBit_ = 0;
 
     int64_t xBufferSize_ = 0;
     int64_t smoothScaleBufferSize_ = 0;
@@ -202,6 +231,16 @@ __aicore__ inline void DynamicDualLevelMxQuantBase<xDtype, roundMode, needSmooth
     colTileNum_ = tilingData_->colTileNum;
     // 单行level1ScaleBlock个数，用于偏移计算
     level1BlockRowNum_ = ops::CeilDiv(tilingData_->rowSize, DIGIT_64) * DIGIT_TWO;
+
+    // level1_scale计算算法参数
+    scaleAlg_ = tilingData_->scaleAlg;
+    dstTypeMax_ = tilingData_->dstTypeMax;
+    invDstTypeMax_ = tilingData_->invDstTypeMax;
+    if (dstTypeMax_ == DST_TYPE_MAX_SIX) {
+        addValueBit_ = ADD_VALUE_FOR_BF16_MAN1;
+    } else if (dstTypeMax_ == DST_TYPE_MAX_SEVEN) {
+        addValueBit_ = ADD_VALUE_FOR_BF16_MAN2;
+    }
 
     isRowTail_ = blockIdx_ % rowTileNum_ == (rowTileNum_ - 1);
     isColTail_ = blockIdx_ / rowTileNum_ == (colTileNum_ - 1);
@@ -448,8 +487,25 @@ __aicore__ inline void DynamicDualLevelMxQuantBase<xDtype, roundMode, needSmooth
         xTmpUbOffset = xUbOffset;
         ComputeSmoothScaleLevel0Quant(rowLoopNum, xUbAddr + xUbOffset, smoothScaleUbAddr, xTmpUbAddr + xTmpUbOffset,
                                       level0ScaleUbAddr + level0ScaleUbOffset);
-        ComputeLevel1Scale(rowLoopNum * DIGIT_TWO, xTmpUbAddr + xTmpUbOffset, level1ScaleUbAddr + level1ScaleUbOffset,
-                           level1ScaleReciprocalUbAddr + level1ScaleReciprocalUbOffset); // 256
+        if (scaleAlg_ == 1) {
+            ComputeLevel1ScaleCeilAlg(rowLoopNum * DIGIT_TWO, xTmpUbAddr + xTmpUbOffset,
+                                      level1ScaleUbAddr + level1ScaleUbOffset,
+                                      level1ScaleReciprocalUbAddr + level1ScaleReciprocalUbOffset); // 256
+        } else if (scaleAlg_ == 2) {
+            if (dstTypeMax_ == DST_TYPE_MAX_SIX || dstTypeMax_ == DST_TYPE_MAX_SEVEN) {
+                ComputeLevel1ScaleDynamicDefault(rowLoopNum * DIGIT_TWO, xTmpUbAddr + xTmpUbOffset,
+                                                 level1ScaleUbAddr + level1ScaleUbOffset,
+                                                 level1ScaleReciprocalUbAddr + level1ScaleReciprocalUbOffset); // 256
+            } else {
+                ComputeLevel1ScaleDynamic(rowLoopNum * DIGIT_TWO, xTmpUbAddr + xTmpUbOffset,
+                                          level1ScaleUbAddr + level1ScaleUbOffset,
+                                          level1ScaleReciprocalUbAddr + level1ScaleReciprocalUbOffset); // 256
+            }
+        } else {
+            ComputeLevel1Scale(rowLoopNum * DIGIT_TWO, xTmpUbAddr + xTmpUbOffset,
+                               level1ScaleUbAddr + level1ScaleUbOffset,
+                               level1ScaleReciprocalUbAddr + level1ScaleReciprocalUbOffset); // 256
+        }
         ComputeY(rowLoopNum * DIGIT_TWO, xTmpUbAddr + xTmpUbOffset, yUbAddr + yUbOffset,
                  level1ScaleReciprocalUbAddr + level1ScaleReciprocalUbOffset); // 256
     }
@@ -704,6 +760,300 @@ __simd_vf__ inline void DynamicDualLevelMxQuantBase<xDtype, roundMode, needSmoot
         // 搬出8位1/scale，占一个UBBlock方便后续取值计算
         Reg::StoreAlign<uint16_t, Reg::PostLiteral::POST_MODE_UPDATE>(level1ScaleReciprocalUbAddr, reversedShareExp1,
                                                                       UBBlockSize_ / sizeof(uint16_t), maskReduceB16);
+    }
+}
+
+// ceil向上取整算法 (scaleAlg=1)：S = Amax / Amax(DType)，对指数向上取整
+// 参考dynamic_mx_quant_with_dual_axis的ComputeScaleCeilAlg实现
+template <typename xDtype, AscendC::RoundMode roundMode, bool needSmoothScale>
+__simd_vf__ inline void DynamicDualLevelMxQuantBase<xDtype, roundMode, needSmoothScale>::ComputeLevel1ScaleCeilAlg(
+    int64_t loopNum, __ubuf__ xDtype* xTmpUbAddr, __ubuf__ uint8_t* level1ScaleUbAddr,
+    __ubuf__ uint16_t* level1ScaleReciprocalUbAddr)
+{
+    Reg::RegTensor<xDtype> xTmp0;
+    Reg::RegTensor<xDtype> xTmp1;
+    Reg::RegTensor<uint16_t> absX0;
+    Reg::RegTensor<uint16_t> absX1;
+    Reg::RegTensor<uint16_t> absMaxDim1;
+    Reg::RegTensor<uint16_t> zeroB16;
+
+    Reg::RegTensor<float> maxFP32;
+    Reg::RegTensor<float> invMaxFP32;
+    Reg::RegTensor<uint32_t> expFP32;
+    Reg::RegTensor<uint32_t> manFP32;
+    Reg::RegTensor<uint32_t> expPlusOne;
+
+    Reg::RegTensor<uint16_t> scaleB16;
+    Reg::RegTensor<uint16_t> scaleBF16;
+    Reg::RegTensor<uint8_t> scaleB8;
+    Reg::RegTensor<uint16_t> reversedShareExp;
+
+    Reg::RegTensor<uint16_t> absMask;
+    Reg::RegTensor<uint32_t> manMaskFP32;
+    Reg::RegTensor<uint16_t> biasE8M0;
+    Reg::RegTensor<uint16_t> nanBF16;
+    Reg::RegTensor<uint16_t> specialExp;
+    Reg::RegTensor<uint16_t> maxEleBF16;
+
+    Reg::MaskReg p0;
+    Reg::MaskReg p1;
+    Reg::MaskReg infMask;
+    Reg::MaskReg invalidDataMask;
+    Reg::MaskReg maskAll16 = Reg::CreateMask<uint16_t, Reg::MaskPattern::ALL>();
+    Reg::MaskReg maskAll32 = Reg::CreateMask<uint32_t, Reg::MaskPattern::ALL>();
+    Reg::MaskReg maskReduceB16 = Reg::CreateMask<uint8_t, Reg::MaskPattern::VL16>();
+
+    Reg::Duplicate(absMask, ABS_FOR_UINT16);
+    Reg::Duplicate(invMaxFP32, invDstTypeMax_);
+    Reg::Duplicate(manMaskFP32, MAN_MASK_FLOAT);
+    Reg::Duplicate(biasE8M0, BF16_EXP_BIAS);
+    Reg::Duplicate(nanBF16, NAN_CUSTOMIZATION);
+    Reg::Duplicate(specialExp, SPECIAL_EXP_THRESHOLD);
+    Reg::Duplicate(maxEleBF16, INF_FOR_BF16);
+    Reg::Duplicate(zeroB16, 0);
+
+    for (uint16_t i = 0; i < static_cast<uint16_t>(loopNum); i++) {
+        Reg::LoadAlign<xDtype, Reg::PostLiteral::POST_MODE_UPDATE, Reg::LoadDist::DIST_DINTLV_B16>(
+            xTmp0, xTmp1, xTmpUbAddr, vlForHalfNumber_ * DIGIT_TWO);
+
+        Reg::And(absX0, (Reg::RegTensor<uint16_t>&)xTmp0, absMask, maskAll16);
+        Reg::And(absX1, (Reg::RegTensor<uint16_t>&)xTmp1, absMask, maskAll16);
+        Reg::Max(absMaxDim1, absX0, absX1, maskAll16);
+        Reg::ReduceDataBlock<Reg::ReduceType::MAX>(absMaxDim1, absMaxDim1, maskAll16);
+
+        // 与0交织，使8个max紧凑排列，Cast Zero一次取出全部有效值
+        Reg::Interleave(absMaxDim1, zeroB16, absMaxDim1, zeroB16);
+        Reg::Cast<float, xDtype, castTraitXdtypetoFp32Zero>(maxFP32, (Reg::RegTensor<xDtype>&)absMaxDim1, maskAll16);
+        // S = Amax / Amax(DType)
+        Reg::Mul(maxFP32, maxFP32, invMaxFP32, maskAll32);
+        Reg::ShiftRights(expFP32, (Reg::RegTensor<uint32_t>&)maxFP32, SHR_NUM_FOR_FP32, maskAll32);
+        Reg::And(manFP32, (Reg::RegTensor<uint32_t>&)maxFP32, manMaskFP32, maskAll32);
+        // 条件舍入: normal场景 (exp>0 && exp<254 && man>0) → exp+1
+        Reg::Compares<uint32_t, CMPMODE::GT>(p0, expFP32, NUMBER_ZERO_U32, maskAll32);
+        Reg::Compares<uint32_t, CMPMODE::LT>(p0, expFP32, NUMBER_TWO_FIVE_FOUR, p0);
+        Reg::Compares<uint32_t, CMPMODE::GT>(p0, manFP32, NUMBER_ZERO_U32, p0);
+        // 条件舍入: subnormal场景 (exp==0 && man>HALF) → exp+1
+        Reg::Compares<uint32_t, CMPMODE::EQ>(p1, expFP32, NUMBER_ZERO_U32, maskAll32);
+        Reg::Compares<uint32_t, CMPMODE::GT>(p1, manFP32, NUMBER_HALF_U32, p1);
+        Reg::Or(p0, p0, p1, maskAll32);
+        Reg::Adds(expPlusOne, expFP32, 1, maskAll32);
+        Reg::Select(manFP32, expPlusOne, expFP32, p0);
+        Reg::Pack<uint16_t, uint32_t, Reg::HighLowPart::LOWEST>(scaleB16, manFP32);
+        // 左移7位定位到BF16指数域，用于计算1/scale
+        Reg::ShiftLefts(scaleBF16, scaleB16, SHR_NUM_FOR_BF16, maskAll16);
+        Reg::Pack<uint8_t, uint16_t, Reg::HighLowPart::LOWEST>(scaleB8, scaleB16);
+
+        Reg::UnalignRegForStore ureg;
+        Reg::StoreUnAlign<uint8_t, Reg::PostLiteral::POST_MODE_UPDATE>(level1ScaleUbAddr, scaleB8, ureg,
+                                                                       static_cast<uint32_t>(DIGIT_EIGHT));
+        Reg::StoreUnAlignPost<uint8_t, Reg::PostLiteral::POST_MODE_UPDATE>(level1ScaleUbAddr, ureg,
+                                                                           static_cast<int32_t>(0));
+
+        // 计算1/scale
+        Reg::Compare<uint16_t, CMPMODE::NE>(infMask, scaleBF16, maxEleBF16, maskAll16);
+        Reg::Compare<uint16_t, CMPMODE::EQ>(invalidDataMask, scaleBF16, biasE8M0, maskAll16);
+        Reg::Sub(reversedShareExp, biasE8M0, scaleBF16, maskAll16);
+        Reg::Select<uint16_t>(reversedShareExp, reversedShareExp, nanBF16, infMask);
+        Reg::Select<uint16_t>(reversedShareExp, specialExp, reversedShareExp, invalidDataMask);
+        Reg::StoreAlign<uint16_t, Reg::PostLiteral::POST_MODE_UPDATE>(level1ScaleReciprocalUbAddr, reversedShareExp,
+                                                                      UBBlockSize_ / sizeof(uint16_t), maskReduceB16);
+        // 恢复zeroB16 (Interleave会修改dst1)
+        Reg::Duplicate(zeroB16, 0);
+    }
+}
+
+// DynamicDtypeRange默认算法 (scaleAlg=2, dstTypeMax=6/7)：BF16绝对值 + addValueBit进位取指数
+// 参考dynamic_mx_quant_with_dual_axis的ComputeScaleDynamicDefault实现
+template <typename xDtype, AscendC::RoundMode roundMode, bool needSmoothScale>
+__simd_vf__ inline void
+DynamicDualLevelMxQuantBase<xDtype, roundMode, needSmoothScale>::ComputeLevel1ScaleDynamicDefault(
+    int64_t loopNum, __ubuf__ xDtype* xTmpUbAddr, __ubuf__ uint8_t* level1ScaleUbAddr,
+    __ubuf__ uint16_t* level1ScaleReciprocalUbAddr)
+{
+    Reg::RegTensor<xDtype> xTmp0;
+    Reg::RegTensor<xDtype> xTmp1;
+    Reg::RegTensor<bfloat16_t> xTmp0BF16;
+    Reg::RegTensor<bfloat16_t> xTmp1BF16;
+    Reg::RegTensor<uint16_t> absVal0;
+    Reg::RegTensor<uint16_t> absVal1;
+    Reg::RegTensor<uint16_t> absMaxDim1;
+    Reg::RegTensor<uint16_t> expOnly;
+    Reg::RegTensor<uint16_t> addedVal;
+    Reg::RegTensor<uint16_t> sharedExp;
+    Reg::RegTensor<uint16_t> scaleValue;
+    Reg::RegTensor<uint8_t> scaleB8;
+    Reg::RegTensor<uint16_t> reversedShareExp;
+
+    Reg::RegTensor<uint16_t> absMask;
+    Reg::RegTensor<uint16_t> expMaskBF16;
+    Reg::RegTensor<uint16_t> expMaskFP16;
+    Reg::RegTensor<uint16_t> addValue;
+    Reg::RegTensor<uint16_t> maxExpValue;
+    Reg::RegTensor<uint16_t> nanE8M0;
+    Reg::RegTensor<uint16_t> biasE8M0;
+    Reg::RegTensor<uint16_t> zero;
+    Reg::RegTensor<uint16_t> nanBF16;
+    Reg::RegTensor<uint16_t> specialExp;
+
+    Reg::MaskReg infMask;
+    Reg::MaskReg zeroMask;
+    Reg::MaskReg invalidDataMask;
+    Reg::MaskReg infNanDataMask0;
+    Reg::MaskReg infNanDataMask1;
+    Reg::MaskReg maskAll16 = Reg::CreateMask<uint16_t, Reg::MaskPattern::ALL>();
+    Reg::MaskReg maskReduceB16 = Reg::CreateMask<uint8_t, Reg::MaskPattern::VL16>();
+
+    Reg::Duplicate(absMask, ABS_FOR_UINT16);
+    Reg::Duplicate(expMaskBF16, INF_FOR_BF16);
+    Reg::Duplicate(expMaskFP16, INF_FOR_FP16);
+    Reg::Duplicate(addValue, addValueBit_);
+    Reg::Duplicate(maxExpValue, FP4_E2M1_BF16_MAX_EXP);
+    Reg::Duplicate(nanE8M0, NAN_FOR_FP8_E8M0);
+    Reg::Duplicate(biasE8M0, BF16_EXP_BIAS);
+    Reg::Duplicate(zero, 0);
+    Reg::Duplicate(nanBF16, NAN_CUSTOMIZATION);
+    Reg::Duplicate(specialExp, SPECIAL_EXP_THRESHOLD);
+
+    for (uint16_t i = 0; i < static_cast<uint16_t>(loopNum); i++) {
+        Reg::LoadAlign<xDtype, Reg::PostLiteral::POST_MODE_UPDATE, Reg::LoadDist::DIST_DINTLV_B16>(
+            xTmp0, xTmp1, xTmpUbAddr, vlForHalfNumber_ * DIGIT_TWO);
+
+        if constexpr (IsSameType<xDtype, half>::value) {
+            Reg::And(expOnly, (Reg::RegTensor<uint16_t>&)xTmp0, expMaskFP16, maskAll16);
+            Reg::Compare<uint16_t, CMPMODE::NE>(infNanDataMask0, expOnly, expMaskFP16, maskAll16);
+            Reg::And(expOnly, (Reg::RegTensor<uint16_t>&)xTmp1, expMaskFP16, maskAll16);
+            Reg::Compare<uint16_t, CMPMODE::NE>(infNanDataMask1, expOnly, expMaskFP16, maskAll16);
+            Reg::Cast<bfloat16_t, xDtype, castTraitHalf2BF16Rint>(xTmp0BF16, xTmp0, maskAll16);
+            Reg::Cast<bfloat16_t, xDtype, castTraitHalf2BF16Rint>(xTmp1BF16, xTmp1, maskAll16);
+            Reg::And(absVal0, (Reg::RegTensor<uint16_t>&)xTmp0BF16, absMask, maskAll16);
+            Reg::And(absVal1, (Reg::RegTensor<uint16_t>&)xTmp1BF16, absMask, maskAll16);
+            Reg::Select<uint16_t>(absVal0, absVal0, expMaskBF16, infNanDataMask0);
+            Reg::Select<uint16_t>(absVal1, absVal1, expMaskBF16, infNanDataMask1);
+        } else {
+            Reg::And(absVal0, (Reg::RegTensor<uint16_t>&)xTmp0, absMask, maskAll16);
+            Reg::And(absVal1, (Reg::RegTensor<uint16_t>&)xTmp1, absMask, maskAll16);
+        }
+
+        Reg::Max(absMaxDim1, absVal0, absVal1, maskAll16);
+        Reg::ReduceDataBlock<Reg::ReduceType::MAX>(absMaxDim1, absMaxDim1, maskAll16);
+
+        Reg::And(expOnly, absMaxDim1, expMaskBF16, maskAll16);
+        Reg::Compare<uint16_t, CMPMODE::NE>(infMask, expOnly, expMaskBF16, maskAll16);
+        Reg::Compare<uint16_t, CMPMODE::NE>(zeroMask, expOnly, zero, maskAll16);
+        Reg::Compare<uint16_t, CMPMODE::LT>(invalidDataMask, expOnly, maxExpValue, maskAll16);
+
+        Reg::Add(addedVal, absMaxDim1, addValue, maskAll16);
+        Reg::And(addedVal, addedVal, expMaskBF16, maskAll16);
+        Reg::Select<uint16_t>(addedVal, maxExpValue, addedVal, invalidDataMask);
+        Reg::Sub(sharedExp, addedVal, maxExpValue, maskAll16);
+        Reg::ShiftRights(scaleValue, sharedExp, SHR_NUM_FOR_BF16, maskAll16);
+        Reg::Select<uint16_t>(scaleValue, scaleValue, nanE8M0, infMask);
+        Reg::Select<uint16_t>(scaleValue, scaleValue, zero, zeroMask);
+
+        Reg::Pack<uint8_t, uint16_t, Reg::HighLowPart::LOWEST>(scaleB8, scaleValue);
+        Reg::UnalignRegForStore ureg;
+        Reg::StoreUnAlign<uint8_t, Reg::PostLiteral::POST_MODE_UPDATE>(level1ScaleUbAddr, scaleB8, ureg,
+                                                                       static_cast<uint32_t>(DIGIT_EIGHT));
+        Reg::StoreUnAlignPost<uint8_t, Reg::PostLiteral::POST_MODE_UPDATE>(level1ScaleUbAddr, ureg,
+                                                                           static_cast<int32_t>(0));
+
+        Reg::Compare<uint16_t, CMPMODE::EQ>(invalidDataMask, sharedExp, biasE8M0, maskAll16);
+        Reg::Sub(reversedShareExp, biasE8M0, sharedExp, maskAll16);
+        Reg::Select<uint16_t>(reversedShareExp, reversedShareExp, nanBF16, infMask);
+        Reg::Select<uint16_t>(reversedShareExp, reversedShareExp, zero, zeroMask);
+        Reg::Select<uint16_t>(reversedShareExp, specialExp, reversedShareExp, invalidDataMask);
+        Reg::StoreAlign<uint16_t, Reg::PostLiteral::POST_MODE_UPDATE>(level1ScaleReciprocalUbAddr, reversedShareExp,
+                                                                      UBBlockSize_ / sizeof(uint16_t), maskReduceB16);
+    }
+}
+
+// DynamicDtypeRange算法 (scaleAlg=2)：S = Amax / dst_type_max，对指数向上取整
+// 与CeilAlg的区别：乘法因子为用户指定的max_value，且不处理subnormal场景
+template <typename xDtype, AscendC::RoundMode roundMode, bool needSmoothScale>
+__simd_vf__ inline void DynamicDualLevelMxQuantBase<xDtype, roundMode, needSmoothScale>::ComputeLevel1ScaleDynamic(
+    int64_t loopNum, __ubuf__ xDtype* xTmpUbAddr, __ubuf__ uint8_t* level1ScaleUbAddr,
+    __ubuf__ uint16_t* level1ScaleReciprocalUbAddr)
+{
+    Reg::RegTensor<xDtype> xTmp0;
+    Reg::RegTensor<xDtype> xTmp1;
+    Reg::RegTensor<uint16_t> absX0;
+    Reg::RegTensor<uint16_t> absX1;
+    Reg::RegTensor<uint16_t> absMaxDim1;
+    Reg::RegTensor<uint16_t> zeroB16;
+
+    Reg::RegTensor<float> maxFP32;
+    Reg::RegTensor<float> invMaxFP32;
+    Reg::RegTensor<uint32_t> expFP32;
+    Reg::RegTensor<uint32_t> manFP32;
+    Reg::RegTensor<uint32_t> expPlusOne;
+
+    Reg::RegTensor<uint16_t> scaleB16;
+    Reg::RegTensor<uint16_t> scaleBF16;
+    Reg::RegTensor<uint8_t> scaleB8;
+    Reg::RegTensor<uint16_t> reversedShareExp;
+
+    Reg::RegTensor<uint16_t> absMask;
+    Reg::RegTensor<uint32_t> manMaskFP32;
+    Reg::RegTensor<uint16_t> biasE8M0;
+    Reg::RegTensor<uint16_t> nanBF16;
+    Reg::RegTensor<uint16_t> specialExp;
+    Reg::RegTensor<uint16_t> maxEleBF16;
+
+    Reg::MaskReg p0;
+    Reg::MaskReg infMask;
+    Reg::MaskReg invalidDataMask;
+    Reg::MaskReg maskAll16 = Reg::CreateMask<uint16_t, Reg::MaskPattern::ALL>();
+    Reg::MaskReg maskAll32 = Reg::CreateMask<uint32_t, Reg::MaskPattern::ALL>();
+    Reg::MaskReg maskReduceB16 = Reg::CreateMask<uint8_t, Reg::MaskPattern::VL16>();
+
+    Reg::Duplicate(absMask, ABS_FOR_UINT16);
+    Reg::Duplicate(invMaxFP32, invDstTypeMax_);
+    Reg::Duplicate(manMaskFP32, MAN_MASK_FLOAT);
+    Reg::Duplicate(biasE8M0, BF16_EXP_BIAS);
+    Reg::Duplicate(nanBF16, NAN_CUSTOMIZATION);
+    Reg::Duplicate(specialExp, SPECIAL_EXP_THRESHOLD);
+    Reg::Duplicate(maxEleBF16, INF_FOR_BF16);
+    Reg::Duplicate(zeroB16, 0);
+
+    for (uint16_t i = 0; i < static_cast<uint16_t>(loopNum); i++) {
+        Reg::LoadAlign<xDtype, Reg::PostLiteral::POST_MODE_UPDATE, Reg::LoadDist::DIST_DINTLV_B16>(
+            xTmp0, xTmp1, xTmpUbAddr, vlForHalfNumber_ * DIGIT_TWO);
+
+        Reg::And(absX0, (Reg::RegTensor<uint16_t>&)xTmp0, absMask, maskAll16);
+        Reg::And(absX1, (Reg::RegTensor<uint16_t>&)xTmp1, absMask, maskAll16);
+        Reg::Max(absMaxDim1, absX0, absX1, maskAll16);
+        Reg::ReduceDataBlock<Reg::ReduceType::MAX>(absMaxDim1, absMaxDim1, maskAll16);
+
+        Reg::Interleave(absMaxDim1, zeroB16, absMaxDim1, zeroB16);
+        Reg::Cast<float, xDtype, castTraitXdtypetoFp32Zero>(maxFP32, (Reg::RegTensor<xDtype>&)absMaxDim1, maskAll16);
+        // S = Amax / dst_type_max
+        Reg::Mul(maxFP32, maxFP32, invMaxFP32, maskAll32);
+        Reg::ShiftRights(expFP32, (Reg::RegTensor<uint32_t>&)maxFP32, SHR_NUM_FOR_FP32, maskAll32);
+        Reg::And(manFP32, (Reg::RegTensor<uint32_t>&)maxFP32, manMaskFP32, maskAll32);
+        // 条件舍入: 仅normal场景 (exp>0 && exp<254 && man>0) → exp+1
+        Reg::Compares<uint32_t, CMPMODE::GT>(p0, expFP32, NUMBER_ZERO_U32, maskAll32);
+        Reg::Compares<uint32_t, CMPMODE::LT>(p0, expFP32, NUMBER_TWO_FIVE_FOUR, p0);
+        Reg::Compares<uint32_t, CMPMODE::GT>(p0, manFP32, NUMBER_ZERO_U32, p0);
+        Reg::Adds(expPlusOne, expFP32, 1, maskAll32);
+        Reg::Select(manFP32, expPlusOne, expFP32, p0);
+        Reg::Pack<uint16_t, uint32_t, Reg::HighLowPart::LOWEST>(scaleB16, manFP32);
+        Reg::ShiftLefts(scaleBF16, scaleB16, SHR_NUM_FOR_BF16, maskAll16);
+        Reg::Pack<uint8_t, uint16_t, Reg::HighLowPart::LOWEST>(scaleB8, scaleB16);
+
+        Reg::UnalignRegForStore ureg;
+        Reg::StoreUnAlign<uint8_t, Reg::PostLiteral::POST_MODE_UPDATE>(level1ScaleUbAddr, scaleB8, ureg,
+                                                                       static_cast<uint32_t>(DIGIT_EIGHT));
+        Reg::StoreUnAlignPost<uint8_t, Reg::PostLiteral::POST_MODE_UPDATE>(level1ScaleUbAddr, ureg,
+                                                                           static_cast<int32_t>(0));
+
+        Reg::Compare<uint16_t, CMPMODE::NE>(infMask, scaleBF16, maxEleBF16, maskAll16);
+        Reg::Compare<uint16_t, CMPMODE::EQ>(invalidDataMask, scaleBF16, biasE8M0, maskAll16);
+        Reg::Sub(reversedShareExp, biasE8M0, scaleBF16, maskAll16);
+        Reg::Select<uint16_t>(reversedShareExp, reversedShareExp, nanBF16, infMask);
+        Reg::Select<uint16_t>(reversedShareExp, specialExp, reversedShareExp, invalidDataMask);
+        Reg::StoreAlign<uint16_t, Reg::PostLiteral::POST_MODE_UPDATE>(level1ScaleReciprocalUbAddr, reversedShareExp,
+                                                                      UBBlockSize_ / sizeof(uint16_t), maskReduceB16);
+        Reg::Duplicate(zeroB16, 0);
     }
 }
 

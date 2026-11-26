@@ -20,6 +20,9 @@
 namespace ops {
 static constexpr int32_t DEFAULT_LEVEL0_BLOCK_SIZE = 512;
 static constexpr int32_t DEFAULT_LEVEL1_BLOCK_SIZE = 32;
+static constexpr int32_t DEFAULT_SCALE_ALG = 0;
+static constexpr float DEFAULT_DST_TYPE_MAX = 0.0;
+static constexpr uint32_t ATTR_VERSION_V2 = 2;
 
 static const std::vector<ge::DataType> INPUT_DATA_TYPE = {ge::DT_FLOAT16, ge::DT_BF16};
 
@@ -60,6 +63,8 @@ public:
         this->Attr("round_mode").AttrType(OPTIONAL).String("rint");
         this->Attr("level0_block_size").AttrType(OPTIONAL).Int(DEFAULT_LEVEL0_BLOCK_SIZE);
         this->Attr("level1_block_size").AttrType(OPTIONAL).Int(DEFAULT_LEVEL1_BLOCK_SIZE);
+        this->Attr("scale_alg").AttrType(OPTIONAL).Version(ATTR_VERSION_V2).Int(DEFAULT_SCALE_ALG);
+        this->Attr("dst_type_max").AttrType(OPTIONAL).Version(ATTR_VERSION_V2).Float(DEFAULT_DST_TYPE_MAX);
 
         OpAICoreConfig aicoreConfig;
         aicoreConfig.DynamicCompileStaticFlag(true)
@@ -69,6 +74,7 @@ public:
             .NeedCheckSupportFlag(false)
             .PrecisionReduceFlag(true);
         opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_3510, aicoreConfig);
+        opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_9201, aicoreConfig);
     }
 };
 

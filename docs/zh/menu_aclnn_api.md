@@ -101,6 +101,7 @@
 - [aclnnDynamicBlockQuant](../../quant/dynamic_block_quant/docs/aclnnDynamicBlockQuant.md)
 - [aclnnDynamicBlockQuantV2](../../quant/dynamic_block_quant/docs/aclnnDynamicBlockQuantV2.md)
 - [aclnnDynamicDualLevelMxQuant](../../quant/dynamic_dual_level_mx_quant/docs/aclnnDynamicDualLevelMxQuant.md)
+- [aclnnDynamicDualLevelMxQuantV2](../../quant/dynamic_dual_level_mx_quant/docs/aclnnDynamicDualLevelMxQuantV2.md)
 - [aclnnDynamicMxQuant](../../quant/dynamic_mx_quant/docs/aclnnDynamicMxQuant.md)
 - [aclnnDynamicMxQuantV2](../../quant/dynamic_mx_quant/docs/aclnnDynamicMxQuantV2.md)
 - [aclnnDynamicMxQuantV3](../../quant/dynamic_mx_quant/docs/aclnnDynamicMxQuantV3.md)

@@ -77,6 +77,16 @@
             "name": "level1_block_size",
             "dtype": "int",
             "value": null
+          },
+          {
+            "name": "scale_alg",
+            "dtype": "int",
+            "value": null
+          },
+          {
+            "name": "dst_type_max",
+            "dtype": "float",
+            "value": null
           }
         ]
       },
@@ -148,13 +158,23 @@
             "value": null
           },
           {
-            "name": "dst_type",
+            "name": "level0_block_size",
+            "dtype": "int",
+            "value": null
+          },
+          {
+            "name": "level1_block_size",
             "dtype": "int",
             "value": null
           },
           {
             "name": "scale_alg",
             "dtype": "int",
+            "value": null
+          },
+          {
+            "name": "dst_type_max",
+            "dtype": "float",
             "value": null
           }
         ]
