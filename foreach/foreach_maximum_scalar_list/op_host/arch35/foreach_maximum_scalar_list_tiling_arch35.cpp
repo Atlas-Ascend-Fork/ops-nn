@@ -31,7 +31,7 @@ constexpr uint32_t WS_SYS_SIZE = 0U;
 constexpr int32_t INPUT_IDX_0 = 0;
 constexpr int64_t INPUT_IDX_SCALARS = 1;
 constexpr uint32_t DCACHE_SIZE = 128 * 1024;
-constexpr int64_t MIN_PER_CORE = 1024;
+constexpr int64_t MIN_PER_CORE = 4;
 constexpr int32_t MAX_TENSOR_NUM = 256;
 constexpr uint32_t MAX_DIM_NUM = 8U;
 

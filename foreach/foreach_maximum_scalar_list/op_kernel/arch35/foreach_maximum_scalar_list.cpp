@@ -34,12 +34,12 @@ __global__ __aicore__ void foreach_maximum_scalar_list(GM_ADDR x, GM_ADDR scalar
     const ForeachMaximumScalarListTilingData* tilingGm = &tilingData;
 
     if constexpr (schMode == static_cast<uint32_t>(ForeachMaximumScalarListTilingKey::TILING_KEY_FLOAT)) {
-        NsForeachMaximumScalarList::Process<float, float>(x, scalars, y, tilingGm);
+        NsForeachMaximumScalarList::Process<float, float>(x, scalars, y, tilingGm, tiling);
     } else if constexpr (schMode == static_cast<uint32_t>(ForeachMaximumScalarListTilingKey::TILING_KEY_FLOAT16)) {
-        NsForeachMaximumScalarList::Process<half, float>(x, scalars, y, tilingGm);
+        NsForeachMaximumScalarList::Process<half, float>(x, scalars, y, tilingGm, tiling);
     } else if constexpr (schMode == static_cast<uint32_t>(ForeachMaximumScalarListTilingKey::TILING_KEY_INT32)) {
-        NsForeachMaximumScalarList::Process<int32_t, int64_t>(x, scalars, y, tilingGm);
+        NsForeachMaximumScalarList::Process<int32_t, int64_t>(x, scalars, y, tilingGm, tiling);
     } else if constexpr (schMode == static_cast<uint32_t>(ForeachMaximumScalarListTilingKey::TILING_KEY_BF16)) {
-        NsForeachMaximumScalarList::Process<bfloat16_t, float>(x, scalars, y, tilingGm);
+        NsForeachMaximumScalarList::Process<bfloat16_t, float>(x, scalars, y, tilingGm, tiling);
     }
 }
