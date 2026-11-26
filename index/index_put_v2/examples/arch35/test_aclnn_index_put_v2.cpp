@@ -102,8 +102,8 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(indexTwoHostData, indexShape, &indexTwoDeviceAddr, aclDataType::ACL_INT64, &indexTwo);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    aclTensor* indexs[] = {indexOne, indexTwo};
-    auto indexTensorList = aclCreateTensorList(indexs, 2);
+    aclTensor* indices[] = {indexOne, indexTwo};
+    auto indexTensorList = aclCreateTensorList(indices, 2);
     // value aclTensor
     ret = CreateAclTensor(valueHostData, valueShape, &valueDeviceAddr, aclDataType::ACL_FLOAT, &value);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -120,7 +120,7 @@ int main()
     void* workspaceAddr = nullptr;
     if (workspaceSize > 0) {
         ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed, ERROR: %d\n", ret); return ret;);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed, ERROR: %d\n", ret); return ret);
     }
     // 调用aclnnIndexPutImpl第二段接口
     ret = aclnnIndexPutImpl(workspaceAddr, workspaceSize, executor, stream);

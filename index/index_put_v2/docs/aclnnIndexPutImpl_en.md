@@ -91,8 +91,8 @@ aclnnStatus aclnnIndexPutImpl(
     <tbody>
       <tr>
         <td>selfRef</td>
-        <td>Input</td>
-        <td>self in the formula.</td>
+        <td>Input/Output</td>
+        <td>self in the formula. The result is written back to this tensor in place.</td>
         <td>The data type is consistent with values.</td>
         <td>FLOAT, FLOAT16, DOUBLE, INT32, INT64, INT16, INT8, UINT8, BOOL, BFLOAT16</td>
         <td>ND</td>
@@ -370,8 +370,8 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   ret = CreateAclTensor(indexTwoHostData, indexShape, &indexTwoDeviceAddr, aclDataType::ACL_INT64, &indexTwo);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
-  aclTensor* indexs[] = {indexOne, indexTwo};
-  auto indexTensorList = aclCreateTensorList(indexs, 2);
+  aclTensor* indices[] = {indexOne, indexTwo};
+  auto indexTensorList = aclCreateTensorList(indices, 2);
   // value aclTensor
   ret = CreateAclTensor(valueHostData, valueShape, &valueDeviceAddr, aclDataType::ACL_FLOAT, &value);
   CHECK_RET(ret == ACL_SUCCESS, return ret);

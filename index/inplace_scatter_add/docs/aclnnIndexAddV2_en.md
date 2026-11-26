@@ -25,9 +25,9 @@
 
 ## Function
 
-Adds values from the source tensor to the values at the corresponding positions in the input tensor along a specified dimension based on the given indices.
+Along the specified dimension, adds source values to the values in self at the positions specified by index. With deterministic computation disabled and mode=0, it uses source directly. Otherwise, it uses alpha × source.
 
-This operator uses in-place semantics: the computation is accumulated directly onto the storage of self, and self is overwritten in place after the call (equivalent to executing self[index] += alpha × source in place). The underlying operator's output is bound to the storage of self (in-place binding), and the aclnn API copies the result to out for delivery.
+The API writes the result to out. The operation may modify the data in self in place. Read the result from out.
 
 ## Function Prototype
 
@@ -81,9 +81,9 @@ aclnnStatus aclnnIndexAddV2(
       </tr></thead>
     <tbody>
       <tr>
-        <td>self (aclTensor*)</td>
+        <td>self (const aclTensor*)</td>
         <td>Input</td>
-        <td>Input tensor.</td>
+        <td>Provides the initial values for accumulation. The operation may modify its data in place. The const qualifier applies to the tensor descriptor and does not guarantee that the tensor data remains unchanged.</td>
         <td>1 to 8 dimensions are supported. A 0-D self has no valid dim value (the value range [-self.dim(), self.dim()-1] is empty when self is 0-D), and it is rejected by the first-phase validation.</td>
         <td>FLOAT, FLOAT16, INT32, INT16, INT8, UINT8, DOUBLE, INT64, BOOL, BFLOAT16</td>
         <td>ND</td>
@@ -124,7 +124,7 @@ aclnnStatus aclnnIndexAddV2(
         <td>alpha (aclScalar*)</td>
         <td>Input</td>
         <td>Scaling factor.</td>
-        <td>The data type can be converted to the data type after <a href="../../../docs/en/context/deduction_relationship.md">deduction</a> between self and source.<br>A floating-point alpha with an integer self is accepted: the alpha value is truncated according to the conversion semantics toward the self data type (for example, 0.5 is converted to 0 for an integer self). When the alpha value is outside the representable range of the self data type (for example, alpha is inf, nan, or a floating-point value beyond the representable range while self is an integer type), the behavior is undefined.<br>When self is BOOL, alpha supports only BOOL (BOOL supports one-way conversion to other data types; numeric/floating-point types cannot be converted to BOOL).<br>In a non-deterministic computation use case where mode is 0, alpha does not participate in the computation.</td>
+        <td>The data type can be converted to the data type after <a href="../../../docs/en/context/deduction_relationship.md">deduction</a> between self and source.<br>A floating-point alpha with an integer self is accepted: the alpha value is truncated according to the conversion semantics toward the self data type (for example, 0.5 is converted to 0 for an integer self). When the alpha value is outside the representable range of the self data type (for example, alpha is inf, nan, or a floating-point value beyond the representable range while self is an integer type), the behavior is undefined.<br>When self is BOOL, alpha supports only BOOL (BOOL supports one-way conversion to other data types; numeric/floating-point types cannot be converted to BOOL).<br>With deterministic computation disabled and mode=0, alpha does not scale the values being added, but it must still be non-null and satisfy the data type requirements.</td>
         <td>Scalar type (must be convertible to the data type of self; complex types are not supported)</td>
         <td>-</td>
         <td>-</td>
@@ -134,7 +134,7 @@ aclnnStatus aclnnIndexAddV2(
         <td>mode (int64_t)</td>
         <td>Input</td>
         <td>Computation mode.</td>
-        <td>When the value is 0, the high-performance mode is used. Other values indicate the non-high-performance mode. For limitations of the high-performance mode, see Constraints.<br>In deterministic computation use cases, the value of mode is ignored and the deterministic computation mode is used.</td>
+        <td>With deterministic computation disabled, mode=0 selects the high-performance mode and other values select the standard mode. For limitations of the high-performance mode, see Constraints.<br>With deterministic computation enabled, the API ignores mode and uses the deterministic computation path.</td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>
@@ -144,7 +144,7 @@ aclnnStatus aclnnIndexAddV2(
         <td>out (aclTensor*)</td>
         <td>Output</td>
         <td>Output aclTensor.</td>
-        <td>The underlying operator binds the output to the storage of self in place (self is overwritten in place), and the API copies the result to out.</td>
+        <td>Receives the accumulation result.</td>
         <td>Consistent with self</td>
         <td>ND</td>
         <td>Consistent with self</td>
@@ -222,7 +222,7 @@ aclnnStatus aclnnIndexAddV2(
       <td>The shape of out is not equal to the shape of self.</td>
       </tr>
       <tr>
-      <td>When mode=0, the high-performance mode restrictions in Constraints are not met.</td>
+      <td>With deterministic computation disabled and mode=0, the call reaches the accumulation path but does not meet the high-performance mode restrictions in Constraints.</td>
       </tr>
     </tbody>
     </table>
@@ -274,19 +274,17 @@ aclnnStatus aclnnIndexAddV2(
 
 - Deterministic computation:
   - aclnnIndexAddV2 defaults to a non-deterministic implementation. You can enable deterministic computation through aclrtSetSysParamOpt.
-- In-place semantics
-  - self is overwritten in place after the call (see Function); GE graph mode (GEIR) is not within the supported scope of this operator.
 - Index value range
   - The index value is expected to fall within the range [0, self.shape[dim]). The first-phase API does not validate the index value range: negative indices are silently skipped by the kernel-side guard (not accumulated), and out-of-bounds indices result in undefined behavior (an execution-time exception may be triggered when the InplaceIndexAdd path is used).
 - Empty tensor
   - When source is an empty tensor, the API copies self to out (no accumulation is performed); when self is an empty tensor, out is an empty tensor.
 - Capacity limit
   - The 32-bit fast path of the operator requires the element scale involved in the computation to be within the uint32 domain (2^32-1). Beyond that, the computation is automatically routed to the 64-bit implementation with identical results. The actual supported tensor scale limit depends on the data type and Device memory.
-- High-performance mode (mode=0) has the following additional constraints:
+- The high-performance accumulation path (deterministic computation disabled and mode=0) has the following additional constraints:
   - dim must be 0 or -2.
   - The data type of self must be FLOAT, FLOAT16, INT32, INT16, or BFLOAT16.
   - self must be a two-dimensional tensor.
-  - If mode=0 and the constraints in the parameter description are met but the above three constraints are not, the API throws an error.
+  - If the call reaches the high-performance accumulation path and does not meet these constraints, the first-phase API returns ACLNN_ERR_PARAM_INVALID.
 
 ## Example
 

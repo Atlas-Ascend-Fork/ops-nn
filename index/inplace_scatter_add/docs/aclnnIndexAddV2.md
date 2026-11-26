@@ -23,9 +23,9 @@
 
 ## 功能说明
 
-在指定维度上，根据给定的索引，将源张量中的值加到输入张量中对应位置的值上。
+沿指定维度，根据index将源张量的值与self中对应位置的值相加。未启用确定性计算且mode=0时，直接使用source；其他情况下使用alpha × source。
 
-本算子为就地语义算子：计算直接累加到self的存储上，self在调用后将被原地改写（等价于self[index] += alpha × source的就地执行）；底层算子的输出与self的存储绑定（就地绑定），aclnn接口内部将结果拷贝至out交付。
+接口将计算结果写入out。计算过程中可能原地修改self的数据，请从out读取结果。
 
 ## 函数原型
 
@@ -79,9 +79,9 @@ aclnnStatus aclnnIndexAddV2(
       </tr></thead>
     <tbody>
       <tr>
-        <td>self（aclTensor*）</td>
+        <td>self（const aclTensor*）</td>
         <td>输入</td>
-        <td>输入张量。</td>
+        <td>提供累加的初始值，其数据可能被原地改写。const修饰张量描述符，不保证张量数据保持不变。</td>
         <td>支持1-8维；0维self无合法dim取值（dim取值范围[-self.dim(), self.dim()-1]在0维时为空集），由第一段校验拒绝。</td>
         <td>FLOAT、FLOAT16、INT32、INT16、INT8、UINT8、DOUBLE、INT64、BOOL、BFLOAT16</td>
         <td>ND</td>
@@ -122,7 +122,7 @@ aclnnStatus aclnnIndexAddV2(
         <td>alpha（aclScalar*）</td>
         <td>输入</td>
         <td>缩放因子。</td>
-        <td>数据类型可转换成self与source<a href="../../../docs/zh/context/deduction_relationship.md">推导</a>后的数据类型。<br>浮点类型alpha与整型self的组合受理：alpha数值按向self数据类型转换的语义截断（如0.5按整型self转换为0）；alpha数值超出self数据类型可表示范围时（如整型self时alpha为inf、nan或超出表示范围的浮点值）行为无定义。<br>self为BOOL时，alpha仅支持BOOL类型（BOOL仅支持单向转换为其他数据类型，数值/浮点类型无法转换为BOOL）。<br>在非确定性计算场景下且mode取值为0，alpha不参与计算。</td>
+        <td>数据类型可转换成self与source<a href="../../../docs/zh/context/deduction_relationship.md">推导</a>后的数据类型。<br>浮点类型alpha与整型self的组合受理：alpha数值按向self数据类型转换的语义截断（如0.5按整型self转换为0）；alpha数值超出self数据类型可表示范围时（如整型self时alpha为inf、nan或超出表示范围的浮点值）行为无定义。<br>self为BOOL时，alpha仅支持BOOL类型（BOOL仅支持单向转换为其他数据类型，数值/浮点类型无法转换为BOOL）。<br>在非确定性计算场景下且mode取值为0，alpha不参与累加，但仍须满足非空指针和数据类型要求。</td>
         <td>标量类型（需可转换成self的数据类型，不支持复数类型）</td>
         <td>-</td>
         <td>-</td>
@@ -132,7 +132,7 @@ aclnnStatus aclnnIndexAddV2(
         <td>mode（int64_t）</td>
         <td>输入</td>
         <td>计算模式。</td>
-        <td>当值为0时为高性能模式，其他取值为非高性能模式，高性能模式限制详见约束说明。<br>在确定性计算场景下，会忽略mode取值，统一使用确定性计算模式。</td>
+        <td>在非确定性计算场景下，取值为0时使用高性能模式，其他取值时使用非高性能模式。高性能模式限制详见约束说明。<br>在确定性计算场景下，会忽略mode取值，统一使用确定性计算模式。</td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>
@@ -142,7 +142,7 @@ aclnnStatus aclnnIndexAddV2(
         <td>out（aclTensor*）</td>
         <td>输出</td>
         <td>输出aclTensor。</td>
-        <td>底层算子将输出与self的存储就地绑定（self会被原地改写），接口内部将结果拷贝至out。</td>
+        <td>累加结果写入此张量。</td>
         <td>与self一致</td>
         <td>ND</td>
         <td>与self一致</td>
@@ -220,7 +220,7 @@ aclnnStatus aclnnIndexAddV2(
       <td>out的shape和self的shape不相等。</td>
       </tr>
       <tr>
-      <td>当mode=0时，不满足约束说明中的高性能模式限制。</td>
+      <td>未启用确定性计算、mode=0且进入累加路径时，不满足约束说明中的高性能模式限制。</td>
       </tr>
     </tbody>
     </table>
@@ -272,19 +272,17 @@ aclnnStatus aclnnIndexAddV2(
 
 - 确定性计算：
   - aclnnIndexAddV2默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
-- 就地语义
-  - self在调用后被原地改写（见功能说明）；GE图模式（GEIR）不在本算子支持范围内。
 - index取值范围
   - 期望index取值范围在[0, self.shape[dim])范围内；接口第一段不校验index的取值范围，负值索引在kernel侧被守卫静默跳过（不参与累加），越界索引行为未定义（经InplaceIndexAdd路径执行时可能触发执行期异常）。
 - 空Tensor
   - source为空Tensor时，接口将self拷贝至out（不进行累加）；self为空Tensor时，out为空Tensor。
 - 容量限制
   - 算子32位快速路径要求计算涉及的元素规模不超过uint32表示域（2^32-1），超出时自动路由至64位实现，功能结果一致；实际可支持的张量规模上限取决于数据类型与Device内存。
-- 高性能模式（mode=0）额外限制：
+- 高性能模式（未启用确定性计算且mode=0）在进行累加时有以下额外限制：
   - dim取值为0或-2。
   - self数据类型为FLOAT、FLOAT16、INT32、INT16或BFLOAT16。
   - self是二维tensor。
-  - 如果mode=0，且满足参数说明中的限制，但不满足以上三条约束，接口会抛出错误。
+  - 进入高性能累加路径时，如果不满足上述限制，第一段接口返回ACLNN_ERR_PARAM_INVALID。
 
 ## 调用示例
 

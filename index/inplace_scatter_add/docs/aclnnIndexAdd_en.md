@@ -25,9 +25,9 @@
 
 ## Function
 
-Adds values from the source tensor to the values at the corresponding positions in the input tensor along a specified dimension based on the given indices.
+Along the specified dimension, adds alpha × source to the values in self at the positions specified by index.
 
-This operator uses in-place semantics: the computation is accumulated directly onto the storage of self, and self is overwritten in place after the call (equivalent to executing self[index] += alpha × source in place). The underlying operator's output is bound to the storage of self (in-place binding), and the aclnn API copies the result to out for delivery.
+The API writes the result to out. The operation may modify the data in self in place. Read the result from out.
 
 ## Function Prototype
 
@@ -80,9 +80,9 @@ aclnnStatus aclnnIndexAdd(
       </tr></thead>
     <tbody>
       <tr>
-        <td>self (aclTensor*)</td>
+        <td>self (const aclTensor*)</td>
         <td>Input</td>
-        <td>Input tensor.</td>
+        <td>Provides the initial values for accumulation. The operation may modify its data in place. The const qualifier applies to the tensor descriptor and does not guarantee that the tensor data remains unchanged.</td>
         <td>1 to 8 dimensions are supported. A 0-D self has no valid dim value (the value range [-self.dim(), self.dim()-1] is empty when self is 0-D), and it is rejected by the first-phase validation.</td>
         <td>FLOAT, FLOAT16, INT32, INT16, INT8, UINT8, DOUBLE, INT64, BOOL, BFLOAT16</td>
         <td>ND</td>
@@ -133,7 +133,7 @@ aclnnStatus aclnnIndexAdd(
         <td>out (aclTensor*)</td>
         <td>Output</td>
         <td>Output aclTensor.</td>
-        <td>The underlying operator binds the output to the storage of self in place (self is overwritten in place), and the API copies the result to out.</td>
+        <td>Receives the accumulation result.</td>
         <td>Consistent with self.</td>
         <td>ND</td>
         <td>Consistent with self.</td>
@@ -257,8 +257,6 @@ aclnnStatus aclnnIndexAdd(
 
 - deterministic computation:
   - aclnnIndexAdd defaults to a non-deterministic implementation. You can enable deterministic computation through aclrtSetSysParamOpt.
-- In-place semantics
-  - self is overwritten in place after the call (see Function); GE graph mode (GEIR) is not within the supported scope of this operator.
 - Index value range
   - The index value is expected to fall within the range [0, self.shape[dim]). The first-phase API does not validate the index value range: negative indices are silently skipped by the kernel-side guard (not accumulated), and out-of-bounds indices result in undefined behavior (an execution-time exception may be triggered when the InplaceIndexAdd path is used).
 - Empty tensor
@@ -269,6 +267,8 @@ aclnnStatus aclnnIndexAdd(
 ## Example
 
 The following sample code is for reference only. For details about compilation and execution, see [Compile and Run Samples](../../../docs/en/context/compile_and_run_sample.md).
+
+With dim=0 and alpha=1.0, the expected result in out is `[[1, 2], [3, 5], [6, 7], [9, 10]]`. The sample prints these eight values in row order.
 
 ```Cpp
 #include <iostream>
@@ -413,6 +413,7 @@ int main() {
                     resultSize * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret);
             exitCode = -1; goto cleanup);
+  // Expected out in row order: 1, 2, 3, 5, 6, 7, 9, 10.
   for (int64_t i = 0; i < resultSize; i++) {
     LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
   }

@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：根据索引indices将输入x对应坐标的数据取出。
+- 接口功能：根据索引indices取出输入张量self中对应位置的数据。
 - 计算公式：
 
   $$
@@ -219,7 +219,7 @@ aclnnStatus aclnnIndex(
 - 确定性计算：
   - aclnnIndex默认确定性实现。
 - self支持1-8维Tensor，indices中tensor的个数需要小于等于self的维度数。
-- indices中的各个tensor中的值不能超过self中对应维度的大小，否则会产生不可预知行为，如地址越界。
+- 整数索引的取值上界为self中对应维度的大小，不含上界。超出合法范围时，行为未定义。
 <!-- npu="950" id9 -->
 - <term>Ascend 950PR&950DT系列产品</term>：indices各tensor之间shape需相同或满足broadcast关系。
 <!-- end id9 -->
@@ -342,7 +342,7 @@ int main() {
   void* workspaceAddr = nullptr;
   if (workspaceSize > 0) {
     ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret;);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
   }
   // 调用aclnnIndex第二段接口
   ret = aclnnIndex(workspaceAddr, workspaceSize, executor, stream);

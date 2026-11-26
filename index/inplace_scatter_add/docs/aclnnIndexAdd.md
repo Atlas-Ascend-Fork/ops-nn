@@ -23,9 +23,9 @@
 
 ## 功能说明
 
-在指定维度上，根据给定的索引，将源张量中的值加到输入张量中对应位置的值上。
+沿指定维度，根据index将alpha × source与self中对应位置的值相加。
 
-本算子为就地语义算子：计算直接累加到self的存储上，self在调用后将被原地改写（等价于self[index] += alpha × source的就地执行）；底层算子的输出与self的存储绑定（就地绑定），aclnn接口内部将结果拷贝至out交付。
+接口将计算结果写入out。计算过程中可能原地修改self的数据，请从out读取结果。
 
 ## 函数原型
 
@@ -78,9 +78,9 @@ aclnnStatus aclnnIndexAdd(
       </tr></thead>
     <tbody>
       <tr>
-        <td>self（aclTensor*）</td>
+        <td>self（const aclTensor*）</td>
         <td>输入</td>
-        <td>输入张量。</td>
+        <td>提供累加的初始值，其数据可能被原地改写。const修饰张量描述符，不保证张量数据保持不变。</td>
         <td>支持1-8维；0维self无合法dim取值（dim取值范围[-self.dim(), self.dim()-1]在0维时为空集），由第一段校验拒绝。</td>
         <td>FLOAT、FLOAT16、INT32、INT16、INT8、UINT8、DOUBLE、INT64、BOOL、BFLOAT16</td>
         <td>ND</td>
@@ -131,7 +131,7 @@ aclnnStatus aclnnIndexAdd(
         <td>out（aclTensor*）</td>
         <td>输出</td>
         <td>输出aclTensor。</td>
-        <td>底层算子将输出与self的存储就地绑定（self会被原地改写），接口内部将结果拷贝至out。</td>
+        <td>累加结果写入此张量。</td>
         <td>与self一致</td>
         <td>ND</td>
         <td>与self一致</td>
@@ -255,8 +255,6 @@ aclnnStatus aclnnIndexAdd(
 
 - 确定性计算：
   - aclnnIndexAdd默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
-- 就地语义
-  - self在调用后被原地改写（见功能说明）；GE图模式（GEIR）不在本算子支持范围内。
 - index取值范围
   - 期望index取值范围在[0, self.shape[dim])范围内；接口第一段不校验index的取值范围，负值索引在kernel侧被守卫静默跳过（不参与累加），越界索引行为未定义（经InplaceIndexAdd路径执行时可能触发执行期异常）。
 - 空Tensor
@@ -267,6 +265,8 @@ aclnnStatus aclnnIndexAdd(
 ## 调用示例
 
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
+
+本示例使用dim=0、alpha=1.0，out的预期结果为`[[1, 2], [3, 5], [6, 7], [9, 10]]`，示例按行打印这8个值。
 
 ```Cpp
 #include <iostream>
@@ -411,6 +411,7 @@ int main() {
                     resultSize * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret);
             exitCode = -1; goto cleanup);
+  // out按行展开的预期结果：1、2、3、5、6、7、9、10。
   for (int64_t i = 0; i < resultSize; i++) {
     LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
   }
