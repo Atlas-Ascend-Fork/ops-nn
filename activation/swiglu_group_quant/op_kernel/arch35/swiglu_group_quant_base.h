@@ -46,6 +46,11 @@ constexpr uint32_t INV_FP8_E4M3_MAX_VALUE = 0x3b124925;
 constexpr uint32_t FAST_LOG_SHIFT_BITS = 23U;
 constexpr uint32_t FAST_LOG_AND_VALUE1 = 0xFF;
 constexpr uint32_t FAST_LOG_AND_VALUE2 = (((uint32_t)1 << (uint32_t)23) - (uint32_t)1);
+// bits + FAST_LOG_MANTISSA_CARRY: 非零尾数进位到指数域, 等价于 exp + (mantissa != 0)
+constexpr uint32_t FAST_LOG_MANTISSA_CARRY = (((uint32_t)1 << (uint32_t)23) - (uint32_t)1);
+// invScale 指数域 = FAST_LOG_INV_EXP_BIAS - sf_uint32
+constexpr uint32_t FAST_LOG_INV_EXP_BIAS = 254U;
+constexpr uint32_t FAST_LOG_SIGN_MASK = 0x7FFFFFFFU;
 constexpr uint32_t REPEAT_SIZE = 256;
 constexpr uint16_t FOUR_UNFOLD = 4;
 constexpr int64_t MX_BLOCK_SIZE_MXFP4 = 32LL;
@@ -925,9 +930,7 @@ __simd_vf__ inline void VFProcessSwigluMxFp8InvScaleFullVf(__ubuf__ T0* yOriginL
 {
     RegTensor<float> weight;
     RegTensor<float> one;
-    RegTensor<uint32_t> oneUint32;
     RegTensor<float> zero;
-    RegTensor<uint32_t> zeroUint32;
     RegTensor<T0> x0;
     RegTensor<T0> x1;
     RegTensor<float> x0Layout0;
@@ -951,8 +954,6 @@ __simd_vf__ inline void VFProcessSwigluMxFp8InvScaleFullVf(__ubuf__ T0* yOriginL
     RegTensor<float> scale0;
     RegTensor<float> scale1;
     RegTensor<uint32_t> scale2;
-    RegTensor<uint32_t> scale3;
-    RegTensor<int32_t> scale4;
     RegTensor<int32_t> scale5;
     RegTensor<uint8_t> scale6;
     RegTensor<uint16_t> scale7;
@@ -960,8 +961,6 @@ __simd_vf__ inline void VFProcessSwigluMxFp8InvScaleFullVf(__ubuf__ T0* yOriginL
     RegTensor<float> tmp;
     RegTensor<uint32_t> tmp0;
     RegTensor<uint32_t> tmp1;
-    RegTensor<uint32_t> tmp2;
-    RegTensor<uint32_t> tmp3;
     RegTensor<int32_t> tmp4;
     RegTensor<uint8_t> tmp5;
     UnalignRegForStore uReg;
@@ -971,16 +970,12 @@ __simd_vf__ inline void VFProcessSwigluMxFp8InvScaleFullVf(__ubuf__ T0* yOriginL
     MaskReg pregMain1 = CreateMask<T0, MaskPattern::ALL>();
     MaskReg pregMerge = UpdateMask<float>(sreg);
     MaskReg pregMerge1 = UpdateMask<float>(sreg1);
-    MaskReg compareMask0;
     Duplicate(one, 1.0f, pregMain0);
-    Duplicate(zeroUint32, static_cast<uint32_t>(0), pregMain0);
     Duplicate(zero, 0.0f, pregMain0);
-    Duplicate(oneUint32, static_cast<uint32_t>(1), pregMain0);
     Duplicate(coeff, maxValueInt, pregMain0);
-    Duplicate(tmp0, FAST_LOG_AND_VALUE1, pregMerge);
-    Duplicate(tmp1, FAST_LOG_AND_VALUE2, pregMerge);
-    Duplicate(tmp3, static_cast<uint32_t>(127), pregMerge);
-    Duplicate(tmp4, static_cast<int32_t>(127), pregMerge);
+    Duplicate(tmp0, FAST_LOG_SIGN_MASK, pregMerge);
+    Duplicate(tmp1, FAST_LOG_MANTISSA_CARRY, pregMerge);
+    Duplicate(tmp4, static_cast<int32_t>(FAST_LOG_INV_EXP_BIAS), pregMerge);
     for (uint16_t i = 0; i < curRowNum; i++) {
         if constexpr (hasWeight) {
             LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(weight, weightLocalAddr + i);
@@ -1033,24 +1028,20 @@ __simd_vf__ inline void VFProcessSwigluMxFp8InvScaleFullVf(__ubuf__ T0* yOriginL
             Maxs(clampScale, scale, 0.0001f, pregMerge);                 // amax
             Mul(scale, clampScale, (RegTensor<float>&)coeff, pregMerge); // sf = amax / 448.0
 
-            // 量化逻辑
-            ShiftRights(scale2, (RegTensor<uint32_t>&)scale, static_cast<int16_t>(FAST_LOG_SHIFT_BITS), pregMerge);
-            And(scale2, scale2, tmp0, pregMerge);                      // exp
-            And(scale3, (RegTensor<uint32_t>&)scale, tmp1, pregMerge); // man_bits
-            Compare<uint32_t, AscendC::CMPMODE::NE>(compareMask0, scale3, zeroUint32, pregMerge);
-            Select(tmp2, oneUint32, zeroUint32, compareMask0); // man_bits != 0
-            Sub(scale3, scale2, tmp3, pregMerge);              // exp - 127
-            // exp_scale-uint32 = exp - 127 + (man_bits != 0)
-            Add((RegTensor<uint32_t>&)scale4, scale3, tmp2, pregMerge);
-            Adds(scale5, scale4, 127, pregMerge); // sf_uint32
+            // 量化逻辑: 先清符号位, bits + 0x7FFFFF 使非零尾数进位到指数域,
+            // ((bits & 0x7FFFFFFF) + 0x7FFFFF) >> 23 即 sf_uint32 = exp + (mantissa != 0),
+            // 对所有输入(含 denormal/inf/NaN)与拆位+比较的原始实现位级等价
+            And(scale2, (RegTensor<uint32_t>&)scale, tmp0, pregMerge);
+            Add(scale2, scale2, tmp1, pregMerge);
+            ShiftRights(scale2, scale2, static_cast<int16_t>(FAST_LOG_SHIFT_BITS), pregMerge); // sf_uint32
 
-            Cast<uint8_t, int32_t, castTraitU32toU8Even>(tmp5, scale5, pregMerge);
+            Cast<uint8_t, int32_t, castTraitU32toU8Even>(tmp5, (RegTensor<int32_t>&)scale2, pregMerge);
             Pack(scale7, (RegTensor<uint32_t>&)tmp5);
             Pack(scale6, scale7);
             StoreUnAlign<uint8_t, PostLiteral::POST_MODE_UPDATE>(scaleLocalAddr, scale6, uReg, 4);
 
-            Sub(scale5, tmp4, scale4, pregMerge); // 127 - exp_scale
-            // ((127 - exp_scale) << 23).view(float32)
+            Sub(scale5, tmp4, (RegTensor<int32_t>&)scale2, pregMerge); // 254 - sf_uint32
+            // ((254 - sf_uint32) << 23).view(float32) == 2^(127 - exp_scale)
             ShiftLefts((RegTensor<int32_t>&)invScale, scale5, static_cast<int16_t>(23), pregMerge);
             Interleave(invScale0, invScale1, invScale, invScale);
             Interleave(invScale1, invScale, invScale0, invScale0);
@@ -1072,7 +1063,6 @@ __simd_vf__ inline void VFProcessSwigluMxFp8InvScaleVf(__ubuf__ T0* yOriginLocal
 {
     RegTensor<float> weight;
     RegTensor<float> one;
-    RegTensor<uint32_t> oneUint32;
     RegTensor<float> zero;
     RegTensor<uint32_t> zeroUint32;
     RegTensor<T0> x0;
@@ -1098,8 +1088,6 @@ __simd_vf__ inline void VFProcessSwigluMxFp8InvScaleVf(__ubuf__ T0* yOriginLocal
     RegTensor<float> scale0;
     RegTensor<float> scale1;
     RegTensor<uint32_t> scale2;
-    RegTensor<uint32_t> scale3;
-    RegTensor<int32_t> scale4;
     RegTensor<int32_t> scale5;
     RegTensor<uint8_t> scale6;
     RegTensor<uint16_t> scale7;
@@ -1107,8 +1095,6 @@ __simd_vf__ inline void VFProcessSwigluMxFp8InvScaleVf(__ubuf__ T0* yOriginLocal
     RegTensor<float> tmp;
     RegTensor<uint32_t> tmp0;
     RegTensor<uint32_t> tmp1;
-    RegTensor<uint32_t> tmp2;
-    RegTensor<uint32_t> tmp3;
     RegTensor<int32_t> tmp4;
     RegTensor<uint8_t> tmp5;
     UnalignRegForStore uReg;
@@ -1116,16 +1102,13 @@ __simd_vf__ inline void VFProcessSwigluMxFp8InvScaleVf(__ubuf__ T0* yOriginLocal
     MaskReg pregMain0 = CreateMask<float, MaskPattern::ALL>();
     MaskReg pregMain1 = CreateMask<T0, MaskPattern::ALL>();
     MaskReg pregMerge = UpdateMask<float>(sreg);
-    MaskReg compareMask0;
     Duplicate(one, 1.0f, pregMain0);
     Duplicate(zeroUint32, static_cast<uint32_t>(0), pregMain0);
     Duplicate(zero, 0.0f, pregMain0);
-    Duplicate(oneUint32, static_cast<uint32_t>(1), pregMain0);
     Duplicate(coeff, maxValueInt, pregMain0);
-    Duplicate(tmp0, FAST_LOG_AND_VALUE1, pregMerge);
-    Duplicate(tmp1, FAST_LOG_AND_VALUE2, pregMerge);
-    Duplicate(tmp3, static_cast<uint32_t>(127), pregMerge);
-    Duplicate(tmp4, static_cast<int32_t>(127), pregMerge);
+    Duplicate(tmp0, FAST_LOG_SIGN_MASK, pregMerge);
+    Duplicate(tmp1, FAST_LOG_MANTISSA_CARRY, pregMerge);
+    Duplicate(tmp4, static_cast<int32_t>(FAST_LOG_INV_EXP_BIAS), pregMerge);
     for (uint16_t i = 0; i < curRowNum; i++) {
         if constexpr (hasWeight) {
             LoadAlign<float, AscendC::Reg::LoadDist::DIST_BRC_B32>(weight, weightLocalAddr + i);
@@ -1191,25 +1174,21 @@ __simd_vf__ inline void VFProcessSwigluMxFp8InvScaleVf(__ubuf__ T0* yOriginLocal
             Maxs(clampScale, scale, 0.0001f, pregMerge);                 // amax
             Mul(scale, clampScale, (RegTensor<float>&)coeff, pregMerge); // sf = amax / 448.0
 
-            // 量化逻辑
-            ShiftRights(scale2, (RegTensor<uint32_t>&)scale, static_cast<int16_t>(FAST_LOG_SHIFT_BITS), pregMerge);
-            And(scale2, scale2, tmp0, pregMerge);                      // exp
-            And(scale3, (RegTensor<uint32_t>&)scale, tmp1, pregMerge); // man_bits
-            Compare<uint32_t, AscendC::CMPMODE::NE>(compareMask0, scale3, zeroUint32, pregMerge);
-            Select(tmp2, oneUint32, zeroUint32, compareMask0); // man_bits != 0
-            Sub(scale3, scale2, tmp3, pregMerge);              // exp - 127
-            // exp_scale-uint32 = exp - 127 + (man_bits != 0)
-            Add((RegTensor<uint32_t>&)scale4, scale3, tmp2, pregMerge);
-            Adds(scale5, scale4, 127, pregMerge); // sf_uint32
+            // 量化逻辑: 先清符号位, bits + 0x7FFFFF 使非零尾数进位到指数域,
+            // ((bits & 0x7FFFFFFF) + 0x7FFFFF) >> 23 即 sf_uint32 = exp + (mantissa != 0),
+            // 对所有输入(含 denormal/inf/NaN)与拆位+比较的原始实现位级等价
+            And(scale2, (RegTensor<uint32_t>&)scale, tmp0, pregMerge);
+            Add(scale2, scale2, tmp1, pregMerge);
+            ShiftRights(scale2, scale2, static_cast<int16_t>(FAST_LOG_SHIFT_BITS), pregMerge); // sf_uint32
 
-            Cast<uint8_t, int32_t, castTraitU32toU8Even>(tmp5, scale5, pregMerge);
+            Cast<uint8_t, int32_t, castTraitU32toU8Even>(tmp5, (RegTensor<int32_t>&)scale2, pregMerge);
             Pack(scale7, (RegTensor<uint32_t>&)tmp5);
             Pack(scale6, scale7);
             uint32_t curScaleNum = (curCol + PER_MX_FP16 - 1) / PER_MX_FP16;
             StoreUnAlign<uint8_t, PostLiteral::POST_MODE_UPDATE>(scaleLocalAddr, scale6, uReg, curScaleNum);
 
-            Sub(scale5, tmp4, scale4, pregMerge); // 127 - exp_scale
-            // ((127 - exp_scale) << 23).view(float32)
+            Sub(scale5, tmp4, (RegTensor<int32_t>&)scale2, pregMerge); // 254 - sf_uint32
+            // ((254 - sf_uint32) << 23).view(float32) == 2^(127 - exp_scale)
             ShiftLefts((RegTensor<int32_t>&)invScale, scale5, static_cast<int16_t>(23), pregMerge);
             Interleave(invScale0, invScale1, invScale, invScale);
             Interleave(invScale1, invScale, invScale0, invScale0);
