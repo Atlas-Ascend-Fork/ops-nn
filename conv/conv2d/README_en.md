@@ -54,7 +54,7 @@ English | [简体中文](./README.md)
 
 - Ascend 950PR/Ascend 950DT:
 
-  - The size of each dimension of each `tensor` in `x`, `filter`, `bias`, `offset_w`, and `y` should be within the range [1, 1000000].
+  - The size of each dimension of each `tensor` in `x`, `filter`, `bias`, `offset_w`, and `y` should be within the range [1, 1000000], except that the W-axis dimensions (the `w` of `x`, the `kernel_w` of `filter`, and the `w` of `y`) support up to 10000000.
   - The values of `strides` and `dilations` should be within the range [1, 1000000].
   - The values of `pads` should be within the range [0, 1000000].
   - The supported combinations of data types and formats are as follows:

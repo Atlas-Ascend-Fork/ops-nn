@@ -169,7 +169,9 @@ __aicore__ __forceinline__ void ConvGroupCommon<CONV, CONV_TILING>::CalcStartAdd
         CalcStartAddrOriGroupHWC(doIdxStart, diIdxStart);
     } else {
         fmapOneGroupSize = convOps->ciPerGroup * dhwIn;
-        weightOneCoSize = convOps->ciPerGroup * kd * convTilingData->kh * convTilingData->kw;
+        // cast the first uint16/uint32 operand to uint64: the leading product may exceed the
+        // uint32 range once the D dim supports up to 10000000
+        weightOneCoSize = static_cast<uint64_t>(convOps->ciPerGroup) * kd * convTilingData->kh * convTilingData->kw;
         weightOneGroupSize = convOps->coPerGroup * weightOneCoSize;
         outputOneGroupSize = convOps->coPerGroup * dhwOut;
         CalcStartAddrOriGroupCHW(doIdxStart, diIdxStart);
@@ -332,12 +334,16 @@ __aicore__ __forceinline__ void ConvGroupCommon<CONV, CONV_TILING>::CalcStartAdd
     fmStartAddr = convOps->batchIdxStart * convOps->fmapOneBatchSize + convOps->groupIdxStart * fmapOneGroupSize;
     CalcStartAddrFmapHW();
     if constexpr (CONV::B_FORMAT == ConvFormat::FRACTAL_Z) {
-        weightOneGroupSize = convTilingData->coutOpt * convTilingData->cinOpt * kd * convTilingData->kh *
-                             convTilingData->kw;
+        // cast the first uint32 operand to uint64: the leading product may exceed the uint32
+        // range once the D dim supports up to 10000000
+        weightOneGroupSize = static_cast<uint64_t>(convTilingData->coutOpt) * convTilingData->cinOpt * kd *
+                             convTilingData->kh * convTilingData->kw;
         weightStartAddr = convOps->groupIdxStart * weightOneGroupSize + convOps->nIdxStart * convOps->k0;
     } else {
-        weightOneGroupSize = convTilingData->coutOpt * convOps->ciPerGroup * kd * convTilingData->kh *
-                             convTilingData->kw;
+        // cast the first uint32 operand to uint64: the leading product may exceed the uint32
+        // range once the D dim supports up to 10000000
+        weightOneGroupSize = static_cast<uint64_t>(convTilingData->coutOpt) * convOps->ciPerGroup * kd *
+                             convTilingData->kh * convTilingData->kw;
         weightStartAddr = convOps->groupIdxStart * weightOneGroupSize;
     }
 
@@ -359,8 +365,10 @@ __aicore__ __forceinline__ void ConvGroupCommon<CONV, CONV_TILING>::CalcStartAdd
     fmStartAddr = convOps->batchIdxStart * convOps->fmapOneBatchSize + convOps->groupIdxStart * convTilingData->cinOpt;
     CalcStartAddrFmapHW();
     if constexpr (CONV::B_FORMAT == ConvFormat::FRACTAL_Z) {
-        weightOneGroupSize = convTilingData->coutOpt * convTilingData->cinOpt * kd * convTilingData->kh *
-                             convTilingData->kw;
+        // cast the first uint32 operand to uint64: the leading product may exceed the uint32
+        // range once the D dim supports up to 10000000
+        weightOneGroupSize = static_cast<uint64_t>(convTilingData->coutOpt) * convTilingData->cinOpt * kd *
+                             convTilingData->kh * convTilingData->kw;
         weightStartAddr = convOps->groupIdxStart * weightOneGroupSize + convOps->nIdxStart * convOps->k0;
     } else {
         weightOneGroupSize = convTilingData->coutOpt;

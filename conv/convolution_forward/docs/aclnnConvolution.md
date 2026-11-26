@@ -479,7 +479,10 @@ aclnnStatus aclnnConvolution(
         </ul>
      </td>
      <td>
-        transposed为true的场景，支持1D、2D和3D卷积，支持空Tensor，此时padding区域梯度的计算行为取决于输入shape，根据算子优化策略的不同，padding区域梯度可能直接置0。
+        <ul>
+          <li>transposed为true的场景，支持1D、2D和3D卷积，支持空Tensor，此时padding区域梯度的计算行为取决于输入shape，根据算子优化策略的不同，padding区域梯度可能直接置0。</li>
+          <li>transposed为false的1D、2D卷积场景，input、weight、bias中每一组tensor的每一维大小都应不大于1000000，其中W轴维度（input的w、weight的kernel_w、output的w）最大支持到10000000。</li>
+        </ul>
      </td>
    </tr>
    </tbody>

@@ -459,7 +459,10 @@ aclnnStatus aclnnConvolution(
           <li>For each group of tensors in input, weight, and bias, the Dimension Size of each dimension should not be greater than 1000000.</li>
         </ul>
      </td>
-     <td>        When transposed is true, 1D, 2D, and 3D Convolution are supported, and empty tensors are supported. In this case, the computation behavior of gradients in the padding area depends on the input shape. Depending on the operator optimization strategy, gradients in the padding area may be directly set to 0.
+     <td>        <ul>
+          <li>When transposed is true, 1D, 2D, and 3D Convolution are supported, and empty tensors are supported. In this case, the computation behavior of gradients in the padding area depends on the input shape. Depending on the operator optimization strategy, gradients in the padding area may be directly set to 0.</li>
+          <li>In the non-transposed 1D/2D convolution scenarios, the size of each dimension of each group of tensors in input, weight, and bias must not exceed 1000000, except that the W-axis dimensions (the w of input, the kernel_w of weight, and the w of output) support up to 10000000.</li>
+        </ul>
      </td>
    </tr>
    </tbody>

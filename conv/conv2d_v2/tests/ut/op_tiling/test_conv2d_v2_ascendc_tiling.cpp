@@ -8492,7 +8492,7 @@ INSTANTIATE_TEST_CASE_P(
                                    "NCHW",
                                    "9201"},
                       // output W upper bound exceeded: rejected by CheckOutputShape
-                      Conv2DParams{{1, 16, 16, 1000000},
+                      Conv2DParams{{1, 16, 16, 10000000},
                                    {16, 16, 1, 1},
                                    {0, 0, 1, 1},
                                    {1, 1},

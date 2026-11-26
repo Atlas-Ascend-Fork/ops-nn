@@ -117,11 +117,11 @@ namespace ge {
 | x size            | n                    | [1, 1000000] |\n
 |                   | in_channels          | [1, 1000000] |\n
 |                   | h                    | [1, 100000]  |\n
-|                   | w                    | [1, 4096]    |\n
+|                   | w                    | [1, 10000000] |\n
 | filter size       | out_channels         | [1, 1000000] |\n
 |                   | in_channels / groups | [1, 1000000] |\n
 |                   | kernel_h             | [1, 511]     |\n
-|                   | kernel_w             | [1, 511]     |\n
+|                   | kernel_w             | [1, 10000000] |\n
 | bias size         | out_channels         | [1, 1000000] |\n
 | offset_w size     | out_channels or 1    | [1, 1000000] |\n
 | scale0 size       | out_channels or 1    | [1, 1000000] |\n
@@ -150,7 +150,9 @@ namespace ge {
 *\n
 * @li In Ascend 950PR&950DT products: If any dimension of
 * x/filter/bias/offset_w/scale0/relu_weight0/clip_value0/scale1/relu_weight1/clip_value1/y shape exceeds max
-* 1000000, the product of each dimension of x/filter/bias/scale/offset/y
+* 1000000 (except that the W-axis dimensions, i.e. the w of x, the kernel_w
+* of filter and the w of y, support up to 10000000), the product of each
+* dimension of x/filter/bias/scale/offset/y
 * shape exceeds max int32(2147483647) or the value of strides/pads/dilations/offset_x
 * exceeds the range in the above table, the correctness of the operator cannot be guaranteed.
 *\n

@@ -126,7 +126,9 @@ namespace ge {
 * shape exceeds max int32(2147483647) or the value of strides/pads/dilations/offset_x
 * exceeds the range in the above table, the correctness of the operator cannot be guaranteed. \n
 * In Ascend 950 AI Processor: If any dimension of x/filter/bias/offset_w/y shape exceeds max
-* 1000000, the product of each dimension of x/filter/bias/offset_w/y
+* 1000000 (except that the W-axis dimensions, i.e. the w of x, the kernel_w
+* of filter and the w of y, support up to 10000000), the product of each
+* dimension of x/filter/bias/offset_w/y
 * shape exceeds max int32(2147483647) or the value of strides/pads/dilations/offset_x
 * exceeds the range in the above table, the correctness of the operator cannot be guaranteed.
 *\n

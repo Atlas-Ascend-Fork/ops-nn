@@ -334,8 +334,11 @@ aclnnStatus aclnnConvDepthwise2d(
   </tr>
   <tr>
     <th scope="row">其他约束</th>
-    <td colspan="2">
+    <td>
       self、weight、bias中每一组tensor的每一维大小都应不大于1000000。
+    </td>
+    <td>
+      self、weight、bias中每一组tensor的每一维大小都应不大于1000000，其中W轴维度（self的w、weight的kernel_w、output的w）最大支持到10000000。
     </td>
   </tr>
   </tbody>

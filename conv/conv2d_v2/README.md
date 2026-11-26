@@ -148,7 +148,7 @@
 - Ascend 950PR&950DT系列产品：
 
   - 当`x`数据类型为`HIFLOAT8`时，`filter`的数据类型必须与`x`一致，且`x`和`filter`的format都仅支持为`NCHW`。
-  - `x`、`filter`、`bias`、`y`中每一组`tensor`的每一维大小都应该在[1, 1000000]范围内。
+  - `x`、`filter`、`bias`、`y`中每一组`tensor`的每一维大小都应该在[1, 1000000]范围内，其中W轴维度（`x`的`w`、`filter`的`kernel_w`、`y`的`w`）最大支持到10000000。
   - `strides`、`dilations`的值应该在[1, 1000000]范围内。
   - `pads`的值应该在[0, 1000000]范围内。
   - 支持的数据类型和Format组合如下表：

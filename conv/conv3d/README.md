@@ -67,7 +67,7 @@ dtype/format支持组合：
 
 ## 约束说明
 
-- `x`、`filter`、`y`的shape均为5D（`x`支持动态shape`-1`与动态rank`-2`）。
+- `x`、`filter`、`y`的shape均为5D（`x`支持动态shape`-1`与动态rank`-2`），其中D轴维度（`x`的`d`、`filter`的`kernel_d`、`y`的`d`）最大支持到10000000，其余维度最大支持1000000。
 - `strides`、`dilations`长度必须为5，且`strides`的D/H/W维必须大于0；`dilations`的D维取值范围为[1, 1000000]，H/W维取值范围为[1, 255]。
 - `pads`长度支持1/3/6（长度3按`[pad_d, pad_h, pad_w]`广播到对应维两侧，长度1全维同值）；静态shape下取值必须不小于0。
 - `data_format`仅支持`NCDHW`或`NDHWC`；`x`的format仅支持NCDHW/NDHWC，`filter`仅支持NCDHW/NDHWC/DHWCN，`y`仅支持NCDHW/NDHWC。

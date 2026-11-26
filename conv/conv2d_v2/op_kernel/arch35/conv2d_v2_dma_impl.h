@@ -72,6 +72,20 @@ public:
 
     __aicore__ inline void DmaSyncWait(Intf* self)
     {
+        // Origin-group conv may run multiple groups on one core. After the last fmap load of a group,
+        // DmaUpdateAL1 suppresses the next MTE1_MTE3 permission because loadUB2L1Iter has reached
+        // aL1LoadTimes. Vector core then waits for that permission before overwriting AL1 with the
+        // next group's fmap (see DmaVecImpl), so cube side must grant it here on each group's first
+        // load. The grant is issued into the MTE1 queue before the wait below, hence ordered after
+        // all AL1->L0A loads of the previous group: AL1 can only be overwritten after consumption.
+        if (unlikely(self->ctx.loadUB2L1Iter == 0 && self->ctx.dmaCubeLoaded)) {
+            CrossCoreSetFlag<CV_ENHANCE_MODE, PIPE_MTE1>(CV_SYNC_ID_MTE1_MTE3);
+            if constexpr (VEC_NUM == DOUBLE_VEC_CORE) {
+                if (self->ctx.convTilingData->cinAInCore > Intf::k0) {
+                    CrossCoreSetFlag<CV_ENHANCE_MODE, PIPE_MTE1>(VEC_ID_MAX + CV_SYNC_ID_MTE1_MTE3);
+                }
+            }
+        }
         CrossCoreWaitFlag<CV_ENHANCE_MODE, PIPE_MTE1>(CV_SYNC_ID_MTE3_MTE1);
         if constexpr (VEC_NUM == DOUBLE_VEC_CORE) {
             if (self->ctx.convTilingData->cinAInCore > Intf::k0) {
@@ -79,6 +93,7 @@ public:
             }
         }
         self->ctx.loadUB2L1Iter++;
+        self->ctx.dmaCubeLoaded = true;
     }
 
     __aicore__ inline void DmaCalcAL1LoadTimes(Intf* self)
@@ -376,7 +391,7 @@ public:
             self->ctx.dmaLoadGM2UBTools.LoadGM2UB();
 
             if (self->ctx.vecCi1Iter == 0 && self->ctx.vecKhIter == 0 && self->ctx.vecKwIter == 0 &&
-                !self->ctx.isFirstIterate) {
+                self->ctx.dmaVecLoaded) {
                 CrossCoreWaitFlag<CV_ENHANCE_MODE, PIPE_MTE3>(CV_SYNC_ID_MTE1_MTE3);
             }
 
@@ -390,7 +405,7 @@ public:
                 self->ctx.vecKwIter == self->ctx.maxVecKwIter) {
                 CrossCoreSetFlag<CV_ENHANCE_MODE, PIPE_MTE3>(CV_SYNC_ID_MTE3_MTE1);
             }
-
+            self->ctx.dmaVecLoaded = true;
             self->ctx.isFirstIterate = false;
         }
 

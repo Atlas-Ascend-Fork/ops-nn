@@ -26,7 +26,8 @@ namespace ge {
             The format of x is NCDHW or NDHWC.
             The data is stored in the order of: [n, in_channels, d, h, w] or [n, d, h, w, in_channels]. \n
             Any dimension of x shape must be in [1, 2147483646] except Ascend 950 AI Processor. \n
-            In Ascend 950 AI Processor, any dimension of x shape must be in [1, 1000000].
+            In Ascend 950 AI Processor, any dimension of x shape must be in [1, 1000000],
+            except that the d dimension supports up to 10000000.
     * @li filter: A required 5D tensor of convolution kernel.
                 Must have the same type as "x".
                 The format support NCDHW or DHWCN.
@@ -39,7 +40,8 @@ namespace ge {
                 When format is DHWCN and type is float32,
                 filter should be a constants except Ascend 950 AI Processor. \n
                 In Ascend 950 AI Processor, the kernel_h and kernel_w dimensions must be in [1, 255],
-                And the other values of filter_size must be in [1, 1000000].
+                And the other values of filter_size must be in [1, 1000000],
+                except that the kernel_d dimension supports up to 10000000.
     * @li bias: An optional 1D tensor of additive biases to the outputs.
                 The data is stored in the order of: [out_channels].
                 "out_channels" must equals to the "out_channels" of output y. \n
@@ -115,7 +117,8 @@ Processor. \n In Ascend 950 AI Processor the dilation_d dimensions must be in [1
 *                 / stride_w + 1
 *\n
         Any dimension of y shape must be in [1, 2147483646] except Ascend 950 AI Processor. \n
-        In Ascend 950 AI Processor, any dimension of y shape must be in [1, 1000000].
+        In Ascend 950 AI Processor, any dimension of y shape must be in [1, 1000000],
+        except that the d dimension supports up to 10000000.
 * @attention Constraints:
     * @li The input x size after padding should be greater than the filter size.
     * @li The w dimension of the input x supports cases exceeding 4096, but it may

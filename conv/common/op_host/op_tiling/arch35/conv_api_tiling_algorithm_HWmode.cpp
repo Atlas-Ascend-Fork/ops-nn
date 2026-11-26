@@ -572,6 +572,10 @@ void ConvTilingAlgorithmHWmode::L0TilingRest(bool kFullLoadFlag)
     // when al0 & bl0 open db but kl0 tiling not fullLoad Kl1, need close db and update l0 tiling
     bool resetFlag = this->dbValue.pbAL0 == DOUBLE_BUFFER_NUM && this->dbValue.pbBL0 == DOUBLE_BUFFER_NUM &&
                      kFullLoadFlag;
+
+    if (KeepL0DoubleBufferForDma()) {
+        resetFlag = false;
+    }
     if (!resetFlag || tilingIns_->platformInfo.npuArch == Ops::Base::DAV_5162) {
         return;
     }
@@ -594,17 +598,46 @@ void ConvTilingAlgorithmHWmode::L0TilingRest(bool kFullLoadFlag)
     SetL0TilingRes();
 }
 
+// The kernel-registered tiling keys of the DMA mode only cover L0PingPong ALL_CLOSE for the
+// FmpTiling FULLLOAD + WeightTiling FULLLOAD family.
+bool ConvTilingAlgorithmHWmode::KeepL0DoubleBufferForDma() const
+{
+    if (!tilingIns_->isDmaFlag || tilingIns_->isC04Flag) {
+        return false;
+    }
+    if (tilingIns_->attrInfo.groups > 1) {
+        return true;
+    }
+    uint64_t ci1 = CeilDiv(static_cast<uint64_t>(tilingIns_->shapeInfo.orgCi), tilingIns_->cubeInfo.k0);
+    uint64_t kernelKSize = ci1 * static_cast<uint64_t>(tilingIns_->shapeInfo.orgkH) *
+                           static_cast<uint64_t>(tilingIns_->shapeInfo.orgkW) * tilingIns_->cubeInfo.k0;
+    // mirrors GetFmpTilingValForHWSplit: FULLLOAD_AL1 requires kAL1/hoAL1/woAL1 all full-load
+    bool kAL1FullloadFlag = tilingIns_->l1TilingInfo.kAL1 == kernelKSize;
+    bool hoL1FullloadFlag = static_cast<uint64_t>(tilingIns_->shapeInfo.singleHo) <= tilingIns_->l1TilingInfo.hoAL1;
+    bool woL1FullloadFlag = static_cast<uint64_t>(tilingIns_->shapeInfo.singleWo) <= tilingIns_->l1TilingInfo.woAL1 &&
+                            !(CeilDiv(static_cast<uint64_t>(tilingIns_->shapeInfo.singleWo),
+                                      tilingIns_->l0TilingInfo.woL0) > 1 &&
+                              tilingIns_->shapeInfo.singleWo % tilingIns_->cubeInfo.m0 > 0 &&
+                              tilingIns_->l0TilingInfo.hoL0 > 1);
+    // mirrors GetWeightTilingVal: FULLLOAD_BL1 requires kBL1 and nBL1 full-load
+    bool kBL1FullloadFlag = tilingIns_->l1TilingInfo.kBL1 == kernelKSize;
+    bool nBL1FullloadFlag = tilingIns_->l1TilingInfo.nBL1 == static_cast<uint64_t>(tilingIns_->shapeInfo.singleCo);
+    return !(kAL1FullloadFlag && hoL1FullloadFlag && woL1FullloadFlag && kBL1FullloadFlag && nBL1FullloadFlag);
+}
+
 void ConvTilingAlgorithmHWmode::CheckL0DoubleBuffer()
 {
     bool kFullLoadFlag = tilingIns_->l0TilingInfo.kL0 ==
                          (tilingIns_->isC04Flag ? this->l1TilingCalc.c04KSizeAlign : this->l1TilingCalc.kBL1MaxSize);
+    bool keepL0DbCase = KeepL0DoubleBufferForDma();
 
-    if (static_cast<uint64_t>(tilingIns_->shapeInfo.singleHo) <= tilingIns_->l0TilingInfo.hoL0 &&
+    if (!keepL0DbCase && static_cast<uint64_t>(tilingIns_->shapeInfo.singleHo) <= tilingIns_->l0TilingInfo.hoL0 &&
         static_cast<uint64_t>(tilingIns_->shapeInfo.singleWo) <= tilingIns_->l0TilingInfo.woL0 && kFullLoadFlag) {
         this->dbValue.pbAL0 = SINGLE_BUFFER_NUM;
     }
 
-    if (kFullLoadFlag && tilingIns_->shapeInfo.singleCo1 * tilingIns_->cubeInfo.n0 == tilingIns_->l0TilingInfo.nL0) {
+    if (!keepL0DbCase && kFullLoadFlag &&
+        tilingIns_->shapeInfo.singleCo1 * tilingIns_->cubeInfo.n0 == tilingIns_->l0TilingInfo.nL0) {
         this->dbValue.pbBL0 = SINGLE_BUFFER_NUM;
     }
 

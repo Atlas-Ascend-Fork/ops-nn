@@ -180,7 +180,7 @@ English | [简体中文](./README.md)
 - Ascend 950PR&950DT products:
   - The data type of `x` must be the same as that of `filter`.
   - For the `filter` input, the sizes of `H` and `W` should be in the range [1, 511].
-  - For `x`, `filter`, `bias`, `scale`, and `y`, the size of each dimension of each `tensor` should be in the range [1, 1000000].
+  - For `x`, `filter`, `bias`, `scale`, and `y`, the size of each dimension of each `tensor` should be in the range [1, 1000000], except that the D-axis dimensions (the `d` of `x`, the `kernel_d` of `filter`, and the `d` of `y`) support up to 10000000.
   - The dimension sizes of `bias` and `scale` should be consistent with the size of the `N` dimension of `filter`.
   - The supported combinations of data types and formats are shown in the following table:
 

@@ -69,7 +69,7 @@ Supported dtype/format combinations:
 
 ## Constraints
 
-- The shapes of `x`, `filter`, and `y` are all 5D (`x` supports dynamic shape `-1` and dynamic rank `-2`).
+- The shapes of `x`, `filter`, and `y` are all 5D (`x` supports dynamic shape `-1` and dynamic rank `-2`), where the D-axis dimensions (the `d` of `x`, the `kernel_d` of `filter`, and the `d` of `y`) support up to 10000000, and the other dimensions support up to 1000000.
 - The lengths of `strides` and `dilations` must be 5, and the D/H/W dimensions of `strides` must be greater than 0; the D dimension of `dilations` is in the range [1, 1000000], and the H/W dimensions are in the range [1, 255].
 - Lengths 1/3/6 of `pads` are supported (length 3 is broadcast to both sides of the corresponding dimensions as `[pad_d, pad_h, pad_w]`, and length 1 uses the same value for all dimensions); for static shapes, the values must not be less than 0.
 - `data_format` supports only `NCDHW` or `NDHWC`; the format of `x` supports only NCDHW/NDHWC, `filter` supports only NCDHW/NDHWC/DHWCN, and `y` supports only NCDHW/NDHWC.

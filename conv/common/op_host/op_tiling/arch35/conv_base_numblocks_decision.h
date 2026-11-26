@@ -25,7 +25,7 @@ using namespace std;
 
 uint64_t ConvCeilDiv(uint64_t a, uint64_t b);
 void ConvCalcCommFactor(const uint64_t num, const uint32_t numMax, vector<uint32_t>& reslist);
-uint32_t ConvAlignB(uint32_t a, uint32_t b);
+uint64_t ConvAlignB(uint64_t a, uint64_t b);
 uint64_t ConvInferHiL1(uint64_t inputHoL1, uint64_t hi, uint64_t singlekH, uint32_t dilationH, uint32_t strideH);
 uint64_t ConvInferWiL1(uint64_t inputWoL1, uint64_t wi, uint64_t singlekW, uint32_t dilationW, uint32_t strideW);
 int64_t ConvComputeHo(int64_t hi, int64_t hk, int64_t padTop, int64_t padBottom, int64_t dilationH, int64_t strideH);

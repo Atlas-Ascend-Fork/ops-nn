@@ -194,6 +194,7 @@ private:
     void UpdateHoL0WoL0(uint64_t& value, uint64_t& index, std::vector<uint64_t>& range, uint64_t valueMax,
                         uint64_t anotherValue);
     void L0TilingRest(bool kFullLoadFlag);
+    bool KeepL0DoubleBufferForDma() const;
     void CheckL0DoubleBuffer();
     void GetKhKwL1Tiling();
     void ScaleBiasUbTilingDecision();

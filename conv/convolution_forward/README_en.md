@@ -71,6 +71,7 @@ English | [简体中文](./README.md)
 ## Constraints
 
 * <term>Atlas A2 products</term>, <term>Atlas A3 products</term>: the size of each dimension of each group of tensors in input, weight, and bias must not be greater than 1000000.
+* <term>Ascend 950PR&950DT products</term>: in the non-transposed 1D/2D convolution scenarios, the size of each dimension of each group of tensors in input/weight/bias must not be greater than 1000000, except that the W-axis dimensions (the `w` of input, the `kernel_w` of weight, and the `w` of output for 1D/2D convolution) support up to 10000000.
 * <term>Ascend 950PR&950DT products</term>: in the scenario where transposed is true, 1D, 2D, and 3D convolutions are supported, and empty tensors are supported.
 * Due to hardware resource limits, the operator fails to execute for certain combinations of parameter values. Analyze and troubleshoot the problem according to the log information. If the problem cannot be resolved, click [Link](https://www.hiascend.com/support) to obtain technical support.
 

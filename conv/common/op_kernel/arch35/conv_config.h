@@ -358,6 +358,8 @@ public:
         // Iterate Var
         uint8_t isFirstIterate = true;   // 是否第一次Iterate
         uint8_t isFirstIterateDB = true; // cv 1:1 db vector iterate
+        uint8_t dmaVecLoaded = false;    // dma vec是否完成了首次fmap装载
+        uint8_t dmaCubeLoaded = false;   // dma cube是否完成过首次fmap消费
         uint8_t kAL1fullload = false;
         uint8_t kBL1fullload = false;
         uint8_t loadAL1Flag = true;   // 是否载入AL1的标志

@@ -253,13 +253,13 @@ void Conv2dTiling::GetDmaUbTiling(ConvDmaParams& params)
 void Conv2dTiling::SetScalarParams(optiling::Conv2DTilingData& tiling)
 {
     // calculate the follow params in tiling process, for scalar optimization in kernel
-    uint32_t kernelHxkernelW = tiling.get_kernelH() * tiling.get_kernelW();
+    uint64_t kernelHxkernelW = static_cast<uint64_t>(tiling.get_kernelH()) * tiling.get_kernelW();
     uint32_t khL1xhwL1 = tiling.get_khL1() * tiling.get_kwL1();
-    uint32_t kernelValueInKSize = isDmaFlag ? khL1xhwL1 : kernelHxkernelW;
-    uint32_t cinAInCore = isC04Flag ? C04_CIN_SIZE : tiling.get_kAL1() / kernelValueInKSize;
-    uint32_t kAL1Tail = (tiling.get_singleCoreCi() * kernelValueInKSize) % tiling.get_kAL1();
+    uint64_t kernelValueInKSize = isDmaFlag ? khL1xhwL1 : kernelHxkernelW;
+    uint64_t cinAInCore = isC04Flag ? C04_CIN_SIZE : tiling.get_kAL1() / kernelValueInKSize;
+    uint64_t kAL1Tail = (tiling.get_singleCoreCi() * kernelValueInKSize) % tiling.get_kAL1();
     kAL1Tail = kAL1Tail == 0 ? tiling.get_kAL1() : kAL1Tail;
-    uint32_t kBL1Tail = (tiling.get_singleCoreCi() * kernelValueInKSize) % tiling.get_kBL1();
+    uint64_t kBL1Tail = (tiling.get_singleCoreCi() * kernelValueInKSize) % tiling.get_kBL1();
     kBL1Tail = kBL1Tail == 0 ? tiling.get_kBL1() : kBL1Tail;
     uint32_t cinATailInCore = kAL1Tail / kernelValueInKSize;
     uint32_t cinBTailInCore = kBL1Tail / kernelValueInKSize;
@@ -279,11 +279,11 @@ void Conv2dTiling::SetScalarParams(optiling::Conv2DTilingData& tiling)
     uint32_t cinBInCore = tiling.get_kBL1() / kernelValueInKSize;
     uint32_t nL1DivBlockSize = tiling.get_nBL1() / cubeInfo.n0;
 
-    tiling.set_kernelHxkernelW(kernelHxkernelW);
-    tiling.set_kernelHxkernelWxkernelD(kernelHxkernelW);
+    tiling.set_kernelHxkernelW(static_cast<uint32_t>(kernelHxkernelW));
+    tiling.set_kernelHxkernelWxkernelD(static_cast<uint32_t>(kernelHxkernelW));
     // l0TilingInfo.nL0 != 0 is checked before
     tiling.set_multiNBL1(static_cast<uint32_t>(CeilDiv(tiling.get_nBL1(), tiling.get_nL0())));
-    tiling.set_cinAInCore(cinAInCore);
+    tiling.set_cinAInCore(static_cast<uint32_t>(cinAInCore));
     tiling.set_cinATailInCore(cinATailInCore);
     tiling.set_orgHixWi(orgHixWi);
     tiling.set_cinOffsetBlockInGM(cinOffsetBlockInGM);

@@ -88,11 +88,11 @@ namespace ge {
 | x size           | n                    | [1, 1000000] |\n
 |                  | in_channels          | [1, 1000000] |\n
 |                  | h                    | [1, 100000]  |\n
-|                  | w                    | [1, 4096]    |\n
+|                  | w                    | [1, 10000000] |\n
 | filter size      | out_channels         | [1, 1000000] |\n
 |                  | in_channels / groups | [1, 1000000] |\n
 |                  | kernel_h             | [1, 511]     |\n
-|                  | kernel_w             | [1, 511]     |\n
+|                  | kernel_w             | [1, 10000000] |\n
 | bias size        | out_channels         | [1, 1000000] |\n
 | offset_w size    | out_channels         | [1, 1000000] |\n
 | strides          | stride_h             | [1, 63]      |\n
@@ -109,11 +109,10 @@ namespace ge {
 | pad_mode         | -                    | ["SPECIFIC", "SAME", "VALID", "SAME_UPPER", "SAME_LOWER"] |\n
 | enable_hf32      | -                    | [true, false] |\n
 *\n
-* @li The w dimension of the input image supports cases exceeding 4096, but it may
-* cause compilation errors.
-*\n
 * @li If any dimension of x/filter/bias/offset_w/y shape exceeds max
-* 1000000, the product of each dimension of x/filter/bias/offset_w/y
+* 1000000 (except that the W-axis dimensions, i.e. the w of x, the kernel_w
+* of filter and the w of y, support up to 10000000), the product of each
+* dimension of x/filter/bias/offset_w/y
 * shape exceeds max int32(2147483647) or the value of
 * strides/pads/dilations/groups/data_format/offset_x/pad_mode/enable_hf32
 * exceeds the range in the above table, the correctness of the operator cannot be guaranteed.

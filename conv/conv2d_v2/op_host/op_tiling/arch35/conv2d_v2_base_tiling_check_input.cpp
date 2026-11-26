@@ -228,6 +228,21 @@ ge::graphStatus Conv2dBaseTiling::CheckWeightShape()
         return ge::GRAPH_FAILED;
     }
 
+    uint64_t kernelSizeHxW = static_cast<uint64_t>(oriShapeAttrInfo_.oriWeightH) *
+                             static_cast<uint64_t>(oriShapeAttrInfo_.oriWeightW);
+    // the kernel feeds kernelSizeHxW into DataCopy/NdDma instruction configs
+    // whose parameter width is 32-bit
+    if (kernelSizeHxW > MAX_32_BIT_NUM) {
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context_->GetNodeType(), "filter",
+            VectorToString(GetInputShapeVec(context_, INPUT_WEIGHT_INDEX), IntToString<int64_t>).c_str(),
+            FormatString("The product of shape[%zu] and shape[%zu] of this parameter must not exceed %lu",
+                         paramInfo_.paramsIdxVec[paramInfo_.WEIGHT_PARAM_IDX][IDX_LIST_H_IDX],
+                         paramInfo_.paramsIdxVec[paramInfo_.WEIGHT_PARAM_IDX][IDX_LIST_W_IDX], MAX_32_BIT_NUM)
+                .c_str());
+        return ge::GRAPH_FAILED;
+    }
+
     auto k0 = CUBE_MKN_MAP.GetMKN(dtypeMap.at(descInfo_.weightDtype), MKN_K_IDX);
     if (k0 == 0) {
         OP_LOGE(paramInfo_.nodeType.c_str(), "AscendC: Get k0 = 0.");
@@ -368,12 +383,12 @@ ge::graphStatus Conv2dBaseTiling::CheckOutputShape()
         return ge::GRAPH_FAILED;
     }
 
-    if (!CheckDim(oriShapeAttrInfo_.oriOutputW, MAX_OUT_SHAPE)) {
+    if (!CheckDim(oriShapeAttrInfo_.oriOutputW, MAX_OUT_W_SHAPE)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
             context_->GetNodeType(), "y",
             VectorToString(GetOutputShapeVec(context_, OUTPUT_INDEX), IntToString<int64_t>).c_str(),
             FormatString("Shape[%zu] of this parameter must be within the range [%lu, %lu]",
-                         paramInfo_.paramsIdxVec[paramInfo_.OUT_PARAM_IDX][IDX_LIST_W_IDX], 1, MAX_OUT_SHAPE)
+                         paramInfo_.paramsIdxVec[paramInfo_.OUT_PARAM_IDX][IDX_LIST_W_IDX], 1, MAX_OUT_W_SHAPE)
                 .c_str());
         return ge::GRAPH_FAILED;
     }

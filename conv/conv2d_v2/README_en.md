@@ -150,7 +150,7 @@ English | [简体中文](./README.md)
 - Ascend 950PR&950DT products:
 
   - When the data type of `x` is `HIFLOAT8`, the data type of `filter` must be consistent with `x`, and the formats of `x` and `filter` both support only `NCHW`.
-  - The size of each dimension of each group of `tensor` in `x`, `filter`, `bias`, and `y` should be within the range [1, 1000000].
+  - The size of each dimension of each group of `tensor` in `x`, `filter`, `bias`, and `y` should be within the range [1, 1000000], except that the W-axis dimensions (the `w` of `x`, the `kernel_w` of `filter`, and the `w` of `y`) support up to 10000000.
   - The values of `strides` and `dilations` should be within the range [1, 1000000].
   - The values of `pads` should be within the range [0, 1000000].
   - The supported data type and format combinations are as follows:

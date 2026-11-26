@@ -178,7 +178,7 @@
 - Ascend 950PR&950DT系列产品：
   - `x`的数据类型必须与`filter`一致。
   - 对于`filter`输入，`H`、`W`的大小应该在 [1, 511] 的范围内。
-  - `x`、`filter`、`bias`、`scale`、`y`中每一组`tensor`的每一维大小都应该在[1, 1000000]范围内。
+  - `x`、`filter`、`bias`、`scale`、`y`中每一组`tensor`的每一维大小都应该在[1, 1000000]范围内，其中D轴维度（`x`的`d`、`filter`的`kernel_d`、`y`的`d`）最大支持到10000000。
   - `bias`和`scale`维度大小应该与`filter`的`N`维度大小一致。
   - 支持的数据类型和Format组合如下表：
 

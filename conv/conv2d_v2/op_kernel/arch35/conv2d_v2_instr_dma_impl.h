@@ -81,7 +81,7 @@ public:
         WaitFlag<HardEvent::V_MTE2>(eventId);
         copyParams.loopInfo.loopSize[NDDMA_LOOP0_INDEX] = IsCiTail() ? self_->ctx.ciTail : Intf::k0;
 
-        uint32_t baseOffset = self_->ctx.batchIter * self_->ctx.fmapOneBatchSize + self_->ctx.vecCi1Iter * srcCiStride;
+        uint64_t baseOffset = self_->ctx.batchIter * self_->ctx.fmapOneBatchSize + self_->ctx.vecCi1Iter * srcCiStride;
         if constexpr (Intf::formatFmap == ConvFormat::NCHW) {
             baseOffset += self_->ctx.cinAL1Iter * self_->ctx.convTilingData->cinOffsetBlockInGM;
             if (self_->ctx.vecId == 1) {
@@ -101,7 +101,7 @@ public:
         uint32_t dstKhStride = dstKwStride * self_->ctx.convTilingData->kwUb;
         copyParams.loopInfo.loopDstStride[NDDMA_LOOP1_INDEX] = dstKwStride;
         copyParams.loopInfo.loopDstStride[NDDMA_LOOP2_INDEX] = dstKhStride;
-        uint32_t srcOffset = 0;
+        uint64_t srcOffset = 0;
 
         for (uint16_t hoIdx = 0; hoIdx < self_->ctx.currentHoL1; hoIdx++) {
             for (uint16_t woIdx = 0; woIdx < self_->ctx.currentWoL1; woIdx++) {
@@ -224,7 +224,7 @@ private:
     Intf* self_ = nullptr;
     // NdDmaParams<typename Intf::FmapT, NDDMA_DIMS_BASE> copyParams;
     NdDmaParams<typename Intf::FmapT, NDDMA_DIMS_LOAD_FMAP> copyParams;
-    uint32_t srcCiStride = 0;
+    uint64_t srcCiStride = 0;
     uint32_t srcKhStride = 0;
     uint32_t srcKwStride = 0;
     uint32_t hIdxWithPad = 0;
@@ -238,8 +238,8 @@ private:
     int64_t hIdxWithPadEndOrg = 0;
     int64_t wIdxWithPadEndOrg = 0;
 
-    uint32_t hoL1Idx = 0;
-    uint32_t woL1Idx = 0;
+    uint64_t hoL1Idx = 0;
+    uint64_t woL1Idx = 0;
     uint32_t srckhAL1IterOffset = 0;
     uint32_t srckwAL1IterOffset = 0;
     uint32_t kwUbOnFmap = 0;

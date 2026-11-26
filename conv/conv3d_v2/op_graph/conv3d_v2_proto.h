@@ -169,14 +169,15 @@ namespace ge {
 * @li The w dimension of the input image supports cases exceeding 4096, but it may
 * cause compilation errors.
 *\n
-* @li If any dimension of x/filter/bias/scale/offset/y shape exceeds max 1000000
+* @li In Ascend 950PR&950DT products: If any dimension of
+* x/filter/bias/scale/offset/y shape exceeds max 1000000
 * (the D-axis dimensions, i.e., the d of x, the kernel_d of filter and the d of y,
 * support up to 10000000),
 * the product of each dimension of x/filter/bias/scale/offset/y
 * shape exceeds max int32 minus one (2147483646) or the value of
 * strides/pads/dilations/groups/data_format/offset_x/pad_mode/enable_hf32
 * exceeds the range in the above table, the correctness of the operator cannot be guaranteed.
-\n
+*\n
 */
 
 REG_OP(Conv3DV2)

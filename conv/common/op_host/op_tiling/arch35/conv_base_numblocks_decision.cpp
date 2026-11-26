@@ -29,7 +29,7 @@ uint64_t ConvCeilDiv(uint64_t a, uint64_t b)
     return (a + b - 1) / b;
 }
 
-uint32_t ConvAlignB(uint32_t a, uint32_t b)
+uint64_t ConvAlignB(uint64_t a, uint64_t b)
 {
     if (b == 0) {
         return 0;
@@ -634,9 +634,9 @@ void ConvCalcCommFactor(const uint64_t num, const uint32_t numMax, std::vector<u
             if (i <= numMax) {
                 reslist.emplace_back(i);
             }
-            uint32_t right = num / i;
+            uint64_t right = num / i;
             if (right != i && right <= numMax) {
-                reslist.emplace_back(right);
+                reslist.emplace_back(static_cast<uint32_t>(right));
             }
         }
     }

@@ -330,7 +330,9 @@ aclnnStatus aclnnConvDepthwise2d(
   </tr>
   <tr>
     <th scope="row">Other constraints</th>
-    <td colspan="2">      For self, weight, and bias, each dimension size of each tensor must not exceed 1000000.
+    <td>      For self, weight, and bias, each dimension size of each tensor must not exceed 1000000.
+    </td>
+    <td>      For self, weight, and bias, each dimension size of each tensor must not exceed 1000000, except that the W-axis dimensions (the w of self, the kernel_w of weight, and the w of output) support up to 10000000.
     </td>
   </tr>
   </tbody>

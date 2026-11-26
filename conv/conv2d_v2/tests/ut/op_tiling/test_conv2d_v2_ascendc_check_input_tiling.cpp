@@ -143,7 +143,7 @@ TEST_F(TestConv2dCheckInput, fmap_h_over_max_fail)
 
 TEST_F(TestConv2dCheckInput, fmap_w_over_max_fail)
 {
-    RunInputCheckTest("fmap_w_over", {1, 16, 16, 1000001}, {16, 16, 1, 1}, ge::DT_FLOAT16, true, true);
+    RunInputCheckTest("fmap_w_over", {1, 16, 16, 10000001}, {16, 16, 1, 1}, ge::DT_FLOAT16, true, true);
 }
 
 // ============================================================================
@@ -237,7 +237,7 @@ TEST_F(TestConv2dCheckInput, weight_cin_zero_fail)
 // ============================================================================
 TEST_F(TestConv2dCheckInput, output_w_over_max_fail)
 {
-    RunInputCheckTest("output_w_over", {1, 16, 16, 1000001}, {16, 16, 1, 1}, ge::DT_FLOAT16, true, true);
+    RunInputCheckTest("output_w_over", {1, 16, 16, 10000001}, {16, 16, 1, 1}, ge::DT_FLOAT16, true, true);
 }
 
 // ============================================================================
@@ -746,7 +746,7 @@ TEST_F(TestConv2dCheckInputDirect, output_h_w_bound_checks)
     sut.oriShapeAttrInfo_.oriOutputW = 16;
     EXPECT_EQ(sut.CheckOutputShape(), ge::GRAPH_FAILED);
     sut.oriShapeAttrInfo_.oriOutputH = 16;
-    sut.oriShapeAttrInfo_.oriOutputW = 1000001;
+    sut.oriShapeAttrInfo_.oriOutputW = 10000001;
     EXPECT_EQ(sut.CheckOutputShape(), ge::GRAPH_FAILED);
 }
 

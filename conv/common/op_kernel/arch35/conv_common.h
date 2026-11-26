@@ -186,7 +186,9 @@ __aicore__ __forceinline__ void ConvCommon<CONV, CONV_TILING>::CalcStartAddrComm
     hwOut = convTilingData->hout * convTilingData->wout;
 
     uint64_t effectiveCout = ConvGetEffectiveCout<CONV::C_FORMAT>(convTilingData);
-    convOps->fmapOneBatchSize = convTilingData->cin * din * hwIn;
+    // cast the first uint32 operand to uint64: cin * din may exceed the uint32 range once the
+    // D/W dim supports up to 10000000 (e.g. cin >= 430 with din = 10000000)
+    convOps->fmapOneBatchSize = static_cast<uint64_t>(convTilingData->cin) * din * hwIn;
     convOps->outputOneBatchSize = effectiveCout * dout * hwOut;
 
     if (convTilingData->hasBias) {

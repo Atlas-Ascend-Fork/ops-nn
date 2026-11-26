@@ -69,6 +69,7 @@
 ## 约束说明
 
 * <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：input, weight, bias中每一组tensor的每一维大小都应不大于1000000。
+* <term>Ascend 950PR&950DT系列产品</term>：非transposed的1D/2D卷积场景，input/weight/bias中每一组tensor的每一维大小都应不大于1000000，其中W轴维度（1D/2D卷积input的`w`、weight的`kernel_w`、output的`w`）最大支持到10000000。
 * <term>Ascend 950PR&950DT系列产品</term>：transposed为true的场景，支持1D、2D和3D卷积，支持空Tensor。
 * 由于硬件资源限制，算子在部分参数取值组合场景下会执行失败，请根据日志信息提示分析并排查问题。若无法解决，请单击[Link](https://www.hiascend.com/support)获取技术支持。
 
