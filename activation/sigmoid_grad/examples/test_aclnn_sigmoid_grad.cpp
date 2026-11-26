@@ -89,7 +89,7 @@ int main()
     aclTensor* output = nullptr;
     aclTensor* gradInput = nullptr;
     std::vector<float> gradOutputHostData = {1, 1, 1, 1};
-    std::vector<float> outputHostData = {1, 2, 3, 4};
+    std::vector<float> outputHostData = {0.5, 0.6, 0.7, 0.8};
     std::vector<float> gradInputHostData(4, 0);
     // 创建gradOutput aclTensor
     ret = CreateAclTensor(gradOutputHostData, gradOutputShape, &gradOutputDeviceAddr, aclDataType::ACL_FLOAT,

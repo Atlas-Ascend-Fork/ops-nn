@@ -103,7 +103,7 @@ aclnnStatus aclnnEluBackward(
       <tr>
       <td>gradOutput (aclTensor*)</td>
       <td>Input</td>
-      <td>Indicates the gradient of the forward output of the ELU activation function, that is, gradInput in the formula.</td>
+      <td>Indicates the gradient of the forward output of the ELU activation function, that is, gradOutput in the formula.</td>
       <td>Supports empty tensors.</td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
@@ -163,7 +163,7 @@ aclnnStatus aclnnEluBackward(
        <tr>
       <td>gradInput (aclTensor*)</td>
       <td>Output</td>
-      <td>Indicates the gradient of the forward input of the ELU activation function, that is, the result of differentiating the input, that is, gradOutput in the formula.</td>
+      <td>Indicates the gradient of the forward input of the ELU activation function, that is, the result of differentiating the input, that is, gradInput in the formula.</td>
       <td><ul><li>The data type must be convertible to the data type of gradOutput after deduction (see also <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">conversion relationship</a>).</li><li>The shape must be consistent with the shape of gradOutput.</li></ul></td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
@@ -336,7 +336,7 @@ int Init(int32_t deviceId, aclrtStream* stream) {
 
 template <typename T>
 int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
-                    aclDataType dataType, aclTensor** selfOrResult) {
+                    aclDataType dataType, aclTensor** tensor) {
   auto size = GetShapeSize(shape) * sizeof(T);
   // Call aclrtMalloc to apply for device-side memory.
   auto ret = aclrtMalloc(deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST);
@@ -346,14 +346,14 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
   ret = aclrtMemcpy(*deviceAddr, size, hostData.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
 
-  // Calculate the strides of contiguous selfOrResult.
+  // Calculate the strides of contiguous tensor.
   std::vector<int64_t> strides(shape.size(), 1);
   for (int64_t i = shape.size() - 2; i >= 0; i--) {
     strides[i] = shape[i + 1] * strides[i + 1];
   }
 
   // Call the aclCreateTensor API to create an aclTensor.
-  *selfOrResult = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
+  *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
                             shape.data(), shape.size(), *deviceAddr);
   return 0;
 }
@@ -392,13 +392,13 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // Create the alpha aclScalar.
   alpha = aclCreateScalar(&alphaValue, aclDataType::ACL_FLOAT);
-  CHECK_RET(alpha != nullptr, return ret);
+  CHECK_RET(alpha != nullptr, LOG_PRINT("alpha aclCreateScalar failed.\n"); return -1);
   // Create the scale aclScalar.
   scale = aclCreateScalar(&scaleValue, aclDataType::ACL_FLOAT);
-  CHECK_RET(scale != nullptr, return ret);
+  CHECK_RET(scale != nullptr, LOG_PRINT("scale aclCreateScalar failed.\n"); return -1);
   // Create the inputScale aclScalar.
   inputScale = aclCreateScalar(&inputScaleValue, aclDataType::ACL_FLOAT);
-  CHECK_RET(inputScale != nullptr, return ret);
+  CHECK_RET(inputScale != nullptr, LOG_PRINT("inputScale aclCreateScalar failed.\n"); return -1);
   // Create the selfOrResult aclTensor.
   ret = CreateAclTensor(selfOrResultHostData, selfOrResultShape, &selfOrResultDeviceAddr, aclDataType::ACL_FLOAT,
                         &selfOrResult);

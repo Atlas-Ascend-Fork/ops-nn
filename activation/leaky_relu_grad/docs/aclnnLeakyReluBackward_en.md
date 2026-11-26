@@ -108,7 +108,7 @@ aclnnStatus aclnnLeakyReluBackward(
      <tr>
       <td>negativeSlope (aclScalar*)</td>
       <td>Input</td>
-      <td>Slope when self < 0.</td>
+      <td>Slope when self is less than or equal to 0.</td>
       <td>-</td>
       <td>FLOAT, FLOAT16, DOUBLE, INT32, INT64, INT8, BOOL, INT16, UINT8, BFLOAT16</td>
       <td>-</td>
@@ -329,30 +329,30 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
     // 2. Construct the input and output. Custom construction is required based on the API.
-    std::vector<int64_t> gradShape = {4};
+    std::vector<int64_t> gradOutputShape = {4};
     std::vector<int64_t> selfShape = {4};
     std::vector<int64_t> outShape = {4};
-    void* gradDeviceAddr = nullptr;
+    void* gradOutputDeviceAddr = nullptr;
     void* selfDeviceAddr = nullptr;
     void* outDeviceAddr = nullptr;
-    aclTensor* grad = nullptr;
+    aclTensor* gradOutput = nullptr;
     aclTensor* self = nullptr;
     aclScalar* negativeSlope = nullptr;
     aclTensor* out = nullptr;
-    std::vector<float> gradHostData = {2, 3, 4, 5};
+    std::vector<float> gradOutputHostData = {2, 3, 4, 5};
     std::vector<float> selfHostData = {1, 2, 3, 4};
     std::vector<float> outHostData = {0, 0, 0, 0};
     float negativeSlopeValue = 0.01f;
     bool selfIsResultValue = true;
-    // Create the grad aclTensor.
-    ret = CreateAclTensor(gradHostData, gradShape, &gradDeviceAddr, aclDataType::ACL_FLOAT, &grad);
+    // Create the gradOutput aclTensor.
+    ret = CreateAclTensor(gradOutputHostData, gradOutputShape, &gradOutputDeviceAddr, aclDataType::ACL_FLOAT, &gradOutput);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // Create the self aclTensor.
     ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // Create the negativeSlope aclScalar.
     negativeSlope = aclCreateScalar(&negativeSlopeValue, aclDataType::ACL_FLOAT);
-    CHECK_RET(negativeSlope != nullptr, return ret);
+    CHECK_RET(negativeSlope != nullptr, LOG_PRINT("negativeSlope aclCreateScalar failed.\n"); return -1);
     // Create the out aclTensor.
     ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT, &out);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -362,7 +362,7 @@ int main()
     aclOpExecutor* executor;
     // Call the first-phase API of aclnnLeakyReluBackward.
     ret = aclnnLeakyReluBackwardGetWorkspaceSize(
-        grad, self, negativeSlope, selfIsResultValue, out, &workspaceSize, &executor);
+        gradOutput, self, negativeSlope, selfIsResultValue, out, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnLeakyReluBackwardGetWorkspaceSize failed. ERROR: %d\n", ret);
               return ret);
     // Allocate device memory based on the workspaceSize computed by the first-phase API.
@@ -391,13 +391,13 @@ int main()
     }
 
     // 6. Release aclTensor and aclScalar. Modify the code according to the specific API definition.
-    aclDestroyTensor(grad);
+    aclDestroyTensor(gradOutput);
     aclDestroyTensor(self);
     aclDestroyScalar(negativeSlope);
     aclDestroyTensor(out);
 
     // 7. Release device resources.
-    aclrtFree(gradDeviceAddr);
+    aclrtFree(gradOutputDeviceAddr);
     aclrtFree(selfDeviceAddr);
     aclrtFree(outDeviceAddr);
     if (workspaceSize > 0) {

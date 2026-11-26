@@ -83,7 +83,7 @@ aclnnStatus aclnnGeluV2(
       <tr>
       <td>x (aclTensor*)</td>
       <td>Input</td>
-      <td>Input of the GELU activation function, corresponding to self in the formula.</td>
+      <td>Input of the GELU activation function, corresponding to x_{i} in the formula.</td>
       <td><ul><li>The data type must be the same as that of y.</li><li>The shape must be the same as that of y.</li><li>Empty tensors are supported.</li></ul></td>
       <td>FLOAT32, FLOAT16, BFLOAT16</td>
       <td>ND</td>
@@ -132,8 +132,8 @@ aclnnStatus aclnnGeluV2(
     </tr>
   </tbody>
   </table>
-   <!-- npu="910,310p,310b" id7 -->
-   - <term>Atlas training products</term>, <term>Atlas 200I/500 A2 inference products</term>, and <term>Atlas inference products</term>: FLOAT32 and FLOAT16 are supported.
+   <!-- npu="910,310p" id7 -->
+   - <term>Atlas training products</term> and <term>Atlas inference products</term>: FLOAT32 and FLOAT16 are supported.
    <!-- end id7 -->
 
 - **Return value**

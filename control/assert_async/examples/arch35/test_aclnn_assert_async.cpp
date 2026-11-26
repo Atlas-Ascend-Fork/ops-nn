@@ -47,6 +47,7 @@ int Init(int32_t deviceId, aclrtStream* stream)
     return 0;
 }
 
+// Helper: allocate device memory, copy host data, and create an aclTensor.
 template <typename T>
 int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
                     aclDataType dataType, aclTensor** tensor)
@@ -74,15 +75,16 @@ static int RunAssertAsyncCase(bool value, const char* assertMsg)
     auto ret = Init(deviceId, &stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
-    void* conditionDeviceAddr = nullptr;
-    aclTensor* condition = nullptr;
-    ret = CreateAclTensor<uint8_t>({static_cast<uint8_t>(value ? 1 : 0)}, {1}, &conditionDeviceAddr, ACL_BOOL,
-                                   &condition);
+    // Build the single-element BOOL condition tensor (numel must be 1).
+    void* inputConditionDeviceAddr = nullptr;
+    aclTensor* inputCondition = nullptr;
+    ret = CreateAclTensor<uint8_t>({static_cast<uint8_t>(value ? 1 : 0)}, {1}, &inputConditionDeviceAddr, ACL_BOOL,
+                                   &inputCondition);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor failed. ERROR: %d\n", ret); return ret);
 
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor = nullptr;
-    ret = aclnnAssertAsyncGetWorkspaceSize(condition, assertMsg, &workspaceSize, &executor);
+    ret = aclnnAssertAsyncGetWorkspaceSize(inputCondition, assertMsg, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnAssertAsyncGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
 
     void* workspaceAddr = nullptr;
@@ -97,8 +99,8 @@ static int RunAssertAsyncCase(bool value, const char* assertMsg)
     ret = aclrtSynchronizeStream(stream);
     LOG_PRINT("aclrtSynchronizeStream ret = %d (case value=%d)\n", ret, static_cast<int>(value));
 
-    aclDestroyTensor(condition);
-    aclrtFree(conditionDeviceAddr);
+    aclDestroyTensor(inputCondition);
+    aclrtFree(inputConditionDeviceAddr);
     if (workspaceSize > static_cast<uint64_t>(0)) {
         aclrtFree(workspaceAddr);
     }
@@ -110,6 +112,7 @@ static int RunAssertAsyncCase(bool value, const char* assertMsg)
 
 int main()
 {
+    // Entry: run once with condition=true (passes, no output) and once with false (fails and prints assertMsg).
     LOG_PRINT("Testing aclnnAssertAsync with condition == true (expect pass).\n");
     RunAssertAsyncCase(true, "condition should be true");
 

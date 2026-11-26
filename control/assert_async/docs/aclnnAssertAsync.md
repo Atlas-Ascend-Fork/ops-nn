@@ -30,8 +30,8 @@
 - 判定规则（bit-exact，无浮点计算）：
 
   ```text
-  inputCondition 的单一元素值为 0（含 bool False）  ->  断言失败：打印 assertMsg + 触发算子失败
-  inputCondition 的单一元素值非 0（含 bool True）   ->  断言通过：无任何输出 / 无副作用
+  inputCondition 的单一元素值为 0 (含 bool False)  ->  断言失败: 打印 assertMsg + 触发算子失败
+  inputCondition 的单一元素值非 0 (含 bool True)   ->  断言通过: 无任何输出 / 无副作用
   ```
 
   - 浮点类型（FLOAT16、FLOAT、DOUBLE、BFLOAT16）按符号位掩码判定：FLOAT 取 `& 0x7FFFFFFF`，FLOAT16/BFLOAT16 取 `& 0x7FFF`，
@@ -273,6 +273,7 @@ int Init(int32_t deviceId, aclrtStream* stream)
     return 0;
 }
 
+// 公共辅助函数：在device侧申请内存、拷贝host数据并创建aclTensor
 template <typename T>
 int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
                     aclDataType dataType, aclTensor** tensor)
@@ -300,15 +301,16 @@ static int RunAssertAsyncCase(bool value, const char* assertMsg)
     auto ret = Init(deviceId, &stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
-    void* conditionDeviceAddr = nullptr;
-    aclTensor* condition = nullptr;
-    ret = CreateAclTensor<uint8_t>({static_cast<uint8_t>(value ? 1 : 0)}, {1}, &conditionDeviceAddr, ACL_BOOL,
-                                   &condition);
+    // 构造单元素BOOL条件张量（numel必须为1）
+    void* inputConditionDeviceAddr = nullptr;
+    aclTensor* inputCondition = nullptr;
+    ret = CreateAclTensor<uint8_t>({static_cast<uint8_t>(value ? 1 : 0)}, {1}, &inputConditionDeviceAddr, ACL_BOOL,
+                                   &inputCondition);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("CreateAclTensor failed. ERROR: %d\n", ret); return ret);
 
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor = nullptr;
-    ret = aclnnAssertAsyncGetWorkspaceSize(condition, assertMsg, &workspaceSize, &executor);
+    ret = aclnnAssertAsyncGetWorkspaceSize(inputCondition, assertMsg, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnAssertAsyncGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
 
     void* workspaceAddr = nullptr;
@@ -323,8 +325,8 @@ static int RunAssertAsyncCase(bool value, const char* assertMsg)
     ret = aclrtSynchronizeStream(stream);
     LOG_PRINT("aclrtSynchronizeStream ret = %d (case value=%d)\n", ret, static_cast<int>(value));
 
-    aclDestroyTensor(condition);
-    aclrtFree(conditionDeviceAddr);
+    aclDestroyTensor(inputCondition);
+    aclrtFree(inputConditionDeviceAddr);
     if (workspaceSize > static_cast<uint64_t>(0)) {
         aclrtFree(workspaceAddr);
     }
@@ -336,6 +338,7 @@ static int RunAssertAsyncCase(bool value, const char* assertMsg)
 
 int main()
 {
+    // 示例入口：分别以condition为true（预期通过、无输出）和false（预期断言失败并打印assertMsg）各跑一次
     LOG_PRINT("Testing aclnnAssertAsync with condition == true (expect pass).\n");
     RunAssertAsyncCase(true, "condition should be true");
 

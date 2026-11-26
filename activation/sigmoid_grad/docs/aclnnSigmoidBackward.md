@@ -107,7 +107,7 @@ aclnnStatus aclnnSigmoidBackward(
       <td>gradInput（aclTensor*）</td>
       <td>输出</td>
       <td>为输入张量的梯度值，公式中的grad_input。</td>
-      <td><ul><li>shape需要与gradOutput，output满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。</li><li>数据类型需要是gradOutput，output可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li></ul></td>
+      <td><ul><li>shape需要与gradOutput和output的broadcast结果一致（参见<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>）。</li><li>数据类型需要是gradOutput，output可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16、DOUBLE、COMPLEX64、COMPLEX128</td>
       <td>ND</td>
       <td>1-8</td>
@@ -311,7 +311,7 @@ int main() {
   aclTensor* output = nullptr;
   aclTensor* gradInput = nullptr;
   std::vector<float> gradOutputHostData = {1, 1, 1, 1};
-  std::vector<float> outputHostData = {1, 2, 3, 4};
+  std::vector<float> outputHostData = {0.5, 0.6, 0.7, 0.8};
   std::vector<float> gradInputHostData(4, 0);
   // 创建gradOutput aclTensor
   ret = CreateAclTensor(gradOutputHostData, gradOutputShape, &gradOutputDeviceAddr, aclDataType::ACL_FLOAT, &gradOutput);

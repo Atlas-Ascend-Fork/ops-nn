@@ -291,24 +291,24 @@ int main() {
   CHECK_RET(ret == 0, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
   // 2. Construct inputs and outputs. Construct them as required by the API.
-  std::vector<int64_t> gradOutShape = {4, 2};
+  std::vector<int64_t> gradOutputShape = {4, 2};
   std::vector<int64_t> selfShape = {4, 2};
   std::vector<int64_t> outShape = {4, 2};
   void* selfDeviceAddr = nullptr;
-  void* gradOutDeviceAddr = nullptr;
+  void* gradOutputDeviceAddr = nullptr;
   void* outDeviceAddr = nullptr;
   aclTensor* self = nullptr;
-  aclTensor* gradOut = nullptr;
+  aclTensor* gradOutput = nullptr;
   aclTensor* out = nullptr;
   std::vector<float> selfHostData = {0, 1, 2, 3, 4, 5, 6, 7};
-  std::vector<float> gradOutHostData = {0, 1, 2, 3, 4, 5, 6, 7};
+  std::vector<float> gradOutputHostData = {0, 1, 2, 3, 4, 5, 6, 7};
   std::vector<float> outHostData = {0, 0, 0, 0, 0, 0, 0, 0};
 
   // Create the self aclTensor.
   ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
-  // Create the gradOut aclTensor.
-  ret = CreateAclTensor(gradOutHostData, gradOutShape, &gradOutDeviceAddr, aclDataType::ACL_FLOAT, &gradOut);
+  // Create the gradOutput aclTensor.
+  ret = CreateAclTensor(gradOutputHostData, gradOutputShape, &gradOutputDeviceAddr, aclDataType::ACL_FLOAT, &gradOutput);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // Create the out aclTensor.
   ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT, &out);
@@ -317,7 +317,7 @@ int main() {
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
   // Call the first-phase API of aclnnHardsigmoidBackward.
-  ret = aclnnHardsigmoidBackwardGetWorkspaceSize(gradOut, self, out, &workspaceSize, &executor);
+  ret = aclnnHardsigmoidBackwardGetWorkspaceSize(gradOutput, self, out, &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnHardsigmoidBackwardGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
   // Allocate device memory using the workspaceSize computed by the first-phase API.
   void* workspaceAddr = nullptr;
@@ -343,12 +343,12 @@ int main() {
 
   // 6. Release aclTensor. Change it based on the specific API definition.
   aclDestroyTensor(self);
-  aclDestroyTensor(gradOut);
+  aclDestroyTensor(gradOutput);
   aclDestroyTensor(out);
 
   // 7. Release device resources. Change it based on the specific API definition.
   aclrtFree(selfDeviceAddr);
-  aclrtFree(gradOutDeviceAddr);
+  aclrtFree(gradOutputDeviceAddr);
   aclrtFree(outDeviceAddr);
   if (workspaceSize > 0) {
     aclrtFree(workspaceAddr);

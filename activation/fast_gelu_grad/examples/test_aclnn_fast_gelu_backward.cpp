@@ -92,7 +92,8 @@ int main()
     std::vector<float> selfHostData(9, 0);
     std::vector<float> gradInputHostData(9, 0);
     // 创建gradOutput、self和gradInput aclTensor
-    ret = CreateAclTensor(gradOutputHostData, selfShape, &gradOutputDeviceAddr, aclDataType::ACL_FLOAT, &gradOutput);
+    ret = CreateAclTensor(gradOutputHostData, gradOutputShape, &gradOutputDeviceAddr, aclDataType::ACL_FLOAT,
+                          &gradOutput);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
     CHECK_RET(ret == ACL_SUCCESS, return ret);

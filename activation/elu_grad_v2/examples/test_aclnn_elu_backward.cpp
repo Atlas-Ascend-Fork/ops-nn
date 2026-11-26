@@ -48,7 +48,7 @@ int Init(int32_t deviceId, aclrtStream* stream)
 
 template <typename T>
 int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
-                    aclDataType dataType, aclTensor** selfOrResult)
+                    aclDataType dataType, aclTensor** tensor)
 {
     auto size = GetShapeSize(shape) * sizeof(T);
     // 调用aclrtMalloc申请device侧内存
@@ -59,15 +59,15 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
     ret = aclrtMemcpy(*deviceAddr, size, hostData.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
 
-    // 计算连续selfOrResult的strides
+    // 计算连续tensor的strides
     std::vector<int64_t> strides(shape.size(), 1);
     for (int64_t i = shape.size() - 2; i >= 0; i--) {
         strides[i] = shape[i + 1] * strides[i + 1];
     }
 
     // 调用aclCreateTensor接口创建aclTensor
-    *selfOrResult = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
-                                    shape.data(), shape.size(), *deviceAddr);
+    *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
+                              shape.data(), shape.size(), *deviceAddr);
     return 0;
 }
 
@@ -106,13 +106,13 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建alpha aclScalar
     alpha = aclCreateScalar(&alphaValue, aclDataType::ACL_FLOAT);
-    CHECK_RET(alpha != nullptr, return ret);
+    CHECK_RET(alpha != nullptr, LOG_PRINT("alpha aclCreateScalar failed.\n"); return -1);
     // 创建scale aclScalar
     scale = aclCreateScalar(&scaleValue, aclDataType::ACL_FLOAT);
-    CHECK_RET(scale != nullptr, return ret);
+    CHECK_RET(scale != nullptr, LOG_PRINT("scale aclCreateScalar failed.\n"); return -1);
     // 创建inputScale aclScalar
     inputScale = aclCreateScalar(&inputScaleValue, aclDataType::ACL_FLOAT);
-    CHECK_RET(inputScale != nullptr, return ret);
+    CHECK_RET(inputScale != nullptr, LOG_PRINT("inputScale aclCreateScalar failed.\n"); return -1);
     // 创建selfOrResult aclTensor
     ret = CreateAclTensor(selfOrResultHostData, selfOrResultShape, &selfOrResultDeviceAddr, aclDataType::ACL_FLOAT,
                           &selfOrResult);

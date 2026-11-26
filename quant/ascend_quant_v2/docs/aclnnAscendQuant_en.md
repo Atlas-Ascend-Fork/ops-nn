@@ -30,14 +30,16 @@
   - When sqrtMode is false, the formula is:
 
     $$
-    y = round((x * scale) + offset)
+    y = roundMode(x * scale + offset)
     $$
 
   - When sqrtMode is true, the formula is:
 
     $$
-    y = round((x * scale * scale) + offset)
+    y = roundMode(x * scale * scale + offset)
     $$
+
+where roundMode is specified by the input roundMode and takes round/ceil/trunc/floor, meaning the result is rounded accordingly.
 
 ## Function Prototype
 
@@ -124,7 +126,7 @@ aclnnStatus aclnnAscendQuant(
       <td>sqrtMode (bool)</td>
       <td>Input</td>
       <td>Specifies the logic for scale in the computation. Corresponds to `sqrtMode` in the Formula.</td>
-      <td>If the value is true, the formula is y = round((x * scale * scale) + offset). If the value is false, the formula is y = round((x * scale) + offset).</td>
+      <td>If the value is true, the formula is y = roundMode((x * scale * scale) + offset). If the value is false, the formula is y = roundMode((x * scale) + offset).</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -371,24 +373,24 @@ int main()
     // Handle the check as needed.
     CHECK_RET(ret == 0, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
     // 2. Construct inputs and outputs. Custom construction is required based on the API.
-    std::vector<int64_t> selfShape = {4, 2};
+    std::vector<int64_t> xShape = {4, 2};
     std::vector<int64_t> scaleShape = {2};
     std::vector<int64_t> offsetShape = {2};
-    std::vector<int64_t> outShape = {4, 2};
-    void* selfDeviceAddr = nullptr;
+    std::vector<int64_t> yShape = {4, 2};
+    void* xDeviceAddr = nullptr;
     void* scaleDeviceAddr = nullptr;
     void* offsetDeviceAddr = nullptr;
-    void* outDeviceAddr = nullptr;
-    aclTensor* self = nullptr;
+    void* yDeviceAddr = nullptr;
+    aclTensor* x = nullptr;
     aclTensor* scale = nullptr;
     aclTensor* offset = nullptr;
-    aclTensor* out = nullptr;
-    std::vector<float> selfHostData = {0, 1, 2, 3, 4, 5, 6, 7};
+    aclTensor* y = nullptr;
+    std::vector<float> xHostData = {0, 1, 2, 3, 4, 5, 6, 7};
     std::vector<float> scaleHostData = {1, 2};
     std::vector<float> offsetHostData = {1, 2};
-    std::vector<int8_t> outHostData = {0, 0, 0, 0, 0, 0, 0, 0};
-    // Create the self aclTensor.
-    ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
+    std::vector<int8_t> yHostData = {0, 0, 0, 0, 0, 0, 0, 0};
+    // Create the x aclTensor.
+    ret = CreateAclTensor(xHostData, xShape, &xDeviceAddr, aclDataType::ACL_FLOAT, &x);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // Create the scale aclTensor.
     ret = CreateAclTensor(scaleHostData, scaleShape, &scaleDeviceAddr, aclDataType::ACL_FLOAT, &scale);
@@ -396,8 +398,8 @@ int main()
     // Create the offset aclTensor.
     ret = CreateAclTensor(offsetHostData, offsetShape, &offsetDeviceAddr, aclDataType::ACL_FLOAT, &offset);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    // Create the out aclTensor.
-    ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_INT8, &out);
+    // Create the y aclTensor.
+    ret = CreateAclTensor(yHostData, yShape, &yDeviceAddr, aclDataType::ACL_INT8, &y);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     const int32_t dstType = 2;
@@ -409,7 +411,7 @@ int main()
     aclOpExecutor* executor;
     // Call the first-phase API of aclnnAscendQuant.
     ret = aclnnAscendQuantGetWorkspaceSize(
-        self, scale, offset, sqrtMode, roundMode, dstType, out, &workspaceSize, &executor);
+        x, scale, offset, sqrtMode, roundMode, dstType, y, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnAscendQuantGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
     // Allocate device memory based on the workspaceSize calculated by the first-phase API.
     void* workspaceAddr = nullptr;
@@ -424,10 +426,10 @@ int main()
     ret = aclrtSynchronizeStream(stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
     // 5. Obtain the output value, copy the result from device memory to the host, and view the data in resultData. Modify it based on the specific API definition.
-    auto size = GetShapeSize(outShape);
+    auto size = GetShapeSize(yShape);
     std::vector<int8_t> resultData(size, 0);
     ret = aclrtMemcpy(
-        resultData.data(), resultData.size() * sizeof(resultData[0]), outDeviceAddr, size * sizeof(int8_t),
+        resultData.data(), resultData.size() * sizeof(resultData[0]), yDeviceAddr, size * sizeof(int8_t),
         ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
     for (int64_t i = 0; i < size; i++) {
@@ -435,16 +437,16 @@ int main()
     }
 
     // 6. Release the aclTensor. Modify it based on the specific API definition.
-    aclDestroyTensor(self);
+    aclDestroyTensor(x);
     aclDestroyTensor(scale);
     aclDestroyTensor(offset);
-    aclDestroyTensor(out);
+    aclDestroyTensor(y);
 
     // 7. Release device resources. Modify it based on the specific API definition.
-    aclrtFree(selfDeviceAddr);
+    aclrtFree(xDeviceAddr);
     aclrtFree(scaleDeviceAddr);
     aclrtFree(offsetDeviceAddr);
-    aclrtFree(outDeviceAddr);
+    aclrtFree(yDeviceAddr);
     if (workspaceSize > 0) {
         aclrtFree(workspaceAddr);
     }

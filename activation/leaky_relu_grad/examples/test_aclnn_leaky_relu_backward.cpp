@@ -79,30 +79,31 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
     // 2. 构造输入与输出，需要根据API的接口自定义构造
-    std::vector<int64_t> gradShape = {4};
+    std::vector<int64_t> gradOutputShape = {4};
     std::vector<int64_t> selfShape = {4};
     std::vector<int64_t> outShape = {4};
-    void* gradDeviceAddr = nullptr;
+    void* gradOutputDeviceAddr = nullptr;
     void* selfDeviceAddr = nullptr;
     void* outDeviceAddr = nullptr;
-    aclTensor* grad = nullptr;
+    aclTensor* gradOutput = nullptr;
     aclTensor* self = nullptr;
     aclScalar* negativeSlope = nullptr;
     aclTensor* out = nullptr;
-    std::vector<float> gradHostData = {2, 3, 4, 5};
+    std::vector<float> gradOutputHostData = {2, 3, 4, 5};
     std::vector<float> selfHostData = {1, 2, 3, 4};
     std::vector<float> outHostData = {0, 0, 0, 0};
     float negativeSlopeValue = 0.01f;
     bool selfIsResultValue = true;
-    // 创建grad aclTensor
-    ret = CreateAclTensor(gradHostData, gradShape, &gradDeviceAddr, aclDataType::ACL_FLOAT, &grad);
+    // 创建gradOutput aclTensor
+    ret = CreateAclTensor(gradOutputHostData, gradOutputShape, &gradOutputDeviceAddr, aclDataType::ACL_FLOAT,
+                          &gradOutput);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建self aclTensor
     ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建negativeSlope aclScalar
     negativeSlope = aclCreateScalar(&negativeSlopeValue, aclDataType::ACL_FLOAT);
-    CHECK_RET(negativeSlope != nullptr, return ret);
+    CHECK_RET(negativeSlope != nullptr, LOG_PRINT("negativeSlope aclCreateScalar failed.\n"); return -1);
     // 创建out aclTensor
     ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT, &out);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
@@ -111,8 +112,8 @@ int main()
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // 调用aclnnLeakyReluBackward第一段接口
-    ret = aclnnLeakyReluBackwardGetWorkspaceSize(grad, self, negativeSlope, selfIsResultValue, out, &workspaceSize,
-                                                 &executor);
+    ret = aclnnLeakyReluBackwardGetWorkspaceSize(gradOutput, self, negativeSlope, selfIsResultValue, out,
+                                                 &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnLeakyReluBackwardGetWorkspaceSize failed. ERROR: %d\n", ret);
               return ret);
     // 根据第一段接口计算出的workspaceSize申请device内存
@@ -140,13 +141,13 @@ int main()
     }
 
     // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改
-    aclDestroyTensor(grad);
+    aclDestroyTensor(gradOutput);
     aclDestroyTensor(self);
     aclDestroyScalar(negativeSlope);
     aclDestroyTensor(out);
 
     // 7. 释放device 资源
-    aclrtFree(gradDeviceAddr);
+    aclrtFree(gradOutputDeviceAddr);
     aclrtFree(selfDeviceAddr);
     aclrtFree(outDeviceAddr);
     if (workspaceSize > 0) {

@@ -81,24 +81,24 @@ int main()
     // check根据自己的需要处理
     CHECK_RET(ret == 0, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
     // 2. 构造输入与输出，需要根据API的接口自定义构造
-    std::vector<int64_t> selfShape = {4, 2};
+    std::vector<int64_t> xShape = {4, 2};
     std::vector<int64_t> scaleShape = {2};
     std::vector<int64_t> offsetShape = {2};
-    std::vector<int64_t> outShape = {4, 2};
-    void* selfDeviceAddr = nullptr;
+    std::vector<int64_t> yShape = {4, 2};
+    void* xDeviceAddr = nullptr;
     void* scaleDeviceAddr = nullptr;
     void* offsetDeviceAddr = nullptr;
-    void* outDeviceAddr = nullptr;
-    aclTensor* self = nullptr;
+    void* yDeviceAddr = nullptr;
+    aclTensor* x = nullptr;
     aclTensor* scale = nullptr;
     aclTensor* offset = nullptr;
-    aclTensor* out = nullptr;
-    std::vector<float> selfHostData = {0, 1, 2, 3, 4, 5, 6, 7};
+    aclTensor* y = nullptr;
+    std::vector<float> xHostData = {0, 1, 2, 3, 4, 5, 6, 7};
     std::vector<float> scaleHostData = {1, 2};
     std::vector<float> offsetHostData = {1, 2};
-    std::vector<int8_t> outHostData = {0, 0, 0, 0, 0, 0, 0, 0};
-    // 创建self aclTensor
-    ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
+    std::vector<int8_t> yHostData = {0, 0, 0, 0, 0, 0, 0, 0};
+    // 创建x aclTensor
+    ret = CreateAclTensor(xHostData, xShape, &xDeviceAddr, aclDataType::ACL_FLOAT, &x);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建scale aclTensor
     ret = CreateAclTensor(scaleHostData, scaleShape, &scaleDeviceAddr, aclDataType::ACL_FLOAT, &scale);
@@ -106,8 +106,8 @@ int main()
     // 创建offset aclTensor
     ret = CreateAclTensor(offsetHostData, offsetShape, &offsetDeviceAddr, aclDataType::ACL_FLOAT, &offset);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    // 创建out aclTensor
-    ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_INT8, &out);
+    // 创建y aclTensor
+    ret = CreateAclTensor(yHostData, yShape, &yDeviceAddr, aclDataType::ACL_INT8, &y);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     const int32_t dstType = 2;
@@ -118,8 +118,8 @@ int main()
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // 调用aclnnAscendQuantV3第一段接口
-    ret = aclnnAscendQuantV3GetWorkspaceSize(self, scale, offset, sqrtMode, roundMode, dstType, axis, out,
-                                             &workspaceSize, &executor);
+    ret = aclnnAscendQuantV3GetWorkspaceSize(x, scale, offset, sqrtMode, roundMode, dstType, axis, y, &workspaceSize,
+                                             &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnAscendQuantV3GetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
     // 根据第一段接口计算出的workspaceSize申请device内存
     void* workspaceAddr = nullptr;
@@ -134,26 +134,26 @@ int main()
     ret = aclrtSynchronizeStream(stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
     // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改，查看resultData中数据
-    auto size = GetShapeSize(outShape);
+    auto size = GetShapeSize(yShape);
     std::vector<int8_t> resultData(size, 0);
-    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), outDeviceAddr,
-                      size * sizeof(int8_t), ACL_MEMCPY_DEVICE_TO_HOST);
+    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), yDeviceAddr, size * sizeof(int8_t),
+                      ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
     for (int64_t i = 0; i < size; i++) {
         LOG_PRINT("result[%ld] is: %d\n", i, resultData[i]);
     }
 
     // 6. 释放aclTensor，需要根据具体API的接口定义修改
-    aclDestroyTensor(self);
+    aclDestroyTensor(x);
     aclDestroyTensor(scale);
     aclDestroyTensor(offset);
-    aclDestroyTensor(out);
+    aclDestroyTensor(y);
 
     // 7. 释放device资源，需要根据具体API的接口定义修改
-    aclrtFree(selfDeviceAddr);
+    aclrtFree(xDeviceAddr);
     aclrtFree(scaleDeviceAddr);
     aclrtFree(offsetDeviceAddr);
-    aclrtFree(outDeviceAddr);
+    aclrtFree(yDeviceAddr);
     if (workspaceSize > 0) {
         aclrtFree(workspaceAddr);
     }

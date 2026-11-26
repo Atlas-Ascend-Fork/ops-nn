@@ -69,7 +69,7 @@ aclnnStatus aclnnGeluBackwardGetWorkspaceSize(
 ```Cpp
 aclnnStatus aclnnGeluBackward(
   void             *workspace,
-  uint64_t          workspace_size,
+  uint64_t          workspaceSize,
   aclOpExecutor    *executor,
   const aclrtStream stream)
 ```
@@ -291,7 +291,7 @@ int CreateAclTensor(
     aclTensor** tensor)
 {
     auto size = GetShapeSize(shape) * sizeof(T);
-    // Call aclrtMalloc to allocate the device-side engine
+    // Call aclrtMalloc to allocate the device-side memory
     auto ret = aclrtMalloc(deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMalloc failed. ERROR: %d\n", ret); return ret);
 

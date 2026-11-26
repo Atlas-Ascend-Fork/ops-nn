@@ -101,7 +101,7 @@ aclnnStatus aclnnEluBackward(
       <tr>
       <td>gradOutput（aclTensor*）</td>
       <td>输入</td>
-      <td>表示ELU激活函数正向输出的梯度，公式中的gradInput。</td>
+      <td>表示ELU激活函数正向输出的梯度，公式中的gradOutput。</td>
       <td>支持空Tensor。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -161,7 +161,7 @@ aclnnStatus aclnnEluBackward(
        <tr>
       <td>gradInput（aclTensor*）</td>
       <td>输出</td>
-      <td>表示ELU激活函数正向输入的梯度，即对输入进行求导后的结果，公式中的gradOutput。</td>
+      <td>表示ELU激活函数正向输入的梯度，即对输入进行求导后的结果，公式中的gradInput。</td>
       <td><ul><li>数据类型需要是gradOutput推导之后可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li><li>shape需要和gradOutput的shape一致。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -334,7 +334,7 @@ int Init(int32_t deviceId, aclrtStream* stream) {
 
 template <typename T>
 int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
-                    aclDataType dataType, aclTensor** selfOrResult) {
+                    aclDataType dataType, aclTensor** tensor) {
   auto size = GetShapeSize(shape) * sizeof(T);
   // 调用aclrtMalloc申请device侧内存
   auto ret = aclrtMalloc(deviceAddr, size, ACL_MEM_MALLOC_HUGE_FIRST);
@@ -344,14 +344,14 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
   ret = aclrtMemcpy(*deviceAddr, size, hostData.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtMemcpy failed. ERROR: %d\n", ret); return ret);
 
-  // 计算连续selfOrResult的strides
+  // 计算连续tensor的strides
   std::vector<int64_t> strides(shape.size(), 1);
   for (int64_t i = shape.size() - 2; i >= 0; i--) {
     strides[i] = shape[i + 1] * strides[i + 1];
   }
 
   // 调用aclCreateTensor接口创建aclTensor
-  *selfOrResult = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
+  *tensor = aclCreateTensor(shape.data(), shape.size(), dataType, strides.data(), 0, aclFormat::ACL_FORMAT_ND,
                             shape.data(), shape.size(), *deviceAddr);
   return 0;
 }
@@ -390,13 +390,13 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 创建alpha aclScalar
   alpha = aclCreateScalar(&alphaValue, aclDataType::ACL_FLOAT);
-  CHECK_RET(alpha != nullptr, return ret);
+  CHECK_RET(alpha != nullptr, LOG_PRINT("alpha aclCreateScalar failed.\n"); return -1);
   // 创建scale aclScalar
   scale = aclCreateScalar(&scaleValue, aclDataType::ACL_FLOAT);
-  CHECK_RET(scale != nullptr, return ret);
+  CHECK_RET(scale != nullptr, LOG_PRINT("scale aclCreateScalar failed.\n"); return -1);
   // 创建inputScale aclScalar
   inputScale = aclCreateScalar(&inputScaleValue, aclDataType::ACL_FLOAT);
-  CHECK_RET(inputScale != nullptr, return ret);
+  CHECK_RET(inputScale != nullptr, LOG_PRINT("inputScale aclCreateScalar failed.\n"); return -1);
   // 创建selfOrResult aclTensor
   ret = CreateAclTensor(selfOrResultHostData, selfOrResultShape, &selfOrResultDeviceAddr, aclDataType::ACL_FLOAT,
                         &selfOrResult);

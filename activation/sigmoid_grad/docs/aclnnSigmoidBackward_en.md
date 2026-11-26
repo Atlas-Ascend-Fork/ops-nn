@@ -109,7 +109,7 @@ aclnnStatus aclnnSigmoidBackward(
       <td>gradInput (aclTensor*)</td>
       <td>Output</td>
       <td>Gradient of the input tensor, i.e., grad_input in the formula.</td>
-      <td><ul><li>shape must satisfy the <a href="../../../docs/en/context/broadcast_relationship.md" target="_blank">broadcast relationship</a> with gradOutput and output.</li><li>Data type must be a data type that gradOutput and output can be converted to (see <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">conversion relationship</a>).</li></ul></td>
+      <td><ul><li>The shape must be the same as the broadcast result of gradOutput and output (see <a href="../../../docs/en/context/broadcast_relationship.md" target="_blank">broadcast relationship</a>).</li><li>Data type must be a data type that gradOutput and output can be converted to (see <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">conversion relationship</a>).</li></ul></td>
       <td>FLOAT, FLOAT16, BFLOAT16, DOUBLE, COMPLEX64, COMPLEX128</td>
       <td>ND</td>
       <td>1-8</td>
@@ -313,7 +313,7 @@ int main() {
   aclTensor* output = nullptr;
   aclTensor* gradInput = nullptr;
   std::vector<float> gradOutputHostData = {1, 1, 1, 1};
-  std::vector<float> outputHostData = {1, 2, 3, 4};
+  std::vector<float> outputHostData = {0.5, 0.6, 0.7, 0.8};
   std::vector<float> gradInputHostData(4, 0);
   // Create the gradOutput aclTensor.
   ret = CreateAclTensor(gradOutputHostData, gradOutputShape, &gradOutputDeviceAddr, aclDataType::ACL_FLOAT, &gradOutput);

@@ -87,7 +87,7 @@ aclnnStatus aclnnGeluV2(
       <tr>
       <td>x（aclTensor*）</td>
       <td>输入</td>
-      <td>表示GELU激活函数的输入，公式中的self。</td>
+      <td>表示GELU激活函数的输入，公式中的x_{i}。</td>
       <td><ul><li>数据类型必须和y一致。</li><li>shape必须和y一致。</li><li>支持空Tensor。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -136,8 +136,8 @@ aclnnStatus aclnnGeluV2(
     </tr>
   </tbody>
   </table>
-   <!-- npu="910,310p,310b" id7 -->
-   - <term>Atlas训练系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>、<term>Atlas推理系列产品</term>：数据类型支持FLOAT32、FLOAT16。
+   <!-- npu="910,310p" id7 -->
+   - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：数据类型支持FLOAT32、FLOAT16。
    <!-- end id7 -->
 
 - **返回值：**
