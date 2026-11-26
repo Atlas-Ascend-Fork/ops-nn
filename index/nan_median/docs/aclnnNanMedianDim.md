@@ -301,7 +301,7 @@
 - 确定性计算：
   - aclnnNanMedianDim默认确定性实现。
 
-  - self的数据类型不为FLOAT、FLOAT16、BFLOAT16时，Tensor size过大可能会导致算子执行超时（aicpu error类型报错，报错reason=[aicpu timeout]）具体类型最大size(与机器具体剩余内存强相关)限制如下：
+  - self的数据类型不为FLOAT、FLOAT16、BFLOAT16时，Tensor size过大可能会导致算子执行超时（aicpu error类型报错，报错reason=[aicpu timeout]）具体类型最大size（与机器具体剩余内存强相关）限制如下：
     - INT64类型：150000000
     - UINT8、INT8、INT16、INT32类型：725000000
   - 当self为BFLOAT16数据类型时，不支持dim所在轴为1且不支持标量。

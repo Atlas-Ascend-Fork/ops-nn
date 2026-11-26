@@ -34,7 +34,7 @@
   y = {{x-E(x)}\over\sqrt {Var(x)+epsilon}} * gamma + beta
   $$
 
-  - 当quantMode输入为"static"时，输出outScales1Out和outScales2Out无实际意义。取决于divMode的输入，融合的量化算子可能是Quantize或AscendQuantV2：
+  - 当quantMode输入为"static"时，输出outScales1Out和outScales2Out无实际意义，取决于divMode的输入，融合的量化算子可能是Quantize或AscendQuantV2：
     - 当divMode输入为true时，融合的量化算子为Quantize，计算公式如下所示：
 
         $$
@@ -94,11 +94,11 @@
         y1Out = round(tmp1 / outScales1Out),\quad y2Out = round(tmp2 / outScales2Out)
         $$
 
-        其中row\_max代表对每行求最大值
+        其中row\_max代表对每行求最大值。
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用`aclnnAddLayerNormQuantGetWorkspaceSize`接口获取入参并根据计算流程所需workspace大小，再调用`aclnnAddLayerNormQuant`接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnAddLayerNormQuantGetWorkspaceSize”接口获取入参并根据计算流程计算所需workspace大小，再调用“aclnnAddLayerNormQuant”接口执行计算。
 
 ```Cpp
 aclnnStatus aclnnAddLayerNormQuantGetWorkspaceSize(
@@ -383,7 +383,7 @@ aclnnStatus aclnnAddLayerNormQuant(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>如果传入参数是必选输入，输出或者必选属性，且是空指针。</td>
+      <td>如果传入参数是必选输入、输出或者必选属性，且是空指针。</td>
     </tr>
     <tr>
       <td rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
@@ -404,7 +404,7 @@ aclnnStatus aclnnAddLayerNormQuant(
       <li>当量化模式为动态，即输入quantMode的值为"dynamic"时，outScales1Out的shape不为输入x1的shape剔除掉最后一维。</li></ol></td>
     </tr>
     <tr>
-      <td>全部输入tensor的shape满足以下等量关系：
+      <td>全部输入Tensor的shape满足以下等量关系：
       <ol>
       <li>x1、x2、xOut、y1的shape不相同；当scales2Optional可选输入存在时，该条件严格化为x1、x2、xOut、y1、y2的shape不相同。</li>
       <li>gamma、beta的shape不相同；当可选输入scales1Optional、scales2Optional、zeroPoints1Optional、zeroPoints2Optional存在时，它们的shape和gamma相异。</li>

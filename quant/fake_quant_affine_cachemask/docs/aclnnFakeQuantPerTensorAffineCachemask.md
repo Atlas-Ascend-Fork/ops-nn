@@ -234,7 +234,7 @@ aclnnStatus aclnnFakeQuantPerTensorAffineCachemask(
       <td>out和mask的shape与self不一致</td>
     </tr>
     <tr>
-      <td>quantMin大于quantMax，或quantMin/quantMax绝对值不小于2^24（超出fp32可精确表示的整数域）。</td>
+      <td>quantMin大于quantMax，或quantMin/quantMax绝对值不小于2^24（超出FP32可精确表示的整数域）。</td>
     </tr>
   </tbody>
   </table>

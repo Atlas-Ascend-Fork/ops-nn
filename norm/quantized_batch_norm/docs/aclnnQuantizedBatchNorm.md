@@ -25,7 +25,7 @@
 
 - 接口功能：
 
-  将输入Tensor执行一个反量化的计算，再根据输入的weight、bias、epsilon执行归一化，最后根据输入的outputScale以及outputZeroPoint执行量化。
+  将输入Tensor执行反量化计算，再根据输入的weight、bias、epsilon执行归一化，最后根据输入的outputScale以及outputZeroPoint执行量化。
 - 计算公式：
 
   1. 反量化计算：
@@ -196,7 +196,7 @@ aclnnStatus aclnnQuantizedBatchNorm(
     <tr>
       <td>epsilon（float）</td>
       <td>输入</td>
-      <td>表示添加到方差中的值，以避免出现除以零的情况。对应公式中的`epsilon`。</td>
+      <td>表示添加到方差中的值，以避免出现除以零的情况，对应公式中的`epsilon`。</td>
       <td>计算公式要求每个通道的var + epsilon &gt; 0。满足该条件时，epsilon可以为0或负数。</td>
       <td>-</td>
       <td>-</td>

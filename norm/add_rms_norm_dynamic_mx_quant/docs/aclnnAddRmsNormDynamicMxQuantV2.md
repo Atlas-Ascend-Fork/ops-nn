@@ -67,7 +67,7 @@
 
   当scaleAlg为1时，只涉及FP8类型：
 
-  - 将长向量按块分，每块长度为k，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型FP8。
+  - 将长向量按块划分，每块长度为k，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型FP8。
 
   - 找到该块中数值的最大绝对值：
 
@@ -175,7 +175,7 @@ aclnnStatus aclnnAddRmsNormDynamicMxQuantV2(
       <td>gamma（const aclTensor*）</td>
       <td>输入</td>
       <td>表示标准化过程中的权重张量。对应公式中的gamma。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape只能为一维，需要与x1最后一维维度匹配。</li><li>数据类型默认与输入x1一致；若不一致，则显式设为FLOAT32。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape只能为一维，需要与x1最后一维匹配。</li><li>数据类型默认与输入x1一致；若不一致，则显式设为FLOAT32。</li></ul></td>
       <td>FLOAT16、BFLOAT16、FLOAT32</td>
       <td>ND</td>
       <td>1</td>
@@ -355,7 +355,7 @@ aclnnStatus aclnnAddRmsNormDynamicMxQuantV2(
       <td>输入x1、x2和输出yOut、xOut的shape不是完全相同的shape。</td>
     </tr>
     <tr>
-      <td>gamma、beta(若存在)的shape不是完全相同的shape，或二者的维度数不为1，或轴长不等于x1的尾轴大小，或者类型不相同。</td>
+      <td>gamma、beta（若存在）的shape不是完全相同的shape，或二者的维度数不为1，或轴长不等于x1的尾轴大小，或者类型不相同。</td>
     </tr>
     <tr>
       <td>gamma的维度和x1的需要做norm的维度不相同，或rstdOut的维度和x1的不需要norm的维度不相同，或rstdOut对应x1归一化维度的轴长不为1。</td>

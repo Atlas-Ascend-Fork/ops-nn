@@ -310,7 +310,7 @@ aclnnStatus aclnnFusedQuantMatmulWeightNz(
       <td>x1、x2、biasOptional、x1Scale、x2Scale或out是空tensor。</td>
     </tr>
     <tr>
-      <td>传入的fusedOpType不属于"gelu_tanh"，"gelu_erf"中的一种。</td>
+      <td>传入的fusedOpType不属于"gelu_tanh"、"gelu_erf"中的一种。</td>
     </tr>
     <tr>
       <td>传入的当前不支持的yScaleOptional、x1OffsetOptional、x2OffsetOptional、yOffsetOptional、x3Optional、groupSizeOptional参数。</td>
@@ -388,7 +388,7 @@ aclnnStatus aclnnFusedQuantMatmulWeightNz(
   - x2数据类型支持INT8、INT32、INT4。
     - 该接口仅支持x2为NZ格式，此时k、n不能为1。
     - 数据类型为INT32时，每个INT32数据存放8个INT4数据。
-    - 可使用aclnnConvertWeightToINT4Pack接口完成x2从INT32（1个int32在0~3bit位存储1个int4）到INT32（1个int32存储8个int4）或INT4（1个int4表示1个int4）的数据格式转换，具体参见[aclnnConvertWeightToINT4Pack接口](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)。
+    - 可使用aclnnConvertWeightToINT4Pack接口完成x2从INT32（1个int32在0~3bit存储1个int4）到INT32（1个int32存储8个int4）或INT4（1个int4表示1个int4）的数据格式转换，具体参见[aclnnConvertWeightToINT4Pack接口](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)。
     - x2按逻辑shape声明，维度为2~6。不转置时为（batch，k，n），转置时为（batch，n，k），batch可不存在。数据格式为NZ。不要把NZ内部块排布当作入参shape。
       - 内部存储才是4~8维。不转置时为（batch，n1，k1，k0，n0），其中k0 = 16，n0 = 32，ceil（k / 16） = k1；转置时为（batch，k1，n1，n0，k0），其中k0 = 32，n0 = 16，ceil（k / 32） = k1。
       - 可使用aclnnCalculateMatmulWeightSizeV2接口以及aclnnTransMatmulWeight接口，把原始ND数据转换成上述内部排布。入参仍声明逻辑shape，并设置format为NZ。
@@ -398,7 +398,7 @@ aclnnStatus aclnnFusedQuantMatmulWeightNz(
     - shape支持1维，形状为（n,）或者（1,），其中n与x2的n一致，数据类型支持FLOAT32、BFLOAT16。
   - biasOptional的约束如下：
     - shape支持1、3维，INT4量化场景下只支持biasOptional为1维，shape为(n)，3维时biasOptional shape为(batch, 1, n)。
-    - 数据类型支持int32、float32、bfloat16或float16。
+    - 数据类型支持INT32、FLOAT32、BFLOAT16或FLOAT16。
   - out的约束如下：
     - shape支持2~6维，（batch，m，n）。数据类型支持FLOAT16、BFLOAT16。
 

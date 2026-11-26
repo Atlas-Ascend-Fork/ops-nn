@@ -153,7 +153,7 @@ aclnnStatus aclnnLinalgVectorNorm(
     <tr>
       <td>executor（aclOpExecutor**）</td>
       <td>输出</td>
-      <td>返回op执行器，包含了算子计算流程。</td>
+      <td>返回OP执行器，包含了算子计算流程。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -205,7 +205,7 @@ aclnnStatus aclnnLinalgVectorNorm(
       <td>self或out的shape超过8维。</td>
     </tr>
     <tr>
-      <td>out的shape不等于由self，dims，keepDims推导得到的shape。</td>
+      <td>out的shape不等于由self、dims、keepDims推导得到的shape。</td>
     </tr>
   </tbody></table>
 
@@ -238,7 +238,7 @@ aclnnStatus aclnnLinalgVectorNorm(
     <tr>
       <td>executor</td>
       <td>输入</td>
-      <td>op执行器，包含了算子计算流程。</td>
+      <td>OP执行器，包含了算子计算流程。</td>
     </tr>
     <tr>
       <td>stream</td>

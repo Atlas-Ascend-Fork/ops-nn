@@ -38,7 +38,7 @@
 
     - E[x]表示x的均值。
     - invstd表示x的标准差倒数，直接作为乘子参与计算（语义上对应 $\frac{1}{\sqrt{Var(x)+eps}}$）。
-    - eps为兼容保留参数，不参与计算（历史实现将eps参与方差反解，在eps为大值、NaN或±inf时存在数值风险）。
+    - eps为兼容保留参数，不参与计算（历史实现中eps参与方差反解，在eps为大值、NaN或±inf时存在数值风险）。
   <!-- end id7 -->
   <!-- npu="A3,910b,910" id8 -->
   - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas训练系列产品</term>：
@@ -47,7 +47,7 @@
     y = \frac{(x-E[x])}{\sqrt{Var(x)+ eps}} * weight + bias
     $$
 
-    标准差与方差的关系如下:
+    标准差与方差的关系如下：
 
     $$
     \frac{1}{S} = \frac{1}{\sqrt{Var(x) + eps}}
@@ -107,7 +107,7 @@ aclnnStatus aclnnBatchNormElemt(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
@@ -164,7 +164,7 @@ aclnnStatus aclnnBatchNormElemt(
     <tr>
       <td>eps（double）</td>
       <td>输入</td>
-      <td>表示添加到方差中的值，以避免出现除以零的情况。对应公式中的`eps`。</td>
+      <td>表示添加到方差中的值，以避免出现除以零的情况，对应公式中的`eps`。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -175,7 +175,7 @@ aclnnStatus aclnnBatchNormElemt(
       <td>output（aclTensor*）</td>
       <td>输出</td>
       <td>表示最终的输出结果，对应公式中的`y`。</td>
-      <td><ul><li>支持空Tensor。</li><li>数据类型、shape与输入`input`的数据类型、shape保持一致。</li><li>shape与入参`input`的shape相同，支持的shape和格式有：2维（对应的格式为NC），3维（对应的格式为NCL），4维（对应的格式为NCHW或NHWC），5维（对应的格式为NCDHW或NDHWC），6-8维（对应的格式为ND，其中第2维固定为channel轴）；NHWC/NDHWC的适用产品、通道位置与维度要求见约束说明。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>数据类型、shape与入参`input`保持一致。</li><li>支持的shape和格式有：2维（对应的格式为NC），3维（对应的格式为NCL），4维（对应的格式为NCHW或NHWC），5维（对应的格式为NCDHW或NDHWC），6-8维（对应的格式为ND，其中第2维固定为channel轴）；NHWC/NDHWC的适用产品、通道位置与维度要求见约束说明。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>NC、NCL、NCHW、NCDHW、ND、NHWC、NDHWC</td>
       <td>2-8</td>
@@ -235,7 +235,7 @@ aclnnStatus aclnnBatchNormElemt(
     <tr>
       <td rowspan="9">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="9">161002</td>
-      <td>input，output数据类型和数据格式不在支持的范围之内。</td>
+      <td>input、output数据类型和数据格式不在支持的范围之内。</td>
     </tr>
     <tr>
       <td>input和output数据的shape不在支持的范围内。</td>
@@ -311,7 +311,7 @@ aclnnStatus aclnnBatchNormElemt(
 - 数据格式与通道位置：
 
   <!-- npu="950" id10 -->
-  - <term>Ascend 950PR&950DT系列产品</term>：5维输入支持NDHWC、4维输入支持NHWC，该两种存储格式的通道为末维；NDHWC仅接受5维、NHWC仅接受4维，其余维度组合（如6维NDHWC）在参数校验阶段拒绝。其余格式的通道为第2维。
+  - <term>Ascend 950PR&950DT系列产品</term>：5维输入支持NDHWC、4维输入支持NHWC，这两种存储格式的通道为末维；NDHWC仅接受5维、NHWC仅接受4维，其余维度组合（如6维NDHWC）在参数校验阶段拒绝。其余格式的通道为第2维。
   <!-- end id10 -->
   <!-- npu="A3,910b,910" id11 -->
   - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas训练系列产品</term>：通道轴固定为第2维，与存储格式无关。
@@ -320,7 +320,7 @@ aclnnStatus aclnnBatchNormElemt(
 - eps与invstd取值：
 
   <!-- npu="950" id12 -->
-  - <term>Ascend 950PR&950DT系列产品</term>：eps为兼容保留参数，不参与计算，任意取值不影响输出；invstd元素值可为0或负：0时输出为bias，负值按符号语义参与计算。
+  - <term>Ascend 950PR&950DT系列产品</term>：eps为兼容保留参数，不参与计算，任意取值不影响输出；invstd元素值可为0或负值：0时输出为bias，负值按符号语义参与计算。
   <!-- end id12 -->
 
 - 统计量数据类型：

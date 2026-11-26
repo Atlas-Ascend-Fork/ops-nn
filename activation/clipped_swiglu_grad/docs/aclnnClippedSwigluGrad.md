@@ -152,7 +152,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用"aclnnClippedSwigluGradGetWorkspaceSize"接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用"aclnnClippedSwigluGrad"接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnClippedSwigluGradGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnClippedSwigluGrad”接口执行计算。
 
 ```Cpp
 aclnnStatus aclnnClippedSwigluGradGetWorkspaceSize(
@@ -346,7 +346,7 @@ aclnnStatus aclnnClippedSwigluGrad(
     <tr>
       <td>ACLNN_ERR_INNER_TILING_ERROR</td>
       <td>561002</td>
-      <td>多个输入tensor之间的shape信息不匹配、输入属性不在取值范围（详见参数说明）。</td>
+      <td>多个输入Tensor之间的shape信息不匹配、输入属性不在取值范围内（详见参数说明）。</td>
     </tr>
   </tbody></table>
 

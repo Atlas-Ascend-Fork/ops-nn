@@ -29,8 +29,8 @@
 对应**`quantMode=5`（mx_quant_v2）**这一独立量化模式，在V1的MX量化基础上新增：
 
 - 新增`alpha`、`bias`两个属性，支持变体ClippedSwiGLU激活
-  $A' \cdot \sigma(\alpha \cdot A') \cdot (B' + \beta)$；
-- `weightOptional`的数据类型由FLOAT32扩展为**FLOAT16、BFLOAT16、FLOAT32**；
+  $A' \cdot \sigma(\alpha \cdot A') \cdot (B' + \beta)$。
+- `weightOptional`的数据类型由FLOAT32扩展为**FLOAT16、BFLOAT16、FLOAT32**。
 - 量化尺度采用**cuBLAS**（`scale_alg=1`，无amax下限），与双轴算子
   `swiglu_group_quant_with_dual_axis`的第1路共享同一MX kernel，
   因此训练（双轴）与推理（单轴`quantMode=5`）的第1路量化数值保持一致。

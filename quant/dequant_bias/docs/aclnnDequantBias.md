@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：对输入x反量化操作，将输入的INT32的数据转化为FLOAT16/BFLOAT16输出。
+- 接口功能：对输入x进行反量化操作，将输入的INT32数据转化为FLOAT16/BFLOAT16输出。
 - 计算公式：
 
   $$
@@ -84,14 +84,14 @@ aclnnStatus aclnnDequantBias(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
      <tr>
       <td>x（aclTensor*）</td>
       <td>输入</td>
-      <td>表示反量化操作的输入tensor，公式中的A。</td>
+      <td>表示反量化操作的输入Tensor，公式中的A。</td>
     <td><ul><li>支持空Tensor（空输入返回空输出）。</li><li>shape为[M，N]。</li></ul></td>
       <td>INT32</td>
       <td>ND</td>
@@ -103,7 +103,7 @@ aclnnStatus aclnnDequantBias(
       <td>输入</td>
       <td>表示反量化操作输入N维度上乘法的权重，公式中的输入weight_scale。</td>
       <td><ul><li>支持空Tensor（x为空时weightScale可为空）。</li><li>shape为[N]，长度与x的N维长度一致。</li></ul></td>
-      <td>FLOAT，BFLOAT16</td>
+      <td>FLOAT、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
       <td>√</td>

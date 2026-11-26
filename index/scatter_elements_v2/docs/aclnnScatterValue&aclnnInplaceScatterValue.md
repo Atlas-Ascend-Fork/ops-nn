@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：将scalar value中的值按指定的轴和方向和对应的位置关系逐个填入tensor self中。value会被broadcast成和tensor index的shape一致的tensor src进行Scatter的计算。
+- 接口功能：将scalar value中的值按指定的轴和方向和对应的位置关系逐个填入tensor self中。value会被broadcast成和Tensor index的shape一致的Tensor src进行Scatter的计算。
 
 - 示例：
   对于一个3D tensor，self会按照如下的规则进行更新：
@@ -513,7 +513,7 @@
 
 **aclnnScatterValue示例代码：**
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"
@@ -664,7 +664,7 @@ int main() {
 
 **aclnnInplaceScatterValue示例代码：**
 
-```Cpp
+```cpp
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"

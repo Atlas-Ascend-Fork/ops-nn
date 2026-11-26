@@ -23,10 +23,10 @@
 
 ## 功能说明
 
-- 接口功能：将tensor中的每个元素根据dim这个维度，每个元素重复repeats的相应次数。
+- 接口功能：将tensor中的每个元素根据dim这个维度，重复repeats的相应次数。
 
 - 示例：
-  假设input tensor是([[a, b], [c, d], [e, f]])。repeats为2, dim为0。
+  假设input tensor是([[a, b], [c, d], [e, f]])。repeats为2，dim为0。
   那么最后生成的tensor为 [ [a, b], [a, b], [c, d], [c, d], [e, f], [e, f]]。
   在dim 0维度，对应的a、b会重复2次，对应的c、d会重复2次，对应的e、f会重复2次。
   在计算时需要满足要求：outputSize = self的dim维度的size * repeats的值。
@@ -187,7 +187,7 @@ aclnnStatus aclnnRepeatInterleaveIntWithDim(
         <td>repeats 为负数，或 repeats 为 0 时 outputSize 或输出形状不符合要求。</td>
       </tr>
       <tr>
-        <td>dim的值不在[-self的维度数量， self的维度数量-1]之间。</td>
+        <td>dim的值不在[-self的维度数量，self的维度数量-1]之间。</td>
       </tr>
       <tr>
         <td>self的维度数超过8。</td>

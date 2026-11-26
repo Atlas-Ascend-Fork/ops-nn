@@ -45,7 +45,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用"aclnnMatmulEmuSplitWeightGetWorkspaceSize"接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用"aclnnMatmulEmuSplitWeight"接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnMatmulEmuSplitWeightGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnMatmulEmuSplitWeight”接口执行计算。
 
 ```cpp
 aclnnStatus aclnnMatmulEmuSplitWeightGetWorkspaceSize(
@@ -271,7 +271,7 @@ aclnnStatus aclnnMatmulEmuSplitWeight(
 
 - **Shape约束**：
   - M、K、N取值范围为(0, INT32_MAX]。
-- **转置**：aclnn接口本身不接收转置属性。如需转置，调用方应在传入前对tensor做permute处理，算子支持非连续Tensor，无需额外做contiguous。
+- **转置**：aclnn接口本身不接收转置属性。如需转置，调用方应在传入前对Tensor做permute处理，算子支持非连续Tensor，无需额外做contiguous。
 
 ## 调用示例
 

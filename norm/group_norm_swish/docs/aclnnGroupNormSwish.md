@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：计算输入x的组归一化结果yOut，均值meanOut，标准差的倒数rstdOut，以及swish的输出。
+- 接口功能：计算输入x的组归一化结果yOut，均值meanOut，标准差的倒数rstdOut，以及Swish的输出。
 - 计算公式：
   - **GroupNorm：**
 
@@ -105,7 +105,7 @@ aclnnStatus aclnnGroupNormSwish(
        <td>x（aclTensor*）</td>
        <td>输入</td>
        <td>待组归一化的目标张量，yOut计算公式中的x。</td>
-       <td><ul><li>不支持空tensor。</li><li>维度支持2D到8D，第0维为N，第1维为C，要求x第0维和第1维大于0，第1维要求能被group整除。</li></ul></td>
+       <td><ul><li>不支持空Tensor。</li><li>维度支持2D到8D，第0维为N，第1维为C，要求x第0维和第1维大于0，第1维要求能被group整除。</li></ul></td>
        <td>FLOAT16、FLOAT、BFLOAT16</td>
        <td>ND</td>
        <td>2-8</td>
@@ -115,7 +115,7 @@ aclnnStatus aclnnGroupNormSwish(
        <td>gamma（aclTensor*）</td>
        <td>输入</td>
        <td>组归一化中的gamma参数，yOut计算公式中的γ。</td>
-       <td><ul><li>不支持空tensor。</li><li>元素数量需与输入x的第1维度相同，gamma与beta的数据类型必须保持一致，且数据类型与x相同或者为FLOAT。</li></ul></td>
+       <td><ul><li>不支持空Tensor。</li><li>元素数量需与输入x的第1维度相同，gamma与beta的数据类型必须保持一致，且数据类型与x相同或者为FLOAT。</li></ul></td>
        <td>FLOAT16、FLOAT、BFLOAT16</td>
        <td>ND</td>
        <td>1</td>
@@ -125,7 +125,7 @@ aclnnStatus aclnnGroupNormSwish(
        <td>beta（aclTensor*）</td>
        <td>输入</td>
        <td>组归一化中的beta参数，yOut计算公式中的β。</td>
-       <td><ul><li>不支持空tensor。</li><li>元素数量需与输入x的第1维度相同，gamma与beta的数据类型必须保持一致，且数据类型与x相同或者为FLOAT。</li></ul></td>
+       <td><ul><li>不支持空Tensor。</li><li>元素数量需与输入x的第1维度相同，gamma与beta的数据类型必须保持一致，且数据类型与x相同或者为FLOAT。</li></ul></td>
        <td>FLOAT16、FLOAT、BFLOAT16</td>
        <td>ND</td>
        <td>1</td>
@@ -134,7 +134,7 @@ aclnnStatus aclnnGroupNormSwish(
       <tr>
        <td>numGroups（int64_t）</td>
        <td>输入</td>
-       <td>输入x的C维度分为group组。</td>
+       <td>输入x的C维度分为numGroups组。</td>
        <td>group需大于0。</td>
        <td>-</td>
        <td>-</td>
@@ -164,8 +164,8 @@ aclnnStatus aclnnGroupNormSwish(
       <tr>
        <td>activateSwish（bool）</td>
        <td>输入</td>
-       <td>是否支持swish计算。</td>
-       <td>如果设置为true，则表示groupnorm计算后继续swish计算。</td>
+       <td>是否进行swish计算。</td>
+       <td>如果设置为true，则表示GroupNorm计算后继续Swish计算。</td>
        <td>-</td>
        <td>-</td>
        <td>-</td>

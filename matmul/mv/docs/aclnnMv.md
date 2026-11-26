@@ -91,7 +91,7 @@ aclnnStatus aclnnMv(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -107,7 +107,7 @@ aclnnStatus aclnnMv(
     <tr>
       <td>vec</td>
       <td>输入</td>
-      <td>公式中的vec,数据类型与self保持一致。</td>
+      <td>公式中的vec，数据类型与self保持一致。</td>
       <td>其余格式如果没有特别强调则按照ND格式读取，但是继续运行可能会有非预期行为。</td>
       <td>BFLOAT16、FLOAT、FLOAT16</td>
       <td>ND</td>
@@ -201,13 +201,13 @@ aclnnStatus aclnnMv(
     <tr>
       <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="4">161002</td>
-      <td>self，vec和out的数据类型不在支持的范围之内。</td>
+      <td>self、vec和out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>self，vec和out的数据类型不同。</td>
+      <td>self、vec和out的数据类型不同。</td>
     </tr>
     <tr>
-      <td>self，vec和out的shape不符合约束。</td>
+      <td>self、vec和out的shape不符合约束。</td>
     </tr>
     <tr>
       <td>传入的cubeMathType不符合约束。</td>

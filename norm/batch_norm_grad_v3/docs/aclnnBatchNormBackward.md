@@ -212,7 +212,7 @@ aclnnStatus aclnnBatchNormBackward(
     <tr>
       <td>eps（double）</td>
       <td>输入</td>
-      <td>表示添加到方差中的值，以避免出现除以零的情况。对应公式中的`eps`。</td>
+      <td>表示添加到方差中的值，以避免出现除以零的情况，对应公式中的`eps`。</td>
       <td>必填，由调用方指定。建议使用有限正数，例如示例中的1e-5。训练时的用法参见计算公式。</td>
       <td>-</td>
       <td>-</td>

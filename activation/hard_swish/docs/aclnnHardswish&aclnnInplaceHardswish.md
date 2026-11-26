@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：激活函数，返回与输入Tensor shape相同的输出tensor：输入元素value小于等于-3时取0；大于等于3时取value；其余情况取value与(value+3)乘积除以6的结果。
+- 接口功能：激活函数，返回与输入Tensor shape相同的输出Tensor：输入元素value小于等于-3时取0；大于等于3时取value；其余情况取value与(value+3)乘积除以6的结果。
 - 计算公式：
 
   $$
@@ -430,7 +430,7 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
 }
 
 int main() {
-  // 1. （固定写法）device/stream初始化, 参考acl API手册
+  // 1. （固定写法）device/stream初始化，参考acl API手册
   // 根据自己的实际device填写deviceId
   int32_t deviceId = 0;
   aclrtStream stream;

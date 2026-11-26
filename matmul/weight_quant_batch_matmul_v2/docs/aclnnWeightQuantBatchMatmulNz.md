@@ -31,7 +31,7 @@
     y = x @ ANTIQUANT(weight) + bias
     $$
 
-    其中，$weight$为伪量化场景的输入，其反量化公式$ANTIQUANT(weight)$为
+    其中，$weight$为伪量化场景的输入，其反量化公式$ANTIQUANT(weight)$为：
 
     $$
     ANTIQUANT(weight) = (weight + antiquantOffset) * antiquantScale
@@ -244,10 +244,10 @@ aclnnStatus aclnnWeightQuantBatchMatmulNz(
       <tr>
         <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
         <td rowspan="2">161002</td>
-        <td>输入tensor的shape、数据格式、连续性等不符合要求。</td>
+        <td>输入Tensor的shape、数据格式、连续性等不符合要求。</td>
       </tr>
       <tr>
-        <td>不支持空tensor场景。</td>
+        <td>不支持空Tensor场景。</td>
       </tr>
       <tr>
         <td>ACLNN_ERR_RUNTIME_ERROR</td>

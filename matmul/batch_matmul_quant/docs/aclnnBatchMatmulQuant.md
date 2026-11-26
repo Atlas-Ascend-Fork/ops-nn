@@ -82,7 +82,7 @@ aclnnStatus aclnnBatchMatmulQuant(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -109,7 +109,7 @@ aclnnStatus aclnnBatchMatmulQuant(
       <td>bias</td>
       <td>输入</td>
       <td>公式中的输入bias。</td>
-      <td>shape的大小等于输出tensor(out)最后一个维度的大小，输入可以为空。</td>
+      <td>shape的大小等于输出Tensor(out)最后一个维度的大小，输入可以为空。</td>
       <td>FLOAT16</td>
       <td>-</td>
       <td>1</td>
@@ -120,7 +120,7 @@ aclnnStatus aclnnBatchMatmulQuant(
       <td>输入</td>
       <td>硬件完成量化计算的量化参数。</td>
       <td>可以通过 <a href="../../../quant/trans_quant_param/docs/aclnnTransQuantParam.md">aclnnTransQuantParam</a> 接口获取。shape的大小（即元素个数）需要满足以下场景中任意一种：<ul><li>shape的大小为1。</li>
-      <li>shape的大小等于输出tensor(out)最后一个维度的大小向上对齐到16的倍数。</li></ul></td>
+      <li>shape的大小等于输出Tensor(out)最后一个维度的大小向上对齐到16的倍数。</li></ul></td>
       <td>UINT64</td>
       <td>NC1HWC0</td>
       <td>1</td>
@@ -149,7 +149,7 @@ aclnnStatus aclnnBatchMatmulQuant(
     <tr>
       <td>out</td>
       <td>输出</td>
-      <td>输出tensor(out)。</td>
+      <td>输出Tensor(out)。</td>
       <td>-</td>
       <td>INT8</td>
       <td>ND</td>
@@ -210,16 +210,16 @@ aclnnStatus aclnnBatchMatmulQuant(
       <td>x1、x2、quantParam或out的数据格式不在支持的范围内。</td>
     </tr>
     <tr>
-      <td>quantParam的维度值不为1，或者不为输出tensor(out)最后一个维度的大小向上对齐到16的倍数。</td>
+      <td>quantParam的维度值不为1，或者不为输出Tensor(out)最后一个维度的大小向上对齐到16的倍数。</td>
     </tr>
     <tr>
       <td>x1和x2的输入shape在根据输入transpose描述处理后不满足矩阵乘的关系。</td>
     </tr>
     <tr>
-      <td>shape中存在0，即空tensor。</td>
+      <td>shape中存在0，即空Tensor。</td>
     </tr>
     <tr>
-      <td>bias存在时，bias shape与输出tensor(out)最后一个维度的大小不一致。</td>
+      <td>bias存在时，bias shape与输出Tensor(out)最后一个维度的大小不一致。</td>
     </tr>
   </tbody>
   </table>

@@ -245,7 +245,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
       <td>scale或zeroPoint的size与self在axis轴上的size大小不一致。</td>
     </tr>
     <tr>
-      <td>quantMin大于quantMax，或quantMin/quantMax绝对值不小于2^24（超出fp32可精确表示的整数域）。</td>
+      <td>quantMin大于quantMax，或quantMin/quantMax绝对值不小于2^24（超出FP32可精确表示的整数域）。</td>
     </tr>
   </tbody>
   </table>
@@ -304,7 +304,7 @@ aclnnStatus aclnnFakeQuantPerChannelAffineCachemask(
 - <term>Ascend 950PR&950DT系列产品</term>：浮点zero_point支持与self交叉组合；GEIR图模式另支持BFLOAT16的zero_point（可与self交叉组合）。
 <!-- end id7 -->
 <!-- npu="A3,910b" id8 -->
-- <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：浮点zero_point仅支持与self同型；GEIR图模式（非regbase形态）仅支持axis=0（aclnn入口通过内部Transpose归一化不受此限制）。
+- <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：浮点zero_point仅支持与self同型；GEIR图模式（非Regbase形态）仅支持axis=0（aclnn入口通过内部Transpose归一化不受此限制）。
 <!-- end id8 -->
 
 ## 调用示例

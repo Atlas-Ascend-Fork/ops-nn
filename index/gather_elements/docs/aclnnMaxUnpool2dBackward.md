@@ -31,7 +31,7 @@
   out[n][c][i] = gradOutput[n][c][indices[n][c][i]]
   $$
 
-  其中out、gradOutput、indices是最后两轴合为一轴，经过reshape得到的，H，W分别代表最后两轴，$i ∈ [0, H*W)$。
+  其中out、gradOutput、indices是最后两轴合为一轴，经过reshape得到的，H、W分别代表最后两轴，$i ∈ [0, H*W)$。
 
 ## 函数原型
 
@@ -210,7 +210,7 @@ aclnnStatus aclnnMaxUnpool2dBackward(
       <td>当self为3维时，self与gradOutput在C维度上的size不一致。</td>
     </tr>
     <tr>
-      <td>当self为4维时，self与gradOutput在N，C维度上的size不一致。</td>
+      <td>当self为4维时，self与gradOutput在N、C维度上的size不一致。</td>
     </tr>
     <tr>
       <td>self、indices、out的shape不一致。</td>

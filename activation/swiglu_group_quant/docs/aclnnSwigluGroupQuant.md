@@ -34,7 +34,7 @@ SwigluGroupQuant算子实现SwiGLU与分组量化融合计算。支持四种量�
 
 ### 计算公式
 
-**基础计算流程**
+**基础计算流程：**
 
 ```txt
 步骤一：GroupIndex处理（可选）→ 计算real_bs
@@ -471,7 +471,7 @@ aclnnStatus aclnnSwigluGroupQuant(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
@@ -488,7 +488,7 @@ aclnnStatus aclnnSwigluGroupQuant(
     <tr>
       <td>weightOptional（aclTensor*）</td>
       <td>输入（可选）</td>
-      <td>MOE权重张量，用于SwiGLU输出的加权计算。</td>
+      <td>MoE权重张量，用于SwiGLU输出的加权计算。</td>
       <td><ul><li>可选参数，quantMode为0或1时支持空Tensor；quantMode为2或3不支持空Tensor。</li><li>不为空时，数据类型为FLOAT32，元素个数需等于x除最后一维外的元素个数之积。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
@@ -732,7 +732,7 @@ aclnnStatus aclnnSwigluGroupQuant(
 - 确定性计算：aclnnSwigluGroupQuant默认确定性实现。
 - quantMode为0时，仅支持FP8输出，blockSize支持0或128。
 - quantMode为1时，支持FP8输出，blockSize支持0或32，roundScale必须为true。
-- quantMode为2或3时，支持HIFP8量化输出，dstType, blockSize和roundScale不生效。输入x的维度为[T, D]或[B, S, D]，需满足以下规格约束：
+- quantMode为2或3时，支持HIFP8量化输出，dstType、blockSize和roundScale不生效。输入x的维度为[T, D]或[B, S, D]，需满足以下规格约束：
 
   | 规格项 | 规格 | 规格说明 |
   | :--- | :--- | :--- |

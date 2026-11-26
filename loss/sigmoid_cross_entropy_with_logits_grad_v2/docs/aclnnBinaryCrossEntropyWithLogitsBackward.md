@@ -209,7 +209,7 @@ aclnnStatus aclnnBinaryCrossEntropyWithLogitsBackward(
       <td>gradOutput不能<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>到self的shape。</td>
       </tr>
       <tr>
-      <td>reduction的值非0,1,2三值之一。</td>
+      <td>reduction的值非0、1、2三值之一。</td>
       </tr>
     </tbody>
     </table>

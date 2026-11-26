@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：计算输入self的组归一化结果groupnormOut，均值meanOut，标准差的倒数rstdOut，将groupnormOut进行silu运算得到最终的输出out。
+- 接口功能：计算输入self的组归一化结果groupnormOut、均值meanOut、标准差的倒数rstdOut，将groupnormOut进行silu运算得到最终的输出out。
 - 计算公式：
   - **GroupNorm：**
 

@@ -147,7 +147,7 @@ aclnnStatus aclnnForeachMulScalarList(
 
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-    - 参数`x`、`out`支持包含的最大Tensor个数均为50。且`out`的TensorList长度需要与`x`的TensorList长度相等。
+    - 参数`x`、`out`支持包含的最大Tensor个数均为50，且`out`的TensorList长度需要与`x`的TensorList长度相等。
     - 参数`scalars`的ScalarList长度需要与`x`的TensorList长度相等。
     - 参数`scalars`的数据类型支持FLOAT32、DOUBLE、INT64，且与入参`x`的数据类型具有一定对应关系：
       - 当`x`的数据类型为BFLOAT16、FLOAT32、FLOAT16时，数据类型支持FLOAT32、DOUBLE。

@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：量化矩阵乘和Gelu计算融合。
+- 接口功能：量化矩阵乘和GELU计算融合。
 - 计算公式：
 
   - x1Scale， bias INT32（此场景无offset）：
@@ -378,7 +378,7 @@ aclnnStatus aclnnFusedQuantMatmul(
   | INT4/INT32                | INT4/INT32                | FLOAT32     | FLOAT32/BFLOAT16| null        | null     | null/INT32/BFLOAT16/FLOAT32   | null       | BFLOAT16              |
   | INT4/INT32                | INT4/INT32                | FLOAT32     | FLOAT32         | null        | null     | null/INT32/FLOAT16/FLOAT32    | null       | FLOAT16               |
 
-- 当前接口支持x1 pertoken量化和x2 perchannel/pertensor量化，不同的[量化模式](../../../docs/zh/context/quant_mode_introduction.md)支持的x1、 x2、x1Scale和x2Scale的输入dtype组合约束为：
+- 当前接口支持x1 pertoken量化和x2 perchannel/pertensor量化，不同的[量化模式](../../../docs/zh/context/quant_mode_introduction.md)支持的x1、x2、x1Scale和x2Scale的输入dtype组合约束为：
   - x1数据类型支持INT8、INT32、INT4。
     - 当数据类型为INT32、INT4时，为INT4量化场景：
       - 当前仅支持ND输入。
@@ -389,8 +389,8 @@ aclnnStatus aclnnFusedQuantMatmul(
     - 当数据类型为INT32、INT4时，为INT4量化场景：
       - 该接口仅支持2维ND格式。
       - 要求x2内轴为偶数。
-    - 数据类型为INT32时，每个INT32数据存放8个INT4数据：
-    - 可使用aclnnConvertWeightToINT4Pack接口完成x2从INT32（1个int32在0~3bit位存储1个int4）到INT32（1个int32存储8个int4）或INT4（1个int4表示1个int4）的数据格式转换，具体参见[aclnnConvertWeightToINT4Pack接口](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)。
+    - 数据类型为INT32时，每个INT32数据存放8个INT4数据。
+    - 可使用aclnnConvertWeightToINT4Pack接口完成x2从INT32（1个INT32在0~3bit存储1个INT4）到INT32（1个int32存储8个int4）或INT4（1个int4表示1个int4）的数据格式转换，具体参见[aclnnConvertWeightToINT4Pack接口](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)。
   - x1Scale约束如下：
     - shape支持1维，形状为（m,），数据类型支持FLOAT32。
   - x2Scale的约束如下：

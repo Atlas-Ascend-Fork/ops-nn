@@ -217,7 +217,7 @@ aclnnStatus aclnnNorm(
       <td>dim和keepdim的数据类型不符合接口入参要求。</td>
     </tr>
     <tr>
-      <td>dim超过[-N, N-1] (N表示self的维度)。</td>
+      <td>dim超过[-N, N-1]（N表示self的维度）。</td>
     </tr>
     <tr>
       <td>dim中数值重复。</td>
@@ -226,7 +226,7 @@ aclnnStatus aclnnNorm(
       <td>self或out的shape超过8维。</td>
     </tr>
     <tr>
-      <td>out的shape不等于由self，dim，keepdim推导得到的shape。</td>
+      <td>out的shape不等于由self、dim、keepdim推导得到的shape。</td>
     </tr>
   </tbody></table>
 

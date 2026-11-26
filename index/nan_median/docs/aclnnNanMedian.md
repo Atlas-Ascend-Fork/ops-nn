@@ -83,7 +83,7 @@ aclnnStatus aclnnNanMedian(
     <tr>
       <td>self（aclTensor*）</td>
       <td>输入</td>
-      <td>需要计算的输入tensor。</td>
+      <td>需要计算的输入Tensor。</td>
       <td>-</td>
       <td>FLOAT、FLOAT16、BFLOAT16、UINT8、INT8、INT16、INT32、INT64</td>
       <td>ND</td>
@@ -93,7 +93,7 @@ aclnnStatus aclnnNanMedian(
     <tr>
       <td>out（aclTensor*）</td>
       <td>输出</td>
-      <td>输出tensor，为一维Tensor，shape为(1,)。</td>
+      <td>输出Tensor，为一维Tensor，shape为(1,)。</td>
       <td>需要与self数据类型相同。</td>
       <td>FLOAT、FLOAT16、BFLOAT16、UINT8、INT8、INT16、INT32、INT64</td>
       <td>ND</td>

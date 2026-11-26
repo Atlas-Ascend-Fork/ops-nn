@@ -194,7 +194,7 @@ aclnnStatus aclnnInplaceAddRmsNorm(
     <tr>
       <td>ACLNN_ERR_INNER_TILING_ERROR</td>
       <td>561002</td>
-      <td>输入/输出的维度数（rank）不满足约束说明要求（如gamma与x1Ref需要归一化的维度不一致或rstdOut的维度数/前缀维/尾维与x1Ref、gamma的关系不成立），shape关系不满足约束说明中的要求（如x2Ref与x1Ref的shape不一致）, epsilon取值为非有限值/负值，x1Ref、x2Ref、gamma、rstdOut中的部分Tensor为空而其余非空。</td>
+      <td>输入/输出的维度数（rank）不满足约束说明要求（如gamma与x1Ref需要归一化的维度不一致或rstdOut的维度数/前缀维/尾维与x1Ref、gamma的关系不成立），shape关系不满足约束说明中的要求（如x2Ref与x1Ref的shape不一致），epsilon取值为非有限值/负值，x1Ref、x2Ref、gamma、rstdOut中的部分Tensor为空而其余非空。</td>
     </tr>
   </tbody></table>
 

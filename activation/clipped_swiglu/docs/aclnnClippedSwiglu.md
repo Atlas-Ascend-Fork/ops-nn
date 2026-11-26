@@ -29,7 +29,7 @@
 
   对给定的输入张量x，其维度为[a,b,c,d,e,f,g…]，aclnnClippedSwiglu对其进行以下计算：
 
-  1. 将x基于输入参数dim进行合轴，合轴后维度为[pre,cut,after]。其中cut轴为合轴之后需要切分为两个张量的轴，切分方式分为前后切分或者奇偶切分；pre，after可以等于1。例如当dim为3，合轴后x的维度为[a*b*c,d,e*f*g*…]。此外，由于after轴的元素为连续存放，且计算操作为逐元素的，因此将cut轴与after轴合并，得到x的维度为[pre,cut]。
+  1. 将x基于输入参数dim进行合轴，合轴后维度为[pre,cut,after]。其中cut轴为合轴之后需要切分为两个张量的轴，切分方式分为前后切分或者奇偶切分；pre、after可以等于1。例如当dim为3，合轴后x的维度为[a*b*c,d,e*f*g*…]。此外，由于after轴的元素为连续存放，且计算操作为逐元素的，因此将cut轴与after轴合并，得到x的维度为[pre,cut]。
 
   2. 根据输入参数group_index，对x的pre轴进行过滤处理，公式如下：
 
@@ -243,11 +243,11 @@ aclnnStatus aclnnClippedSwiglu(
 
   <!-- npu="950" id7 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-    - 入参`groupIndexOptional`，不支持空tensor，支持的group分组数量由UB空间大小决定。
+    - 入参`groupIndexOptional`，不支持空Tensor，支持的group分组数量由UB空间大小决定。
   <!-- end id7 -->
   <!-- npu="A3,910b" id8 -->
   - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：
-    - 入参`groupIndexOptional`，支持空tensor。
+    - 入参`groupIndexOptional`，支持空Tensor。
   <!-- end id8 -->
 
 - **返回值**
@@ -338,7 +338,7 @@ aclnnStatus aclnnClippedSwiglu(
 - 张量参数非连续性说明：
   <!-- npu="950" id9 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-    - 所有输入张量参数支持非连续Tensor，输出张量参数不支持非连续tensor。
+    - 所有输入张量参数支持非连续Tensor，输出张量参数不支持非连续Tensor。
   <!-- end id9 -->
   <!-- npu="A3,910b" id10 -->
   - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：

@@ -140,7 +140,7 @@ aclnnStatus aclnnAddRmsNormDynamicMxQuant(
         <th>使用说明</th>
         <th>数据类型</th>
         <th>数据格式</th>
-        <th>维度(shape)</th>
+        <th>维度（shape）</th>
         <th>非连续Tensor</th>
       </tr></thead>
     <tbody>
@@ -333,7 +333,7 @@ aclnnStatus aclnnAddRmsNormDynamicMxQuant(
       <td>输入x1、x2和输出yOut、xOut的shape不是完全相同的shape。</td>
     </tr>
     <tr>
-      <td>gamma、beta(若存在)的shape不是完全相同的shape，或二者的维度数不为1，或轴长不等于x1的尾轴大小，或者类型不相同。</td>
+      <td>gamma、beta（若存在）的shape不是完全相同的shape，或二者的维度数不为1，或轴长不等于x1的尾轴大小，或者类型不相同。</td>
     </tr>
     <tr>
       <td>gamma的维度和x1的需要做norm的维度不相同，或rstdOut的维度和x1的不需要norm的维度不相同，或rstdOut对应x1归一化维度的轴长不为1。</td>

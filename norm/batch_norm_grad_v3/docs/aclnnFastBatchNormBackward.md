@@ -206,7 +206,7 @@ aclnnStatus aclnnFastBatchNormBackward(
       <td>outputMask（aclBoolArray*）</td>
       <td>输入</td>
       <td>表示输出的掩码。</td>
-      <td>size为3。分别表示是否输出`gradInput`、`gradWeight`、`gradBias`，若为true则输出，否则输出对应位置返回空。</td>
+      <td>size为3，分别表示是否输出`gradInput`、`gradWeight`、`gradBias`，若为true则输出，否则输出对应位置返回空。</td>
       <td>BoolArray</td>
       <td>-</td>
       <td>-</td>
@@ -317,10 +317,10 @@ aclnnStatus aclnnFastBatchNormBackward(
     <tr>
       <td rowspan="10">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="10">161002</td>
-      <td>input，gradOut，数据类型、数据格式和shape不在支持的范围之内。</td>
+      <td>input、gradOut、数据类型、数据格式和shape不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>weight，runningMean，runningVar，saveMean，saveInvstd非空时，数据类型、数据格式和shape不在支持的范围之内。</td>
+      <td>weight、runningMean、runningVar、saveMean、saveInvstd非空时，数据类型、数据格式和shape不在支持的范围之内。</td>
     </tr>
     <tr>
       <td>outputMask的长度不为3。</td>
@@ -335,7 +335,7 @@ aclnnStatus aclnnFastBatchNormBackward(
       <td>当outputMask[2]为true，gradBias数据类型、数据格式和shape不在支持的范围之内时。</td>
     </tr>
     <tr>
-      <td>weight，runningMean，runningVar，saveMean，saveInvstd，gradWeight（非空时），gradBias（非空时）的shape长度与input shape中channel轴的长度不相等。</td>
+      <td>weight、runningMean、runningVar、saveMean、saveInvstd、gradWeight（非空时）、gradBias（非空时）的shape长度与input shape中channel轴的长度不相等。</td>
     </tr>
     <tr>
       <td>input、gradOut、gradInput（非空时）的数据格式不一致。</td>

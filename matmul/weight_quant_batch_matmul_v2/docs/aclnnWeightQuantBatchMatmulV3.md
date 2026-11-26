@@ -32,13 +32,13 @@
   y = x @ ANTIQUANT(weight) + bias
   $$
 
-  公式中的$weight$为伪量化场景的输入，其反量化公式$ANTIQUANT(weight)$为
+  公式中的$weight$为伪量化场景的输入，其反量化公式$ANTIQUANT(weight)$为：
 
   $$
   ANTIQUANT(weight) = (weight + antiquantOffset) * antiquantScale
   $$
 
-  当用户配置quantScaleOptional输入时，会对输出进行量化处理,其量化公式为
+  当用户配置quantScaleOptional输入时，会对输出进行量化处理，其量化公式为：
 
   $$
   \begin{aligned}
@@ -47,7 +47,7 @@
   \end{aligned}
   $$
 
-  当用户配置quantScaleOptional输入为nullptr,则直接输出:
+  当用户配置quantScaleOptional输入为nullptr，则直接输出：
 
   $$
   y = x @ ANTIQUANT(weight) + bias
@@ -95,7 +95,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
       <col style="width: 190px">
       <col style="width: 145px">
     </colgroup>
-    <thread>
+    <thead>
       <tr>
       <th>参数名</th>
       <th>输入/输出</th>
@@ -104,9 +104,9 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
       </tr>
-    </thread>
+    </thead>
     <tbody>
       <tr>
         <td>x</td>
@@ -182,7 +182,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
         <td>biasOptional</td>
         <td>输入</td>
         <td>偏置输入，公式中的输入`bias`。当输入`x`的数据类型为BFLOAT16时，数据类型要求为BFLOAT16或FLOAT；当输入`x`的数据类型为FLOAT16时，数据类型要求为FLOAT16。</td>
-        <td>可选输入,当不需要时为空指针。</td>
+        <td>可选输入，当不需要时为空指针。</td>
         <td>FLOAT、FLOAT16、BFLOAT16<sup>2</sup></td>
         <td>ND</td>
         <td>1-2</td>
@@ -286,7 +286,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
       <td>传入x、weight、antiquantScale、antiquantOffsetOptional、quantScaleOptional、quantOffsetOptional、biasOptional、y的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>x、weight的reduce维度(k)不相等。</td>
+      <td>x、weight的Reduce维度(k)不相等。</td>
     </tr>
     <tr>
       <td>antiquantOffsetOptional存在输入时，shape与antiquantScale不相同。</td>
@@ -310,7 +310,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
       <td>x矩阵为非转置时，m不在[1, 2^31-1]范围内；转置时，m不在[1, 65535]范围内。</td>
     </tr>
     <tr>
-      <td>不支持空tensor场景。</td>
+      <td>不支持空Tensor场景。</td>
     </tr>
     <tr>
       <td>传入x、weight、antiquantScale、antiquantOffsetOptional、quantScaleOptional、quantOffsetOptional、biasOptional、y的连续性不符合要求。</td>
@@ -378,7 +378,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
 
   - **公共约束**
     - 当weight数据格式为FRACTAL_NZ且数据类型为INT4/INT32时，或者当weight数据格式为ND且数据类型为INT32时，仅在INT4Pack场景支持，需要配合aclnnConvertWeightToINT4Pack接口完成从INT32到INT4Pack的转换，以及从ND到FRACTAL_NZ的转换，<a href="../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md" target="_blank">详情可参考</a>，若数据类型为INT4，则weight的内轴应为偶数。
-    - 对于不同伪量化算法模式，weight的数据格式为FRACTAL_NZ仅在如下场景下支持:
+    - 对于不同伪量化算法模式，weight的数据格式为FRACTAL_NZ仅在如下场景下支持：
       - per_channel模式：
           weight的数据类型为INT8，y的数据类型为非INT8。
           weight的数据类型为INT4/INT32，weight转置，y的数据类型为非INT8。
@@ -468,8 +468,8 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
 
   - **性能优化建议**
 
-    - pertensor[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：当[数据格式](../../../docs/zh/context/data_format.md)为ND时，推荐使用转置后的`weight`输入；
-    - perchannel[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：当[数据格式](../../../docs/zh/context/data_format.md)为ND时，推荐使用转置后的`weight`输入；
+    - pertensor[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：当[数据格式](../../../docs/zh/context/data_format.md)为ND时，推荐使用转置后的`weight`输入。
+    - perchannel[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：当[数据格式](../../../docs/zh/context/data_format.md)为ND时，推荐使用转置后的`weight`输入。
     - pergroup[量化模式](../../../docs/zh/context/quant_mode_introduction.md)和MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：推荐使用非转置的`weight`输入。
 
     </details>
@@ -487,7 +487,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV3(
 
 A16W8调用示例。
 
-  ```Cpp
+  ```cpp
   #include <iostream>
   #include <memory>
   #include <vector>
@@ -718,7 +718,7 @@ A16W8调用示例。
 
 A16MxFp4调用示例。
 
-  ```Cpp
+  ```cpp
   #include <iostream>
   #include <memory>
   #include <vector>

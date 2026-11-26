@@ -222,7 +222,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV2(
   <!-- npu="950" id7 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
 
-    - 上表数据类型列中的角标“1”代表该系列不支持的数据类型；
+    - 上表数据类型列中的角标“1”代表该系列不支持的数据类型。
 
   <!-- end id7 -->
   <!-- npu="A3,910b" id8 -->
@@ -269,7 +269,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV2(
         <td>传入x、weight、antiquantScale、antiquantOffsetOptional、quantScaleOptional、quantOffsetOptional、biasOptional、y的数据类型不在支持的范围之内。</td>
       </tr>
       <tr>
-        <td>x、weight的reduce维度(k)不相等。</td>
+        <td>x、weight的Reduce维度(k)不相等。</td>
       </tr>
       <tr>
         <td>antiquantOffsetOptional存在输入时，shape与antiquantScale不相同。</td>
@@ -293,7 +293,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV2(
         <td>x矩阵为非转置时，m不在[1, 2^31-1]范围内；转置时，m不在[1, 65535]范围内。</td>
       </tr>
       <tr>
-        <td>不支持空tensor场景。</td>
+        <td>不支持空Tensor场景。</td>
       </tr>
       <tr>
         <td>传入x、weight、antiquantScale、antiquantOffsetOptional、quantScaleOptional、quantOffsetOptional、biasOptional、y的连续性不符合要求。</td>
@@ -364,21 +364,21 @@ aclnnStatus aclnnWeightQuantBatchMatmulV2(
 
   - `x`（aclTensor *,计算输入）：矩阵为非转置时，m大小在[1, 2^31-1]范围内；转置时，m大小在[1, 65535]范围内。
   - `weight`（aclTensor *,计算输入）：维度支持2维，Reduce维度k需要与`x`的Reduce维度k大小相等。数据类型支持INT8、INT4、INT32，当`weight`[数据格式](../../../docs/zh/context/data_format.md)为FRACTAL_NZ且数据类型为INT4或INT32时，或者当`weight`[数据格式](../../../docs/zh/context/data_format.md)为ND且数据类型为INT32时，仅在INT4Pack场景支持，需配合`aclnnConvertWeightToINT4Pack`接口完成从INT32到INT4Pack的转换，以及从ND到FRACTAL_NZ的转换，[详情可参考样例](../../convert_weight_to_int4_pack/docs/aclnnConvertWeightToINT4Pack.md)，若数据类型为INT4，则`weight`的内轴应为偶数。[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)仅支持转置场景。shape支持(k, n)，其中k表示矩阵第1维的大小，n表示矩阵第2维的大小。
-    对于不同伪量化算法模式，`weight`的[数据格式](../../../docs/zh/context/data_format.md)为FRACTAL_NZ仅在如下场景下支持:
+    对于不同伪量化算法模式，`weight`的[数据格式](../../../docs/zh/context/data_format.md)为FRACTAL_NZ仅在如下场景下支持：
     - perchannel[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：
       - `weight`的数据类型为INT8，y的数据类型为非INT8。
       - `weight`的数据类型为INT4/INT32，`weight`转置，y的数据类型为非INT8。
     - pergroup[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：`weight`的数据类型为INT4/INT32，`weight`非转置，`x`非转置，antiquantGroupSize为64或128，k为antiquantGroupSize对齐，n为64对齐，y的数据类型为非INT8。
   - `antiquantScale`（aclTensor *,计算输入）：数据类型支持FLOAT16、BFLOAT16、UINT64、INT64（当FLOAT16、BFLOAT16时，数据类型要求和输入`x`保持一致；当为UINT64、INT64时，`x`仅支持FLOAT16，不转置，`weight`仅支持INT8，ND转置，模式仅支持perchannel[量化模式](../../../docs/zh/context/quant_mode_introduction.md)，quantScaleOptional和quantOffsetOptional必须传入空指针，m仅支持[1, 96]，k和n要求64对齐，需要首先配合aclnnCast接口完成FLOAT16到FLOAT32的转换，详情请参考[Cast](https://gitcode.com/cann/ops-math/blob/master/math/cast/docs/aclnnCast.md)，再配合aclnnTransQuantParamV2接口完成FLOAT32到UINT64的转换，详情请参考[TransQuantParamV2](../../../quant/trans_quant_param_v2/docs/aclnnTransQuantParamV2.md)）。[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)仅支持转置场景。
-    对于不同伪量化算法模式，`antiquantScale`支持的shape如下:
+    对于不同伪量化算法模式，`antiquantScale`支持的shape如下：
     - pertensor[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：输入shape为(1,)或(1, 1)。
     - perchannel[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：输入shape为(1, n)或(n,)。
     - pergroup[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：输入shape为(⌈k/group_size⌉, n)，其中group_size表示k要分组的每组的大小。
   - `antiquantOffsetOptional`（aclTensor *,计算输入）：数据类型支持FLOAT16、BFLOAT16、INT32，数据类型为FLOAT16、BFLOAT16时，数据类型要求和输入`x`的数据类型保持一致；数据类型为INT32时，数据范围限制为[-128, 127]，x仅支持FLOAT16，weight仅支持INT8，`antiquantScale`仅支持UINT64/INT64。[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)仅支持转置场景。
-  - `quantScaleOptional`（aclTensor *,计算输入）：数据类型支持UINT64，[数据格式](../../../docs/zh/context/data_format.md)支持ND。不支持[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)。可选输入，当不需要时为空指针；对于不同的伪量化算法模式，支持的shape如下:
+  - `quantScaleOptional`（aclTensor *,计算输入）：数据类型支持UINT64，[数据格式](../../../docs/zh/context/data_format.md)支持ND。不支持[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)。可选输入，当不需要时为空指针；对于不同的伪量化算法模式，支持的shape如下：
     - pertensor[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：输入shape为(1,)或(1, 1)。
     - perchannel[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：输入shape为(1, n)或(n,)。
-  - `quantOffsetOptional`（aclTensor *,计算输入）：数据类型支持FLOAT，[数据格式](../../../docs/zh/context/data_format.md)支持ND。可选输入,当不需要时为空指针；存在时shape要求与`quantScaleOptional`一致。不支持[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)。
+  - `quantOffsetOptional`（aclTensor *,计算输入）：数据类型支持FLOAT，[数据格式](../../../docs/zh/context/data_format.md)支持ND。可选输入，当不需要时为空指针；存在时shape要求与`quantScaleOptional`一致。不支持[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)。
   - `biasOptional`（aclTensor *,计算输入）：维度支持1维或2维，shape支持(n,)或(1, n)。数据类型支持FLOAT16、FLOAT。当`x`的数据类型为BFLOAT16时，本参数要求为FLOAT；当`x`的数据类型为FLOAT16时，本参数要求为FLOAT16。
   - `antiquantGroupSize`（int,计算输入）：表示在伪量化pergroup和MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)下，对输入`weight`进行反量化计算的groupSize输入，描述一组反量化参数对应的待反量化数据量在Reduce方向的大小。当伪量化算法不为pergroup和MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)时传入0；当伪量化算法为pergroup[量化模式](../../../docs/zh/context/quant_mode_introduction.md)时传入值的范围为[32, k-1]且值要求是32的倍数；在MX[量化模式](../../../docs/zh/context/quant_mode_introduction.md)，仅支持32。
   - `y`（aclTensor *,计算输出）：维度支持2维，shape支持(m, n)。数据类型支持FLOAT16、BFLOAT16、INT8。当`quantScaleOptional`存在时，数据类型为INT8；当`quantScaleOptional`不存在时，数据类型支持FLOAT16、BFLOAT16，且与输入`x`的数据类型一致。
@@ -406,7 +406,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV2(
       - 输入shape需要为(batch, n, k)，其中batch表示矩阵的批次大小，支持0~4维，k表示单个batch矩阵第1维的大小，n表示单个batch矩阵的第2维的大小。
       - 配合aclnnCalculateMatmulWeightSizeV2以及aclnnTransMatmulWeight完成输入Format从ND到FRACTAL_NZ的转换。
   - `antiquantScale`（aclTensor *,计算输入）：数据类型支持FLOAT16，数据类型要求和输入`x`保持一致。
-    对于不同伪量化算法模式，`antiquantScale`支持的shape如下:
+    对于不同伪量化算法模式，`antiquantScale`支持的shape如下：
     - pertensor[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：输入shape为(1,)或(1, 1)。
     - perchannel[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：输入shape为(n, 1)或(n,)，不支持[非连续的Tensor](../../../docs/zh/context/non_contiguous_tensor.md)。
     - pergroup[量化模式](../../../docs/zh/context/quant_mode_introduction.md)：输入shape与`weight`的数据格式相关，如下：
@@ -417,7 +417,7 @@ aclnnStatus aclnnWeightQuantBatchMatmulV2(
   - `quantOffsetOptional`（aclTensor *,计算输入）：预留参数，暂未使用，固定传入空指针。
   - `biasOptional`（aclTensor *,计算输入）：数据类型支持FLOAT16。维度支持1~6维，带batch时，输入shape需要为(batch，1，n)，batch要与x和weight的batch维度broadcast后的batch保持一致，不带batch时，输入shape需要为(n,)或(1, n)。
   - `antiquantGroupSize`（int,计算输入）：数据类型支持FLOAT16。维度支持2~6维，shape支持(batch, m, n)，batch可不存在，支持x与weight的batch维度broadcast，输出batch与broadcast之后的batch一致，m与x的m一致，n与weight的n一致。
-  - `y`（aclTensor *,计算输出）：
+  - `y`（aclTensor *,计算输出）。
 
 </details>
 <!-- end id11 -->

@@ -87,7 +87,7 @@ aclnnStatus aclnnForeachAddcdivScalarV2(
     <tr>
       <td>x1（aclTensorList*）</td>
       <td>输入</td>
-      <td>表示混合运算中加法的第一个输入张量列表。公式中的`x1`。</td>
+      <td>表示混合运算中加法的第一个输入张量列表。对应公式中的`x1`。</td>
       <td><ul><li>不支持空Tensor。</li><li>空TensorList（长度为0）按no-op处理并返回成功。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>shape与入参`x2`、`x3`的shape一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -196,7 +196,7 @@ aclnnStatus aclnnForeachAddcdivScalarV2(
       <td>x1、x2、x3、out中存在空Tensor。</td>
     </tr>
     <tr>
-      <td>x1、x2、x3或out中的Tensor的元素数据类型不一致。</td>
+      <td>x1、x2、x3或out中的Tensor的数据类型不一致。</td>
     </tr>
     <tr>
       <td>x1、x2、x3或out中的Tensor维度超过8维。</td>

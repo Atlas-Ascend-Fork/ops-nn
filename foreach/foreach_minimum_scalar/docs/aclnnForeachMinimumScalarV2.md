@@ -96,7 +96,7 @@ aclnnStatus aclnnForeachMinimumScalarV2(
       <td>scalar（aclScalar*）</td>
       <td>输入</td>
       <td>对应公式中的`scalar`，表示取最小值运算的输入标量。</td>
-      <td>数据类型与入参`x`的数据类型具有一定对应关系，且数值不超过入参`x`对应数据类型的数值范围：<ul><li>当`x`的数据类型为FLOAT32、BFLOAT16时，数据类型支持FLOAT32、DOUBLE。</li><li>当`x`的数据类型为FLOAT16时，数据类型支持FLOAT16、DOUBLE。</li><li>当`x`的数据类型为INT32时，数据类型支持INT32、INT64。</li></ul></td>
+      <td>数据类型与入参`x`的数据类型具有一定对应关系，且数值不超出入参`x`对应数据类型的数值范围：<ul><li>当`x`的数据类型为FLOAT32、BFLOAT16时，数据类型支持FLOAT32、DOUBLE。</li><li>当`x`的数据类型为FLOAT16时，数据类型支持FLOAT16、DOUBLE。</li><li>当`x`的数据类型为INT32时，数据类型支持INT32、INT64。</li></ul></td>
       <td>FLOAT32、FLOAT16、INT32、DOUBLE、INT64</td>
       <td>-</td>
       <td>-</td>
@@ -157,7 +157,7 @@ aclnnStatus aclnnForeachMinimumScalarV2(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>如果传入参数是必选输入，输出或必选属性，且是空指针。</td>
+      <td>如果传入参数是必选输入、输出或必选属性，且是空指针。</td>
     </tr>
     <tr>
       <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
