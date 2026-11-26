@@ -36,7 +36,7 @@ inline ge::graphStatus CheckLambApplyDtypeConsistency(gert::TilingContext* conte
         auto inputDesc = context->GetInputDesc(inputIdx);
         OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
         if (inputDesc->GetDataType() != input0DType) {
-            std::string paramNames = std::string(inputNames[inputIdx]) + " and input0";
+            std::string paramNames = std::string(inputNames[inputIdx]) + " and " + inputNames[0];
             OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
                 context->GetNodeName(), paramNames.c_str(),
                 (Ops::Base::ToString(inputDesc->GetDataType()) + " and " + Ops::Base::ToString(input0DType)).c_str(),
@@ -48,7 +48,7 @@ inline ge::graphStatus CheckLambApplyDtypeConsistency(gert::TilingContext* conte
         auto outputDesc = context->GetOutputDesc(outputIdx);
         OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
         if (outputDesc->GetDataType() != input0DType) {
-            std::string paramNames = std::string(outputNames[outputIdx]) + " and input0";
+            std::string paramNames = std::string(outputNames[outputIdx]) + " and " + inputNames[0];
             OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
                 context->GetNodeName(), paramNames.c_str(),
                 (Ops::Base::ToString(outputDesc->GetDataType()) + " and " + Ops::Base::ToString(input0DType)).c_str(),

@@ -10,8 +10,11 @@
 
 #include <cstring>
 #include <limits>
+#include <map>
+#include <string>
 #include <vector>
 #include <gtest/gtest.h>
+#include "base/err_mgr.h"
 #include "tiling_case_executor.h"
 #include "tiling_context_faker.h"
 #include "../../../../op_host/arch35/apply_came_part3_tiling_arch35.h"
@@ -222,6 +225,107 @@ TEST(ApplyCamePart3Tiling, InvalidShapesReturnGraphFailed)
     EXPECT_FALSE(RunInvalidTiling({2, 4}, {2}, {2}));
     EXPECT_FALSE(RunInvalidTiling({2, 4}, {1}, {1}));
     EXPECT_FALSE(RunInvalidTiling({2, 4}, {1}, {3}));
+}
+
+// ---------------------------------------------------------------------------
+// 错误码整改负向用例：CheckInputParams/ParseAttributes 的正式宏分支覆盖。
+// u/m dtype 不匹配 -> EZ0021；标量输入 dtype 不符 -> EZ0019；
+// global_shape dtype 不符 -> EZ0019。均断言唯一首错与精确字段。
+// ---------------------------------------------------------------------------
+namespace {
+bool RunInvalidDtypeTiling(ge::DataType uType, ge::DataType mType, ge::DataType scalarType,
+                           ge::DataType globalShapeType)
+{
+    const gert::StorageShape matrix = MakeStorageShape({4, 8});
+    const gert::StorageShape scalar = MakeStorageShape({1});
+    const gert::StorageShape globalShape = MakeStorageShape({2});
+    const gert::StorageShape sumR = MakeStorageShape({4});
+    const gert::StorageShape sumC = MakeStorageShape({8});
+    std::vector<gert::TilingContextPara::TensorDescription> inputs = {
+        {matrix, uType, ge::FORMAT_ND},
+        {matrix, mType, ge::FORMAT_ND},
+        {scalar, scalarType, ge::FORMAT_ND},
+        {scalar, scalarType, ge::FORMAT_ND},
+        {scalar, scalarType, ge::FORMAT_ND},
+        {scalar, scalarType, ge::FORMAT_ND},
+        {globalShape, globalShapeType, ge::FORMAT_ND},
+    };
+    std::vector<gert::TilingContextPara::TensorDescription> outputs = {
+        {matrix, mType, ge::FORMAT_ND},
+        {sumR, ge::DT_FLOAT, ge::FORMAT_ND},
+        {sumC, ge::DT_FLOAT, ge::FORMAT_ND},
+        {scalar, ge::DT_FLOAT, ge::FORMAT_ND},
+    };
+    std::vector<gert::TilingContextPara::OpAttr> attrs = {
+        {"use_first_moment", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+    };
+    optiling::ApplyCamePart3CompileInfo compileInfo{static_cast<int32_t>(kCoreNum), kUbSize};
+    gert::TilingContextPara para("ApplyCamePart3", inputs, outputs, attrs, &compileInfo, kCoreNum, kUbSize,
+                                 kTilingDataSize);
+    TilingInfo info;
+    return ExecuteTiling(para, info);
+}
+
+bool DrainFirstErrorFields(std::string& errorId, std::map<std::string, std::string>& fields)
+{
+    auto errors = error_message::GetErrMgrRawErrorMessages();
+    if (errors.size() != 1U) {
+        return false;
+    }
+    errorId = std::string(errors.front().error_id.get());
+    for (size_t i = 0; i < errors.front().args_key.size(); ++i) {
+        fields.emplace(std::string(errors.front().args_key[i].get()), std::string(errors.front().args_value[i].get()));
+    }
+    return true;
+}
+} // namespace
+
+TEST(ApplyCamePart3Tiling, InvalidUmDtypesReportSingleEz0021)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    EXPECT_FALSE(RunInvalidDtypeTiling(ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_INT64));
+    std::string errorId;
+    std::map<std::string, std::string> fields;
+    ASSERT_TRUE(DrainFirstErrorFields(errorId, fields));
+    EXPECT_EQ(errorId, "EZ0021");
+    EXPECT_EQ(fields.at("param_names"), "u, m");
+    EXPECT_EQ(fields.at("incorrect_dtypes"), "DT_FLOAT16 and DT_FLOAT");
+    EXPECT_EQ(fields.at("reason"), "u must be float32, and m must be float32, float16 or bfloat16");
+    EXPECT_FALSE(fields.at("op_name").empty());
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+TEST(ApplyCamePart3Tiling, InvalidScalarDtypeReportsSingleEz0019)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    EXPECT_FALSE(RunInvalidDtypeTiling(ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_INT32, ge::DT_INT64));
+    std::string errorId;
+    std::map<std::string, std::string> fields;
+    ASSERT_TRUE(DrainFirstErrorFields(errorId, fields));
+    EXPECT_EQ(errorId, "EZ0019");
+    EXPECT_EQ(fields.at("param_name"), "eps");
+    EXPECT_EQ(fields.at("incorrect_dtype"), "DT_INT32");
+    EXPECT_EQ(fields.at("correct_dtype"), "DT_FLOAT");
+    EXPECT_FALSE(fields.at("op_name").empty());
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+TEST(ApplyCamePart3Tiling, InvalidGlobalShapeDtypeReportsSingleEz0019)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    EXPECT_FALSE(RunInvalidDtypeTiling(ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_INT32));
+    std::string errorId;
+    std::map<std::string, std::string> fields;
+    ASSERT_TRUE(DrainFirstErrorFields(errorId, fields));
+    EXPECT_EQ(errorId, "EZ0019");
+    EXPECT_EQ(fields.at("param_name"), "global_shape");
+    EXPECT_EQ(fields.at("incorrect_dtype"), "DT_INT32");
+    EXPECT_EQ(fields.at("correct_dtype"), "DT_INT64");
+    EXPECT_FALSE(fields.at("op_name").empty());
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
 }
 
 } // namespace ApplyCamePart3TilingUT

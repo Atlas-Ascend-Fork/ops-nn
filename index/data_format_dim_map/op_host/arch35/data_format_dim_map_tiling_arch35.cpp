@@ -78,8 +78,10 @@ static ge::graphStatus GetInputInfo(gert::TilingContext* context, int64_t& total
     OP_CHECK_NULL_WITH_CONTEXT(context, inputShapePtr);
     totalIdx = EnsureNotScalar(inputShapePtr->GetStorageShape()).GetShapeSize();
     OP_CHECK_IF(EnsureNotScalar(inputShapePtr->GetStorageShape()).GetDimNum() > 8,
-                OP_LOGE(context, "DataFormatDimMap: input dimensions %zu exceeds platform limit 8",
-                        EnsureNotScalar(inputShapePtr->GetStorageShape()).GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "x",
+                    std::to_string(EnsureNotScalar(inputShapePtr->GetStorageShape()).GetDimNum()).c_str(),
+                    "input rank must be within [0, 8]"),
                 return ge::GRAPH_FAILED);
     auto inputDesc = context->GetInputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
@@ -87,7 +89,8 @@ static ge::graphStatus GetInputInfo(gert::TilingContext* context, int64_t& total
     const std::set<ge::DataType> supportedDtype = {ge::DT_INT32, ge::DT_INT64};
     OP_CHECK_IF(
         supportedDtype.count(dataType) == 0,
-        OP_LOGE(context, "DataFormatDimMap: unsupported dtype=%d (allowed: INT32/INT64)", static_cast<int>(dataType)),
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(dataType).c_str(),
+                                              "supported dtype list is [DT_INT32, DT_INT64]"),
         return ge::GRAPH_FAILED);
     OP_CHECK_IF(IsPrivateFormat(inputDesc->GetOriginFormat()),
                 OP_LOGE(context, "DataFormatDimMap: unsupported private origin format=%d",
@@ -187,7 +190,8 @@ static ge::graphStatus DataFormatDimMapTilingFunc(gert::TilingContext* context)
 
     int64_t totalIdx;
     ge::DataType dataType;
-    OP_CHECK_IF(GetInputInfo(context, totalIdx, dataType) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetInputInfo error"),
+    OP_CHECK_IF(GetInputInfo(context, totalIdx, dataType) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GetInputInfo failed; see root-cause error above"),
                 return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(CheckOutputConsistency(context, dataType) != ge::GRAPH_SUCCESS,

@@ -79,12 +79,20 @@ static inline const gert::Shape EnsureNotScalar(const gert::Shape& inShape)
 
 static ge::graphStatus ComputeElementCount(gert::TilingContext* context, const gert::Shape& shape, int64_t* totalIdx)
 {
+    bool hasZeroDim = false;
     for (size_t i = 0; i < shape.GetDimNum(); ++i) {
         const int64_t dim = shape.GetDim(i);
         if (dim < 0) {
             OP_LOGE(context, "LpNormUpdateV2: invalid shape: dim[%zu]=%ld is negative", i, dim);
             return ge::GRAPH_FAILED;
         }
+        hasZeroDim = hasZeroDim || (dim == 0);
+    }
+    if (hasZeroDim) {
+        // 任一维度为 0 即空张量，总元素数为 0；GetShapeSize 的逐步 MulOverflow 检查会在
+        // 遇到后续 0 维之前对大前缀维度误报溢出（如 {2^32, 2^32, 0}），需提前短路。
+        *totalIdx = 0;
+        return ge::GRAPH_SUCCESS;
     }
     *totalIdx = shape.GetShapeSize();
     if (*totalIdx < 0) {
@@ -114,20 +122,26 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     auto inputX = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputX);
     OP_CHECK_IF(inputX->GetStorageShape().GetDimNum() > MAX_TENSOR_RANK,
-                OP_LOGE(context, "LpNormUpdateV2: x rank=%zu exceeds max supported rank %zu",
-                        inputX->GetStorageShape().GetDimNum(), MAX_TENSOR_RANK),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "x", (std::to_string(inputX->GetStorageShape().GetDimNum()) + "D").c_str(),
+                    "rank must not exceed 8"),
                 return ge::GRAPH_FAILED);
     auto inputShapeX = EnsureNotScalar(inputX->GetStorageShape());
 
-    OP_CHECK_IF(ComputeElementCount(context, inputShapeX, totalIdx) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "LpNormUpdateV2: invalid input shape"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        ComputeElementCount(context, inputShapeX, totalIdx) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(
+            context, "stage=GetShapeAttrsInfo callee=ComputeElementCount rc=GRAPH_FAILED; preserve first error"),
+        return ge::GRAPH_FAILED);
 
     const std::set<ge::DataType> supportedDtype = {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16};
     auto inputDesc = context->GetInputDesc(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     *dataType = inputDesc->GetDataType();
     OP_CHECK_IF(supportedDtype.count(*dataType) == 0,
-                OP_LOGE(context, "LpNormUpdateV2: invalid dtype=%d", static_cast<int>(*dataType)),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x",
+                                                      ge::TypeUtils::DataTypeToSerialString(*dataType).c_str(),
+                                                      "supported dtypes are FLOAT16, FLOAT and BF16"),
                 return ge::GRAPH_FAILED);
 
     // 读取属性 p 和 epsilon
@@ -256,8 +270,11 @@ static ge::graphStatus LpNormUpdateV2TilingFunc(gert::TilingContext* context)
     ge::DataType dataType = ge::DT_FLOAT;
     float p = DEFAULT_P;
     float epsilon = DEFAULT_EPSILON;
-    OP_CHECK_IF(GetShapeAttrsInfo(context, &dim0, &dataType, &p, &epsilon) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        GetShapeAttrsInfo(context, &dim0, &dataType, &p, &epsilon) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(
+            context, "stage=LpNormUpdateV2TilingFunc callee=GetShapeAttrsInfo rc=GRAPH_FAILED; preserve first error"),
+        return ge::GRAPH_FAILED);
 
     // Step 3: 获取 WorkspaceSize
     OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),

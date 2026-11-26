@@ -101,3 +101,156 @@ TEST_F(ForeachAddListTilingArch35, test_tiling_int16_arch35) { DoCase({32, 4}, g
 TEST_F(ForeachAddListTilingArch35, test_tiling_int8_arch35) { DoCase({32, 4}, ge::DT_INT8, ge::DT_INT32, 0); }
 
 TEST_F(ForeachAddListTilingArch35, test_tiling_uint8_arch35) { DoCase({32, 4}, ge::DT_UINT8, ge::DT_INT32, 0); }
+
+// ---------------------------------------------------------------------------
+// Error-code remediation negative tests: formal first-error reporting for the
+// alpha dtype mapping and one-element root causes in ValidateForeachAddList.
+// ---------------------------------------------------------------------------
+#include <map>
+#include <string>
+#include "base/err_mgr.h"
+#include "graph/utils/type_utils.h"
+
+namespace {
+
+ge::graphStatus RunAddListAlphaCase(ge::DataType xDtype, ge::DataType alphaDtype, const gert::StorageShape& alphaShape)
+{
+    fe::PlatFormInfos pf;
+    std::map<std::string, std::string> soc;
+    std::map<std::string, std::string> ai;
+    std::map<std::string, std::string> intr;
+    GetPlatFormInfos(R"({"hardware_info":{"UB_SIZE":253952,"CORE_NUM":64}})", soc, ai, intr);
+    if (!pf.Init()) {
+        return ge::GRAPH_FAILED;
+    }
+    struct ForeachAddListCompileInfo {
+    } ci;
+    auto opType = std::string("ForeachAddList");
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    if (opImpl == nullptr || opImpl->tiling == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    gert::StorageShape xS = {{4, 4}, {4, 4}};
+    gert::StorageShape yS = {{4, 4}, {4, 4}};
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsh = gert::ContinuousVector::Create<size_t>(4096);
+    auto th = gert::TilingContextFaker()
+                  .SetOpType("ForeachAddList")
+                  .NodeIoNum(3, 1)
+                  .IrInstanceNum({1, 1, 1})
+                  .InputShapes({&xS, &xS, const_cast<gert::StorageShape*>(&alphaShape)})
+                  .OutputShapes({&yS})
+                  .CompileInfo(&ci)
+                  .PlatformInfo(reinterpret_cast<char*>(&pf))
+                  .NodeInputTd(0, xDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeInputTd(1, xDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeInputTd(2, alphaDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeOutputTd(0, xDtype, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .TilingData(param.get())
+                  .Workspace(reinterpret_cast<gert::ContinuousVector*>(wsh.get()))
+                  .Build();
+    auto* ctx = th.GetContext<gert::TilingContext>();
+    ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc);
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", ai);
+    ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
+    return opImpl->tiling(ctx);
+}
+
+void ExpectSingleRawError(const char* expectedCode, const std::map<std::string, std::string>& expectedMap)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), expectedCode);
+    std::map<std::string, std::string> actual;
+    for (size_t j = 0; j < errors.front().args_key.size(); ++j) {
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[j].get(), errors.front().args_value[j].get()).second);
+    }
+    EXPECT_EQ(actual, expectedMap);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+} // namespace
+
+TEST_F(ForeachAddListTilingArch35, alpha_dtype_mismatch_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape alphaShape = {{1}, {1}};
+    // x1 is FLOAT (expected alpha FLOAT) but alpha is INT32
+    EXPECT_EQ(RunAddListAlphaCase(ge::DT_FLOAT, ge::DT_INT32, alphaShape), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0020",
+                         {{"param_name", "alpha"},
+                          {"op_name", "ForeachAddList"},
+                          {"incorrect_dtype", ge::TypeUtils::DataTypeToSerialString(ge::DT_INT32)},
+                          {"reason", "the dtype of alpha must follow the scalar mapping of x1 dtype: the same as x1 "
+                                     "for FLOAT/FLOAT16/INT32, FLOAT when x1 is BF16, and INT32 when x1 is "
+                                     "INT16/INT8/UINT8"}});
+}
+
+TEST_F(ForeachAddListTilingArch35, alpha_not_one_element_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape alphaShape = {{2}, {2}};
+    EXPECT_EQ(RunAddListAlphaCase(ge::DT_FLOAT, ge::DT_FLOAT, alphaShape), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0015", {{"param_name", "alpha"},
+                                    {"op_name", "ForeachAddList"},
+                                    {"incorrect_size", "2"},
+                                    {"reason", "alpha must contain exactly one element"}});
+}
+
+// x1 and x2 carry different tensor-list sizes: the shared flat-regbase validator
+// reports a single formal EZ0037 first error before any per-tensor validation.
+TEST_F(ForeachAddListTilingArch35, flow_list_size_mismatch_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    fe::PlatFormInfos pf;
+    std::map<std::string, std::string> soc;
+    std::map<std::string, std::string> ai;
+    std::map<std::string, std::string> intr;
+    GetPlatFormInfos(R"({"hardware_info":{"UB_SIZE":253952,"CORE_NUM":64}})", soc, ai, intr);
+    ASSERT_TRUE(pf.Init());
+    struct ForeachAddListCompileInfo {
+    } ci;
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("ForeachAddList");
+    ASSERT_NE(opImpl, nullptr);
+    ASSERT_NE(opImpl->tiling, nullptr);
+
+    // x1 holds 2 tensors while x2 holds 1; the list-size equality is checked
+    // before any per-tensor validation in ValidateHomogeneous<2>.
+    gert::StorageShape x1Tensor0 = {{4, 4}, {4, 4}};
+    gert::StorageShape x1Tensor1 = {{2, 2}, {2, 2}};
+    gert::StorageShape x2Tensor0 = {{4, 4}, {4, 4}};
+    gert::StorageShape scalarS = {{1}, {1}};
+    gert::StorageShape y0 = {{4, 4}, {4, 4}};
+    gert::StorageShape y1 = {{2, 2}, {2, 2}};
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsh = gert::ContinuousVector::Create<size_t>(4096);
+    auto th = gert::TilingContextFaker()
+                  .SetOpType("ForeachAddList")
+                  .NodeIoNum(3, 2)
+                  .IrInstanceNum({2, 1, 1}, {2})
+                  .InputShapes({&x1Tensor0, &x1Tensor1, &x2Tensor0, &scalarS})
+                  .OutputShapes({&y0, &y1})
+                  .CompileInfo(&ci)
+                  .PlatformInfo(reinterpret_cast<char*>(&pf))
+                  .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                  .TilingData(param.get())
+                  .Workspace(reinterpret_cast<gert::ContinuousVector*>(wsh.get()))
+                  .Build();
+    auto* ctx = th.GetContext<gert::TilingContext>();
+    ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc);
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", ai);
+    ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
+    EXPECT_EQ(opImpl->tiling(ctx), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0037", {{"param_name", "x"},
+                                    {"op_name", "ForeachAddList"},
+                                    {"reason", "all tensor-list inputs must have the same list size"}});
+}

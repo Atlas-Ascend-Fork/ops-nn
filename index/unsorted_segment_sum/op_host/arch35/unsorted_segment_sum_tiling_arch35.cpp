@@ -2174,7 +2174,13 @@ ge::graphStatus CalcTiling4Float(gert::TilingContext* context, const int32_t e_s
 
     // select key
     OP_CHECK_IF(!GetTilingMode(commParas, x_ub_size, tiling_params->select_key_input_scalar),
-                OP_LOGE(context->GetNodeName(), "GetTilingMode failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "num_segments", std::to_string(commParas.num_segments).c_str(),
+                    ("GetTilingMode failed: num_segments must be a positive integer, and x must contain at least one "
+                     "element when num_segments is greater than 1 (x contains " +
+                     std::to_string(commParas.x_e_num) + " elements)")
+                        .c_str()),
+                return ge::GRAPH_FAILED);
     tiling_params->e_num_input_scalar = e_size;
     tiling_params->input_last_axis_align_floor_ele_num_input_scalar = commParas.e_size_align;
     tiling_params->e_num_sub = commParas.e_size_align - e_size;
@@ -2293,9 +2299,14 @@ ge::graphStatus CalcTiling4Int(gert::TilingContext* context, const ge::DataType 
     comm_tiling_mode_params.output_ub_ele_num_one_row = output_ub_ele_num_one_row;
     comm_tiling_mode_params.all_size = input_size;
     comm_tiling_mode_params.num_segments = num_segments;
-    OP_CHECK_IF(!GetTilingModeNoAtomic(comm_tiling_mode_params, tiling_params->select_key_input_scalar, e_once_num,
-                                       id_once_num, tiling_params->num_segment_max),
-                OP_LOGE(context->GetNodeName(), "GetTilingModeNoAtomic failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !GetTilingModeNoAtomic(comm_tiling_mode_params, tiling_params->select_key_input_scalar, e_once_num, id_once_num,
+                               tiling_params->num_segment_max),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "num_segments", std::to_string(comm_tiling_mode_params.num_segments).c_str(),
+            "GetTilingModeNoAtomic failed: num_segments must be a positive integer, as a tiling mode exists "
+            "for every num_segments of at least 1"),
+        return ge::GRAPH_FAILED);
     ComputeNumSegmentsParams(num_segments, e_size, output_ub_ele_num_one_row, tiling_params);
 
     // ids params

@@ -195,13 +195,15 @@ static ge::graphStatus ValidateShape(gert::TilingContext* context)
 }
 
 // ========== ValidateInputs 调度器 ==========
+// dtype/shape 根因在 ValidateDtype/ValidateShape 内已用正式宏首报（EZ0019/EZ0020/EZ0011/EZ0012/EZ0008/EZ0009），
+// 本层只补上下文日志并保持失败返回，不再重复 ErrorManager 首报。
 static ge::graphStatus ValidateInputs(gert::TilingContext* context)
 {
     // SE "参数约束"小节：dtype 列 + dtype 关系
-    OP_CHECK_IF(ValidateDtype(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "ValidateDtype failed"),
+    OP_CHECK_IF(ValidateDtype(context) != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context, "ValidateDtype failed"),
                 return ge::GRAPH_FAILED);
     // SE "参数约束"小节：shape 列 + shape 关系
-    OP_CHECK_IF(ValidateShape(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "ValidateShape failed"),
+    OP_CHECK_IF(ValidateShape(context) != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context, "ValidateShape failed"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -316,15 +318,15 @@ static ge::graphStatus TensorScatterSubTilingFunc(gert::TilingContext* context)
 {
     OP_LOGD(context, "Enter TilingTensorScatterSub");
 
-    // 1. validate inputs (SE "参数约束"小节)
-    OP_CHECK_IF(ValidateInputs(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "ValidateInputs failed"),
+    // 1. validate inputs (SE "参数约束"小节)；参数根因已在 ValidateDtype/ValidateShape 正式首报
+    OP_CHECK_IF(ValidateInputs(context) != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context, "ValidateInputs failed"),
                 return ge::GRAPH_FAILED);
 
     // 2. get platform info
     uint64_t ubSize = 0;
     int64_t coreNum = 0;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     // 3. compute scatter shapes
     auto xShape = EnsureNotScalar(context->GetInputShape(kXIdx)->GetStorageShape());
@@ -364,13 +366,13 @@ static ge::graphStatus TensorScatterSubTilingFunc(gert::TilingContext* context)
     ComputeScatterCoreNum(totalXElements, numSlices, coreNum, context);
     context->SetScheduleMode(1);
 
-    // 6. workspace (system workspace, user workspace = 0)
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
+    // 6. workspace (system workspace, user workspace = 0)；GetWorkspaceSize 内部 OP_CHECK_NULL 已首报
+    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
 
-    // 7. local memory
-    OP_CHECK_IF(SetLocalMemory(context, ubSize) != ge::GRAPH_SUCCESS, OP_LOGE(context, "SetLocalMemory error"),
-                return ge::GRAPH_FAILED);
+    // 7. local memory；SetLocalMemory 内部已打印具体失败原因
+    OP_CHECK_IF(SetLocalMemory(context, ubSize) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "SetLocalMemory error"), return ge::GRAPH_FAILED);
 
     // 8. tiling key
     context->SetTilingKey(GET_TPL_TILING_KEY(TENSOR_SCATTER_SUB_SCENE_DEFAULT));

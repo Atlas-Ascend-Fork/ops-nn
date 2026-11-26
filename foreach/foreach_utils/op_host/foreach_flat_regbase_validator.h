@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <string>
 #include "log/log.h"
 #include "register/op_impl_registry.h"
 #include "../op_kernel/arch35/foreach_flat_tiling_data.h"
@@ -30,13 +31,18 @@ constexpr int32_t MAX_DIM_NUM = 8;
 inline ge::graphStatus ValidateShape(gert::TilingContext* context, const gert::Shape& shape, const char* valueName,
                                      uint32_t tensorIndex)
 {
+    const std::string tensorParamName = std::string(valueName) + "[" + std::to_string(tensorIndex) + "]";
     if (shape.GetDimNum() > MAX_DIM_NUM) {
-        OP_LOGE(context, "%s[%u] supports at most %d dimensions", valueName, tensorIndex, MAX_DIM_NUM);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            context->GetNodeName(), tensorParamName.c_str(), std::to_string(shape.GetDimNum()).c_str(),
+            (tensorParamName + " supports at most " + std::to_string(MAX_DIM_NUM) + " dimensions").c_str());
         return ge::GRAPH_FAILED;
     }
     for (size_t dimIndex = 0; dimIndex < shape.GetDimNum(); ++dimIndex) {
         if (shape.GetDim(dimIndex) < 0) {
-            OP_LOGE(context, "%s[%u] contains a negative dimension", valueName, tensorIndex);
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), tensorParamName.c_str(),
+                                                  Ops::Base::ToString(shape).c_str(),
+                                                  (tensorParamName + " contains a negative dimension").c_str());
             return ge::GRAPH_FAILED;
         }
     }
@@ -61,20 +67,23 @@ ge::graphStatus ValidateHomogeneous(gert::TilingContext* context, DtypePredicate
     }
     uint64_t tensorCount = firstListInfo->GetInstanceNum();
     if (tensorCount == 0U || tensorCount > FOREACH_FLAT_MAX_TENSOR_COUNT) {
-        OP_LOGE(context, "tensor-list size must be in [1, %u], but got %lu", FOREACH_FLAT_MAX_TENSOR_COUNT,
-                tensorCount);
+        OP_LOGE_FOR_INVALID_TENSORNUMS_WITH_REASON(
+            context->GetNodeName(), "x", std::to_string(tensorCount).c_str(),
+            ("tensor-list size must be in [1, " + std::to_string(FOREACH_FLAT_MAX_TENSOR_COUNT) + "]").c_str());
         return ge::GRAPH_FAILED;
     }
 
     for (uint32_t flow = 1; flow < INPUT_FLOW_COUNT; ++flow) {
         auto listInfo = computeNodeInfo->GetInputInstanceInfo(listInputIndex + flow);
         if (listInfo == nullptr || listInfo->GetInstanceNum() != tensorCount) {
-            OP_LOGE(context, "all tensor-list inputs must have the same list size");
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                     "all tensor-list inputs must have the same list size");
             return ge::GRAPH_FAILED;
         }
     }
     if (context->GetComputeNodeOutputNum() != tensorCount) {
-        OP_LOGE(context, "input and output tensor lists must have the same list size");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x and y",
+                                                 "input and output tensor lists must have the same list size");
         return ge::GRAPH_FAILED;
     }
 
@@ -90,13 +99,20 @@ ge::graphStatus ValidateHomogeneous(gert::TilingContext* context, DtypePredicate
 
         ge::DataType currentDtype = firstDesc->GetDataType();
         if (!acceptsDtype(currentDtype)) {
-            OP_LOGE(context, "x[%u] has an unsupported dtype", tensorIndex);
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                context->GetNodeName(), ("x[" + std::to_string(tensorIndex) + "]").c_str(),
+                Ops::Base::ToString(currentDtype).c_str(),
+                ("x[" + std::to_string(tensorIndex) + "] has an unsupported dtype").c_str());
             return ge::GRAPH_FAILED;
         }
         if (listDtype == ge::DT_UNDEFINED) {
             listDtype = currentDtype;
         } else if (currentDtype != listDtype) {
-            OP_LOGE(context, "all tensors in a tensor list must have the same dtype");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                context->GetNodeName(), "x", Ops::Base::ToString(currentDtype).c_str(),
+                ("all tensors in a tensor list must have the same dtype: the dtype of x[" +
+                 std::to_string(tensorIndex) + "] differs from the list dtype " + Ops::Base::ToString(listDtype))
+                    .c_str());
             return ge::GRAPH_FAILED;
         }
 

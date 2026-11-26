@@ -118,8 +118,15 @@ static ge::graphStatus ForeachMaximumListTilingFunc(gert::TilingContext* context
                     OP_LOGE(context, "x1[%lu] dim num %zu exceeds the max support dim num %zu", i,
                             shapePtr->GetStorageShape().GetDimNum(), op::MAX_SUPPORT_DIMS_NUMS),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(shapePtr->GetStorageShape() != x2ShapePtr->GetStorageShape(),
-                    OP_LOGE(context, "x1[%lu] and x2[%lu] storage shape mismatch", i, i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            shapePtr->GetStorageShape() != x2ShapePtr->GetStorageShape(),
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), ("x1[" + std::to_string(i) + "], x2[" + std::to_string(i) + "]").c_str(),
+                (Ops::Base::ToString(shapePtr->GetStorageShape()) + ", " +
+                 Ops::Base::ToString(x2ShapePtr->GetStorageShape()))
+                    .c_str(),
+                "corresponding tensor-list members must have equal storage shapes"),
+            return ge::GRAPH_FAILED);
         auto x1DescPtr = context->GetDynamicInputDesc(INPUT_IDX_0, i);
         auto x2DescPtr = context->GetDynamicInputDesc(INPUT_IDX_1, i);
         OP_CHECK_NULL_WITH_CONTEXT(context, x1DescPtr);
@@ -130,8 +137,14 @@ static ge::graphStatus ForeachMaximumListTilingFunc(gert::TilingContext* context
                     OP_LOGE(context, "x1[%lu] dtype[%d] is not equal to x1[0] dtype[%d]", i,
                             static_cast<int32_t>(x1DescPtr->GetDataType()), static_cast<int32_t>(dataType)),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(x1DescPtr->GetDataType() != x2DescPtr->GetDataType(),
-                    OP_LOGE(context, "x1[%lu] and x2[%lu] dtype mismatch", i, i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            x1DescPtr->GetDataType() != x2DescPtr->GetDataType(),
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context->GetNodeName(), ("x1[" + std::to_string(i) + "], x2[" + std::to_string(i) + "]").c_str(),
+                (Ops::Base::ToString(x1DescPtr->GetDataType()) + ", " + Ops::Base::ToString(x2DescPtr->GetDataType()))
+                    .c_str(),
+                "corresponding tensor-list members must have the same dtype"),
+            return ge::GRAPH_FAILED);
         OP_CHECK_IF(
             !IsSupportedPublicFormat(x1DescPtr->GetFormat().GetStorageFormat()) ||
                 !IsSupportedPublicFormat(x2DescPtr->GetFormat().GetStorageFormat()),

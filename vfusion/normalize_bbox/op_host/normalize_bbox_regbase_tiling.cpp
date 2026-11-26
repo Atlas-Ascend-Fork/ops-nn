@@ -203,14 +203,19 @@ ge::graphStatus NormalizeBBoxTilingForRegbase::GetShapeAttrsInfo()
 
     const uint64_t batch = static_cast<uint64_t>(boxesGeShape.GetDim(0));
     OP_CHECK_IF(num != 0 && batch > MAX_TENSOR_ELEMENTS / num,
-                OP_LOGE(opName_, "batch*num exceeds int64 range, batch=%lu num=%lu.", batch, num),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "boxes",
+                                                      "batch=" + std::to_string(batch) + ", num=" + std::to_string(num),
+                                                      "batch*num exceeds int64 range"),
                 return ge::GRAPH_FAILED);
     const uint64_t batchFrames = batch * num;
     OP_CHECK_IF(batchFrames > MAX_TENSOR_ELEMENTS / static_cast<uint64_t>(COORD_NUM),
-                OP_LOGE(opName_, "boxes element count exceeds int64 range, batch=%lu num=%lu.", batch, num),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "boxes",
+                                                      "batch=" + std::to_string(batch) + ", num=" + std::to_string(num),
+                                                      "boxes element count (batch*num*4) exceeds int64 range"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(batch > MAX_TENSOR_ELEMENTS / SHAPE_HW_ELEMENTS_PER_BATCH,
-                OP_LOGE(opName_, "shape_hw element count exceeds int64 range, batch=%lu.", batch),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "shape_hw", "batch=" + std::to_string(batch),
+                                                      "shape_hw element count (batch*3) exceeds int64 range"),
                 return ge::GRAPH_FAILED);
 
     tilingData_.batch = static_cast<int64_t>(batch);

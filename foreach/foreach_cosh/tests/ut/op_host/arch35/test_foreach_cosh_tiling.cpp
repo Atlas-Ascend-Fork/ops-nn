@@ -20,6 +20,10 @@
 #include "ut_op_util.h"
 #include "../../../../op_kernel/arch35/foreach_cosh_tiling_data.h"
 #include "../../../../op_kernel/arch35/foreach_cosh_tiling_key.h"
+#include <map>
+#include <string>
+#include "base/err_mgr.h"
+#include "graph/utils/type_utils.h"
 
 using namespace ut_util;
 
@@ -228,4 +232,132 @@ TEST_F(ForeachCoshTilingTest, foreach_cosh_large_tensor_full_cores)
 TEST_F(ForeachCoshTilingTest, foreach_cosh_list_with_empty_tensor)
 {
     DoListCase({4, 0, 8}, ge::DT_FLOAT, GET_TPL_TILING_KEY(FOREACH_COSH_TPL_SCH_MODE_FLOAT));
+}
+
+// ---------------------------------------------------------------------------
+// Error-code remediation negative tests: formal first-error reporting for the
+// user-parameter root causes in ForeachCoshTilingFunc.
+// ---------------------------------------------------------------------------
+#include <map>
+#include <string>
+#include "base/err_mgr.h"
+#include "graph/utils/type_utils.h"
+
+namespace {
+
+ge::graphStatus RunCoshTiling(const std::vector<gert::StorageShape>& xShapes, const std::vector<ge::DataType>& xDtypes,
+                              ge::DataType yDtype)
+{
+    fe::PlatFormInfos pf;
+    std::map<std::string, std::string> soc;
+    std::map<std::string, std::string> ai;
+    std::map<std::string, std::string> intr;
+    GetPlatFormInfos(R"({"hardware_info":{"UB_SIZE":253952,"CORE_NUM":64}})", soc, ai, intr);
+    if (!pf.Init()) {
+        return ge::GRAPH_FAILED;
+    }
+    struct ForeachCoshCompileInfo {
+    } ci;
+    auto opType = std::string("ForeachCosh");
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    if (opImpl == nullptr || opImpl->tiling == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsh = gert::ContinuousVector::Create<size_t>(4096);
+    std::vector<gert::StorageShape> yShapes(xShapes.size());
+    std::vector<gert::StorageShape*> outPtr;
+    for (size_t i = 0; i < xShapes.size(); i++) {
+        yShapes[i] = xShapes[i];
+        outPtr.push_back(&yShapes[i]);
+    }
+    // per-instance dtype inside one dynamic input requires TensorV2-level inputs
+    gert::StorageFormat storageFormat(ge::FORMAT_ND, ge::FORMAT_ND, gert::ExpandDimsType());
+    std::vector<gert::TensorV2> inputTensorsStorage;
+    for (size_t i = 0; i < xShapes.size(); i++) {
+        inputTensorsStorage.emplace_back(xShapes[i], storageFormat, gert::TensorPlacement::kOnHost, xDtypes[i],
+                                         nullptr);
+    }
+    std::vector<gert::TensorV2*> inputTensors;
+    for (auto& t : inputTensorsStorage) {
+        inputTensors.push_back(&t);
+    }
+    gert::TilingContextFaker builder;
+    builder.SetOpType("ForeachCosh")
+        .NodeIoNum(1, static_cast<uint32_t>(xShapes.size()))
+        .IrInstanceNum({static_cast<uint32_t>(xShapes.size())}, {static_cast<uint32_t>(xShapes.size())})
+        .InputTensors(inputTensors)
+        .OutputShapes(outPtr)
+        .CompileInfo(&ci)
+        .PlatformInfo(reinterpret_cast<char*>(&pf));
+    for (size_t i = 0; i < xShapes.size(); i++) {
+        builder.NodeOutputTd(static_cast<int32_t>(i), yDtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    auto th = std::move(builder)
+                  .TilingData(param.get())
+                  .Workspace(reinterpret_cast<gert::ContinuousVector*>(wsh.get()))
+                  .Build();
+    auto* ctx = th.GetContext<gert::TilingContext>();
+    ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc);
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", ai);
+    ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intr);
+    return opImpl->tiling(ctx);
+}
+
+void ExpectSingleRawError(const char* expectedCode, const std::map<std::string, std::string>& expectedMap)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), expectedCode);
+    std::map<std::string, std::string> actual;
+    for (size_t j = 0; j < errors.front().args_key.size(); ++j) {
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[j].get(), errors.front().args_value[j].get()).second);
+    }
+    EXPECT_EQ(actual, expectedMap);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+} // namespace
+
+TEST_F(ForeachCoshTilingTest, mixed_dtype_list_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x0 = {{4, 4}, {4, 4}};
+    gert::StorageShape x1 = {{2, 2}, {2, 2}};
+    EXPECT_EQ(RunCoshTiling({x0, x1}, {ge::DT_FLOAT, ge::DT_FLOAT16}, ge::DT_FLOAT), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0020",
+                         {{"param_name", "x"},
+                          {"op_name", "ForeachCosh"},
+                          {"incorrect_dtype", ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT16)},
+                          {"reason", "The dtypes of all tensors in the tensor list must be the same. Currently, the "
+                                     "dtype of the 1th tensor is inconsistent with that (" +
+                                         ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT) + ") of other tensors"}});
+}
+
+TEST_F(ForeachCoshTilingTest, rank_over_limit_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x = {{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}};
+    EXPECT_EQ(RunCoshTiling({x}, {ge::DT_FLOAT}, ge::DT_FLOAT), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0012",
+                         {{"param_name", "x"},
+                          {"op_name", "ForeachCosh"},
+                          {"incorrect_dim", "9"},
+                          {"reason", "The shape dim of the 0th tensor in the tensor list should be less than or "
+                                     "equal to 8"}});
+}
+
+TEST_F(ForeachCoshTilingTest, unsupported_dtype_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x = {{4, 4}, {4, 4}};
+    EXPECT_EQ(RunCoshTiling({x}, {ge::DT_INT32}, ge::DT_INT32), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0019", {{"param_name", "x"},
+                                    {"op_name", "ForeachCosh"},
+                                    {"incorrect_dtype", ge::TypeUtils::DataTypeToSerialString(ge::DT_INT32)},
+                                    {"correct_dtype", "float, float16 or bfloat16"}});
 }

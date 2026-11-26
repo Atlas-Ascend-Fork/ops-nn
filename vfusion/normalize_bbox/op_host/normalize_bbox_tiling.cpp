@@ -30,7 +30,11 @@ static ge::graphStatus NormalizeBBoxTilingFunc(gert::TilingContext* context)
     OP_LOGD(context, "NormalizeBBoxTiling start.");
     NormalizeBBoxTilingForRegbase tilingOp(context);
     auto ret = tilingOp.DoTiling();
-    OP_CHECK_IF((ret == ge::GRAPH_FAILED), OP_LOGE(context, "NormalizeBBoxTiling failed."), return ge::GRAPH_FAILED);
+    // DoTiling's callees (GetShapeAttrsInfo/GetPlatformInfo/DoOpTiling/PostTiling) report
+    // their own first error on every failure path; log without reporting again so the
+    // inner report is not diluted by a generic EZ9999 wrapper.
+    OP_CHECK_IF((ret == ge::GRAPH_FAILED), OP_LOGE_WITHOUT_REPORT(context, "NormalizeBBoxTiling failed."),
+                return ge::GRAPH_FAILED);
     OP_LOGD(context, "NormalizeBBoxTiling end.");
     return ge::GRAPH_SUCCESS;
 }

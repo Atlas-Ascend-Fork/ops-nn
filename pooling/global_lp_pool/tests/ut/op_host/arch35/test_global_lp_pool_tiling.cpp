@@ -10,6 +10,8 @@
 
 #include <iostream>
 #include <vector>
+#include <map>
+#include "base/err_mgr.h"
 #include <gtest/gtest.h>
 #include "ut_op_common.h"
 #include "ut_op_util.h"
@@ -67,8 +69,32 @@ static string TilingData2Str(const gert::TilingData* tilingData)
     return result;
 }
 
+static void CheckRawError(const std::string& code, const std::map<std::string, std::string>& expected)
+{
+    auto messages = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(messages.size(), 1U);
+    const auto& message = messages.front();
+    ASSERT_NE(message.error_id, nullptr);
+    EXPECT_EQ(std::string(message.error_id.get()), code);
+    ASSERT_EQ(message.args_key.size(), expected.size() + 1U);
+    ASSERT_EQ(message.args_key.size(), message.args_value.size());
+    std::map<std::string, std::string> arguments;
+    for (size_t i = 0; i < message.args_key.size(); ++i) {
+        ASSERT_NE(message.args_key[i], nullptr);
+        ASSERT_NE(message.args_value[i], nullptr);
+        EXPECT_TRUE(arguments.emplace(message.args_key[i].get(), message.args_value[i].get()).second);
+    }
+    EXPECT_FALSE(arguments.at("op_name").empty());
+    for (const auto& entry : expected) {
+        EXPECT_EQ(arguments.at(entry.first), entry.second);
+    }
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
 TEST_P(GlobalLpPoolTilingRunTime, general_cases)
 {
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
     GlobalLpPoolTilingTestParam param = GetParam();
     cout << "run case " << param.caseName << endl;
 
@@ -108,6 +134,8 @@ TEST_P(GlobalLpPoolTilingRunTime, general_cases)
         make_pair("p", Ops::NN::AnyValue::CreateFrom<float>(param.p)),
     };
     auto tilingData = gert::TilingData::CreateCap(2048);
+    auto workspace = gert::ContinuousVector::Create<size_t>(1);
+    ASSERT_NE(workspace, nullptr);
     auto holder = gert::TilingContextFaker()
                       .SetOpType(param.opType)
                       .NodeIoNum(1, 1)
@@ -120,6 +148,7 @@ TEST_P(GlobalLpPoolTilingRunTime, general_cases)
                       .CompileInfo(&opInfo)
                       .PlatformInfo(reinterpret_cast<char*>(&platform_info))
                       .TilingData(tilingData.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()))
                       .Build();
 
     TilingContext* tilingContext = holder.GetContext<gert::TilingContext>();
@@ -134,6 +163,14 @@ TEST_P(GlobalLpPoolTilingRunTime, general_cases)
         ASSERT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
     } else {
         ASSERT_EQ(tilingFunc(tilingContext), ge::GRAPH_FAILED);
+        if (param.p == 0.0f) {
+            CheckRawError("EZ0037",
+                          {{"param_name", "p"},
+                           {"reason", "p must be a finite non-zero value; 0, +inf, -inf and NaN are rejected"}});
+        } else {
+            CheckRawError("EZ0011",
+                          {{"param_name", "x"}, {"incorrect_dim", "3"}, {"correct_dim", "4 (NCHW) or 5 (NCD0D1D2)"}});
+        }
         return;
     }
 
@@ -160,6 +197,34 @@ TEST_P(GlobalLpPoolTilingRunTime, general_cases)
 }
 
 static GlobalLpPoolTilingTestParam general_cases_params[] = {
+    {"GlobalLpPool_invalid_p_zero",
+     "GlobalLpPool",
+     "{}",
+     {1, 2, 3, 4},
+     FORMAT_ND,
+     {1, 2, 3, 4},
+     FORMAT_ND,
+     {1, 2, 1, 1},
+     FORMAT_ND,
+     {1, 2, 1, 1},
+     FORMAT_ND,
+     0.0f,
+     0,
+     false},
+    {"GlobalLpPool_invalid_rank_three",
+     "GlobalLpPool",
+     "{}",
+     {1, 2, 3},
+     FORMAT_ND,
+     {1, 2, 3},
+     FORMAT_ND,
+     {1, 2, 1},
+     FORMAT_ND,
+     {1, 2, 1},
+     FORMAT_ND,
+     2.0f,
+     0,
+     false},
     // ─── Normal cases (tilingKey=2: isEmptyTensor=0, isTailR=1) ───
     {"GlobalLpPool_basic_4d_fp16_p2",
      "GlobalLpPool",

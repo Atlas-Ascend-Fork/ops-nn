@@ -17,6 +17,7 @@
 #include <string>
 #include <algorithm>
 #include "log/log.h"
+#include "graph/utils/type_utils.h"
 #include "util/math_util.h"
 #include "util/platform_util.h"
 #include "graph/utils/type_utils.h"
@@ -160,7 +161,7 @@ static ge::graphStatus ForeachAtanTilingFunc(gert::TilingContext* context)
     uint64_t ubSize;
     int64_t coreNum;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     // 2. Get tensor list info
     auto computeNodeInfoPtr = context->GetComputeNodeInfo();
@@ -170,8 +171,10 @@ static ge::graphStatus ForeachAtanTilingFunc(gert::TilingContext* context)
     uint64_t tensorNum = idxInstanceInfoPtr->GetInstanceNum();
 
     // 3. Validate input/output tensor lists
-    OP_CHECK_IF(ValidateForeachAtan(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "ValidateForeachAtan failed"),
-                return ge::GRAPH_FAILED);
+    // ValidateForeachAtan reports its own first error on every failure path (formal macros);
+    // log without reporting again so the formal first error is not diluted by a generic wrapper.
+    OP_CHECK_IF(ValidateForeachAtan(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "ValidateForeachAtan failed"), return ge::GRAPH_FAILED);
 
     // 4. Get dtype for tiling key
     auto inputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, 0);
@@ -224,7 +227,8 @@ static ge::graphStatus ForeachAtanTilingFunc(gert::TilingContext* context)
     } else if (dataType == ge::DT_BF16) {
         tilingKey = GET_TPL_TILING_KEY(FOREACH_ATAN_TPL_SCH_MODE_BF16);
     } else {
-        OP_LOGE(context, "unsupported dtype for foreach_atan");
+        OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "x", ge::TypeUtils::DataTypeToSerialString(dataType).c_str(),
+                                  "float, float16 or bfloat16");
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(tilingKey);

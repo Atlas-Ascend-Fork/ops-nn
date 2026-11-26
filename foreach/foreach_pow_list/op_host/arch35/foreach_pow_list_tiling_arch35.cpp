@@ -68,8 +68,11 @@ static ge::graphStatus ForeachPowListTilingFunc(gert::TilingContext* context)
                 OP_LOGE_WITHOUT_REPORT(context, "set tiling data error"), return ge::GRAPH_FAILED);
 
     if (static_cast<int32_t>(tensorNum) > MAX_TENSOR_NUM) {
-        OP_LOGE_FOR_INVALID_TENSORNUM(context->GetNodeName(), "x", static_cast<int64_t>(tensorNum),
-                                      std::to_string(MAX_TENSOR_NUM).c_str());
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "x1",
+            ("x1 has " + std::to_string(tensorNum) + " tensors, exceeding the maximum tensor num " +
+             std::to_string(MAX_TENSOR_NUM))
+                .c_str());
         return ge::GRAPH_FAILED;
     }
     for (uint64_t i = 0; i < tensorNum; i++) {

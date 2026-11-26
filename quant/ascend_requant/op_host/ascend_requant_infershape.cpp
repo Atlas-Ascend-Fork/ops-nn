@@ -12,9 +12,24 @@
 #include "exe_graph/runtime/infer_shape_context.h"
 #include "op_common/log/log.h"
 
+#include <string>
+
 using namespace ge;
 
 namespace ops {
+
+static std::string ShapeToString(const gert::Shape& shape)
+{
+    std::string result = "[";
+    for (size_t i = 0; i < shape.GetDimNum(); ++i) {
+        if (i != 0) {
+            result += ",";
+        }
+        result += std::to_string(shape.GetDim(i));
+    }
+    result += "]";
+    return result;
+}
 
 static ge::graphStatus InferShape4AscendRequant(gert::InferShapeContext* context)
 {
@@ -34,19 +49,24 @@ static ge::graphStatus InferShape4AscendRequant(gert::InferShapeContext* context
     const bool scaleUnknownRank = is_unknown_rank(*req_scale_shape);
 
     if (!xUnknownRank && (input_shape->GetDimNum() < 1U || input_shape->GetDimNum() > 8U)) {
-        OP_LOGE(context->GetNodeName(), "rank(x)[%zu] must be in [1, 8].", input_shape->GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x",
+                                                 (std::to_string(input_shape->GetDimNum()) + "D").c_str(),
+                                                 "The rank of x must be in [1, 8]");
         return ge::GRAPH_FAILED;
     }
     if (!scaleUnknownRank && req_scale_shape->GetDimNum() > 8U) {
-        OP_LOGE(context->GetNodeName(), "rank(req_scale)[%zu] must be in [0, 8].", req_scale_shape->GetDimNum());
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "req_scale",
+                                                 (std::to_string(req_scale_shape->GetDimNum()) + "D").c_str(),
+                                                 "The rank of req_scale must be in [0, 8]");
         return ge::GRAPH_FAILED;
     }
 
     if (!xUnknownRank && !scaleUnknownRank && req_scale_shape->GetDimNum() > input_shape->GetDimNum()) {
-        OP_LOGE(context->GetNodeName(),
-                "rank(req_scale)[%zu] must be <= rank(x)[%zu], "
-                "req_scale is not broadcastable to x (shape_mismatch).",
-                req_scale_shape->GetDimNum(), input_shape->GetDimNum());
+        const std::string ranks = std::to_string(req_scale_shape->GetDimNum()) + "D, " +
+                                  std::to_string(input_shape->GetDimNum()) + "D";
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            context->GetNodeName(), "req_scale, x", ranks.c_str(),
+            "The rank of req_scale must not exceed the rank of x, req_scale is not broadcastable to x");
         return ge::GRAPH_FAILED;
     }
 
@@ -54,9 +74,10 @@ static ge::graphStatus InferShape4AscendRequant(gert::InferShapeContext* context
         const size_t xRank = input_shape->GetDimNum();
         const size_t scaleRank = req_scale_shape->GetDimNum();
         if (xRank < 1U || scaleRank > xRank) {
-            OP_LOGE(context->GetNodeName(),
-                    "rank(req_scale)[%zu] must be in [0, rank(x)[%zu]], req_scale is not broadcastable to x.",
-                    scaleRank, xRank);
+            const std::string ranks = std::to_string(scaleRank) + "D, " + std::to_string(xRank) + "D";
+            OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                context->GetNodeName(), "req_scale, x", ranks.c_str(),
+                "The rank of req_scale must be in [0, rank(x)], req_scale is not broadcastable to x");
             return ge::GRAPH_FAILED;
         }
         const auto is_unknown_dim = [](int64_t dim) -> bool { return dim == ge::UNKNOWN_DIM; };
@@ -67,10 +88,10 @@ static ge::graphStatus InferShape4AscendRequant(gert::InferShapeContext* context
                 continue;
             }
             if (scaleDim != 1 && scaleDim != xDim) {
-                OP_LOGE(context->GetNodeName(),
-                        "req_scale dim[%zu]=%lld is neither 1 nor equal to x dim[%zu]=%lld; "
-                        "req_scale must broadcast to x (broadcast_result_must_equal_x).",
-                        i, scaleDim, xRank - scaleRank + i, xDim);
+                const std::string shapes = ShapeToString(*req_scale_shape) + ", " + ShapeToString(*input_shape);
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "req_scale, x", shapes.c_str(),
+                                                       "Each dim of req_scale must be 1 or equal to the "
+                                                       "corresponding x dim, req_scale must broadcast to x");
                 return ge::GRAPH_FAILED;
             }
         }

@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "ut_op_util.h"
+#include "base/err_mgr.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "kernel_run_context_facker.h"
@@ -364,13 +365,33 @@ TEST_F(SoftmaxFocalLossGradTiling, test_tiling_reduction_invalid_value_rejected)
 {
     uint64_t tilingKey = 0;
     uint32_t blockDim = 0;
-    EXPECT_EQ(DoSoftmaxFocalLossGradTilingCase({32, 128}, ge::DT_FLOAT, true, 2.0f, 0.25f, "avg", tilingKey, blockDim),
-              ge::GRAPH_FAILED);
-    EXPECT_EQ(
-        DoSoftmaxFocalLossGradTilingCase({32, 128}, ge::DT_FLOAT, true, 2.0f, 0.25f, "means", tilingKey, blockDim),
-        ge::GRAPH_FAILED);
-    EXPECT_EQ(DoSoftmaxFocalLossGradTilingCase({32, 128}, ge::DT_FLOAT, true, 2.0f, 0.25f, "", tilingKey, blockDim),
-              ge::GRAPH_FAILED);
+    for (const std::string reduction : {std::string("avg"), std::string("means"), std::string("")}) {
+        ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+        (void)error_message::GetErrMgrRawErrorMessages();
+        ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+        EXPECT_EQ(DoSoftmaxFocalLossGradTilingCase({32, 128}, ge::DT_FLOAT, true, 2.0f, 0.25f, reduction, tilingKey,
+                                                   blockDim),
+                  ge::GRAPH_FAILED);
+        const auto errors = error_message::GetErrMgrRawErrorMessages();
+        ASSERT_EQ(errors.size(), 1U);
+        ASSERT_NE(errors.front().error_id, nullptr);
+        EXPECT_EQ(std::string(errors.front().error_id.get()), "EZ0026");
+        ASSERT_EQ(errors.front().args_key.size(), 4U);
+        ASSERT_EQ(errors.front().args_value.size(), 4U);
+        std::map<std::string, std::string> actual;
+        for (size_t i = 0; i < errors.front().args_key.size(); ++i) {
+            ASSERT_NE(errors.front().args_key[i], nullptr);
+            ASSERT_NE(errors.front().args_value[i], nullptr);
+            EXPECT_TRUE(actual.emplace(errors.front().args_key[i].get(), errors.front().args_value[i].get()).second);
+        }
+        const std::map<std::string, std::string> expected = {
+            {"param_name", "reduction"},
+            {"op_name", "SoftmaxFocalLossGrad"},
+            {"incorrect_value", reduction},
+            {"reason", "supported values are none, mean and sum (case-insensitive)"}};
+        EXPECT_EQ(actual, expected);
+        EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+    }
 }
 
 // 属性顺序必须与 A2 的 REG_OP 一致(alpha 在前、gamma 在后)。用非对称取值断言 tilingData,

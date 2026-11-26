@@ -107,7 +107,7 @@ bool IndexFullLoadTiling::IsCapable()
     }
     const gert::Tensor* maskTensor = context_->GetInputTensor(MASK_INPUT_IDX);
     if (maskTensor == nullptr) {
-        OP_LOGE(context_->GetNodeName(), "maskTensor is nullptr!");
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "maskTensor is nullptr!");
         return false;
     }
     int64_t maskSize = static_cast<int64_t>(maskShape_.GetDim(0));

@@ -22,6 +22,7 @@
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "log/log.h"
+#include "base/err_mgr.h"
 #include "platform/platform_info.h"
 
 class DataFormatDimMapInferShapeUTest : public testing::Test {
@@ -232,6 +233,8 @@ TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_8d)
 
 TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_9d_rejected)
 {
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::PROCESS_MODE), 0);
+    error_message::GetErrMgrRawErrorMessages();
     ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("DataFormatDimMap"), nullptr);
     auto infer_shape_func = gert::OpImplRegistry::GetInstance().GetOpImpl("DataFormatDimMap")->infer_shape;
     ASSERT_NE(infer_shape_func, nullptr);
@@ -250,6 +253,23 @@ TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_9d_reject
 
     auto context = holder.GetContext<gert::InferShapeContext>();
     EXPECT_EQ(infer_shape_func(context), ge::GRAPH_FAILED);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_EQ(errors[0].error_id.get(), std::string("EZ0012"));
+    ASSERT_EQ(errors[0].args_key.size(), errors[0].args_value.size());
+    auto findArg = [&errors](const std::string& key) {
+        for (size_t i = 0; i < errors[0].args_key.size(); ++i) {
+            if (errors[0].args_key[i] != nullptr && errors[0].args_key[i].get() == key) {
+                return errors[0].args_value[i] == nullptr ? std::string() : std::string(errors[0].args_value[i].get());
+            }
+        }
+        return std::string();
+    };
+    EXPECT_EQ(findArg("param_name"), "x");
+    EXPECT_EQ(findArg("op_name"), "fakeOp");
+    EXPECT_EQ(findArg("incorrect_dim"), "9");
+    EXPECT_EQ(findArg("reason"), "input rank must be within [0, 8]");
 }
 
 TEST_F(DataFormatDimMapInferShapeUTest, data_format_dim_map_infershape_unknown_rank)

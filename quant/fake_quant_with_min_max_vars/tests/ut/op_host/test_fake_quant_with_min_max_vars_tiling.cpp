@@ -12,6 +12,7 @@
 #include <map>
 #include <string>
 
+#include "base/err_mgr.h"
 #include "platform/platform_infos_def.h"
 #include "ut_op_util.h"
 #include "kernel_run_context_facker.h"
@@ -28,6 +29,9 @@ const char* kCompileInfo = R"({"hardware_info": {
     "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072
 }})";
 
+// 匿名命名空间隔离：本仓多个 UT 文件定义同名不同布局结构体，全局作用域下其隐式
+// 构造函数为 weak 符号会被链接器串台（ODR），内部链接保证各 TU 用自身定义。
+namespace {
 struct TilingCase {
     gert::StorageShape shape;
     int64_t numBits;
@@ -38,6 +42,7 @@ struct TilingCase {
     int32_t blockTailFactor;
     int32_t baseLen;
 };
+} // namespace
 
 // min/max are per-tensor scalar inputs: the kernel unconditionally copies a
 // fixed 4-byte float from each of them, so any shape other than (1,) would
@@ -223,7 +228,37 @@ TEST_P(FakeQuantWithMinMaxVarsTilingRejectTest, tiling_reject_invalid_min_max_sh
     auto holder = faker.Build();
     auto context = holder.GetContext<gert::TilingContext>();
     ASSERT_NE(context, nullptr);
-    EXPECT_NE(impl->tiling(context), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+    EXPECT_EQ(impl->tiling(context), ge::GRAPH_FAILED);
+    const auto messages = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(messages.size(), 1U);
+    const auto& message = messages.front();
+    ASSERT_NE(message.error_id, nullptr);
+    EXPECT_EQ(std::string(message.error_id.get()), "EZ0008");
+    ASSERT_EQ(message.args_key.size(), 4U);
+    ASSERT_EQ(message.args_value.size(), 4U);
+    std::map<std::string, std::string> arguments;
+    for (size_t i = 0; i < message.args_key.size(); ++i) {
+        ASSERT_NE(message.args_key[i], nullptr);
+        ASSERT_NE(message.args_value[i], nullptr);
+        EXPECT_TRUE(arguments.emplace(message.args_key[i].get(), message.args_value[i].get()).second);
+    }
+    const auto& minShape = testCase.minShape.GetStorageShape();
+    const bool invalidMin = minShape.GetDimNum() != 1 || minShape.GetDim(0) != 1;
+    const auto& badShape = invalidMin ? minShape : testCase.maxShape.GetStorageShape();
+    std::string actualShape = "[";
+    for (size_t i = 0; i < badShape.GetDimNum(); ++i) {
+        actualShape += (i == 0 ? "" : ",") + std::to_string(badShape.GetDim(i));
+    }
+    actualShape += "]";
+    const std::map<std::string, std::string> expected = {{"param_name", invalidMin ? "min" : "max"},
+                                                         {"op_name", context->GetNodeName()},
+                                                         {"incorrect_shape", actualShape},
+                                                         {"correct_shape", "[1]"}};
+    EXPECT_EQ(arguments, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
 }
 
 INSTANTIATE_TEST_SUITE_P(InvalidMinMaxShape, FakeQuantWithMinMaxVarsTilingRejectTest,

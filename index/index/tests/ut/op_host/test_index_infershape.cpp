@@ -16,9 +16,12 @@
 #include "ut_op_util.h"
 #include "infershape_test_util.h"
 #include <iostream>
+#include <map>
+#include <string>
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include <gtest/gtest.h>
+#include "base/err_mgr.h"
 #include "kernel_run_context_facker.h"
 #include "register/op_impl_registry.h"
 #include "log/log.h"
@@ -305,4 +308,60 @@ TEST_F(IndexTest, index_infershape_broadcast_03)
         "Index", {x_shape, indexed_sizes_shape, indexed_strides_shape, indices_shape_01, indices_shape_02}, {y},
         {1, 1, 1, 2}, {1});
     ExecuteTestCase(infershapeContextPara, ge::GRAPH_FAILED);
+}
+
+TEST_F(IndexTest, index_infershape_indexed_sizes_exceeds_x_rank_reports_ez0015)
+{
+    // 错误码整改负向用例：indexedSizes 元素个数超过 x 的秩时，InferShape4Index 以正式宏
+    // OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON 首报 EZ0015，字段精确且唯一。
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+
+    gert::StorageShape x_shape = {{1000}, {1000}};
+    gert::StorageShape indexed_strides_shape = {{2}, {2}};
+    gert::StorageShape indices_shape = {{1}, {1}};
+    gert::Shape y_shape = {{1}};
+
+    // x 秩为 1，indexedSizes 携带 2 个元素（shape size = 2 > 1）触发 EZ0015
+    vector<int64_t> indexed_sizes_data{1, 1};
+    size_t total_size = 0;
+    auto tensor_holder = gert::Tensor::CreateFollowing(indexed_sizes_data.size(), ge::DT_INT64, total_size);
+    auto tensor = reinterpret_cast<gert::Tensor*>(tensor_holder.get());
+    tensor->MutableStorageShape().AppendDim(static_cast<int64_t>(indexed_sizes_data.size()));
+    tensor->MutableOriginShape().AppendDim(static_cast<int64_t>(indexed_sizes_data.size()));
+    tensor->SetOriginFormat(ge::FORMAT_ND);
+    tensor->SetStorageFormat(ge::FORMAT_ND);
+    (void)memcpy_s(tensor->GetData<uint8_t>(), total_size - sizeof(gert::Tensor), indexed_sizes_data.data(),
+                   indexed_sizes_data.size() * sizeof(int64_t));
+
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("Index")->infer_shape;
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(4, 1)
+                      .IrInstanceNum({1, 1, 1, 1})
+                      .InputShapes({&x_shape, tensor, &indexed_strides_shape, &indices_shape})
+                      .OutputShapes({&y_shape})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+
+    EXPECT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), "EZ0015");
+    std::map<std::string, std::string> actual;
+    for (size_t j = 0; j < errors.front().args_key.size(); ++j) {
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[j].get(), errors.front().args_value[j].get()).second);
+    }
+    const std::map<std::string, std::string> expected = {{"param_name", "indexedSizes"},
+                                                         {"incorrect_size", "2"},
+                                                         {"reason", "the element num must not be larger than the "
+                                                                    "rank of x 1"}};
+    for (const auto& entry : expected) {
+        EXPECT_EQ(actual.at(entry.first), entry.second);
+    }
+    EXPECT_FALSE(actual.at("op_name").empty());
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
 }

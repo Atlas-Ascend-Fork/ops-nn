@@ -242,11 +242,11 @@ static ge::graphStatus InferShape4Index(gert::InferShapeContext* context)
     }
     vector<int64_t> indexed_sizes_vec(xDimNum, 0);
     int64_t indexed_sizes_num = sizes_tensor->GetShapeSize();
-    OP_CHECK_IF(
-        (indexed_sizes_num > static_cast<int64_t>(xDimNum)),
-        OP_LOGE(context->GetNodeName(), "The element num of indexedSizes is %ld, which is larger than rank of x %zu.",
-                indexed_sizes_num, xDimNum),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF((indexed_sizes_num > static_cast<int64_t>(xDimNum)),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context->GetNodeName(), "indexedSizes", std::to_string(indexed_sizes_num).c_str(),
+                    ("the element num must not be larger than the rank of x " + std::to_string(xDimNum)).c_str()),
+                return ge::GRAPH_FAILED);
     int indicesIdx = IDX_INDICES_START;
     vector<vector<int64_t>> indicesShapeList;
     for (int64_t i = 0; i < indexed_sizes_num; i++) {

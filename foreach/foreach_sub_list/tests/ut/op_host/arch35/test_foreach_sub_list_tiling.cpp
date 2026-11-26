@@ -30,6 +30,10 @@
 #include "ut_op_util.h"
 #include "op_host/tiling_base.h"
 #include "../../../../op_kernel/arch35/foreach_sub_list_tiling_data.h"
+#include <map>
+#include <string>
+#include "base/err_mgr.h"
+#include "graph/utils/type_utils.h"
 
 using namespace ut_util;
 using namespace std;
@@ -630,4 +634,220 @@ TEST_F(ForeachSubListTilingTest, test_tiling_l1_128_scalars)
 {
     std::vector<int64_t> numels(128, 1);
     DoListTilingCase(numels, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Error-code remediation negative tests: formal first-error reporting for the
+// user-parameter root causes in ForeachSubListTilingFunc/CheckInputCompatibility.
+// ---------------------------------------------------------------------------
+#include "base/err_mgr.h"
+#include "graph/utils/type_utils.h"
+
+namespace {
+
+struct MemberRelationCase {
+    gert::StorageShape x1Shape = {{4, 4}, {4, 4}};
+    gert::StorageShape x2Shape = {{4, 4}, {4, 4}};
+    gert::StorageShape yShape = {{4, 4}, {4, 4}};
+    gert::StorageShape alphaShape = {{1}, {1}};
+    ge::DataType x1Dtype = ge::DT_FLOAT;
+    ge::DataType x2Dtype = ge::DT_FLOAT;
+    ge::DataType yDtype = ge::DT_FLOAT;
+    ge::DataType alphaDtype = ge::DT_FLOAT;
+    uint64_t x1InstanceNum = 1;
+    uint64_t x2InstanceNum = 1;
+    uint64_t outputNum = 1;
+    uint64_t ubSize = 262144;
+};
+
+void RunMemberRelationCase(const MemberRelationCase& c)
+{
+    std::map<std::string, std::string> socInfos;
+    std::map<std::string, std::string> aicoreSpec;
+    std::map<std::string, std::string> intrinsics;
+    std::string compileInfoString = R"({"hardware_info":{"UB_SIZE":)" + std::to_string(c.ubSize) +
+                                    R"(,"CORE_NUM":64}})";
+    GetPlatFormInfos(compileInfoString.c_str(), socInfos, aicoreSpec, intrinsics);
+    fe::PlatFormInfos platformInfo;
+    ASSERT_TRUE(platformInfo.Init());
+    struct ForeachSubListCompileInfo {
+    } compileInfo;
+
+    std::string opType("ForeachSubList");
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    ASSERT_NE(opImpl, nullptr);
+    ASSERT_NE(opImpl->tiling, nullptr);
+
+    auto param = gert::TilingData::CreateCap(4096);
+    ASSERT_NE(param, nullptr);
+    auto wsHolder = gert::ContinuousVector::Create<size_t>(4096);
+    ASSERT_NE(wsHolder, nullptr);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(wsHolder.get());
+
+    std::vector<gert::StorageShape*> inputShapes;
+    std::vector<gert::StorageShape*> outputShapes;
+    for (uint64_t i = 0; i < c.x1InstanceNum; i++) {
+        inputShapes.push_back(const_cast<gert::StorageShape*>(&c.x1Shape));
+        outputShapes.push_back(const_cast<gert::StorageShape*>(&c.yShape));
+    }
+    for (uint64_t i = 0; i < c.x2InstanceNum; i++) {
+        inputShapes.push_back(const_cast<gert::StorageShape*>(&c.x2Shape));
+    }
+    inputShapes.push_back(const_cast<gert::StorageShape*>(&c.alphaShape));
+
+    gert::TilingContextFaker builder;
+    builder.SetOpType("ForeachSubList")
+        .NodeIoNum(3, static_cast<uint32_t>(c.outputNum))
+        .IrInstanceNum({c.x1InstanceNum, c.x2InstanceNum, 1})
+        .InputShapes(inputShapes)
+        .OutputShapes(outputShapes)
+        .CompileInfo(&compileInfo)
+        .PlatformInfo(reinterpret_cast<char*>(&platformInfo));
+    for (uint64_t i = 0; i < c.x1InstanceNum; i++) {
+        builder.NodeInputTd(i, c.x1Dtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    for (uint64_t i = 0; i < c.outputNum; i++) {
+        builder.NodeOutputTd(i, c.yDtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    for (uint64_t i = 0; i < c.x2InstanceNum; i++) {
+        builder.NodeInputTd(c.x1InstanceNum + i, c.x2Dtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    builder.NodeInputTd(c.x1InstanceNum + c.x2InstanceNum, c.alphaDtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    auto holder = std::move(builder).TilingData(param.get()).Workspace(wsSize).Build();
+    gert::TilingContext* context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(context, nullptr);
+    context->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    std::map<std::string, std::string> socVersionInfos = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
+    context->GetPlatformInfo()->SetPlatformRes("version", socVersionInfos);
+
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    EXPECT_EQ(opImpl->tiling(context), ge::GRAPH_FAILED);
+}
+
+void ExpectSingleRawError(const char* expectedCode, const std::map<std::string, std::string>& expectedMap)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors.front().error_id, nullptr);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), expectedCode);
+    ASSERT_EQ(errors.front().args_key.size(), expectedMap.size());
+    ASSERT_EQ(errors.front().args_value.size(), expectedMap.size());
+    std::map<std::string, std::string> actual;
+    for (size_t j = 0; j < errors.front().args_key.size(); ++j) {
+        ASSERT_NE(errors.front().args_key[j], nullptr);
+        ASSERT_NE(errors.front().args_value[j], nullptr);
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[j].get(), errors.front().args_value[j].get()).second);
+    }
+    EXPECT_EQ(actual, expectedMap);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+} // namespace
+
+TEST_F(ForeachSubListTilingTest, member_shape_mismatch_reports_single_formal_error)
+{
+    MemberRelationCase c;
+    c.x2Shape = {{4, 5}, {4, 5}};
+    RunMemberRelationCase(c);
+    ExpectSingleRawError("EZ0010", {{"param_names", "x1[0], x2[0]"},
+                                    {"op_name", "ForeachSubList"},
+                                    {"incorrect_shapes", "[4, 4], [4, 5]"},
+                                    {"reason", "corresponding tensor-list members must have equal storage shapes"}});
+}
+
+TEST_F(ForeachSubListTilingTest, x2_count_mismatch_reports_single_formal_error)
+{
+    MemberRelationCase c;
+    c.x2InstanceNum = 2;
+    RunMemberRelationCase(c);
+    ExpectSingleRawError("EZ0023", {{"param_names", "x1, x2"},
+                                    {"op_name", "ForeachSubList"},
+                                    {"incorrect_nums", "1 and 2"},
+                                    {"reason", "x1 and x2 must contain the same number of tensors"}});
+}
+
+TEST_F(ForeachSubListTilingTest, output_count_mismatch_reports_single_formal_error)
+{
+    MemberRelationCase c;
+    c.outputNum = 2;
+    RunMemberRelationCase(c);
+    ExpectSingleRawError("EZ0023", {{"param_names", "x1, y"},
+                                    {"op_name", "ForeachSubList"},
+                                    {"incorrect_nums", "1 and 2"},
+                                    {"reason", "x1 and y must contain the same number of tensors"}});
+}
+
+TEST_F(ForeachSubListTilingTest, output_dtype_mismatch_reports_single_formal_error)
+{
+    MemberRelationCase c;
+    c.yDtype = ge::DT_FLOAT16;
+    RunMemberRelationCase(c);
+    ExpectSingleRawError("EZ0020",
+                         {{"param_name", "y[0]"},
+                          {"op_name", "ForeachSubList"},
+                          {"incorrect_dtype", ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT16)},
+                          {"reason", "y[i] must have the same dtype as the corresponding x1[i]/x2[i] members"}});
+}
+
+TEST_F(ForeachSubListTilingTest, output_shape_mismatch_reports_single_formal_error)
+{
+    MemberRelationCase c;
+    c.yShape = {{2, 4}, {2, 4}};
+    RunMemberRelationCase(c);
+    ExpectSingleRawError("EZ0009", {{"param_name", "y[0]"},
+                                    {"op_name", "ForeachSubList"},
+                                    {"incorrect_shape", "[2, 4]"},
+                                    {"reason", "y[0] must have the same storage shape as x1[0]:[4, 4]"}});
+}
+
+TEST_F(ForeachSubListTilingTest, output_rank_nine_reports_single_formal_error)
+{
+    MemberRelationCase c;
+    c.yShape = {{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}};
+    RunMemberRelationCase(c);
+    ExpectSingleRawError("EZ0012", {{"param_name", "y[0]"},
+                                    {"op_name", "ForeachSubList"},
+                                    {"incorrect_dim", "9"},
+                                    {"reason", "y[i] must have at most 8 dimensions"}});
+}
+
+TEST_F(ForeachSubListTilingTest, alpha_dtype_mismatch_reports_single_formal_error)
+{
+    MemberRelationCase c;
+    c.alphaDtype = ge::DT_INT32;
+    RunMemberRelationCase(c);
+    ExpectSingleRawError("EZ0020", {{"param_name", "alpha"},
+                                    {"op_name", "ForeachSubList"},
+                                    {"incorrect_dtype", ge::TypeUtils::DataTypeToSerialString(ge::DT_INT32)},
+                                    {"reason", "the dtype of alpha must be the same as x1/x2 for FLOAT16/FLOAT/INT32, "
+                                               "FLOAT when x1/x2 is BF16, and INT32 when x1/x2 is INT16/INT8/UINT8"}});
+}
+
+TEST_F(ForeachSubListTilingTest, alpha_not_one_element_reports_single_formal_error)
+{
+    MemberRelationCase c;
+    c.alphaShape = {{2}, {2}};
+    RunMemberRelationCase(c);
+    ExpectSingleRawError("EZ0015", {{"param_name", "alpha"},
+                                    {"op_name", "ForeachSubList"},
+                                    {"incorrect_size", "2"},
+                                    {"reason", "alpha must contain exactly one element"}});
+}
+
+TEST_F(ForeachSubListTilingTest, unsupported_dtype_reports_single_formal_error)
+{
+    MemberRelationCase c;
+    c.x1Dtype = ge::DT_INT64;
+    c.x2Dtype = ge::DT_INT64;
+    c.yDtype = ge::DT_INT64;
+    c.alphaDtype = ge::DT_UNDEFINED;
+    RunMemberRelationCase(c);
+    ExpectSingleRawError("EZ0019", {{"param_name", "x1"},
+                                    {"op_name", "ForeachSubList"},
+                                    {"incorrect_dtype", ge::TypeUtils::DataTypeToSerialString(ge::DT_INT64)},
+                                    {"correct_dtype", "float, float16, bfloat16, int32, int16, int8 or uint8"}});
 }

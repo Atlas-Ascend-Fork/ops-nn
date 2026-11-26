@@ -10,6 +10,8 @@
 
 #include <iostream>
 #include <vector>
+#include <map>
+#include "base/err_mgr.h"
 #include <gtest/gtest.h>
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
@@ -436,3 +438,69 @@ TEST_F(LambApplyOptimizerAssignTilingTest, lamb_apply_optimizer_assign_tiling_te
     tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
 }
+
+namespace {
+void CheckDtypeNameDiagnostic(bool outputMismatch)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    const char* platformJson = R"({"hardware_info":{"UB_SIZE":245760,"CORE_NUM":64,"socVersion":"Ascend950"}})";
+    std::map<std::string, std::string> soc, spec, intrinsic, version;
+    GetPlatFormInfos(platformJson, soc, spec, intrinsic, version);
+    fe::PlatFormInfos platform;
+    platform.Init();
+    platform.SetPlatformRes("SoCInfo", soc);
+    platform.SetPlatformRes("AICoreSpec", spec);
+    platform.SetCoreNumByCoreType("AICore");
+    platform.SetPlatformRes("version", version);
+    optiling::LambApplyOptimizerAssignCompileInfo compileInfo;
+    compileInfo.coreNum = 64;
+    compileInfo.ubSize = 245760;
+    gert::StorageShape shape = {{2, 4}, {2, 4}};
+    auto data = gert::TilingData::CreateCap(4096);
+    auto workspace = gert::ContinuousVector::Create<size_t>(1);
+    ASSERT_NE(data, nullptr);
+    ASSERT_NE(workspace, nullptr);
+    auto faker = gert::TilingContextFaker();
+    faker.SetOpType("LambApplyOptimizerAssign")
+        .NodeIoNum(12, 3)
+        .InputShapes({&shape, &shape, &shape, &shape, &shape, &shape, &shape, &shape, &shape, &shape, &shape, &shape})
+        .OutputShapes({&shape, &shape, &shape})
+        .CompileInfo(&compileInfo)
+        .PlatformInfo(reinterpret_cast<char*>(&platform))
+        .TilingData(data.get())
+        .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()));
+    for (int i = 0; i < 12; ++i) {
+        faker.NodeInputTd(i, !outputMismatch && i == 1 ? ge::DT_FLOAT16 : ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    for (int i = 0; i < 3; ++i) {
+        faker.NodeOutputTd(i, outputMismatch && i == 0 ? ge::DT_FLOAT16 : ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    auto holder = faker.Build();
+    auto* context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(context, nullptr);
+    const auto* impl = gert::OpImplRegistry::GetInstance().GetOpImpl("LambApplyOptimizerAssign");
+    ASSERT_NE(impl, nullptr);
+    ASSERT_NE(impl->tiling, nullptr);
+    EXPECT_EQ(impl->tiling(context), ge::GRAPH_FAILED);
+    auto messages = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(messages.size(), 1U);
+    ASSERT_NE(messages[0].error_id, nullptr);
+    EXPECT_EQ(std::string(messages[0].error_id.get()), "EZ0021");
+    ASSERT_EQ(messages[0].args_key.size(), 4U);
+    ASSERT_EQ(messages[0].args_value.size(), 4U);
+    std::map<std::string, std::string> args;
+    for (size_t i = 0; i < messages[0].args_key.size(); ++i) {
+        ASSERT_NE(messages[0].args_key[i], nullptr);
+        ASSERT_NE(messages[0].args_value[i], nullptr);
+        EXPECT_TRUE(args.emplace(messages[0].args_key[i].get(), messages[0].args_value[i].get()).second);
+    }
+    EXPECT_EQ(args.at("param_names"), outputMismatch ? "output0 and grad" : "inputv and grad");
+    EXPECT_EQ(args.at("incorrect_dtypes"), "DT_FLOAT16 and DT_FLOAT");
+    EXPECT_EQ(args.at("reason"), "Their dtypes should be the same");
+    EXPECT_FALSE(args.at("op_name").empty());
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+} // namespace
+TEST_F(LambApplyOptimizerAssignTilingTest, exact_input_dtype_parameter_names) { CheckDtypeNameDiagnostic(false); }
+TEST_F(LambApplyOptimizerAssignTilingTest, exact_output_dtype_parameter_names) { CheckDtypeNameDiagnostic(true); }

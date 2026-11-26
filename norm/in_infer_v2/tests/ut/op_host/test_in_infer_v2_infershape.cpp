@@ -33,6 +33,9 @@ struct InferCase {
     bool hasBatchVariance = true;
 };
 
+// 匿名命名空间隔离：本仓多个 UT 文件定义同名不同布局结构体，全局作用域下其隐式
+// 构造函数为 weak 符号会被链接器串台（ODR），内部链接保证各 TU 用自身定义。
+namespace {
 struct InferResult {
     ge::graphStatus status = ge::GRAPH_FAILED;
     gert::Shape yShape;
@@ -41,23 +44,24 @@ struct InferResult {
     bool hasBatchMean = false;
     bool hasBatchVariance = false;
 };
+} // namespace
 
-InferResult RunInferShape(InferCase testCase)
+InferResult RunInferShape(const InferCase& testCase)
 {
     std::vector<uint32_t> inputInstanceNum = {1U, testCase.hasGamma ? 1U : 0U, testCase.hasBeta ? 1U : 0U,
                                               testCase.hasMean ? 1U : 0U, testCase.hasVariance ? 1U : 0U};
-    std::vector<gert::Shape*> inputShapes = {&testCase.xShape};
+    std::vector<gert::Shape*> inputShapes = {const_cast<gert::Shape*>(&testCase.xShape)};
     if (testCase.hasGamma) {
-        inputShapes.push_back(&testCase.gammaShape);
+        inputShapes.push_back(const_cast<gert::Shape*>(&testCase.gammaShape));
     }
     if (testCase.hasBeta) {
-        inputShapes.push_back(&testCase.betaShape);
+        inputShapes.push_back(const_cast<gert::Shape*>(&testCase.betaShape));
     }
     if (testCase.hasMean) {
-        inputShapes.push_back(&testCase.meanShape);
+        inputShapes.push_back(const_cast<gert::Shape*>(&testCase.meanShape));
     }
     if (testCase.hasVariance) {
-        inputShapes.push_back(&testCase.varianceShape);
+        inputShapes.push_back(const_cast<gert::Shape*>(&testCase.varianceShape));
     }
 
     std::vector<uint32_t> outputInstanceNum = {1U, testCase.hasBatchMean ? 1U : 0U,

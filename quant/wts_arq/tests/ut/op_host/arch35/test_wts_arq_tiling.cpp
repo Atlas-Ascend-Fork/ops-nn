@@ -31,8 +31,11 @@
 
 #include <cstdint>
 #include <iostream>
+#include <map>
+#include <string>
 #include <vector>
 
+#include "base/err_mgr.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "register/op_impl_registry.h"
@@ -466,4 +469,37 @@ TEST_F(WtsArqTilingTest, tiling_parse_success)
                       .Outputs({&compileInfoOut})
                       .Build();
     ASSERT_EQ(tilingParseFunc(holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+}
+
+// 负向用例：w dtype 不支持。根因层（CheckDtypeAndAttrs）应产出唯一 EZ0019 正式首错，
+// 外层 TilingFunc 只补日志不重复上报（一次故障一个 ErrorManager 首错）。
+TEST_F(WtsArqTilingTest, error_dtype_not_supported_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+
+    gert::TilingContextPara para = MakePara({2, 3}, {1, 3}, {1, 3}, ge::DT_BF16);
+    TilingInfo tilingInfo;
+    EXPECT_FALSE(ExecuteTiling(para, tilingInfo));
+
+    const auto messages = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(messages.size(), 1U);
+    const auto& message = messages.front();
+    ASSERT_NE(message.error_id, nullptr);
+    EXPECT_EQ(std::string(message.error_id.get()), "EZ0019");
+    ASSERT_EQ(message.args_key.size(), 4U);
+    ASSERT_EQ(message.args_value.size(), 4U);
+    std::map<std::string, std::string> arguments;
+    for (size_t i = 0; i < message.args_key.size(); ++i) {
+        ASSERT_NE(message.args_key[i], nullptr);
+        ASSERT_NE(message.args_value[i], nullptr);
+        EXPECT_TRUE(arguments.emplace(message.args_key[i].get(), message.args_value[i].get()).second);
+    }
+    const std::map<std::string, std::string> expected = {{"param_name", "w"},
+                                                         {"op_name", "WtsARQ"},
+                                                         {"incorrect_dtype", "DT_BFLOAT16"},
+                                                         {"correct_dtype", "DT_FLOAT16, DT_FLOAT"}};
+    EXPECT_EQ(arguments, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
 }

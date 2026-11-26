@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include "exe_graph/runtime/storage_shape.h"
+#include "base/err_mgr.h"
 #include "op_impl_registry.h"
 #include "platform/platform_infos_def.h"
 #include "register/op_impl_registry.h"
@@ -59,6 +60,9 @@ struct TilingCase {
     size_t tilingCapacity = DEFAULT_TILING_CAPACITY;
 };
 
+// 匿名命名空间隔离：本仓多个 UT 文件定义同名不同布局结构体，全局作用域下其隐式
+// 构造函数为 weak 符号会被链接器串台（ODR），内部链接保证各 TU 用自身定义。
+namespace {
 struct TilingResult {
     ge::graphStatus status = ge::GRAPH_FAILED;
     uint64_t tilingKey = std::numeric_limits<uint64_t>::max();
@@ -67,6 +71,7 @@ struct TilingResult {
     INInferV2TilingData data{};
     bool hasData = false;
 };
+} // namespace
 
 gert::StorageShape MakeStorageShape(const std::vector<int64_t>& dims)
 {
@@ -443,7 +448,29 @@ TEST_F(INInferV2TilingTest, rejectsNegativeDimension)
 {
     TilingCase testCase;
     testCase.xDims = {2, 3, -1};
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
     EXPECT_EQ(RunTiling(testCase).status, ge::GRAPH_FAILED);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors.front().error_id, nullptr);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), "EZ0009");
+    ASSERT_EQ(errors.front().args_key.size(), 4U);
+    ASSERT_EQ(errors.front().args_value.size(), 4U);
+    std::map<std::string, std::string> actual;
+    for (size_t i = 0; i < errors.front().args_key.size(); ++i) {
+        ASSERT_NE(errors.front().args_key[i], nullptr);
+        ASSERT_NE(errors.front().args_value[i], nullptr);
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[i].get(), errors.front().args_value[i].get()).second);
+    }
+    const std::map<std::string, std::string> expected = {
+        {"param_name", "x"},
+        {"op_name", "INInferV2"},
+        {"incorrect_shape", "[2, 3, -1]"},
+        {"reason", "x dimension 2 has value -1; all dimensions must be nonnegative at tiling"}};
+    EXPECT_EQ(actual, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
 }
 
 TEST_F(INInferV2TilingTest, rejectsNcProductOverflow)

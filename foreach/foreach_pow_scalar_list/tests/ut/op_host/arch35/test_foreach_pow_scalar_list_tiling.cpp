@@ -291,3 +291,142 @@ TEST_F(ForeachPowScalarListArch35Tiling, bfloat16_single_tensor)
     auto tiling_key = tiling_context->GetTilingKey();
     ASSERT_EQ(tiling_key, 3);
 }
+
+// ---------------------------------------------------------------------------
+// Error-code remediation negative tests.
+// ---------------------------------------------------------------------------
+#include <map>
+#include <string>
+#include "base/err_mgr.h"
+#include "graph/utils/type_utils.h"
+
+namespace {
+
+ge::graphStatus RunPowScalarListTiling(const std::vector<gert::StorageShape>& xShapes,
+                                       const std::vector<ge::DataType>& xDtypes, const gert::StorageShape& scalarsShape,
+                                       ge::DataType scalarsDtype, ge::DataType yDtype, uint32_t yInstanceNum)
+{
+    std::string opType("ForeachPowScalarList");
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    if (opImpl == nullptr || opImpl->tiling == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    std::string compileInfoString = R"({"hardware_info":{"UB_SIZE":262144,"CORE_NUM":48}})";
+    std::map<std::string, std::string> socInfos;
+    std::map<std::string, std::string> aicoreSpec;
+    std::map<std::string, std::string> intrinsics;
+    GetPlatFormInfos(compileInfoString.c_str(), socInfos, aicoreSpec, intrinsics);
+    fe::PlatFormInfos platformInfo;
+    if (!platformInfo.Init()) {
+        return ge::GRAPH_FAILED;
+    }
+    ForeachPowScalarListCompileInfo compileInfo;
+
+    auto param = gert::TilingData::CreateCap(8192);
+    auto wsHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(wsHolder.get());
+    std::vector<gert::StorageShape> yShapes(std::max(xShapes.size(), static_cast<size_t>(yInstanceNum)));
+    std::vector<gert::StorageShape*> yPtrs;
+    for (size_t i = 0; i < yShapes.size(); i++) {
+        yShapes[i] = xShapes[i % xShapes.size()];
+        yPtrs.push_back(&yShapes[i]);
+    }
+    // per-instance dtype inside the x dynamic input requires TensorV2-level inputs
+    gert::StorageFormat storageFormat(ge::FORMAT_ND, ge::FORMAT_ND, gert::ExpandDimsType());
+    std::vector<gert::TensorV2> inputTensorsStorage;
+    for (size_t i = 0; i < xShapes.size(); i++) {
+        inputTensorsStorage.emplace_back(xShapes[i], storageFormat, gert::TensorPlacement::kOnHost, xDtypes[i],
+                                         nullptr);
+    }
+    inputTensorsStorage.emplace_back(scalarsShape, storageFormat, gert::TensorPlacement::kOnHost, scalarsDtype,
+                                     nullptr);
+    std::vector<gert::TensorV2*> inputTensors;
+    for (auto& t : inputTensorsStorage) {
+        inputTensors.push_back(&t);
+    }
+    gert::TilingContextFaker builder;
+    builder.SetOpType("ForeachPowScalarList")
+        .NodeIoNum(2, static_cast<uint32_t>(yInstanceNum))
+        .IrInstanceNum({static_cast<uint32_t>(xShapes.size()), 1}, {yInstanceNum})
+        .InputTensors(inputTensors)
+        .OutputShapes(yPtrs)
+        .CompileInfo(&compileInfo)
+        .PlatformInfo(reinterpret_cast<char*>(&platformInfo));
+    for (uint32_t i = 0; i < yInstanceNum; i++) {
+        builder.NodeOutputTd(static_cast<int32_t>(i), yDtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    auto holder = std::move(builder).TilingData(param.get()).Workspace(wsSize).Build();
+    gert::TilingContext* ctx = holder.GetContext<gert::TilingContext>();
+    ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    return opImpl->tiling(ctx);
+}
+
+void ExpectSingleRawError(const char* expectedCode, const std::map<std::string, std::string>& expectedMap)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), expectedCode);
+    std::map<std::string, std::string> actual;
+    for (size_t j = 0; j < errors.front().args_key.size(); ++j) {
+        EXPECT_TRUE(actual.emplace(errors.front().args_key[j].get(), errors.front().args_value[j].get()).second);
+    }
+    EXPECT_EQ(actual, expectedMap);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+} // namespace
+
+TEST_F(ForeachPowScalarListArch35Tiling, mixed_dtype_list_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x0 = {{4, 4}, {4, 4}};
+    gert::StorageShape x1 = {{2, 2}, {2, 2}};
+    gert::StorageShape scalars = {{2}, {2}};
+    EXPECT_EQ(RunPowScalarListTiling({x0, x1}, {ge::DT_FLOAT, ge::DT_FLOAT16}, scalars, ge::DT_FLOAT, ge::DT_FLOAT, 2),
+              ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0020",
+                         {{"param_name", "x"},
+                          {"op_name", "ForeachPowScalarList"},
+                          {"incorrect_dtype", ge::TypeUtils::DataTypeToSerialString(ge::DT_FLOAT16)},
+                          {"reason", "The dtypes of all tensors in the input tensor list x must be the same, but the "
+                                     "dtype of x[1] is inconsistent with x[0]"}});
+}
+
+TEST_F(ForeachPowScalarListArch35Tiling, rank_over_limit_reports_single_formal_error)
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x = {{1, 1, 1, 1, 1, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 1, 1, 1}};
+    gert::StorageShape scalars = {{1}, {1}};
+    EXPECT_EQ(RunPowScalarListTiling({x}, {ge::DT_FLOAT}, scalars, ge::DT_FLOAT, ge::DT_FLOAT, 1), ge::GRAPH_FAILED);
+    ExpectSingleRawError("EZ0011", {{"param_name", "x"},
+                                    {"op_name", "ForeachPowScalarList"},
+                                    {"incorrect_dim", "9"},
+                                    {"correct_dim", "less than or equal to 8"}});
+}
+
+TEST_F(ForeachPowScalarListArch35Tiling, y_count_mismatch_reports_single_error_via_ez9999_fallback)
+{
+    // Documents the current SDK behavior on the production path: the y-count check calls
+    // OP_LOGE_FOR_INVALID_TENSORNUM (EZ0022), whose registration this CANN 9.3 ErrorManager
+    // build rejects at runtime (no raw message); the retained CheckTensorListNum wrapper
+    // OP_LOGE is therefore the only ErrorManager report (internal EZ9999) for this path.
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape x = {{4, 4}, {4, 4}};
+    gert::StorageShape scalars = {{1}, {1}};
+    EXPECT_EQ(RunPowScalarListTiling({x}, {ge::DT_FLOAT}, scalars, ge::DT_FLOAT, ge::DT_FLOAT, 2), ge::GRAPH_FAILED);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(std::string(errors.front().error_id.get()), "EZ9999");
+    for (const auto& e : errors) {
+        if (std::string(e.error_id.get()) == "EZ0022") {
+            FAIL() << "EZ0022 unexpectedly registered/reported in this SDK build";
+        }
+    }
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}

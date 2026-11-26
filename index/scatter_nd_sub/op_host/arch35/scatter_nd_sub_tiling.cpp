@@ -110,7 +110,9 @@ static ge::graphStatus CheckScatterNdSubShapes(gert::TilingContext* context, con
     int64_t indicesLastDim = indicesShape.GetDim(indicesRank - 1);
     OP_CHECK_IF(
         indicesLastDim > varRank,
-        OP_LOGE(context, "var rank %ld must be greater than or equal to indices last dim %ld", varRank, indicesLastDim),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            context->GetNodeName(), "var", (std::to_string(varRank) + "D").c_str(),
+            ("var rank must be greater than or equal to indices last dim " + std::to_string(indicesLastDim)).c_str()),
         return ge::GRAPH_FAILED);
 
     // dynamic shape: indices last dim unknown, skip updates shape consistency check
@@ -172,7 +174,7 @@ static ge::graphStatus ScatterNdSubTilingFunc(gert::TilingContext* context)
     uint64_t ubSize = 0;
     int64_t coreNum = 0;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     auto varInput = context->GetInputShape(IDX_VAR);
     OP_CHECK_NULL_WITH_CONTEXT(context, varInput);
@@ -187,7 +189,7 @@ static ge::graphStatus ScatterNdSubTilingFunc(gert::TilingContext* context)
     int64_t totalVarElements = varShape.GetShapeSize();
 
     OP_CHECK_IF(CheckScatterNdSubShapes(context, varShape, indicesShape, updatesShape) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "CheckScatterNdSubShapes error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "CheckScatterNdSubShapes error"), return ge::GRAPH_FAILED);
 
     int64_t numSlices = 0, sliceSize = 0, indicesLastDim = 0, varRank = 0;
     int64_t varStrides[MAX_VAR_RANK] = {0};
@@ -209,10 +211,10 @@ static ge::graphStatus ScatterNdSubTilingFunc(gert::TilingContext* context)
     ComputeScatterCoreNum(totalVarElements, numSlices, coreNum, context);
     context->SetScheduleMode(1);
 
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(SetLocalMemory(context, ubSize) != ge::GRAPH_SUCCESS, OP_LOGE(context, "SetLocalMemory error"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(SetLocalMemory(context, ubSize) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "SetLocalMemory error"), return ge::GRAPH_FAILED);
 
     context->SetTilingKey(GET_TPL_TILING_KEY(SCATTER_ND_SUB_SCENE_DEFAULT));
     return ge::GRAPH_SUCCESS;

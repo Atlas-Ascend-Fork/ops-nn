@@ -41,10 +41,10 @@ static ge::graphStatus InferShapeScatterNdSub(gert::InferShapeContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, indicesShape);
 
     // Validate: indices must have at least 1 dimension
-    if (indicesShape->GetDimNum() < 1) {
-        OP_LOGE(context->GetNodeName(), "indices must have at least 1 dimension");
-        return GRAPH_FAILED;
-    }
+    OP_CHECK_IF(indicesShape->GetDimNum() < 1,
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "indices",
+                                             (std::to_string(indicesShape->GetDimNum()) + "D").c_str(), "at least 1D"),
+                return GRAPH_FAILED);
 
     // Output shape = var shape
     gert::Shape* outputShape = context->GetOutputShape(IDX_OUTPUT);
@@ -59,10 +59,12 @@ static ge::graphStatus InferShapeScatterNdSub(gert::InferShapeContext* context)
 
     // Validate: var rank >= indices last dim（indices 最后一维未知(-1)时跳过该校验）
     int64_t indicesLastDim = indicesShape->GetDim(indicesShape->GetDimNum() - 1);
-    if (indicesLastDim >= 0 && varShape->GetDimNum() < static_cast<size_t>(indicesLastDim)) {
-        OP_LOGE(context->GetNodeName(), "var rank must >= indices last dim");
-        return GRAPH_FAILED;
-    }
+    OP_CHECK_IF(
+        indicesLastDim >= 0 && varShape->GetDimNum() < static_cast<size_t>(indicesLastDim),
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            context->GetNodeName(), "var", (std::to_string(varShape->GetDimNum()) + "D").c_str(),
+            ("var rank must be greater than or equal to indices last dim " + std::to_string(indicesLastDim)).c_str()),
+        return GRAPH_FAILED);
 
     auto varDimNum = varShape->GetDimNum();
     outputShape->SetDimNum(varDimNum);

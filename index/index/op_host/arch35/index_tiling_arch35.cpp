@@ -146,7 +146,7 @@ ge::graphStatus IndexSimtTiling::GetShapeAttrsInfo()
     }
     factor4Index_ = (!isIndexPut_ && isPerfTemplate_) ? 1 : UpdateTilingData();
     if (factor4Index_ == 0UL) {
-        OP_LOGE("IndexSimt", "UpdateTilingData failed");
+        OP_LOGE_WITHOUT_REPORT("IndexSimt", "UpdateTilingData failed");
         return ge::GRAPH_FAILED;
     }
     xDtype_ = GenXDtype(factor4Index_);

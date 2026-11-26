@@ -287,8 +287,10 @@ static ge::graphStatus ApplyFtrlV2TilingFunc(gert::TilingContext* context)
     // 2. 获取 shape/dtype
     int64_t totalElements;
     ge::DataType dataType;
-    OP_CHECK_IF(GetShapeAttrsInfo(context, &totalElements, &dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+    const auto shapeRet = GetShapeAttrsInfo(context, &totalElements, &dataType);
+    OP_CHECK_IF(shapeRet != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "ApplyFtrlV2TilingFunc: GetShapeAttrsInfo failed, rc=%u", shapeRet),
+                return ge::GRAPH_FAILED);
 
     // 3. Workspace
     OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),

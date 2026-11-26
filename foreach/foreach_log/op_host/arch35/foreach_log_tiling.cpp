@@ -152,15 +152,24 @@ static ge::graphStatus ForeachLogTilingFunc(gert::TilingContext* context)
         // Same contract as the shared flat tiler: reject negative counts and int64
         // accumulation overflow before they can corrupt the per-core range math below.
         OP_CHECK_IF(dataCount < 0 || totalDataCount > std::numeric_limits<int64_t>::max() - dataCount,
-                    OP_LOGE(context, "invalid or overflowing element count at tensor %d", tensorIndex),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        context->GetNodeName(), ("x[" + std::to_string(tensorIndex) + "]").c_str(),
+                        std::to_string(dataCount).c_str(),
+                        ("invalid or overflowing element count at tensor " + std::to_string(tensorIndex) +
+                         ": the count must be non-negative and the accumulated total must not exceed INT64_MAX")
+                            .c_str()),
                     return ge::GRAPH_FAILED);
         // The in-tensor offsets and per-core range fields below are int32 to
         // keep the tiling struct under the ~4KB launch budget; a tensor whose
         // element count cannot be represented there would overflow the fields
         // the kernel consumes as GM cursors.
         OP_CHECK_IF(dataCount > std::numeric_limits<int32_t>::max(),
-                    OP_LOGE(context, "tensor %d has %lld elements, exceeding the int32 offset limit", tensorIndex,
-                            static_cast<long long>(dataCount)),
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                        context->GetNodeName(), ("x[" + std::to_string(tensorIndex) + "]").c_str(),
+                        std::to_string(dataCount).c_str(),
+                        ("tensor " + std::to_string(tensorIndex) + " has " + std::to_string(dataCount) +
+                         " elements, exceeding the int32 offset limit")
+                            .c_str()),
                     return ge::GRAPH_FAILED);
         tilingData->tensorDataCountList[tensorIndex] = dataCount;
         totalDataCount += dataCount;

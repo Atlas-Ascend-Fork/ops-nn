@@ -84,8 +84,9 @@ static ge::graphStatus InferShape4DataFormatDimMap(gert::InferShapeContext* cont
     }
 
     OP_CHECK_IF(inputShape->GetDimNum() > DATA_FORMAT_DIM_MAP_MAX_RANK,
-                OP_LOGE(context, "The rank of x must be within [0, %zu], but got %zu.", DATA_FORMAT_DIM_MAP_MAX_RANK,
-                        inputShape->GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "x",
+                                                         std::to_string(inputShape->GetDimNum()).c_str(),
+                                                         "input rank must be within [0, 8]"),
                 return ge::GRAPH_FAILED);
 
     // -1 未知维放行给 Tiling，由运行时真实 shape 校验

@@ -18,6 +18,7 @@
 #include <vector>
 #include <gtest/gtest.h>
 #include "log/log.h"
+#include "base/err_mgr.h"
 #include "platform/platform_infos_def.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
@@ -839,4 +840,109 @@ TEST_F(BatchNormExt2TilingTest, batch_norm_ext2_tiling_empty_tensor_rejected_arc
     gert::StorageShape n0NdShape = {{0, 512, 4, 1}, {0, 512, 4, 1}};
     RunBatchNormExt2TrainingTilingForTest(n0NdShape, ge::FORMAT_ND, 512, 0, nullptr, 245760, true, "NCHW");
     RunBatchNormExt2InferTilingForTest(n0NdShape, ge::FORMAT_ND, 512, 0, nullptr, nullptr, "NCHW", true);
+}
+
+namespace {
+class BatchNormInferAttrsProbe : public optiling::BatchNormExt2TilingInferBase {
+public:
+    using optiling::BatchNormExt2TilingInferBase::BatchNormExt2TilingInferBase;
+    using optiling::BatchNormExt2TilingInferBase::GetShapeAttrsInfo;
+};
+class BatchNormTrainingAttrsProbe : public optiling::BatchNormExt2RegbaseTilingBase {
+public:
+    using optiling::BatchNormExt2RegbaseTilingBase::BatchNormExt2RegbaseTilingBase;
+    using optiling::BatchNormExt2RegbaseTilingBase::GetShapeAttrsInfo;
+};
+
+void BeginBatchNormFirstErrorCapture()
+{
+    ASSERT_EQ(error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE), 0);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    ASSERT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+void CheckBatchNormInvalidFormatFirstError(const std::string& nodeName)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    const auto& error = errors.front();
+    ASSERT_NE(error.error_id, nullptr);
+    EXPECT_EQ(std::string(error.error_id.get()), "EZ0026");
+    ASSERT_EQ(error.args_key.size(), 4U);
+    ASSERT_EQ(error.args_value.size(), 4U);
+    std::map<std::string, std::string> actual;
+    for (size_t i = 0; i < error.args_key.size(); ++i) {
+        ASSERT_NE(error.args_key[i], nullptr);
+        ASSERT_NE(error.args_value[i], nullptr);
+        EXPECT_TRUE(actual.emplace(error.args_key[i].get(), error.args_value[i].get()).second);
+    }
+    const std::map<std::string, std::string> expected = {{"param_name", "data_format"},
+                                                         {"op_name", nodeName},
+                                                         {"incorrect_value", "INVALID"},
+                                                         {"reason", "only NCHW/NHWC supported"}};
+    EXPECT_EQ(actual, expected);
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
+
+template <typename Probe>
+void CheckDirectBatchNormAttrsError(bool training)
+{
+    gert::StorageShape xShape = {{2, 3, 4, 5}, {2, 3, 4, 5}};
+    gert::StorageShape channelShape = {{3}, {3}};
+    optiling::BatchNormExt2CompileInfo compileInfo;
+    fe::PlatFormInfos platformInfo;
+    ASSERT_TRUE(platformInfo.Init());
+    auto tilingData = gert::TilingData::CreateCap(4096);
+    auto workspace = gert::ContinuousVector::Create<size_t>(4096);
+    ASSERT_NE(tilingData, nullptr);
+    ASSERT_NE(workspace, nullptr);
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("BatchNormExt2")
+                      .NodeIoNum(5, 5)
+                      .IrInstanceNum({1, 1, 1, 1, 1}, {1, 1, 1, 1, 1})
+                      .InputShapes({&xShape, &channelShape, &channelShape, &channelShape, &channelShape})
+                      .OutputShapes({&xShape, &channelShape, &channelShape, &channelShape, &channelShape})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"epsilon", Ops::NN::AnyValue::CreateFrom<float>(1e-5f)},
+                                  {"data_format", Ops::NN::AnyValue::CreateFrom<std::string>("INVALID")},
+                                  {"is_training", Ops::NN::AnyValue::CreateFrom<bool>(training)}})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .TilingData(tilingData.get())
+                      .Workspace(reinterpret_cast<gert::ContinuousVector*>(workspace.get()))
+                      .Build();
+    auto context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(context, nullptr);
+    Probe probe(context);
+    BeginBatchNormFirstErrorCapture();
+    EXPECT_EQ(probe.GetShapeAttrsInfo(), ge::GRAPH_FAILED);
+    CheckBatchNormInvalidFormatFirstError(context->GetNodeName());
+}
+} // namespace
+
+TEST_F(BatchNormExt2TilingTest, invalid_data_format_infer_wrapper_single_first_error)
+{
+    CheckDirectBatchNormAttrsError<BatchNormInferAttrsProbe>(false);
+}
+
+TEST_F(BatchNormExt2TilingTest, invalid_data_format_training_wrapper_single_first_error)
+{
+    CheckDirectBatchNormAttrsError<BatchNormTrainingAttrsProbe>(true);
+}
+
+TEST_F(BatchNormExt2TilingTest, invalid_data_format_registry_preserves_first_template_error)
+{
+    gert::StorageShape xShape = {{2, 3, 4, 5}, {2, 3, 4, 5}};
+    BeginBatchNormFirstErrorCapture();
+    RunBatchNormExt2InferTilingForTest(xShape, ge::FORMAT_ND, 3, 0, nullptr, nullptr, "INVALID", true);
+    CheckBatchNormInvalidFormatFirstError("BatchNormExt2");
 }

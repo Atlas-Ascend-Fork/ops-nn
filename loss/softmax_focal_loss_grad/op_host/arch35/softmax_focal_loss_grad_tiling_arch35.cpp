@@ -68,7 +68,8 @@ ge::graphStatus ParseReduction(gert::TilingContext* context, const char* reducti
     } else if (red == "none" || red == "sum") {
         isMean = false;
     } else {
-        OP_LOGE(context->GetNodeName(), "attr reduction must be none/mean/sum, got %s", reduction);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "reduction", reduction,
+                                              "supported values are none, mean and sum (case-insensitive)");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -357,7 +358,9 @@ ge::graphStatus SoftmaxFocalLossGradTiling::DoTiling()
     tilingData_->r = storageShape.GetDim(dimNum - 1);
     tilingData_->a = (tilingData_->r == 0) ? 0 : storageShape.GetShapeSize() / tilingData_->r;
 
-    OP_CHECK_IF((ParseAttrs() != ge::GRAPH_SUCCESS), OP_LOGE(context_->GetNodeName(), "ParseAttrs failed"),
+    OP_CHECK_IF((ParseAttrs() != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "callee=ParseAttrs rc=%u; preserve first error",
+                                       static_cast<uint32_t>(ge::GRAPH_FAILED)),
                 return ge::GRAPH_FAILED);
 
     CalCoreSplit();
@@ -398,7 +401,8 @@ static ge::graphStatus Tiling4SoftmaxFocalLossGrad(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
     if (tilingImpl.DoTiling() != ge::GRAPH_SUCCESS) {
-        OP_LOGE(context->GetNodeName(), "Tiling4SoftmaxFocalLossGrad do tiling failed.");
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "callee=DoTiling rc=%u; preserve first error",
+                               static_cast<uint32_t>(ge::GRAPH_FAILED));
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

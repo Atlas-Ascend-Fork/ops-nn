@@ -21,6 +21,7 @@
 #include "register/op_def_registry.h"
 #include "op_common/log/log.h"
 #include "op_common/op_host/util/platform_util.h"
+#include "graph/utils/type_utils.h"
 #include "../../op_kernel/arch35/ascend_requant_struct.h"
 #include <sstream>
 #endif
@@ -449,6 +450,11 @@ static std::string Arr2String(const int64_t* arr, int64_t n)
     return oss.str();
 }
 
+static std::string ShapeToString(const std::vector<int64_t>& shape)
+{
+    return Arr2String(shape.data(), static_cast<int64_t>(shape.size()));
+}
+
 static bool PrecomputeStrides(const std::vector<int64_t>& s, std::vector<int64_t>& strides)
 {
     int64_t rank = (int64_t)s.size();
@@ -538,27 +544,41 @@ private:
 
         if (ascend_requant::public_api::ValidateDtype(xDesc->GetDataType(), scaleDesc->GetDataType()) !=
             ascend_requant::public_api::kOk) {
-            OP_LOGE(ctx_->GetNodeName(), "dtype not supported, require x=INT32 and req_scale=UINT64");
+            const std::string dtypes = ge::TypeUtils::DataTypeToSerialString(xDesc->GetDataType()) + ", " +
+                                       ge::TypeUtils::DataTypeToSerialString(scaleDesc->GetDataType());
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(ctx_->GetNodeName(), "x, req_scale", dtypes.c_str(),
+                                                   "The dtype of x must be INT32 and the dtype of req_scale must be "
+                                                   "UINT64");
             return ge::GRAPH_FAILED;
         }
 
         if (ascend_requant::public_api::ValidateFormat(xDesc->GetStorageFormat(), scaleDesc->GetStorageFormat(),
                                                        yDesc->GetStorageFormat()) != ascend_requant::public_api::kOk) {
-            OP_LOGE(ctx_->GetNodeName(), "format not supported, require ND");
+            const std::string formats = ge::TypeUtils::FormatToSerialString(xDesc->GetStorageFormat()) + ", " +
+                                        ge::TypeUtils::FormatToSerialString(scaleDesc->GetStorageFormat()) + ", " +
+                                        ge::TypeUtils::FormatToSerialString(yDesc->GetStorageFormat());
+            OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(ctx_->GetNodeName(), "x, req_scale, y", formats.c_str(),
+                                                    "The format of x, req_scale and y must be ND");
             return ge::GRAPH_FAILED;
         }
 
         int64_t xRank = static_cast<int64_t>(raw_input_shapes_[0].size());
         int64_t scaleRank = static_cast<int64_t>(raw_input_shapes_[1].size());
         if (ascend_requant::public_api::ValidateDimensions(xRank, scaleRank) != ascend_requant::public_api::kOk) {
-            OP_LOGE(ctx_->GetNodeName(), "dimensions invalid: xRank=%lld, scaleRank=%lld", xRank, scaleRank);
+            const std::string ranks = std::to_string(xRank) + "D, " + std::to_string(scaleRank) + "D";
+            OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                ctx_->GetNodeName(), "x, req_scale", ranks.c_str(),
+                "The rank of x must be in [1, 8], the rank of req_scale must be in [0, 8], and the rank of req_scale "
+                "must not exceed the rank of x");
             return ge::GRAPH_FAILED;
         }
 
         if (ascend_requant::public_api::ValidateBroadcastShape(raw_input_shapes_[0], raw_input_shapes_[1],
                                                                raw_output_shapes_) != ascend_requant::public_api::kOk) {
-            OP_LOGE(ctx_->GetNodeName(),
-                    "req_scale must broadcast to x (each dim 1 or equal to x) and output shape must equal x");
+            const std::string shapes = ShapeToString(raw_input_shapes_[0]) + ", " + ShapeToString(raw_input_shapes_[1]);
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(ctx_->GetNodeName(), "x, req_scale", shapes.c_str(),
+                                                   "The shape of req_scale must broadcast to x (each dim is 1 or "
+                                                   "equal to x) and the shape of y must equal x");
             return ge::GRAPH_FAILED;
         }
 

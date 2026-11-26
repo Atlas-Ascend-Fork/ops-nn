@@ -190,3 +190,123 @@ TEST_F(TestSparseApplyAdadeltaTiling, sparse_apply_adadelta_empty_indices)
     ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
     EXPECT_EQ(result.kCount, 0);
 }
+
+// ---------------------------------------------------------------------------
+// 错误码整改负向用例：SparseApplyAdadeltaTilingFunc 的三个 WITHOUT_REPORT 包装
+// 失败分支（GetPlatformInfo/GetWorkspaceSize/SetLocalMemory），下层各自首报，
+// 外层不再重复上报，tiling 返回 GRAPH_FAILED。
+// ---------------------------------------------------------------------------
+namespace {
+// 复用 DoSparseApplyAdadeltaTilingCase 的合法形状，但允许省略 platform/workspace，
+// 或注入小 UB 平台
+ge::graphStatus RunTilingWithOptionalEnv(bool providePlatform, bool provideWorkspace, const char* platformJson)
+{
+    fe::PlatFormInfos platFormInfo;
+    map<string, string> socInfos;
+    map<string, string> aicoreSpec;
+    map<string, string> intrinsics;
+    map<string, string> socVersion = {{"Short_SoC_version", "ASCEND950"}};
+    GetPlatFormInfos(platformJson, socInfos, aicoreSpec, intrinsics, socVersion);
+    platFormInfo.Init();
+
+    std::string opType("SparseApplyAdadelta");
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    if (opImpl == nullptr || opImpl->tiling == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+
+    auto param = gert::TilingData::CreateCap(4096);
+    if (param == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    auto workspaceSizeHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(workspaceSizeHolder.get());
+
+    gert::StorageShape varStorage = {{4, 8}, {4, 8}};
+    gert::StorageShape accumStorage = {{4, 8}, {4, 8}};
+    gert::StorageShape accumUpdateStorage = {{4, 8}, {4, 8}};
+    gert::StorageShape lrStorage = {{1}, {1}};
+    gert::StorageShape rhoStorage = {{1}, {1}};
+    gert::StorageShape epsilonStorage = {{1}, {1}};
+    gert::StorageShape gradStorage = {{2, 8}, {2, 8}};
+    gert::StorageShape indicesStorage = {{2}, {2}};
+
+    SparseApplyAdadeltaUtCompileInfo compileInfo;
+    gert::TilingContextFaker faker;
+    faker.SetOpType(opType)
+        .NodeIoNum(8, 3)
+        .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1})
+        .InputShapes({&varStorage, &accumStorage, &accumUpdateStorage, &lrStorage, &rhoStorage, &epsilonStorage,
+                      &gradStorage, &indicesStorage})
+        .OutputShapes({&varStorage, &accumStorage, &accumUpdateStorage})
+        .CompileInfo(&compileInfo)
+        .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(5, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(6, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeInputTd(7, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+        .NodeAttrs({{"use_locking", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+        .TilingData(param.get());
+    if (providePlatform) {
+        faker.PlatformInfo(reinterpret_cast<char*>(&platFormInfo));
+    }
+    if (provideWorkspace) {
+        faker.Workspace(wsSize);
+    }
+    auto holder = faker.Build();
+    auto tilingContext = holder.GetContext<gert::TilingContext>();
+    if (tilingContext == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+    if (tilingContext->GetPlatformInfo() != nullptr) {
+        tilingContext->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+        tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+        tilingContext->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+        tilingContext->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+        tilingContext->GetPlatformInfo()->SetPlatformRes("version", socVersion);
+    }
+    return opImpl->tiling(tilingContext);
+}
+
+const char* NORMAL_PLATFORM_JSON = R"({
+     "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                       "Intrinsic_fix_pipe_l0c2out": false,
+                       "Intrinsic_data_move_l12ub": true,
+                       "Intrinsic_data_move_l0c2ub": true,
+                       "Intrinsic_data_move_out2l1_nd2nz": false,
+                       "UB_SIZE": 245760, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                       "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                       "CORE_NUM": 64, "socVersion": "Ascend950"}})";
+
+// UB_SIZE(65536) <= DCACHE_SIZE(128KB) 使 SetLocalMemory 失败
+const char* SMALL_UB_PLATFORM_JSON = R"({
+     "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                       "Intrinsic_fix_pipe_l0c2out": false,
+                       "Intrinsic_data_move_l12ub": true,
+                       "Intrinsic_data_move_l0c2ub": true,
+                       "Intrinsic_data_move_out2l1_nd2nz": false,
+                       "UB_SIZE": 65536, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                       "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                       "CORE_NUM": 64, "socVersion": "Ascend950"}})";
+} // namespace
+
+TEST_F(TestSparseApplyAdadeltaTiling, sparse_apply_adadelta_without_platform_failed)
+{
+    EXPECT_EQ(RunTilingWithOptionalEnv(false, true, NORMAL_PLATFORM_JSON), ge::GRAPH_FAILED);
+}
+
+TEST_F(TestSparseApplyAdadeltaTiling, sparse_apply_adadelta_without_workspace_failed)
+{
+    EXPECT_EQ(RunTilingWithOptionalEnv(true, false, NORMAL_PLATFORM_JSON), ge::GRAPH_FAILED);
+}
+
+TEST_F(TestSparseApplyAdadeltaTiling, sparse_apply_adadelta_small_ub_set_local_memory_failed)
+{
+    EXPECT_EQ(RunTilingWithOptionalEnv(true, true, SMALL_UB_PLATFORM_JSON), ge::GRAPH_FAILED);
+}

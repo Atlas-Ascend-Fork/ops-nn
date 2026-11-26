@@ -15,6 +15,7 @@
 
 #include <limits>
 #include "log/log.h"
+#include "graph/utils/type_utils.h"
 #include "util/math_util.h"
 #include "util/platform_util.h"
 #include "op_host/tiling_util.h"
@@ -54,7 +55,7 @@ static ge::graphStatus ForeachCoshTilingFunc(gert::TilingContext* context)
     uint64_t ubSize;
     int64_t coreNum;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     // 2. Get tensor list info
     auto computeNodeInfoPtr = context->GetComputeNodeInfo();
@@ -95,20 +96,28 @@ static ge::graphStatus ForeachCoshTilingFunc(gert::TilingContext* context)
         if (i > 0) {
             auto descPtr = context->GetDynamicInputDesc(INPUT_IDX_0, i);
             OP_CHECK_NULL_WITH_CONTEXT(context, descPtr);
-            OP_CHECK_IF(descPtr->GetDataType() != dataType,
-                        OP_LOGE(context,
-                                "foreach_cosh requires a single dtype across the TensorList; element %lu is %d but "
-                                "element 0 is %d",
-                                i, static_cast<int>(descPtr->GetDataType()), static_cast<int>(dataType)),
-                        return ge::GRAPH_FAILED);
+            OP_CHECK_IF(
+                descPtr->GetDataType() != dataType,
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    context->GetNodeName(), "x", ge::TypeUtils::DataTypeToSerialString(descPtr->GetDataType()).c_str(),
+                    ("The dtypes of all tensors in the tensor list must be the same. Currently, the dtype of "
+                     "the " +
+                     std::to_string(i) + "th tensor is inconsistent with that (" +
+                     ge::TypeUtils::DataTypeToSerialString(dataType) + ") of other tensors")
+                        .c_str()),
+                return ge::GRAPH_FAILED);
         }
         auto shapePtr = context->GetDynamicInputShape(INPUT_IDX_0, i);
         OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
         auto storageShape = shapePtr->GetStorageShape();
-        OP_CHECK_IF(storageShape.GetDimNum() > static_cast<size_t>(MAX_SUPPORT_RANK),
-                    OP_LOGE(context, "rank[%zu] of tensor %lu exceeds the supported maximum %d",
-                            storageShape.GetDimNum(), i, MAX_SUPPORT_RANK),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            storageShape.GetDimNum() > static_cast<size_t>(MAX_SUPPORT_RANK),
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                context->GetNodeName(), "x", std::to_string(storageShape.GetDimNum()).c_str(),
+                ("The shape dim of the " + std::to_string(i) +
+                 "th tensor in the tensor list should be less than or equal to " + std::to_string(MAX_SUPPORT_RANK))
+                    .c_str()),
+            return ge::GRAPH_FAILED);
         int64_t numel = storageShape.GetShapeSize();
         OP_CHECK_IF(numel < 0 || totalElements > std::numeric_limits<int64_t>::max() - numel,
                     OP_LOGE(context, "invalid shape size[%ld] for tensor %lu of foreach_cosh", numel, i),
@@ -165,7 +174,8 @@ static ge::graphStatus ForeachCoshTilingFunc(gert::TilingContext* context)
     } else if (dataType == ge::DT_BF16) {
         tilingKey = GET_TPL_TILING_KEY(FOREACH_COSH_TPL_SCH_MODE_BF16);
     } else {
-        OP_LOGE(context, "unsupported dtype for foreach_cosh: %d", dataType);
+        OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "x", ge::TypeUtils::DataTypeToSerialString(dataType).c_str(),
+                                  "float, float16 or bfloat16");
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(tilingKey);
