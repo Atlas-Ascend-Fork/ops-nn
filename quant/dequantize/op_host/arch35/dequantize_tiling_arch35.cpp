@@ -61,6 +61,14 @@ static bool IsSupportedMode(const std::string& mode)
     return mode == kModeMinCombined || mode == kModeMinFirst || mode == kModeScaled;
 }
 
+// Tiling阶段框架契约类失败(框架对象为空/平台信息异常/策略失败)统一上报EZ1008, 不再生成EZ9999内部码
+static void ReportTilingStageError(const char* opName, const std::string& reason)
+{
+    const std::vector<const char*> msgKey = {"opName", "reason"};
+    const std::vector<const char*> msgValue = {opName != nullptr ? opName : "Dequantize", reason.c_str()};
+    REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+}
+
 static bool ValidateBroadcastRank(const std::vector<std::vector<int64_t>>& in_shapes,
                                   const std::vector<std::vector<int64_t>>& out_shapes, int64_t max_rank,
                                   const char* op_name)
@@ -71,18 +79,22 @@ static bool ValidateBroadcastRank(const std::vector<std::vector<int64_t>>& in_sh
     }
     const auto& x_shape = in_shapes[kXIndex];
     if (static_cast<int64_t>(x_shape.size()) != max_rank) {
-        OP_LOGE(op_name, "CheckBroadcastShape failed: x shape rank mismatch");
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(op_name, kInputNames[kXIndex], std::to_string(x_shape.size()).c_str(),
+                                                 "x rank must equal broadcast max rank");
         return false;
     }
     for (size_t i = kMinIndex; i < in_shapes.size(); i++) {
         if (static_cast<int64_t>(in_shapes[i].size()) != max_rank) {
-            OP_LOGE(op_name, "CheckBroadcastShape failed: input %zu shape rank mismatch", i);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(op_name, kInputNames[i],
+                                                     std::to_string(in_shapes[i].size()).c_str(),
+                                                     "range input rank must equal x rank");
             return false;
         }
     }
     for (size_t i = 0; i < out_shapes.size(); i++) {
         if (static_cast<int64_t>(out_shapes[i].size()) != max_rank) {
-            OP_LOGE(op_name, "CheckBroadcastShape failed: output %zu shape rank mismatch", i);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(op_name, kOutputName, std::to_string(out_shapes[i].size()).c_str(),
+                                                     "output rank must equal broadcast max rank");
             return false;
         }
     }
@@ -377,7 +389,8 @@ ge::graphStatus DequantizeTiling::ReadOneTensorShape(bool is_input, size_t index
         }
     }
     OP_CHECK_IF(dims.size() > static_cast<size_t>(kMaxRank),
-                OP_LOGE(ctx_->GetNodeName(), "%s rank %zu exceeds max rank %ld", name, dims.size(), kMaxRank),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(ctx_->GetNodeName(), name, std::to_string(dims.size()).c_str(),
+                                                         "rank must not exceed max rank 8"),
                 return ge::GRAPH_FAILED);
     return GRAPH_SUCCESS;
 }
@@ -461,8 +474,10 @@ ge::graphStatus DequantizeTiling::ParseMode()
             mode_ = std::string(modeAttr);
         }
     }
-    OP_CHECK_IF(!IsSupportedMode(mode_), OP_LOGE(ctx_->GetNodeName(), "Unsupported mode %s", mode_.c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !IsSupportedMode(mode_),
+        OP_LOGE_FOR_INVALID_VALUE(ctx_->GetNodeName(), "mode", mode_.c_str(), "MIN_COMBINED, MIN_FIRST, SCALED"),
+        return ge::GRAPH_FAILED);
     return GRAPH_SUCCESS;
 }
 
@@ -614,7 +629,7 @@ bool DequantizeTiling::PrepareSplit(DequantizeTilingData<R>* tiling, int64_t& pe
     }
     PerBufferLayout layout;
     if (!CalcPerBufferLayout(static_cast<int64_t>(compileInfo->ubSize), kPhysNodes, kOutputDtypeSize, layout)) {
-        OP_LOGE(ctx_->GetNodeName(), "PrepareSplit failed: invalid UB layout");
+        ReportTilingStageError(ctx_->GetNodeName(), "PrepareSplit: UB layout calc failed, ubSize too small");
         return false;
     }
     if (!FindSplitAxis(max_bro_shape_, layout, tiling->split)) {
@@ -622,7 +637,7 @@ bool DequantizeTiling::PrepareSplit(DequantizeTilingData<R>* tiling, int64_t& pe
         return false;
     }
     if (!MultiCoreSplit(max_bro_shape_, tiling->split, static_cast<int64_t>(compileInfo->coreNum), tiling->multicore)) {
-        OP_LOGE(ctx_->GetNodeName(), "PrepareSplit failed: MultiCoreSplit failed");
+        ReportTilingStageError(ctx_->GetNodeName(), "PrepareSplit: multi-core split failed");
         return false;
     }
     per_buf_bytes = layout.bytes;
@@ -695,7 +710,8 @@ ge::graphStatus DequantizeTiling::DoTilingAndSet()
         PerBufferLayout layout;
         OP_CHECK_IF(
             !CalcPerBufferLayout(static_cast<int64_t>(compileInfo->ubSize), kPhysNodes, kOutputDtypeSize, layout),
-            OP_LOGE(ctx_->GetNodeName(), "empty tensor tiling failed: invalid UB layout"), return ge::GRAPH_FAILED);
+            ReportTilingStageError(ctx_->GetNodeName(), "empty tensor tiling: UB layout calc failed, ubSize too small"),
+            return ge::GRAPH_FAILED);
         tiling->split = {0, 0, 1, 0};
         tiling->multicore = {1, 1, 1, 0};
         FillShapeAndStrideTiling(tiling);

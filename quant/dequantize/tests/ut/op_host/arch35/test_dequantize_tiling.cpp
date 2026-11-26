@@ -371,3 +371,45 @@ TEST_F(DequantizeTilingTest, case24_scalar_x)
     ASSERT_TRUE(ExecuteTiling(ctx, tilingInfo));
     EXPECT_GT(tilingInfo.blockNum, 0);
 }
+
+// case25: unsupported mode attr must be rejected with semantic error
+TEST_F(DequantizeTilingTest, case25_invalid_mode)
+{
+    optiling::DequantizeCompileInfo ci = {64, 262144};
+    gert::TilingContextPara ctx(
+        "Dequantize",
+        {{{{{4, 8}, {4, 8}}, DT_INT8, FORMAT_ND},
+          {{{1}, {1}}, DT_FLOAT, FORMAT_ND},
+          {{{1}, {1}}, DT_FLOAT, FORMAT_ND}}},
+        {{{{{4, 8}, {4, 8}}, DT_FLOAT, FORMAT_ND}}},
+        {gert::TilingContextPara::OpAttr("mode", Ops::NN::AnyValue::CreateFrom<std::string>("INVALID_MODE"))}, &ci);
+    ExecuteTestCase(ctx, GRAPH_FAILED);
+}
+
+// case26: ubSize above metadata but too small for one output element per buffer
+TEST_F(DequantizeTilingTest, case26_ub_size_layout_fail)
+{
+    optiling::DequantizeCompileInfo ci = {64, 656};
+    gert::TilingContextPara ctx(
+        "Dequantize",
+        {{{{{4, 8}, {4, 8}}, DT_INT8, FORMAT_ND},
+          {{{1}, {1}}, DT_FLOAT, FORMAT_ND},
+          {{{1}, {1}}, DT_FLOAT, FORMAT_ND}}},
+        {{{{{4, 8}, {4, 8}}, DT_FLOAT, FORMAT_ND}}},
+        {gert::TilingContextPara::OpAttr("mode", Ops::NN::AnyValue::CreateFrom<std::string>("MIN_COMBINED"))}, &ci);
+    ExecuteTestCase(ctx, GRAPH_FAILED);
+}
+
+// case27: empty x path with ubSize above metadata but too small for one output element
+TEST_F(DequantizeTilingTest, case27_empty_x_ub_size_layout_fail)
+{
+    optiling::DequantizeCompileInfo ci = {64, 656};
+    gert::TilingContextPara ctx(
+        "Dequantize",
+        {{{{{0, 3}, {0, 3}}, DT_INT8, FORMAT_ND},
+          {{{1}, {1}}, DT_FLOAT, FORMAT_ND},
+          {{{1}, {1}}, DT_FLOAT, FORMAT_ND}}},
+        {{{{{0, 3}, {0, 3}}, DT_FLOAT, FORMAT_ND}}},
+        {gert::TilingContextPara::OpAttr("mode", Ops::NN::AnyValue::CreateFrom<std::string>("MIN_COMBINED"))}, &ci);
+    ExecuteTestCase(ctx, GRAPH_FAILED);
+}

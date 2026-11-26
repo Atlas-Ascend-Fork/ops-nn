@@ -67,12 +67,18 @@ static ge::graphStatus InferShape4Dequantize(gert::InferShapeContext* context)
         return ge::GRAPH_SUCCESS;
     }
 
-    OP_CHECK_IF(!BroadcastCompatible(*x_shape, *min_shape),
-                OP_LOGE(context, "Dequantize: x and min_range shapes are not broadcast compatible"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!BroadcastCompatible(*x_shape, *max_shape),
-                OP_LOGE(context, "Dequantize: x and max_range shapes are not broadcast compatible"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !BroadcastCompatible(*x_shape, *min_shape),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "x, min_range",
+                                               Ops::Base::ToString(*x_shape) + ", " + Ops::Base::ToString(*min_shape),
+                                               "min_range must be broadcast compatible with x"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !BroadcastCompatible(*x_shape, *max_shape),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "x, max_range",
+                                               Ops::Base::ToString(*x_shape) + ", " + Ops::Base::ToString(*max_shape),
+                                               "max_range must be broadcast compatible with x"),
+        return ge::GRAPH_FAILED);
 
     OP_LOGI(context->GetNodeName(), "Dequantize output shape: %s.", Ops::Base::ToString(*output_shape).c_str());
     return ge::GRAPH_SUCCESS;
