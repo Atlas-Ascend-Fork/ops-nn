@@ -13,7 +13,7 @@
  * \brief
  */
 #include "fused_mat_mul_batch_asw_tiling.h"
-#include "fused_mat_mul_builtin_tiling_strategy.h"
+#include "fused_mat_mul_tiling_strategy.h"
 #include "fused_mat_mul_common.h"
 #include "matmul/mat_mul_v3/op_host/op_tiling/arch35/matmul_tiling_registry.h"
 #include "matmul/common/op_host/math_util_nn.h"

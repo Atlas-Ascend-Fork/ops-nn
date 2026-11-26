@@ -14,8 +14,8 @@
  */
 
 #include "fused_mat_mul_mergebatch_basic_tiling.h"
-#include "fused_mat_mul_builtin_tiling.h"
-#include "fused_mat_mul_builtin_tiling_strategy.h"
+#include "fused_mat_mul_tiling_advanced.h"
+#include "fused_mat_mul_tiling_strategy.h"
 #include "fused_mat_mul_common.h"
 #include "matmul/mat_mul_v3/op_host/op_tiling/arch35/matmul_tiling_registry.h"
 #include "matmul/mat_mul_v3/op_host/op_tiling/arch35/matmul_v3_tiling_helper.h"

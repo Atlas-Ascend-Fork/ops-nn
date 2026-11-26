@@ -10,11 +10,11 @@
 
 /* !
  * \file fused_mat_mul_tiling.cpp
- * \brief FusedMatMul tiling entry: routes to built-in tiling (BatchMatMulV3-based).
+ * \brief FusedMatMul tiling entry.
  */
 #include "fused_mat_mul_tiling.h"
 
-#include "fused_mat_mul_builtin_tiling.h"
+#include "fused_mat_mul_tiling_advanced.h"
 #include "fused_mat_mul_common.h"
 #include "fused_mat_mul_simplifiedkey.h"
 #include "matmul/common/op_host/op_tiling/debug_tiling.h"
@@ -132,13 +132,13 @@ ge::graphStatus FusedMatMulTilingFunc(gert::TilingContext* context)
                     return ge::GRAPH_FAILED);
 
     const auto& supportedOps = it->second;
-    bool useBuiltInTiling = std::find(supportedOps.begin(), supportedOps.end(), fusedOpType) != supportedOps.end();
-    OP_TILING_CHECK(!useBuiltInTiling,
+    bool isSupportedOpType = std::find(supportedOps.begin(), supportedOps.end(), fusedOpType) != supportedOps.end();
+    OP_TILING_CHECK(!isSupportedOpType,
                     CUBE_INNER_ERR_REPORT(context->GetNodeName(), "unsupported fusedOpType: %s, supported: %s",
                                           fusedOpType.c_str(), JoinOpTypes(supportedOps).c_str()),
                     return ge::GRAPH_FAILED);
 
-    return fused_matmul::FusedMatMulBuiltInTiling(context).DoTiling();
+    return fused_matmul::FusedMatMulTiling(context).DoTiling();
 }
 
 } // namespace

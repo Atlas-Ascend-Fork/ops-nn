@@ -139,7 +139,7 @@ aclnnStatus aclnnAddmv(
       <td>out</td>
       <td>输出</td>
       <td>指定的1维输出向量。</td>
-      <td><ul><li>数据类型需要是self, mat, vec, alpha, beta<a href="../../../docs/zh/context/deduction_relationship.md">推导后的数据类型</a>。</li>
+      <td><ul><li>数据类型需要是self、mat、vec、alpha、beta<a href="../../../docs/zh/context/deduction_relationship.md">推导后的数据类型</a>。</li>
       <li>shape与mat和vec的乘积相同。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT、INT32、INT64、INT16、INT8、UINT8、DOUBLE</td>
       <td>ND</td>

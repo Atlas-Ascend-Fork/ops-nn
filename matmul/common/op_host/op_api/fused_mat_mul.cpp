@@ -9,6 +9,9 @@
  */
 
 #include "fused_mat_mul.h"
+
+#include <string_view>
+
 #include "opdev/make_op_executor.h"
 #include "opdev/op_def.h"
 #include "opdev/op_dfx.h"
@@ -22,6 +25,32 @@ namespace l0op {
 
 OP_TYPE_REGISTER(FusedMatMul);
 
+static const char* GetFusedMatMulProfilingName(const char* fusedOpType)
+{
+    struct ProfilingName {
+        std::string_view opType;
+        const char* name;
+    };
+    static constexpr ProfilingName profilingNames[] = {
+        {"relu", "FusedMatMulCommon_relu"},
+        {"add", "FusedMatMulCommon_add"},
+        {"mul", "FusedMatMulCommon_mul"},
+        {"16cast32", "FusedMatMulCommon_16cast32"},
+        {"sigmoid", "FusedMatMulCommon_sigmoid"},
+        {"gelu_erf", "FusedMatMulCommon_gelu_erf"},
+        {"gelu_tanh", "FusedMatMulCommon_gelu_tanh"},
+    };
+    if (fusedOpType != nullptr) {
+        const std::string_view opType(fusedOpType);
+        for (const auto& entry : profilingNames) {
+            if (opType == entry.opType) {
+                return entry.name;
+            }
+        }
+    }
+    return nullptr;
+}
+
 static const aclTensor* FusedMatMulCommon(const aclTensor* x1, const aclTensor* x2, const aclTensor* bias,
                                           const aclTensor* x3, const op::DataType output_dtype,
                                           const op::Format output_format, const op::Format output_ori_format,
@@ -29,6 +58,9 @@ static const aclTensor* FusedMatMulCommon(const aclTensor* x1, const aclTensor* 
                                           int64_t innerPrecise, aclOpExecutor* executor)
 {
     L0_DFX(FusedMatMulCommon, x1, x2, bias, x3, transposeX1, transposeX2, enableHf32, fusedOpType, innerPrecise);
+    if (const char* profilingName = GetFusedMatMulProfilingName(fusedOpType); profilingName != nullptr) {
+        InitL0Context(profilingName, executor);
+    }
     auto mm_out = executor->AllocTensor(output_dtype, output_format, output_ori_format);
     OP_CHECK_NULL(mm_out, return nullptr);
     auto ret = INFER_SHAPE(FusedMatMul, OP_INPUT(x1, x2, bias, x3), OP_OUTPUT(mm_out),

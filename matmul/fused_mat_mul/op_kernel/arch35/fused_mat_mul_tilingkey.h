@@ -24,7 +24,7 @@
 #include "ascendc/host_api/tiling/template_argument.h"
 #include "fused_mat_mul_tiling_key_public.h"
 #include "fused_mat_mul_tiling_data.h"
-#if defined(__CCE_AICORE__)
+#if defined(__NPU_ARCH__)
 #if ASC_DEVKIT_MAJOR >= 9
 #include "kernel_basic_intf.h"
 #else
@@ -34,7 +34,7 @@
 
 // Host debug validation keeps the union of supported dtype selections.
 // Device template extraction selects only the combinations for the current dtype.
-#if !defined(__CCE_AICORE__)
+#if !defined(__NPU_ARCH__)
 #define FUSED_MATMUL_SAME_DTYPE
 #define FUSED_MATMUL_SELECT_A16
 #define FUSED_MATMUL_SELECT_16CAST32
@@ -93,7 +93,7 @@ ASCENDC_TPL_ARGS_DECL(FusedMatMul, // 算子OpType
                       ASCENDC_TPL_UINT_DECL(INNER_PRECISE, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST,
                                             F_INNER_PRECISE_HIGH_PRECISION, F_INNER_PRECISE_HIGH_PERFORMANCE));
 ASCENDC_TPL_SEL(
-#if !defined(__CCE_AICORE__) || (defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510))
+#if !defined(__NPU_ARCH__) || (__NPU_ARCH__ == 3510)
 // 16cast32: only FP16/BF16 inputs with FP32 output.
 #if defined(FUSED_MATMUL_SELECT_16CAST32)
     // Basic MM, on-the-fly.
@@ -275,7 +275,7 @@ ASCENDC_TPL_SEL(
                          ASCENDC_TPL_UINT_SEL(BATCH_ITER_MODEL, ASCENDC_TPL_UI_LIST, MAT_MUL_FOR_BATCH),
                          ASCENDC_TPL_UINT_SEL(MODEL, ASCENDC_TPL_UI_LIST, MAT_MUL_BASIC),
                          ASCENDC_TPL_UINT_SEL(FULL_LOAD, ASCENDC_TPL_UI_LIST, MAT_MUL_B_FULL_LOAD),
-#if defined(__CCE_AICORE__) && defined(FUSED_MATMUL_SELECT_A16)
+#if defined(__NPU_ARCH__) && defined(FUSED_MATMUL_SELECT_A16)
                          ASCENDC_TPL_UINT_SEL(L0C2OUT_MODEL, ASCENDC_TPL_UI_LIST, MAT_MUL_ON_THE_FLY),
 #else
                          ASCENDC_TPL_UINT_SEL(L0C2OUT_MODEL, ASCENDC_TPL_UI_LIST, MAT_MUL_ON_THE_FLY,
@@ -433,7 +433,7 @@ ASCENDC_TPL_SEL(
 #endif // FUSED_MATMUL_SAME_DTYPE
 
 #endif
-#if defined(__CCE_AICORE__) && defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
     /*AIV_ONLY*/
     // DAV_920x K=0 relu uses the Tensor-level clear-output key.
     ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_KERNEL_TYPE_SEL(ASCENDC_TPL_AIV_ONLY),
@@ -544,7 +544,7 @@ ASCENDC_TPL_SEL(
                          ASCENDC_TPL_UINT_SEL(INNER_PRECISE, ASCENDC_TPL_UI_LIST, F_INNER_PRECISE_HIGH_PERFORMANCE),
                          ASCENDC_TPL_TILING_STRUCT_SEL(MatMulV3BasicTilingData)),
 #endif
-#if !defined(__CCE_AICORE__) || (defined(__FIXED_POINT_ONLY_CUBE_TO_L0C__) && __FIXED_POINT_ONLY_CUBE_TO_L0C__)
+#if !defined(__NPU_ARCH__) || (defined(__FIXED_POINT_ONLY_CUBE_TO_L0C__) && __FIXED_POINT_ONLY_CUBE_TO_L0C__)
     /*AIC_ONLY*/
     // high, aswt, from bmmv3
     ASCENDC_TPL_ARGS_SEL(
