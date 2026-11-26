@@ -106,7 +106,7 @@ def _compute_conv_backward(
     else:
         padding = orig_padding
     if isinstance(outputPadding, list) and len(outputPadding) == 2 * conv_dim:
-        outputPadding = [int(outputPadding[i]) for i in range(conv_dim)]
+        outputPadding = [int(outputPadding[2 * i]) for i in range(conv_dim)]
 
     if isinstance(gradOutput, np.ndarray):
         gradOutput = torch.from_numpy(gradOutput.astype(np.float32))

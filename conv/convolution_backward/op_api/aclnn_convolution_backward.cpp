@@ -4017,6 +4017,14 @@ static aclnnStatus CalculateConv2DBp(ConvolutionBackwardInputTensor& inputTensor
             params.outputPadding = View2dAs3d(params.outputPadding, 0, executor);
             OP_CHECK(params.outputPadding != nullptr, OP_LOGD("newOutputPadding alloc failed."),
                      return ACLNN_ERR_INNER_NULLPTR);
+        } else if (params.transposed && params.outputPadding != nullptr &&
+                   params.outputPadding->Size() == CONV2D_OUTPUT_PADDING_4) {
+            FVector<int64_t> newOutputPadding = {
+                LIFTED_OUTPUT_PADDING_D, GetTransposedOutputPadding(params.outputPadding, CONV2D_OUTPUT_PADDING_H_IDX),
+                GetTransposedOutputPadding(params.outputPadding, CONV2D_OUTPUT_PADDING_W_IDX)};
+            params.outputPadding = executor->AllocIntArray(newOutputPadding.data(), newOutputPadding.size());
+            OP_CHECK(params.outputPadding != nullptr, OP_LOGD("newOutputPadding alloc failed."),
+                     return ACLNN_ERR_INNER_NULLPTR);
         }
         auto ret = CalculateConv3DBp(inputTensor, outputTensor, params, executor);
         CHECK_RET(ret == ACLNN_SUCCESS, ACLNN_ERR_INNER_NULLPTR);

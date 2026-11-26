@@ -126,7 +126,9 @@ bool CheckResolutionGEKernelShape(const op::Shape& inputShape, const op::Shape& 
 {
     int64_t dimOrder = dimIdx - 2; // 2: the dim N and D
     int64_t filterDimDilation = (weightShape[dimIdx] - 1) * (*params.dilation)[dimOrder] + 1;
-    int64_t outputPad = params.transposed ? (*params.outputPadding)[dimOrder] : 0;
+    int64_t outputPad = params.transposed ?
+                            GetTransposedOutputPadding(params.outputPadding, dimIdx - CONV_NON_SPATIAL_DIM_NUM) :
+                            0;
     int64_t dimInput = inputShape.GetDim(dimIdx) - outputPad + (*params.padding)[dimOrder] * 2 -
                        filterDimDilation; // 2 : pad two dim
     bool dimInputExpect = dimInput >= 0;
@@ -148,7 +150,9 @@ int64_t GetExpectNum(const op::Shape& inputShape, const op::Shape& weightShape, 
 {
     int64_t dimOrder = dimIdx - 2; // 2: the dim N and D
     int64_t filterDimDilation = (weightShape[dimIdx] - 1) * (*params.dilation)[dimOrder] + 1;
-    int64_t outputPad = params.transposed ? (*params.outputPadding)[dimOrder] : 0;
+    int64_t outputPad = params.transposed ?
+                            GetTransposedOutputPadding(params.outputPadding, dimIdx - CONV_NON_SPATIAL_DIM_NUM) :
+                            0;
     int64_t dimInput = inputShape.GetDim(dimIdx) - outputPad + (*params.padding)[dimOrder] * 2 -
                        filterDimDilation; // 2 : pad two dim
     int64_t dimExpect = dimInput / (*params.stride)[dimOrder] + 1;

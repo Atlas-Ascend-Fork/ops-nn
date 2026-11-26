@@ -15,6 +15,12 @@ namespace l0op {
 const int CONV1DINPUTDIM = 3;
 const int CONV2DINPUTDIM = 4;
 const int CONV3DINPUTDIM = 5;
+const int32_t CONV_NON_SPATIAL_DIM_NUM = 2;
+const int32_t CONV2D_OUTPUT_PADDING_4 = 4;
+const int32_t CONV2D_OUTPUT_PADDING_SPATIAL_GROUP = 2;
+const int32_t CONV2D_OUTPUT_PADDING_H_IDX = 0;
+const int32_t CONV2D_OUTPUT_PADDING_W_IDX = 1;
+const int64_t LIFTED_OUTPUT_PADDING_D = 0;
 
 struct ConvBackpropParams {
     const aclTensor* input;
@@ -43,6 +49,17 @@ struct ConvolutionBackwardParams {
     const aclBoolArray* outputMask;
     const int8_t cubeMathType;
 };
+
+// transposed场景outputPadding按空间序(spatialOrder)取值。空间维布局(2D为2元素/3D为3元素)按序直取；
+// 2D场景4元素为[pt, pb, pl, pr]方向布局(与padding 4元素约定一致)，H取pt=[0]、W取pl=[2]，
+// 即spatialOrder*CONV2D_OUTPUT_PADDING_SPATIAL_GROUP取每对首个。checker形状校验与属性转换层共用本取值，保证两层索引一致。
+inline int64_t GetTransposedOutputPadding(const aclIntArray* outputPadding, int64_t spatialOrder)
+{
+    const int64_t padIdx = (outputPadding->Size() == static_cast<uint64_t>(CONV2D_OUTPUT_PADDING_4)) ?
+                               spatialOrder * CONV2D_OUTPUT_PADDING_SPATIAL_GROUP :
+                               spatialOrder;
+    return (*outputPadding)[padIdx];
+}
 
 // Check if need to swap D and H dimensions for Conv3D backward
 bool NeedSwapDHForConv3DBackward(const ConvolutionBackwardInputTensor& inputTensor,

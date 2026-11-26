@@ -2439,6 +2439,99 @@ TEST_F(convolution_backward_test, ascend910B2_test_Conv2DTransposeBackward_FP32)
     EXPECT_EQ(aclRet, ACLNN_SUCCESS);
 }
 
+TEST_F(convolution_backward_test, test_Conv2DTransposeBackward_Fp32_outputPadding4dim)
+{
+    auto input_tensor_desc = TensorDesc({1, 16, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({16, 16, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({1, 16, 5, 6}, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{16});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{2, 2});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = true;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0, 1, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{false, true, false});
+    auto gradInput = TensorDesc({1, 16, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({16, 16, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({16}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
+
+TEST_F(convolution_backward_test, test_Conv2DTransposeBackward_Fp32_outputPadding4dimHwPin)
+{
+    auto input_tensor_desc = TensorDesc({1, 16, 2, 2}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({16, 16, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({1, 16, 5, 5}, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{16});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{3, 3});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = true;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{1, 2, 1, 2});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{false, true, false});
+    auto gradInput = TensorDesc({1, 16, 2, 2}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({16, 16, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({16}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
+
+TEST_F(convolution_backward_test, test_Conv2DTransposeBackward_Fp32_outputPadding4dimShapeMismatch)
+{
+    auto input_tensor_desc = TensorDesc({1, 16, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({16, 16, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({1, 16, 5, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{16});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{2, 2});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = true;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0, 1, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{false, true, false});
+    auto gradInput = TensorDesc({1, 16, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({16, 16, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({16}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_NE(aclRet, ACLNN_SUCCESS);
+}
+
 TEST_F(convolution_backward_test, ascend910B2_test_Conv3DTransposeBackward_FP16)
 {
     auto input_tensor_desc = TensorDesc({1, 16, 1, 7, 7}, ACL_FLOAT16, ACL_FORMAT_NCDHW);
@@ -3646,3 +3739,35 @@ TEST_F(convolution_backward_test, ascend950_test_Conv3DTransposeBackward_Hif8_dx
 }
 
 } // namespace
+
+TEST_F(convolution_backward_test, test_Conv2DTransposeBackward_Fp16_outputPadding4dim950)
+{
+    op::NpuArchManager archManager(NpuArch::DAV_3510);
+    auto input_tensor_desc = TensorDesc({1, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({16, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({1, 16, 5, 6}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{16});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{2, 2});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = true;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0, 1, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{false, false, true});
+    auto gradInput = TensorDesc({1, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({16, 16, 3, 3}, ACL_FLOAT16, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({16}, ACL_FLOAT16, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
