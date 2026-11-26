@@ -16,8 +16,7 @@ FTRL-Proximal V1 就地更新。
     计算调用 CPU tf.raw_ops.ApplyFtrl；TTK Promote 传入的 FP32/FP64 保持其精度。
   - third_party["tf"]：在输入 Tensor 所在设备调用等价的 ResourceApplyFtrl，
     使用私有状态变量并返回原 dtype 的 [var, accum, linear]，不修改输入。
-    FP16/FP32 原生计算；BF16 因 TF GPU 未注册 FTRL 内核，在同设备以 FP32
-    计算再回写 BF16，符合本算子 README 的内部 FP32 计算语义。
+    FP16 和 BF16 输入在同一设备上升至 FP32 计算，三个输出转回输入 dtype。
   - float16/bfloat16/float32 的三个输出均使用 TTK cross_check / L1：
     由运行时解析 L1 误差比值及逐 dtype 小值域标准。CPU Golden 与原 dtype
     远端三方独立执行；float64 仅用于 Promote 参考，不是算子声明的输出 dtype。
@@ -134,7 +133,7 @@ def inplace_apply_ftrl_golden(
 
 
 class _TfInplaceApplyFtrl:
-    """Device-local TF FTRL V1; BF16 uses FP32 resources and BF16 outputs."""
+    """Run FTRL on the input device with FP32 resources for FP16 and BF16 inputs."""
 
     def __init__(self, *, use_locking=False, **kwargs):
         if use_locking:
@@ -181,12 +180,9 @@ class _TfInplaceApplyFtrl:
         # accepting eager provider Tensors without a numpy/CPU graph boundary.
         # Keep all resources and scalar reshapes on the remotely assigned device.
         with tf.device(var.device):
-            # TF 2.21 training_ops.cc registers GPU FTRL for half/float/double,
-            # but not BF16. Use the operator's documented internal FP32 compute
-            # for BF16 (README "internal fp32" constraint), on the same device.
             compute_inputs = (
                 [tf.cast(value, tf.float32) for value in inputs]
-                if var.dtype == tf.bfloat16
+                if var.dtype in (tf.float16, tf.bfloat16)
                 else inputs
             )
             states = [

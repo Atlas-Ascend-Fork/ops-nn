@@ -18,7 +18,7 @@
  *   accum_new = accum + grad * grad
  *   pow_new = accum_new ^ (-lr_power)
  *   pow_old = accum ^ (-lr_power)
- *   linear_new = linear + (grad - (pow_new - pow_old) / lr * var)
+ *   linear_new = linear + (grad - (pow_new - pow_old) * var / lr)
  *   quadratic = pow_new / lr + 2 * l2
  *   var_new = (|linear_new| > l1) ? (sign(linear_new) * l1 - linear_new) / quadratic : 0
  *
@@ -60,6 +60,7 @@ constexpr uint32_t NO_PAD_LEN = 0;
 
 constexpr PowerConfig FTRL_POW_HIGH_PRECISION = {PowerAlgo::DOUBLE_FLOAT_TECH};
 constexpr DivConfig FTRL_IEEE_DIV = {DivAlgo::PRECISION_0ULP_FTZ_FALSE};
+constexpr SqrtConfig FTRL_IEEE_SQRT = {SqrtAlgo::PRECISION_0ULP_FTZ_FALSE};
 constexpr float ZERO_F = 0.0f;
 constexpr float ONE_F = 1.0f;
 constexpr float TWO_F = 2.0f; // for 2*l2
@@ -356,9 +357,9 @@ __aicore__ inline void InplaceApplyFtrl<T>::PrepareFp32Sources(int64_t nDma, int
 template <typename T>
 __aicore__ inline void InplaceApplyFtrl<T>::ComputePow(int32_t n)
 {
-    // S1: accum_new = accum + grad*grad
-    Mul(accumNew_, srcGrad_, srcGrad_, n);
-    Add(accumNew_, srcAccum_, accumNew_, n);
+    // S1: round accum + grad*grad once in FP32 before computing the powers.
+    DataCopy(accumNew_, srcAccum_, n);
+    MulAddDst(accumNew_, srcGrad_, srcGrad_, n);
 
     // S2/S3: pow_new / pow_old
     if (lrPowerScalar_ == 0.0f) {
@@ -375,8 +376,8 @@ __aicore__ inline void InplaceApplyFtrl<T>::ComputePow(int32_t n)
         Div<float, FTRL_IEEE_DIV>(powNew_, tmpA_, accumNew_, n);
         Div<float, FTRL_IEEE_DIV>(tmpB_, tmpA_, srcAccum_, n);
     } else if (lrPowerScalar_ == -0.5f) {
-        Sqrt(powNew_, accumNew_, n);
-        Sqrt(tmpB_, srcAccum_, n);
+        Sqrt<float, FTRL_IEEE_SQRT>(powNew_, accumNew_, n);
+        Sqrt<float, FTRL_IEEE_SQRT>(tmpB_, srcAccum_, n);
     } else {
         // High-precision pow (double-float tech) for non-special lr_power paths.
         // Tensors are fp32 regardless of the T template parameter, so use float explicitly.
@@ -391,12 +392,12 @@ __aicore__ inline void InplaceApplyFtrl<T>::ComputePow(int32_t n)
 template <typename T>
 __aicore__ inline void InplaceApplyFtrl<T>::ComputeLinearAndQuad(int32_t n)
 {
-    // S4: delta_pow = (pow_new - pow_old) / lr
+    // S4: correction = (pow_new - pow_old) * var / lr
     Sub(tmpA_, powNew_, tmpB_, n);
+    Mul(tmpA_, tmpA_, srcVar_, n);
     Duplicate(tmpB_, lrScalar_, n);
     Div<float, FTRL_IEEE_DIV>(tmpA_, tmpA_, tmpB_, n);
-    // S5: linear_new = linear + (grad - delta_pow*var)
-    Mul(tmpA_, tmpA_, srcVar_, n);
+    // S5: linear_new = linear + (grad - correction)
     Sub(tmpB_, srcGrad_, tmpA_, n);
     Add(linearNew_, srcLinear_, tmpB_, n);
     // S6: quadratic = pow_new/lr + 2*l2
