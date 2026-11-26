@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- **接口功能：** 将优化器输入的m和v作为索引，取出各自qmap中的值，乘以每个blockSize对应的absmax进行反量化，而后实现AdamW优化器功能，更新后的m和v每blockSize中取一个最大值，每blockSize个m和v对应一个absmax，进行一次norm归一化，利用二分法找到m和v对应qmap中的索引作为输出，absmax也作为下一轮量化的输入。
+- **接口功能：** 先以优化器输入的m和v作为索引，从各自的qmap中取出对应的值，再乘以每个blockSize对应的absmax完成反量化；随后执行AdamW优化器更新，更新后的m和v在每个blockSize内取一个最大值，每个blockSize的m和v对应一个absmax并进行一次norm归一化，最后利用二分法找到m和v在qmap中的索引作为输出，absmax同时作为下一轮量化的输入。
 
 - **优化器计算公式：**
 
@@ -171,7 +171,7 @@ aclnnStatus aclnnApplyAdamWQuant(
     <tr>
       <td class="tg-0pky">absmaxMRef（aclTensor*）</td>
       <td class="tg-0pky">输入/输出</td>
-      <td class="tg-0pky">每blockSize(256)个mRef对应一个最大值，用于对mRef索引选择qmapM中的值乘以对应的absmaxMRef进行反量化。再通过更新后的mRef每blockSize(256)个选择出一个最大值，作为absmaxMRef的输出。</td>
+      <td class="tg-0pky">每blockSize(256)个mRef对应一个最大值，用于根据mRef索引选择qmapM中的值乘以对应的absmaxMRef进行反量化。再通过更新后的mRef每blockSize(256)个选择出一个最大值，作为absmaxMRef的输出。</td>
       <td class="tg-0pky">shape要求为“absmaxMRef.size = ceil(mRef.size/blockSize)”。</td>
       <td class="tg-0pky">FLOAT32</td>
       <td class="tg-0pky">ND</td>
@@ -241,7 +241,7 @@ aclnnStatus aclnnApplyAdamWQuant(
     <tr>
       <td class="tg-0lax">eps（double）</td>
       <td class="tg-0lax">输入</td>
-      <td class="tg-0lax">adamw优化器公式中ϵ参数，加在分母中用来防止除0，推荐1e-8。</td>
+      <td class="tg-0lax">AdamW优化器公式中ϵ参数，加在分母中用来防止除0，推荐1e-8。</td>
       <td class="tg-0lax">-</td>
       <td class="tg-0lax">DOUBLE</td>
       <td class="tg-0lax">-</td>

@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 算子功能：实现兼容tf.compat.v1.scatter_div的功能，将Tensor updates中的值按指定的索引Tensor indices逐切片除到Tensor varRef的切片上。若有多于一个updates值作用到varRef的同一个切片，那么这些值将会在这一切片上连除。规则如下：
+- 算子功能：实现兼容tf.compat.v1.scatter_div的功能，将张量updates中的值按指定的索引张量indices逐切片除到张量varRef的切片上。若有多于一个updates值作用到varRef的同一个切片，那么这些值将会在这一切片上连除。规则如下：
 
 $$
 varRef[indices[i],...] = varRef[indices[i],...] / updates[i,...]

@@ -168,7 +168,7 @@ aclnnStatus aclnnDequantSwigluQuant(
       <tr>
       <td>activateLeft（bool）</td>
       <td>输入</td>
-      <td>表示是否对输入的左半部分做swiglu激活。</td>
+      <td>表示是否对输入的左半部分做SwiGLU激活。</td>
       <td>当值为false时，对输入的右半部分做激活。</td>
       <td>-</td>
       <td>-</td>
@@ -302,7 +302,7 @@ aclnnStatus aclnnDequantSwigluQuant(
     <td>输入的取值不满足要求（例如quantScaleOptional、quantOffsetOptional的shape与x不满足约束）。</td>
   </tr>
   <tr>
-    <td>当x的数据类型为int32时，weightScaleOptional是空指针。</td>
+    <td>当x的数据类型为INT32时，weightScaleOptional是空指针。</td>
   </tr>
   <tr>
     <td>当groupIndexOptional不为空指针且quantModeOptional为static时，quantScaleOptional是空指针。</td>

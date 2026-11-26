@@ -255,7 +255,7 @@ aclnnStatus aclnnAddLayerNormQuantV2(
     <tr>
       <td>quantMode（char*）</td>
       <td>输入</td>
-      <td>量化模式，用于确定融合算子融合的是静态还是动态量化算子。对应公式描述中的quantMode。取值可以是"static"或"dynamic"。</td>
+      <td>量化模式，用于确定融合算子的是静态还是动态量化算子。对应公式描述中的quantMode。取值可以是"static"或"dynamic"。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

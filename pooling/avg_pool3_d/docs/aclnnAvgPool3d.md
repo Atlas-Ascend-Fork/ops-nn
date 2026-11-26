@@ -176,7 +176,7 @@ aclnnStatus aclnnAvgPool3d(
     <tr>
       <td>out</td>
       <td>输出</td>
-      <td>输出的tensor。</td>
+      <td>输出的Tensor。</td>
       <td>-</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>

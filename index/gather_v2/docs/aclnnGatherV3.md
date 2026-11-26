@@ -35,7 +35,7 @@
   以三维张量为例，shape为(3,2,2)的张量self =$\begin{bmatrix}[[1,&2],&[3,&4]], \\ [[5,&6],&[7,&8]], \\ [[9,&10],&[11,&12]]\end{bmatrix}$ index=[1, 0],   self张量dim=0，1，2对应的下标分别是$l， m， n$，index是一维（零维的情况：当成是size为1的一维）。
   - dim为0：I=index[i]; &nbsp;&nbsp;   out$[i][m][n]$ = self$[I][m][n]$
 
-  - dim为1：J=index[j];  &nbsp;&nbsp;   out$[l][j][n]$ = self$[l][J][n]$
+  - dim为1：J=index[j]; &nbsp;&nbsp;   out$[l][j][n]$ = self$[l][J][n]$
 
   - dim为2：K=index[k]; &nbsp;&nbsp;   out$[l][m][k]$ = self$[l][m][K]$
 

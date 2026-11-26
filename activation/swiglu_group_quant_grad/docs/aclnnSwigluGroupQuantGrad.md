@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：SwigluGroupQuantGrad算子实现SwiGLU激活函数分组量化的反向梯度计算。用于计算输入梯度`grad_x`和权重梯度`grad_weight`。
+- 接口功能：SwigluGroupQuantGrad算子实现SwiGLU分组量化的反向梯度计算，用于计算输入梯度`grad_x`和权重梯度`grad_weight`。
 - 算子支持范围：支持MoE场景（传入groupIndex）和非MoE场景（groupIndex传空），支持可选的Clamp反向传播掩码，支持可选的Weight梯度计算。
 - 计算流程：
   - 步骤〇：GroupIndex处理（可选）→ 计算trunc

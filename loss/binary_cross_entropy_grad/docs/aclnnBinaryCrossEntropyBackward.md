@@ -127,7 +127,7 @@ aclnnStatus aclnnBinaryCrossEntropyBackward(
       <td>样本的标签值。数据类型需要与其他参数一起转换到promotion类型。</td>
       <td>shape可以<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>到self的shape。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
-      <td>需要与self保持一致。</td>
+      <td>ND</td>
       <td>0-8</td>
       <td>√</td>
     </tr>
@@ -137,7 +137,7 @@ aclnnStatus aclnnBinaryCrossEntropyBackward(
       <td>结果的权重。</td>
       <td><ul><li>shape可以<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>到self的shape。</li><li>当weightOptional为空时，需要以self的shape创建一个全1的Tensor。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
-      <td>需要与self保持一致。</td>
+      <td>ND</td>
       <td>0-8</td>
       <td>√</td>
     </tr>

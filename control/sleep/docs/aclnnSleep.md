@@ -209,7 +209,7 @@ aclnnStatus aclnnSleep(
 - 输入限制：cycles必须为正整数（cycles &gt; 0），否则返回ACLNN_ERR_INNER_TILING_ERROR（561002）。
 - cycles以aclIntArray*传入，数组包含1个元素即休眠周期数。
 - 不支持空数组：cycles为空数组时，返回ACLNN_ERR_INNER_TILING_ERROR（561002）。
-- 输入不支持包含±inf或nan：cycles为INT64类型，本身不存在inf/nan。若上游通过浮点类型转换传入（如PyTorch的`.to(torch.int64)`），`+inf`会转换为INT64_MAX，cycles校验通过但运行时会触发AI Core超时；`-inf`和`nan`转换为非正数，Tiling阶段拒绝并返回ACLNN_ERR_INNER_TILING_ERROR（561002）。
+- 输入不支持包含±inf或NaN：cycles为INT64类型，本身不存在inf/NaN。若上游通过浮点类型转换传入（如PyTorch的`.to(torch.int64)`），`+inf`会转换为INT64_MAX，cycles校验通过但运行时会触发AI Core超时；`-inf`和`NaN`转换为非正数，Tiling阶段拒绝并返回ACLNN_ERR_INNER_TILING_ERROR（561002）。
 - AI Core超时限制：AI Core默认执行超时时间为18分钟。在Ascend 950PR&950DT系列产品（主频1.65GHz）下，cycles的最大值约为1.782e12（= 1080s × 1.65GHz）。超出此值可能导致算子被强制终止，请根据实际场景合理设置cycles。如需更长的休眠时间，可通过`aclrtSetOpExecuteTimeOut`接口修改AI Core超时配置来调整此限制。
 
 ## 调用示例

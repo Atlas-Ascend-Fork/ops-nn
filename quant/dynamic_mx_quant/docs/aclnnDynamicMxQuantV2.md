@@ -153,7 +153,7 @@ aclnnStatus aclnnDynamicMxQuantV2(
       <td>x（aclTensor*）</td>
       <td>输入</td>
       <td>表示输入x，对应公式中Vi和di。</td>
-      <td><ul><li>目的类型为FLOAT4_E2M1、FLOAT4_E1M2时，x的最后一维必须是偶数。</li><li>x的类型为FLOAT时，仅支持blocksize=32，且量化轴的维度不能小于32。</li></ul></td>
+      <td><ul><li>dstType为FLOAT4_E2M1、FLOAT4_E1M2时，x的最后一维必须是偶数。</li><li>x的类型为FLOAT时，仅支持blocksize=32，且量化轴的维度不能小于32。</li></ul></td>
       <td>FLOAT16、BFLOAT16、FLOAT</td>
       <td>ND</td>
       <td>1-7</td>
@@ -232,7 +232,7 @@ aclnnStatus aclnnDynamicMxQuantV2(
     <tr>
       <td>mxscaleOut（aclTensor*）</td>
       <td>输出</td>
-      <td>表示每个分组对应的量化尺度，对应公式中的mxscale和Sb。</td>
+      <td>表示每个分组对应的块缩放因子，对应公式中的mxscale和Sb。</td>
       <td><ul><li>shape在axis轴上为x对应轴的值除以blocksize向上取整，并对其进行偶数pad，pad填充值为0。</li><li>当axis为非尾轴时，mxscaleOut输出需要对每两行数据进行交织处理。</li></ul></td>
       <td>FLOAT8_E8M0</td>
       <td>ND</td>

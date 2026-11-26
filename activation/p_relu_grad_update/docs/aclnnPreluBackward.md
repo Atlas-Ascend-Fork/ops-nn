@@ -97,7 +97,7 @@ aclnnStatus aclnnPreluBackward(
     <tr>
       <td>gradOutput（aclTensor*）</td>
       <td>输入</td>
-      <td>反向传播的梯度值。公式中的gradOutput。</td>
+      <td>反向传播的梯度值，公式中的gradOutput。</td>
       <td><ul><li>不支持空Tensor，输入不支持包含±inf或nan。</li><li>dtype需要与self相同。</li><li>shape需要与self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>，且Broadcast后shape与self的shape相等。</li></ul></td>
       <td>FLOAT16、FLOAT32、BFLOAT16</td>
       <td>ND</td>

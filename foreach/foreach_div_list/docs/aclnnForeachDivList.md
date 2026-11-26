@@ -227,7 +227,7 @@ aclnnStatus aclnnForeachDivList(
 
 ## 约束说明
 
-- `x1`、`x2`、`out`的Tensor列表长度必须一致，单个Tensor列表中Tensor的数量不超过256个。
+- `x1`、`x2`、`out`的张量列表长度必须一致，单个张量列表中张量的数量不超过256个。
 - 确定性计算：
   - aclnnForeachDivList默认确定性实现。
 

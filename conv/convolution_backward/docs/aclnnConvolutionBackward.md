@@ -237,7 +237,7 @@ aclnnStatus aclnnConvolutionBackward(
       <td>输入</td>
       <td>反向传播过程中对于输出填充。</td>
       <td>
-        <ul><li>数组长度可以为weight维度减2，各维度的数值范围满足[0, max(stride对应维度数值, dilation对应维度数值))。</li>
+        <ul><li>数组长度可以为weight维度减2，各维度的数值范围满足[0, max(stride对应维度数值, dilation对应维度数值)）。</li>
         <li>transposed为False场景下，要求每个元素值为0。</li></ul>
       </td>
       <td>INT64</td>
@@ -498,7 +498,7 @@ aclnnStatus aclnnConvolutionBackward(
      <th scope="row">gradOutput约束</th>
      <td>-</td>
      <td>
-        1d、2d和3d transposed=false场景，各个维度的大小应该大于等于1，当input为空Tensor时，支持N、C、D、H、W维度为0。
+        1D、2D和3D transposed=false场景，各个维度的大小应该大于等于1，当input为空Tensor时，支持N、C、D、H、W维度为0。
      </td>
      <td>
         不支持空Tensor。
@@ -511,7 +511,7 @@ aclnnStatus aclnnConvolutionBackward(
         <li>transposed=false：支持N、C维度为0的空Tensor（C维度为0时要求weight的C维度也为0）。当N或C维度为0且满足空Tensor约束时，还支持DHW维度为0。</li></ul>
      </td>
      <td>
-        1d、2d和3d transposed=false场景，各个维度的大小应该大于等于1。
+        1D、2D和3D transposed=false场景，各个维度的大小应该大于等于1。
           <ul><li>transposed=true：支持N维度为0的空Tensor。当N维度为0且满足空Tensor约束时，还支持DHW维度为0。</li>
           <li>transposed=false：支持N、C维度为0的空Tensor（C维度为0时要求weight的C维度也为0）。当N或C维度为0且满足空Tensor约束时，还支持DHW维度为0。</li></ul>
      </td>
@@ -535,7 +535,7 @@ aclnnStatus aclnnConvolutionBackward(
    <tr>
      <th scope="row">stride约束</th>
      <td>
-        1d、2d和3d transposed=false场景，各个值都应该大于等于1。1d、2d和3d transposed=true场景，strideD应该在[1,1000000]的范围内，strideH、strideW应该在[1,2147483646]的范围内。
+        1D、2D和3D transposed=false场景，各个值都应该大于等于1。1D、2D和3D transposed=true场景，strideD应该在[1,1000000]的范围内，strideH、strideW应该在[1,2147483646]的范围内。
      </td>
      <td>
         3d transposed=false场景，strideD应该大于等于1，strideH、strideW应该在[1,63]的范围内。1d和2d transposed=false场景，各个值都应该大于等于1。
@@ -545,7 +545,7 @@ aclnnStatus aclnnConvolutionBackward(
    <tr>
      <th scope="row">padding约束</th>
      <td>
-        1d、2d和3d transposed=false场景，各个值都应该大于等于0。1d、2d和3d transposed=true场景，paddingD应该在[0,1000000]的范围内，paddingH、paddingW应该在[0,2147483646]的范围内。
+        1D、2D和3D transposed=false场景，各个值都应该大于等于0。1D、2D和3D transposed=true场景，paddingD应该在[0,1000000]的范围内，paddingH、paddingW应该在[0,2147483646]的范围内。
      </td>
      <td>
         3d transposed=false场景，paddingD应该大于等于0，paddingH、paddingW应该在[0,255]的范围内。1d和2d transposed=false场景，各个值都应该在[0,255]的范围内。
@@ -555,10 +555,10 @@ aclnnStatus aclnnConvolutionBackward(
    <tr>
      <th scope="row">dilation约束</th>
      <td>
-        1d、2d和3d transposed=false场景，各个值都应该大于等于1。1d、2d和3d transposed=true场景，dilationD应该在[1,1000000]的范围内，dilationH、dilationW应该在[1,2147483646]的范围内。
+        1D、2D和3D transposed=false场景，各个值都应该大于等于1。1D、2D和3D transposed=true场景，dilationD应该在[1,1000000]的范围内，dilationH、dilationW应该在[1,2147483646]的范围内。
      </td>
      <td>
-        1d、2d和3d transposed=false场景，各个值都应该在[1,255]的范围内。
+        1D、2D和3D transposed=false场景，各个值都应该在[1,255]的范围内。
      </td>
      <td>-</td>
    </tr>

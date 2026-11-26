@@ -229,7 +229,7 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <td>activationScaleOptional（aclTensor*）</td>
       <td>输入</td>
       <td>激活函数的反量化scale。</td>
-      <td><ul><li>激活函数的反量化scale。</li><li>shape为[X1,X2,...Xn]，shape不超过7维不小于1维，维度比x的维度少一维，且shape与对应维度的x的shape一致。</li><li>可选参数，支持传空指针。</li></ul></td>
+      <td><ul><li>shape为[X1,X2,...Xn]，shape不超过7维不小于1维，维度比x的维度少一维，且shape与对应维度的x的shape一致。</li><li>可选参数，支持传空指针。</li></ul></td>
       <td>FLOAT</td>
       <td>ND</td>
       <td>1-7</td>
@@ -278,7 +278,7 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <tr>
       <td>activateLeft（bool）</td>
       <td>输入</td>
-      <td>表示是否对输入的左半部分做swiglu激活。</td>
+      <td>表示是否对输入的左半部分做SwiGLU激活。</td>
       <td>当值为false时，对输入的右半部分做激活。如果swigluMode为1，activateLeft必须为true。</td>
       <td>-</td>
       <td>-</td>
@@ -318,7 +318,7 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <tr>
       <td>activateDim（int64_t）</td>
       <td>输入</td>
-      <td>表示进行swish计算时，选择的切分轴。</td>
+      <td>表示进行Swish计算时，选择的切分轴。</td>
       <td><ul><li>activateDim的取值范围是：[-xDim, xDim - 1]（其中xDim指输入x的维度）。</li><li>当activateDim对应的不是x的尾轴时，不允许输入groupIndexOptional。</li><li>当activateDim对应的不是x的尾轴时，quantModeOptional仅支持dynamic。</li></ul></td>
       <td>-</td>
       <td>-</td>
@@ -328,8 +328,8 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <tr>
       <td>swigluMode（int64_t）</td>
       <td>输入</td>
-      <td>表示swiglu的计算模式。</td>
-      <td><ul><li>取值范围为：[0, 1, 2, 3]，默认是0。</li><li>0：表示传统swiglu计算方式。</li><li>1：表示swiglu的变体（GPT-OSS变体），使用奇偶分块方式，并支持clampLimit、gluAlpha激活系数以及gluBias偏差。</li><li>2：计算方式与1相同（同为变体swiglu，支持clampLimit、gluAlpha、gluBias），区别在于使用连续前后半分块方式（与0的切分方式一致），而非奇偶分块。</li><li>3：变体swiglu，切分方式与0和2相同采用连续前后半分块方式，计算方式与2区别在于clamp在silu之后，不支持gluAlpha、gluBias。</li></ul></td>
+      <td>表示SwiGLU的计算模式。</td>
+      <td><ul><li>取值范围为：[0, 1, 2, 3]，默认是0。</li><li>0：表示传统SwiGLU计算方式。</li><li>1：表示SwiGLU的变体（GPT-OSS变体），使用奇偶分块方式，并支持clampLimit、gluAlpha激活系数以及gluBias偏差。</li><li>2：计算方式与1相同（同为变体SwiGLU，支持clampLimit、gluAlpha、gluBias），区别在于使用连续前后半分块方式（与0的切分方式一致），而非奇偶分块。</li><li>3：变体SwiGLU，切分方式与0和2相同采用连续前后半分块方式，计算方式与2区别在于clamp在SiLU之后，不支持gluAlpha、gluBias。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -338,8 +338,8 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <tr>
       <td>clampLimit（double）</td>
       <td>输入</td>
-      <td>表示变体swiglu使用的门限值。</td>
-      <td><ul><li>该参数为可选参数。</li><li>用于对输入进行裁剪，其值需大于0且小于无穷，避免过大数值影响swiglu计算稳定性，默认值为7.0。</li></ul></td>
+      <td>表示变体SwiGLU使用的门限值。</td>
+      <td><ul><li>该参数为可选参数。</li><li>用于对输入进行裁剪，其值需大于0且小于无穷，避免过大数值影响SwiGLU计算稳定性，默认值为7.0。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -348,7 +348,7 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <tr>
       <td>gluAlpha（double）</td>
       <td>输入</td>
-      <td>表示变体swiglu使用的参数。</td>
+      <td>表示变体SwiGLU使用的参数。</td>
       <td><ul><li>该参数为可选参数。</li><li>用于调整glu激活函数中线性部分的缩放，默认值为1.702。</li></ul></td>
       <td>-</td>
       <td>-</td>
@@ -358,8 +358,8 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <tr>
       <td>gluBias（double）</td>
       <td>输入</td>
-      <td>表示变体swiglu使用的偏差参数。</td>
-      <td><ul><li>该参数为可选参数。</li><li>用于在swiglu的线性计算中增加偏移，默认值为1.0。</li></ul></td>
+      <td>表示变体SwiGLU使用的偏差参数。</td>
+      <td><ul><li>该参数为可选参数。</li><li>用于在SwiGLU的线性计算中增加偏移，默认值为1.0。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -369,7 +369,7 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <td>yOut（aclTensor*）</td>
       <td>输出</td>
       <td>-</td>
-      <td><ul><li>当activateDim对应的x的尾轴时，shape为[X1,X2,...Xn,H]。</li><li>当activateDim对应的不是x的尾轴时，shape为[X1,X2,...,XactivateDim / 2,...,2H]。</li><li>当yOut的数据类型为FLOAT4_E2M1、FLOAT4_E1M2时，yOut的最后一维需要是2的倍数。</li><li>当activateDim对应的不是x的尾轴时，yOut的尾轴需要不超过5120。</li></ul></td>
+      <td><ul><li>当activateDim对应的是x的尾轴时，shape为[X1,X2,...Xn,H]。</li><li>当activateDim对应的不是x的尾轴时，shape为[X1,X2,...,XactivateDim / 2,...,2H]。</li><li>当yOut的数据类型为FLOAT4_E2M1、FLOAT4_E1M2时，yOut的最后一维需要是2的倍数。</li><li>当activateDim对应的不是x的尾轴时，yOut的尾轴需要不超过5120。</li></ul></td>
       <td>INT8、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN、FLOAT4_E2M1、FLOAT4_E1M2</td>
       <td>ND</td>
       <td>2-8</td>
@@ -379,7 +379,7 @@ aclnnStatus aclnnDequantSwigluQuantV2(
       <td>scaleOut（aclTensor*）</td>
       <td>输出</td>
       <td>-</td>
-      <td><ul><li>当activateDim对应的x的尾轴时，shape为[X1,X2,...,Xn]。</li><li>当activateDim对应的不是x的尾轴时，shape为[X1,X2,...,XactivateDim / 2,...,Xn]。</li><li>当quantModeOptional为static时，不计算scaleOut。</li></ul></td>
+      <td><ul><li>当activateDim对应的是x的尾轴时，shape为[X1,X2,...,Xn]。</li><li>当activateDim对应的不是x的尾轴时，shape为[X1,X2,...,XactivateDim / 2,...,Xn]。</li><li>当quantModeOptional为static时，不计算scaleOut。</li></ul></td>
       <td>FLOAT</td>
       <td>ND</td>
       <td>1-7</td>
@@ -470,7 +470,7 @@ aclnnStatus aclnnDequantSwigluQuantV2(
     <tr>
       <td rowspan="10">ACLNN_ERR_INNER_TILING_ERROR</td>
       <td rowspan="10">561002</td>
-      <td>当x的数据类型为int32时，weightScaleOptional是空指针。</td>
+      <td>当x的数据类型为INT32时，weightScaleOptional是空指针。</td>
     </tr>
     <tr>
       <td>当groupIndexOptional不为空指针且quantModeOptional为static时，quantScaleOptional是空指针。</td>

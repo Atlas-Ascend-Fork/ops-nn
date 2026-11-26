@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：激活函数变体，aclnnHardsigmoid将计算结果写入输出tensor，aclnnInplaceHardsigmoid将计算结果原地写回输入tensor。结果的形状与输入tensor相同。
+- 接口功能：激活函数变体，aclnnHardsigmoid将计算结果写入输出Tensor，aclnnInplaceHardsigmoid将计算结果原地写回输入Tensor。结果的形状与输入Tensor相同。
 - 计算公式：
 
   $$
@@ -267,7 +267,7 @@ aclnnStatus aclnnInplaceHardsigmoid(
     <tr>
       <td>self（aclTensor*）</td>
       <td>输入</td>
-      <td>公式中的输入self和输出Hardsigmoid(self)。</td>
+      <td>表示激活函数的输入和输出，公式中的输入self和输出Hardsigmoid(self)。</td>
       <td>支持空Tensor。</td>
       <td>FLOAT、FLOAT16、INT32、BFLOAT16</td>
       <td>ND</td>

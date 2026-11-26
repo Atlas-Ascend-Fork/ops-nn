@@ -206,7 +206,7 @@ aclnnStatus aclnnQuantMatmulReduceSumWeightNz(
       <td>transposeX2（bool）</td>
       <td>输入</td>
       <td>x2的输入shape是否包含transpose。</td>
-      <td>当前版本仅支持false，表示x2的输入shape意义不变</td>
+      <td>当前版本仅支持false，表示x2的输入shape意义不变。</td>
       <td>bool</td>
       <td>-</td>
       <td>-</td>

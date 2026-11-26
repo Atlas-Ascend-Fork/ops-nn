@@ -314,7 +314,7 @@ aclnnStatus aclnnConvTbcBackward(
       <td>非空Tensor场景下，gradInput或gradWeight与对应输入的数据类型不一致，或gradBias的数据类型不满足约束。</td>
     </tr>
     <tr>
-      <td>gradInput、gradWeight、gradBias的shape不满足infershape结果。</td>
+      <td>gradInput、gradWeight、gradBias的shape不满足InferShape结果。</td>
     </tr>
     <tr>
       <td>gradInput、gradWeight、gradBias的shape中存在小于0的值。</td>

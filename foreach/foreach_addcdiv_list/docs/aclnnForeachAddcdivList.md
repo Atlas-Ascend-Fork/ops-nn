@@ -274,7 +274,7 @@ aclnnStatus aclnnForeachAddcdivList(
 
 - 确定性计算：
   - aclnnForeachAddcdivList默认确定性实现。
-- 不同产品中out与x1的tensorList长度约束关系如下:
+- 不同产品中out与x1的tensorList长度约束关系如下：
   <!-- npu="A3,910b" id10 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
     out的tensorList长度（包含的Tensor个数）需大于等于x1的tensorList长度（包含的Tensor个数）。

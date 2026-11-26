@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：执行SwiGLU激活，输出与输入x相同数据类型的激活结果。
+- 接口功能：执行SwiGLU，输出与输入x相同数据类型的激活结果。
 
 - 计算公式：
 
@@ -216,10 +216,10 @@ aclnnStatus aclnnSwigluGroup(
       <td>weightOptional的数据类型不是FLOAT32，或weightOptional的元素个数与x除最后一维外的维度乘积不一致。</td>
     </tr>
     <tr>
-      <td>groupIndexOptional的数据类型不是INT64，或groupIndexOptional单独为空tensor。</td>
+      <td>groupIndexOptional的数据类型不是INT64，或groupIndexOptional单独为空Tensor。</td>
     </tr>
     <tr>
-      <td>其他的输入tensor的shape和dtype信息、输入属性不在合法取值范围等场景（详见参数及约束说明）。</td>
+      <td>其他的输入Tensor的shape和dtype信息、输入属性不在合法取值范围等场景（详见参数及约束说明）。</td>
     </tr>
   </tbody>
   </table>
