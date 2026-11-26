@@ -36,6 +36,10 @@
 //   - 运行期门槛（STUB_REG_PASS 第 4 参）= 实现的运行期 Stage 判定阈值：实现为
 //     IsTargetVersion()/IsGeVersionSupported()/Get*Stage() 判定型的（不足时降级 kAfterInferShape），
 //     桩取同一阈值；实现为固定 kCompatibleInherited 的，桩取 90000000
+//   - 构建形态门槛：单算子选择性构建（build.sh --ops=，CMake 变量 ASCEND_OP_NAME 有效）时本文件
+//     不参与编译（common/CMakeLists.txt 门控 add_subdirectory）——pattern 实现随算子模块被 --ops 裁剪，
+//     名字与实现分离会让 fe 图优化报 E29999 pattern fusion is nullptr（issue #9971）；
+//     单算子包的内置 pass 注册表由全量部署的基础环境提供
 //   - MatmulQuantToFixpipeFusionPass 实现额外依赖 OriginDataType 公共 API（同版本号的不同 CANN 包
 //     API 可用性可能不同），桩单独复刻弱符号探测
 // 白名单说明（对照 opbase 仓 scripts/fusion_config/fusion_pass/config/support_fusion_pass.json，
@@ -68,7 +72,7 @@ STUB_REG_PASS("UniqueSortFusionPass", fe::BUILT_IN_GRAPH_PASS, 0x04, 90000000);
 STUB_REG_PASS("WhereFusionPass", fe::BUILT_IN_GRAPH_PASS, 0x01, 90000000);
 STUB_REG_PASS("ZZMatMulTOQBMMV3FusionPass", fe::SECOND_ROUND_BUILT_IN_GRAPH_PASS, 0x04, 90000000);
 
-// ===== REG_DECOMPOSE_PASS（分解改写类，9 个）：V1→V2 算子承接改写，实现无守卫或守卫 90000000，
+// ===== REG_DECOMPOSE_PASS（分解改写类，11 个）：V1→V2 算子承接改写，实现无守卫或守卫 90000000，
 // 固定 kCompatibleInherited（运行门槛 9.0），与融合 pass 同体系注册到 kCompat 分区、同等待遇桥接 =====
 STUB_REG_PASS("ADeformableConv2dPass", fe::BUILT_IN_GRAPH_PASS, 0x01, 90000000);
 STUB_REG_PASS("Conv2DBackpropFilterToV3FusionPass", fe::BUILT_IN_GRAPH_PASS, 0x01, 90000000);
@@ -83,7 +87,7 @@ STUB_REG_PASS("Conv3dToConv3dV2FusionPass", fe::SECOND_ROUND_BUILT_IN_GRAPH_PASS
 STUB_REG_PASS("DepthwiseToConv2dFusionPass", fe::BUILT_IN_GRAPH_PASS, 0x01, 90000000);
 
 #if GE_COMPILER_VERSION_NUM >= 90100000
-// ===== 编译门槛 9.1 组（22 个）：实现编译守卫为 90000000 < 90100000 =====
+// ===== 编译门槛 9.1 组（23 个）：实现编译守卫为 90100000 =====
 // 固定 kCompatibleInherited（运行期不降级，运行门槛 9.0）
 STUB_REG_PASS("AConv2dMulFusion", fe::BUILT_IN_GRAPH_PASS, 0x04, 90000000);
 STUB_REG_PASS("ADepthwiseFusionPass", fe::BUILT_IN_GRAPH_PASS, 0x01, 90000000);
