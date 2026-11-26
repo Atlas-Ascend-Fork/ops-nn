@@ -267,6 +267,16 @@ static ge::graphStatus Tiling4InplaceSub(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, indicesShapePtr);
     OP_CHECK_NULL_WITH_CONTEXT(context, vShapePtr);
 
+    // GE may materialize a scalar as [1]; check the logical inputs before using storage dimensions.
+    OP_CHECK_IF(xShapePtr->GetOriginShape().IsScalar(),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "x", "0D", "at least 1D"),
+                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(indicesShapePtr->GetOriginShape().IsScalar(),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "indices", "0D", "1D"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(vShapePtr->GetOriginShape().IsScalar(),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "v", "0D", "at least 1D"),
+                return ge::GRAPH_FAILED);
+
     auto xShape = xShapePtr->GetStorageShape();
     auto indicesShape = indicesShapePtr->GetStorageShape();
     auto vShape = vShapePtr->GetStorageShape();

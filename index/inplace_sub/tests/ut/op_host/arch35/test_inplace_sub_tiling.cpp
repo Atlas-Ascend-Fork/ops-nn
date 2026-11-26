@@ -349,6 +349,19 @@ TEST_F(InplaceSubTilingTest, rejectInnerSizeOverflow)
     EXPECT_EQ(status, ge::GRAPH_FAILED);
 }
 
+TEST_F(InplaceSubTilingTest, rejectScalarStoredAsOneElementVector)
+{
+    const gert::StorageShape scalar{{}, {1}};
+    const gert::StorageShape vector{{1}, {1}};
+    const auto run = [](const gert::StorageShape& x, const gert::StorageShape& indices, const gert::StorageShape& v) {
+        return RunInplaceSubTiling(x, indices, v, ge::DT_FLOAT, ge::DT_INT32, ge::DT_FLOAT);
+    };
+    EXPECT_EQ(run(scalar, vector, vector), ge::GRAPH_FAILED);
+    EXPECT_EQ(run(vector, scalar, vector), ge::GRAPH_FAILED);
+    EXPECT_EQ(run(vector, vector, scalar), ge::GRAPH_FAILED);
+    EXPECT_EQ(run(vector, vector, vector), ge::GRAPH_SUCCESS);
+}
+
 TEST_F(InplaceSubTilingTest, rejectScalarX)
 {
     auto status = RunInplaceSubTiling({{}, {}}, {{0}, {0}}, {{}, {}}, ge::DT_FLOAT, ge::DT_INT32, ge::DT_FLOAT);

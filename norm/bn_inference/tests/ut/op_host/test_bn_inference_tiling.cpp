@@ -188,6 +188,25 @@ SimplifiedKeyResult RunSimplifiedKeyCase(ge::DataType xDtype, ge::DataType stati
 }
 } // namespace
 
+TEST(BNInferenceTilingTest, OnlyMomentumAcceptsScalarStoredAsOneElementVector)
+{
+    using Tensor = gert::TilingContextPara::TensorDescription;
+    const Tensor feature{MakeShape({1, 1, 2, 2}), ge::DT_FLOAT, ge::FORMAT_NCHW, false, nullptr, ge::FORMAT_NCHW};
+    const Tensor channel{MakeShape({1}), ge::DT_FLOAT, ge::FORMAT_ND};
+    const gert::StorageShape scalar{{}, {1}};
+    optiling::BNInferenceCompileInfo compileInfo{static_cast<int64_t>(CORE_NUM), static_cast<int64_t>(UB_SIZE), 256,
+                                                 32};
+    for (size_t index = 1; index <= 5; ++index) {
+        SCOPED_TRACE(index);
+        std::vector<Tensor> inputs{feature, channel, channel, channel, channel, channel};
+        inputs[index].shape_ = scalar;
+        gert::TilingContextPara para("BNInference", inputs, {feature}, {1, 1, 1, 1, 1, 1}, {1}, &compileInfo, CORE_NUM,
+                                     UB_SIZE, TILING_DATA_SIZE);
+        TilingInfo info;
+        EXPECT_EQ(ExecuteTiling(para, info), index == 3); // momentum
+    }
+}
+
 TEST(BNInferenceTilingTest, GeneratesD02SimplifiedKeyWithoutAffineInputs)
 {
     const SimplifiedKeyResult result = RunSimplifiedKeyCase(ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_FLOAT, false,

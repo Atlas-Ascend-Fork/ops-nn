@@ -223,6 +223,16 @@ TEST_F(InplaceAddTilingTest, tilingDataLayoutMatchesKernelAbi)
     EXPECT_EQ(offsetof(InplaceAddTilingData, innerSize), 16U);
 }
 
+TEST_F(InplaceAddTilingTest, rejectScalarStoredAsOneElementVector)
+{
+    const gert::StorageShape scalar{{}, {1}};
+    const gert::StorageShape vector{{1}, {1}};
+    EXPECT_EQ(RunInplaceAddTiling(scalar, vector, vector, scalar).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunInplaceAddTiling(vector, scalar, vector, vector).status, ge::GRAPH_FAILED);
+    EXPECT_EQ(RunInplaceAddTiling(vector, vector, scalar, vector).status, ge::GRAPH_FAILED);
+    ExpectSuccessfulSingleKeyTiling(RunInplaceAddTiling(vector, vector, vector, vector));
+}
+
 TEST_F(InplaceAddTilingTest, rankOneSuccess)
 {
     auto result = RunInplaceAddTiling({{4}, {4}}, {{2}, {2}}, {{2}, {2}}, {{4}, {4}});

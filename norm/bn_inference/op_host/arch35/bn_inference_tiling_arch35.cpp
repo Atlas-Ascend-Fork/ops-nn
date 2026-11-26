@@ -151,7 +151,9 @@ int64_t GetDtypeBytes(ge::DataType dtype)
 
 bool IsParameterShape(const gert::StorageShape* shape, int64_t c)
 {
-    return shape != nullptr && shape->GetStorageShape().GetDimNum() == 1 && shape->GetStorageShape().GetDim(0) == c;
+    // Storage [1] can describe a scalar, but channel parameters must be logical vectors even for C == 1.
+    return shape != nullptr && shape->GetOriginShape().GetDimNum() == 1 && shape->GetOriginShape().GetDim(0) == c &&
+           shape->GetStorageShape() == shape->GetOriginShape();
 }
 
 ge::Format GetFeatureBinaryFormat(ge::Format format)
@@ -356,21 +358,21 @@ ge::graphStatus BNInferenceTiling::ValidateParameterTensors(const BNInferenceInp
         return ge::GRAPH_FAILED;
     }
     if (!IsParameterShape(info.meanShape, c_) || !IsParameterShape(info.varianceShape, c_)) {
-        const std::string shapes = Ops::Base::ToString(info.meanShape->GetStorageShape()) + " and " +
-                                   Ops::Base::ToString(info.varianceShape->GetStorageShape());
+        const std::string shapes = Ops::Base::ToString(info.meanShape->GetOriginShape()) + " and " +
+                                   Ops::Base::ToString(info.varianceShape->GetOriginShape());
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context_->GetNodeName(), "mean and variance", shapes.c_str(),
                                                "both shapes must be [C]");
         return ge::GRAPH_FAILED;
     }
     if (hasScale_ && !IsParameterShape(info.scaleShape, c_)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "scale",
-                                              Ops::Base::ToString(info.scaleShape->GetStorageShape()).c_str(),
+                                              Ops::Base::ToString(info.scaleShape->GetOriginShape()).c_str(),
                                               "shape must be [C]");
         return ge::GRAPH_FAILED;
     }
     if (hasOffset_ && !IsParameterShape(info.offsetShape, c_)) {
         OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context_->GetNodeName(), "offset",
-                                              Ops::Base::ToString(info.offsetShape->GetStorageShape()).c_str(),
+                                              Ops::Base::ToString(info.offsetShape->GetOriginShape()).c_str(),
                                               "shape must be [C]");
         return ge::GRAPH_FAILED;
     }
