@@ -277,10 +277,17 @@ DynamicQuantRegbasePerChannnelFullLoad<xDtype, yDtype, hasSmooth, isSymmetrical>
         Reg::RegTensor<yCopyDtype> vregOut;
         Reg::RegTensor<float> vregOutFp32;
         Reg::RegTensor<float> vregMaxFactor;
+        // scale 是每列一个常量，在 m 循环内不变。循环外求倒数，循环内用
+        // 「乘法 + Markstein 修正」得到与 0 ULP 除法逐位一致的结果。
+        Reg::RegTensor<float> vregScaleRecip;
+        Reg::RegTensor<float> vregNegScale;
+        Reg::RegTensor<float> vregQuot;
+        Reg::RegTensor<float> vregOne;
         Reg::MaskReg preg0;
         Reg::MaskReg pregAll = Reg::CreateMask<float, Reg::MaskPattern::ALL>();
         Reg::MaskReg pregH = Reg::CreateMask<float, Reg::MaskPattern::H>();
         Reg::Duplicate<float>(vregMaxFactor, maxValueDiv, pregAll);
+        Reg::Duplicate<float>(vregOne, 1.0f, pregAll);
         for (uint16_t bIdx = 0; bIdx < baBlockSize; bIdx++) {
             uint32_t sregN = nSize;
             for (uint16_t i = 0; i < nLoopNum; i++) {
@@ -300,6 +307,9 @@ DynamicQuantRegbasePerChannnelFullLoad<xDtype, yDtype, hasSmooth, isSymmetrical>
                     Reg::Max<float>(vregColMax, vregAbs, vregColMax, preg0);
                 }
                 Reg::Mul(vregOutScale, vregColMax, vregMaxFactor, preg0);
+                // 每列只做一次 0 ULP 除法，得到倒数与 -scale，供 m 循环内做 Markstein 修正除法
+                Reg::Div<float, &divHighPrecisionMode>(vregScaleRecip, vregOne, vregOutScale, preg0);
+                Reg::Muls(vregNegScale, vregOutScale, -1.0f, preg0);
                 for (uint16_t k = 0; k < mLoopNum; k++) {
                     auto addr = yAddr + i * REG_LEN + (bIdx * mLoopNum + k) * nSizeOut;
                     Reg::LoadAlign<xDtype, Reg::LoadDist::DIST_UNPACK_B16>(
@@ -311,8 +321,12 @@ DynamicQuantRegbasePerChannnelFullLoad<xDtype, yDtype, hasSmooth, isSymmetrical>
                         Reg::Cast<float, xDtype, castTraitB16ToB32>(vregSmoothFp32, vregSmooth, preg0);
                         Reg::Mul<float>(vregInFp32, vregInFp32, vregSmoothFp32, preg0);
                     }
-                    Reg::Div<float>(vregOutFp32, vregInFp32, vregOutScale, preg0);
-                    CastToDstType<yDtype, yCopyDtype>(vregOutFp32, vregOut, preg0);
+                    // Markstein 修正除法：q0 = x*recip，rem = x - q0*scale（FMA，单次舍入），q = q0 + rem*recip
+                    // 结果与 0 ULP 除法逐位一致，默认 Div 非 0ULP，商差 1ulp 时 round 后 y 差 1
+                    Reg::Mul<float>(vregQuot, vregInFp32, vregScaleRecip, preg0);
+                    Reg::MulAddDst<float>(vregInFp32, vregQuot, vregNegScale, preg0);
+                    Reg::MulAddDst<float>(vregQuot, vregInFp32, vregScaleRecip, preg0);
+                    CastToDstType<yDtype, yCopyDtype>(vregQuot, vregOut, preg0);
                     if constexpr (IsSameType<yDtype, int4b_t>::value) {
                         addr = yAddr + (i * REG_LEN + (bIdx * mLen_ + k) * nSizeOut) / 2;
                         Reg::StoreAlign<yCopyDtype, Reg::StoreDist::DIST_PACK4_B32>(addr, vregOut, pregH);

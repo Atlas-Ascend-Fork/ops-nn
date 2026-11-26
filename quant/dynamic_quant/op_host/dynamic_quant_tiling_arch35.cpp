@@ -74,6 +74,9 @@ constexpr uint32_t PER_CHANNEL_N_BASE_SIZE = 64;
 constexpr uint32_t PER_CHANNEL_RESERVED_FACTOR = 8;
 // perchannel float buffer 数量：col_max、col_min、scale、offset
 constexpr uint32_t PER_CHANNEL_FLOAT_BUF_NUM = 4;
+// perchannel 模板择优阈值：split_m 核利用率需比 recompute 高出该幅度才切换，
+// 避免在两者接近时引入 split_m 的额外 SyncAll 与 workspace 开销
+constexpr double PER_CHANNEL_UTIL_MARGIN = 0.1;
 // row 对齐到 16 字节
 constexpr uint32_t ROW_ALIGN_SIZE = 16;
 // 输出 row 对齐到 32 字节，INT4 输出对齐到 64 字节
@@ -101,6 +104,18 @@ template <uint32_t base, typename T = uint32_t>
 auto AlignUp(T a) -> T
 {
     return (a + base - 1) / base * base;
+}
+
+// 计算任务块分配到 vectorCoreNum 个核时的核利用率。
+// 块数能被核数整除时利用率最高（100%），否则关键核要多处理一块，其余核空等。
+// 例如 64 块分到 56 核：8 核做 2 块、48 核做 1 块，利用率 = 64 / (56 * 2) = 57.1%。
+static double CalcCoreUtilization(int64_t totalBlocks, int64_t coreNum)
+{
+    if (totalBlocks <= 0 || coreNum <= 0) {
+        return 0.0;
+    }
+    int64_t blocksPerCore = Ops::Base::CeilDiv(totalBlocks, coreNum);
+    return static_cast<double>(totalBlocks) / static_cast<double>(coreNum * blocksPerCore);
 }
 
 void DynamicQuantRegbaseTiling::SetTilingKey(gert::TilingContext* context) const
@@ -648,24 +663,28 @@ void DynamicQuantRegbaseTiling::IsCapableForFullLoad(const gert::TilingContext* 
     int64_t tempMBlockSize = 1;
     int64_t tempBatchBlockSize = 1;
     uint64_t maxUseUbSize = ubSize - RESERVED_LENGTH * PER_CHANNEL_RESERVED_FACTOR;
+    // 注意：以下两处 UB 估算必须全程用 int64 计算。
+    // 原式里 `sizeof(float)` 是 size_t（无符号），与 int64_t 相乘会把整个表达式提升为无符号，
+    // 一旦减出负数就会回绕成巨大的正数，导致 mLen 较大时（> 61184）被误判为"可全载"。
+    const int64_t maxUseUb = static_cast<int64_t>(maxUseUbSize);
+    const int64_t floatBufBytesPerN = static_cast<int64_t>(SUM_INPUT_OUTPUT_NUM) * USE_BUFFER_NUM * 4;
+    const int64_t xBytesPerElemsPerM = static_cast<int64_t>(USE_BUFFER_NUM) * 2;
+    const int64_t xOutBytesPerN = static_cast<int64_t>(USE_BUFFER_NUM) * 3;
     for (int32_t i = 1; i <= nMaxLoopNum; i++) {
         // maximum m blocksize in ub, buffers in ub are: x, y, scale, offset, smoothscale
         // db * (mMaxBlockSize * nBlockSize * (sizeof(half) + sizeof(int8)) + 4 * nBlockSize * sizeof(float) + mLen *
         // sizeof(half)) < maxUbSize
         tempNBlockSize = i * PER_CHANNEL_N_BASE_SIZE;
-        tempMBlockSize = (static_cast<int64_t>(maxUseUbSize) -
-                          SUM_INPUT_OUTPUT_NUM * USE_BUFFER_NUM * sizeof(float) * tempNBlockSize -
-                          USE_BUFFER_NUM * sizeof(int16_t) * mLen) /
-                         (USE_BUFFER_NUM * (sizeof(int16_t) + sizeof(int8_t)) * tempNBlockSize);
+        tempMBlockSize = (maxUseUb - floatBufBytesPerN * tempNBlockSize - xBytesPerElemsPerM * mLen) /
+                         (xOutBytesPerN * tempNBlockSize);
         if (tempMBlockSize < mLen) {
             break;
         }
         iscapable = true;
         nBaseLoopNum = i;
         // try to load multiple batch each time
-        tempBatchBlockSize = (static_cast<int64_t>(maxUseUbSize) - USE_BUFFER_NUM * sizeof(int16_t) * mLen) /
-                             (tempNBlockSize * (mLen * USE_BUFFER_NUM * (sizeof(int16_t) + sizeof(int8_t)) +
-                                                SUM_INPUT_OUTPUT_NUM * USE_BUFFER_NUM * sizeof(float)));
+        tempBatchBlockSize = (maxUseUb - xBytesPerElemsPerM * mLen) /
+                             (tempNBlockSize * (mLen * xOutBytesPerN + floatBufBytesPerN));
         batchBlockSize = tempBatchBlockSize > 0 ? tempBatchBlockSize : 1;
         batchBlockNum = Ops::Base::CeilDiv(static_cast<int64_t>(totalBatchLen), batchBlockSize);
         batchTailBlockSize = totalBatchLen - (batchBlockNum - 1) * batchBlockSize;
@@ -724,6 +743,30 @@ void DynamicQuantRegbaseTiling::IsCapableForRecompute(const gert::TilingContext*
             return);
         mBlockNum = Ops::Base::CeilDiv(mLen, mBlockSize);
         totalBlockNum = totalBatchLen * nBlockNum;
+
+        // recompute 的块数只按 N 轴切分（totalBlockNum = batch x nBlockNum），
+        // 块数通常接近核数，容易整除不良导致关键核做两份、其余核空等。
+        // split_m 的块数是 mBlockNum x nBlockNum 的乘积，块数多、分配更均匀。
+        // 这里比较两者的核利用率，若 split_m 明显更优则放弃 recompute，让后续 IsCapableForSplitM 生效。
+        // 估算同样必须全程 int64，避免大 nBlockSize/mLen 时的无符号回绕。
+        const int64_t maxUseUb = static_cast<int64_t>(maxUseUbSize);
+        const int64_t floatBufBytesPerN = static_cast<int64_t>(PER_CHANNEL_FLOAT_BUF_NUM) * USE_BUFFER_NUM * 4;
+        const int64_t xBytesPerElemsPerM = static_cast<int64_t>(USE_BUFFER_NUM) * 2;
+        const int64_t xOutBytesPerN = static_cast<int64_t>(USE_BUFFER_NUM) * 3;
+        int64_t splitMBlockSize = (maxUseUb - floatBufBytesPerN * nBlockSize) /
+                                  (nBlockSize * xOutBytesPerN + xBytesPerElemsPerM);
+        if (splitMBlockSize > 0) {
+            int64_t splitMBlockNum = Ops::Base::CeilDiv(mLen, splitMBlockSize);
+            int64_t splitMTotalBlockNum = totalBatchLen * splitMBlockNum * nBlockNum;
+            double recomputeUtil = CalcCoreUtilization(totalBlockNum, vectorCoreNum);
+            double splitMUtil = CalcCoreUtilization(splitMTotalBlockNum, vectorCoreNum);
+            if (splitMUtil > recomputeUtil + PER_CHANNEL_UTIL_MARGIN) {
+                OP_LOGD(context->GetNodeName(),
+                        "perchannel prefer split_m: recompute blocks=%ld util=%.3f, split_m blocks=%ld util=%.3f",
+                        totalBlockNum, recomputeUtil, splitMTotalBlockNum, splitMUtil);
+                iscapable = false;
+            }
+        }
     }
     if (iscapable) {
         quantMode_ = TPL_PER_CHANNEL_RECOMPUTE;

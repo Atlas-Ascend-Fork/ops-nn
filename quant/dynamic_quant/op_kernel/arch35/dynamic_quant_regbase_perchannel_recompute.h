@@ -421,6 +421,12 @@ DynamicQuantRegbasePerChannnelRecompute<xDtype, yDtype, hasSmooth, isSymmetrical
         Reg::RegTensor<half> vregCastF16;
         Reg::RegTensor<yCopyDtype> vregOut;
         Reg::RegTensor<float> vregOutFp32;
+        // scale 是每列一个常量，在 m 循环内不变。循环外求倒数，循环内用
+        // 「乘法 + Markstein 修正」得到与 0 ULP 除法逐位一致的结果。
+        Reg::RegTensor<float> vregScaleRecip;
+        Reg::RegTensor<float> vregNegScale;
+        Reg::RegTensor<float> vregQuot;
+        Reg::RegTensor<float> vregOne;
         Reg::MaskReg pregH = Reg::CreateMask<float, Reg::MaskPattern::H>();
 
         Reg::MaskReg mask;
@@ -430,6 +436,10 @@ DynamicQuantRegbasePerChannnelRecompute<xDtype, yDtype, hasSmooth, isSymmetrical
             // 从ub中读入colMax
             // 插入ub同步，直接读取ub中存储的max和scale
             Reg::LoadAlign<float>(vregInScale, (__ubuf__ float*)(scaleAddr + nIdx * elementNumPerLoop));
+            // 每列只做一次 0 ULP 除法，得到倒数与 -scale，供 m 循环内做 Markstein 修正除法
+            Reg::Duplicate<float>(vregOne, 1.0f, mask);
+            Reg::Div<float, &divHighPrecisionMode>(vregScaleRecip, vregOne, vregInScale, mask);
+            Reg::Muls(vregNegScale, vregInScale, -1.0f, mask);
             for (uint16_t mIdx = 0; mIdx < mLoopNum; mIdx++) {
                 auto addr = yAddr + mIdx * blockColNumForY + nIdx * elementNumPerLoop;
                 Reg::LoadAlign<xDtype, Reg::LoadDist::DIST_UNPACK_B16>(
@@ -441,9 +451,13 @@ DynamicQuantRegbasePerChannnelRecompute<xDtype, yDtype, hasSmooth, isSymmetrical
                     Reg::Cast<float, xDtype, castTraitB16ToB32>(vregSmoothFp32, vregSmooth, mask);
                     Reg::Mul<float>(vregInFp32, vregInFp32, vregSmoothFp32, mask);
                 }
-                Reg::Div<float>(vregOutFp32, vregInFp32, vregInScale, mask);
+                // Markstein 修正除法：q0 = x*recip，rem = x - q0*scale（FMA，单次舍入），q = q0 + rem*recip
+                // 结果与 0 ULP 除法逐位一致，默认 Div 非 0ULP，商差 1ulp 时 round 后 y 差 1
+                Reg::Mul<float>(vregQuot, vregInFp32, vregScaleRecip, mask);
+                Reg::MulAddDst<float>(vregInFp32, vregQuot, vregNegScale, mask);
+                Reg::MulAddDst<float>(vregQuot, vregInFp32, vregScaleRecip, mask);
                 // cast
-                CastToDstType<yDtype, yCopyDtype>(vregOutFp32, vregOut, mask);
+                CastToDstType<yDtype, yCopyDtype>(vregQuot, vregOut, mask);
                 if constexpr (IsSameType<yDtype, int4b_t>::value) {
                     addr = yAddr + (mIdx * blockColNumForY + nIdx * elementNumPerLoop) / 2;
                     Reg::StoreAlign<yCopyDtype, Reg::StoreDist::DIST_PACK4_B32>(addr, vregOut, pregH);

@@ -14,7 +14,7 @@
 #include <cstdint>
 #include "gtest/gtest.h"
 #include "tikicpulib.h"
-#include "dynamic_quant_tiling_def.h"
+#include "../dynamic_quant_tiling_def.h"
 #include "data_utils.h"
 
 #include <cstdint>
@@ -41,7 +41,7 @@ TEST_F(dynamic_quant_test, test_case_bf16)
     size_t outputByteSize = 1 * 128 * 1024 * sizeof(int8_t);
     size_t scaleByteSize = 1 * 128 * sizeof(uint32_t);
     size_t tiling_data_size = sizeof(DynamicQuantTilingData);
-    uint32_t blockDim = 48;
+    uint32_t blockDim = 40;
 
     uint8_t* input = (uint8_t*)AscendC::GmAlloc(inputByteSize);
     uint8_t* smooth_scales = (uint8_t*)AscendC::GmAlloc(smoothScalesByteSzie);
@@ -59,11 +59,11 @@ TEST_F(dynamic_quant_test, test_case_bf16)
 
     DynamicQuantTilingData* tilingDatafromBin = reinterpret_cast<DynamicQuantTilingData*>(tiling);
 
-    tilingDatafromBin->coreNum = 48;
+    tilingDatafromBin->coreNum = 40;
     tilingDatafromBin->rowLen = 1024;
-    tilingDatafromBin->headCoreNum = 0;
-    tilingDatafromBin->rowPerHeadCore = 2;
-    tilingDatafromBin->rowPerTailCore = 2;
+    tilingDatafromBin->headCoreNum = 8;
+    tilingDatafromBin->rowPerHeadCore = 4;
+    tilingDatafromBin->rowPerTailCore = 3;
     tilingDatafromBin->multiRowNumHeadCore = 2;
     tilingDatafromBin->multiRowNumTailCore = 2;
     tilingDatafromBin->innerLoopEle = 0;
@@ -101,7 +101,7 @@ TEST_F(dynamic_quant_test, test_case_bf16)
     // bf16
     ICPU_SET_TILING_KEY(201);
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
-    ICPU_RUN_KF(dynamic_quant, 48, input, smooth_scales, group_index, output, scale, workSpace,
+    ICPU_RUN_KF(dynamic_quant, blockDim, input, smooth_scales, group_index, output, scale, workSpace,
                 (uint8_t*)(tilingDatafromBin));
 
     AscendC::GmFree(input);
@@ -121,7 +121,7 @@ TEST_F(dynamic_quant_test, test_case_bf16_no_smooth)
     size_t outputByteSize = 1 * 128 * 1024 * sizeof(int8_t);
     size_t scaleByteSize = 1 * 128 * sizeof(uint32_t);
     size_t tiling_data_size = sizeof(DynamicQuantTilingData);
-    uint32_t blockDim = 48;
+    uint32_t blockDim = 40;
 
     uint8_t* input = (uint8_t*)AscendC::GmAlloc(inputByteSize);
     uint8_t* smooth_scales = nullptr;
@@ -137,11 +137,11 @@ TEST_F(dynamic_quant_test, test_case_bf16_no_smooth)
 
     DynamicQuantTilingData* tilingDatafromBin = reinterpret_cast<DynamicQuantTilingData*>(tiling);
 
-    tilingDatafromBin->coreNum = 48;
+    tilingDatafromBin->coreNum = 40;
     tilingDatafromBin->rowLen = 1024;
-    tilingDatafromBin->headCoreNum = 0;
-    tilingDatafromBin->rowPerHeadCore = 2;
-    tilingDatafromBin->rowPerTailCore = 2;
+    tilingDatafromBin->headCoreNum = 8;
+    tilingDatafromBin->rowPerHeadCore = 4;
+    tilingDatafromBin->rowPerTailCore = 3;
     tilingDatafromBin->multiRowNumHeadCore = 2;
     tilingDatafromBin->multiRowNumTailCore = 2;
     tilingDatafromBin->innerLoopEle = 0;
@@ -178,7 +178,7 @@ TEST_F(dynamic_quant_test, test_case_bf16_no_smooth)
     // bf16
     ICPU_SET_TILING_KEY(200);
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
-    ICPU_RUN_KF(dynamic_quant, 1, input, smooth_scales, group_index, output, scale, workSpace,
+    ICPU_RUN_KF(dynamic_quant, blockDim, input, smooth_scales, group_index, output, scale, workSpace,
                 (uint8_t*)(tilingDatafromBin));
 
     AscendC::GmFree(input);
@@ -259,7 +259,7 @@ TEST_F(dynamic_quant_test, test_case_largeShape_fp16_int8_1)
     size_t outputByteSize = 8 * 9 * 27185 * sizeof(int8_t);
     size_t scaleByteSize = 8 * 9 * sizeof(uint32_t);
     size_t tiling_data_size = sizeof(DynamicQuantTilingData);
-    uint32_t blockDim = 48;
+    uint32_t blockDim = 40;
 
     uint8_t* input = (uint8_t*)AscendC::GmAlloc(inputByteSize);
     uint8_t* smooth_scales = (uint8_t*)AscendC::GmAlloc(smoothScalesByteSzie);
@@ -275,9 +275,9 @@ TEST_F(dynamic_quant_test, test_case_largeShape_fp16_int8_1)
 
     DynamicQuantTilingData* tilingDatafromBin = reinterpret_cast<DynamicQuantTilingData*>(tiling);
 
-    tilingDatafromBin->coreNum = 48;
+    tilingDatafromBin->coreNum = 40;
     tilingDatafromBin->rowLen = 27185;
-    tilingDatafromBin->headCoreNum = 8;
+    tilingDatafromBin->headCoreNum = 32;
     tilingDatafromBin->rowPerHeadCore = 2;
     tilingDatafromBin->rowPerTailCore = 1;
     tilingDatafromBin->multiRowNumHeadCore = 1;
@@ -314,6 +314,7 @@ TEST_F(dynamic_quant_test, test_case_largeShape_fp16_int8_1)
     tilingDatafromBin->alignType = 0;
     tilingDatafromBin->ubSize = 191 * 1024;
     ICPU_SET_TILING_KEY(211);
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
     ICPU_RUN_KF(dynamic_quant, blockDim, input, smooth_scales, group_index, output, scale, workSpace,
                 (uint8_t*)(tilingDatafromBin));
 
@@ -332,7 +333,7 @@ TEST_F(dynamic_quant_test, test_case_largeShape_fp16_int8_2)
     size_t outputByteSize = 8 * 9 * 34961 * sizeof(int8_t);
     size_t scaleByteSize = 8 * 9 * sizeof(uint32_t);
     size_t tiling_data_size = sizeof(DynamicQuantTilingData);
-    uint32_t blockDim = 48;
+    uint32_t blockDim = 40;
 
     uint8_t* input = (uint8_t*)AscendC::GmAlloc(inputByteSize);
     uint8_t* smooth_scales = nullptr;
@@ -348,9 +349,9 @@ TEST_F(dynamic_quant_test, test_case_largeShape_fp16_int8_2)
 
     DynamicQuantTilingData* tilingDatafromBin = reinterpret_cast<DynamicQuantTilingData*>(tiling);
 
-    tilingDatafromBin->coreNum = 48;
+    tilingDatafromBin->coreNum = 40;
     tilingDatafromBin->rowLen = 34961;
-    tilingDatafromBin->headCoreNum = 8;
+    tilingDatafromBin->headCoreNum = 32;
     tilingDatafromBin->rowPerHeadCore = 2;
     tilingDatafromBin->rowPerTailCore = 1;
     tilingDatafromBin->multiRowNumHeadCore = 1;
@@ -386,6 +387,7 @@ TEST_F(dynamic_quant_test, test_case_largeShape_fp16_int8_2)
     tilingDatafromBin->alignType = 0;
     tilingDatafromBin->ubSize = 191 * 1024;
     ICPU_SET_TILING_KEY(210);
+    AscendC::SetKernelMode(KernelMode::AIV_MODE);
     ICPU_RUN_KF(dynamic_quant, blockDim, input, smooth_scales, group_index, output, scale, workSpace,
                 (uint8_t*)(tilingDatafromBin));
 
@@ -404,7 +406,7 @@ TEST_F(dynamic_quant_test, test_case_01)
     size_t outputByteSize = 1 * 128 * 20480 * sizeof(int8_t);
     size_t scaleByteSize = 1 * 128 * sizeof(uint32_t);
     size_t tiling_data_size = sizeof(DynamicQuantTilingData);
-    uint32_t blockDim = 48;
+    uint32_t blockDim = 40;
 
     uint8_t* input = (uint8_t*)AscendC::GmAlloc(inputByteSize);
     uint8_t* smooth_scales = (uint8_t*)AscendC::GmAlloc(smoothScalesByteSzie);
@@ -488,7 +490,7 @@ TEST_F(dynamic_quant_test, test_case_03)
     size_t outputByteSize = 1 * 128 * 2001 * sizeof(int8_t);
     size_t scaleByteSize = 1 * 128 * sizeof(uint32_t);
     size_t tiling_data_size = sizeof(DynamicQuantTilingData);
-    uint32_t blockDim = 48;
+    uint32_t blockDim = 40;
 
     uint8_t* input = (uint8_t*)AscendC::GmAlloc(inputByteSize);
     uint8_t* smooth_scales = (uint8_t*)AscendC::GmAlloc(smoothScalesByteSzie);
@@ -573,7 +575,7 @@ TEST_F(dynamic_quant_test, test_case_04)
     size_t outputByteSize = 1 * 128 * 1024 * sizeof(int8_t);
     size_t scaleByteSize = 1 * 128 * sizeof(uint32_t);
     size_t tiling_data_size = sizeof(DynamicQuantTilingData);
-    uint32_t blockDim = 48;
+    uint32_t blockDim = 40;
 
     uint8_t* input = (uint8_t*)AscendC::GmAlloc(inputByteSize);
     uint8_t* smooth_scales = (uint8_t*)AscendC::GmAlloc(smoothScalesByteSzie);
@@ -658,7 +660,7 @@ TEST_F(dynamic_quant_test, test_case_05)
     size_t outputByteSize = 1 * 128 * 20485 * sizeof(int8_t);
     size_t scaleByteSize = 1 * 128 * sizeof(uint32_t);
     size_t tiling_data_size = sizeof(DynamicQuantTilingData);
-    uint32_t blockDim = 48;
+    uint32_t blockDim = 40;
 
     uint8_t* input = (uint8_t*)AscendC::GmAlloc(inputByteSize);
     uint8_t* smooth_scales = (uint8_t*)AscendC::GmAlloc(smoothScalesByteSzie);
@@ -742,7 +744,7 @@ TEST_F(dynamic_quant_test, test_case_06)
     size_t outputByteSize = 1 * 128 * 11001 * sizeof(int8_t);
     size_t scaleByteSize = 1 * 128 * sizeof(uint32_t);
     size_t tiling_data_size = sizeof(DynamicQuantTilingData);
-    uint32_t blockDim = 48;
+    uint32_t blockDim = 40;
 
     uint8_t* input = (uint8_t*)AscendC::GmAlloc(inputByteSize);
     uint8_t* smooth_scales = (uint8_t*)AscendC::GmAlloc(smoothScalesByteSzie);

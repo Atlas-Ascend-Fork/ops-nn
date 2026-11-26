@@ -240,7 +240,7 @@ def dynamic_quant_v2_golden(
     """
     output_dtype_str = str(kwargs["output_dtypes"][0])
     if quant_mode == "perchannel":
-        return _dynamic_quant_perchannel(
+        result = _dynamic_quant_perchannel(
             x,
             smooth_scales,
             group_index,
@@ -249,15 +249,21 @@ def dynamic_quant_v2_golden(
             is_symmetrical,
             output_dtype_str,
         )
-    return _dynamic_quant_common(
-        x,
-        smooth_scales,
-        group_index,
-        dst_type,
-        quant_mode,
-        is_symmetrical,
-        output_dtype_str,
-    )
+    else:
+        result = _dynamic_quant_common(
+            x,
+            smooth_scales,
+            group_index,
+            dst_type,
+            quant_mode,
+            is_symmetrical,
+            output_dtype_str,
+        )
+    if is_symmetrical and len(result) == 2:
+        # 对称量化不产生 offset，但算子固定有 3 个输出；补 None 保持槽位对齐，
+        # TTK 将 None golden 视为无语义输出（SUPPRESSED）跳过比对，仅比较 y/scale。
+        result = list(result) + [None]
+    return result
 
 
 def aclnn_dynamic_quant_v2_golden(
@@ -290,8 +296,14 @@ def aclnn_dynamic_quant_v2_golden(
 
     output_dtype_str = str(kwargs.get("output_dtypes", ["int8"])[0])
 
-    quant_mode = "pertoken"
-    is_symmetrical = False
+    # aclnnDynamicQuantV2 固定 pertoken；对称性由 offsetOut 是否为 None 决定
+    # （与 op_host/op_api/aclnn_dynamic_quant.cpp 中 isSymmetrical = (offsetOut == nullptr) 一致），
+    # 显式 attributes 优先，便于用例覆盖。
+    quant_mode = kwargs.get("quant_mode", "pertoken")
+    if "is_symmetrical" in kwargs:
+        is_symmetrical = bool(kwargs["is_symmetrical"])
+    else:
+        is_symmetrical = offsetOut is None
 
     if quant_mode == "perchannel":
         result = _dynamic_quant_perchannel(

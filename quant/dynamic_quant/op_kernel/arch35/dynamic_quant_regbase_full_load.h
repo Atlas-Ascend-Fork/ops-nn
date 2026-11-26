@@ -236,7 +236,9 @@ private:
 
     __aicore__ inline void ComputeYVF(__ubuf__ xDtype* xAddr, __ubuf__ xDtype* smoothAddr, __ubuf__ yCopyDtype* yAddr,
                                       AscendC::Reg::RegTensor<float>& vregDupScale,
-                                      AscendC::Reg::RegTensor<float>& vregDupOffset, int32_t indexRow)
+                                      AscendC::Reg::RegTensor<float>& vregDupOffset,
+                                      AscendC::Reg::RegTensor<float>& vregDupRecip,
+                                      AscendC::Reg::RegTensor<float>& vregDupNegScale, int32_t indexRow)
     {
         AscendC::Reg::RegTensor<float> vregInput;
         AscendC::Reg::RegTensor<float> vregXDivScale;
@@ -256,7 +258,11 @@ private:
             DataCopyInputVF(xAddr + indexRow * sizeHalfLen + j * VL, smoothAddr + j * VL, vregInput, preg2);
 
             if constexpr (isSymmetrical == true) {
-                AscendC::Reg::Div(vregYFp32, vregInput, vregDupScale, preg2);
+                // 默认 Div 非 0ULP，x*smooth 落在 (k+0.5)*scale 精确边界时商差 1ulp，round 后 y 差 1。
+                // Markstein 修正除法：q0 = x*recip，rem = x - q0*scale（FMA，单次舍入），q = q0 + rem*recip。
+                AscendC::Reg::Mul(vregYFp32, vregInput, vregDupRecip, preg2);
+                AscendC::Reg::MulAddDst(vregInput, vregYFp32, vregDupNegScale, preg2);
+                AscendC::Reg::MulAddDst(vregYFp32, vregInput, vregDupRecip, preg2);
             } else if constexpr (isSymmetrical == false) {
                 AscendC::Reg::Div<float, &mode>(vregXDivScale, vregInput, vregDupScale, preg2);
                 AscendC::Reg::Add(vregYFp32, vregXDivScale, vregDupOffset, preg2);
@@ -289,7 +295,9 @@ private:
     __aicore__ inline void ComputeScaleVF(__ubuf__ xDtype* xAddr, __ubuf__ xDtype* smoothAddr,
                                           __ubuf__ float* scaleAddr, __ubuf__ float* offsetAddr,
                                           AscendC::Reg::RegTensor<float>& vregDupScale,
-                                          AscendC::Reg::RegTensor<float>& vregDupOffset, int32_t indexRow)
+                                          AscendC::Reg::RegTensor<float>& vregDupOffset,
+                                          AscendC::Reg::RegTensor<float>& vregDupRecip,
+                                          AscendC::Reg::RegTensor<float>& vregDupNegScale, int32_t indexRow)
     {
         AscendC::Reg::RegTensor<float> vregInput;
         AscendC::Reg::RegTensor<float> vregAbs;
@@ -306,6 +314,10 @@ private:
         AscendC::Reg::RegTensor<float> vregReduceMinXTail;
         AscendC::Reg::RegTensor<float> vregFinalMax;
         AscendC::Reg::RegTensor<float> vregFinalMin;
+        // 每行只做一次 0ULP 除法求 1/scale，逐元素由除法改为 Markstein 修正除法
+        AscendC::Reg::RegTensor<float> vregInvScale;
+        AscendC::Reg::RegTensor<float> vregNegScale;
+        AscendC::Reg::RegTensor<float> vregOne;
 
         AscendC::Reg::MaskReg preg0;
         AscendC::Reg::MaskReg preg1 = AscendC::Reg::CreateMask<float, AscendC::Reg::MaskPattern::ALL>();
@@ -330,7 +342,12 @@ private:
             }
             AscendC::Reg::Reduce<Reg::ReduceType::MAX>(vregReduceMaxX, vregMaxX, preg1);
             AscendC::Reg::Muls(vregScale, vregReduceMaxX, maxValue, preg1);
-            AscendC::Reg::Duplicate(vregDupScale, vregScale, preg1);
+            // 每行一次 0ULP 除法求 1/scale，逐元素改 Markstein 修正除法，与非对称路径精度一致
+            AscendC::Reg::Duplicate(vregOne, 1.0f, preg1);
+            AscendC::Reg::Div<float, &mode>(vregInvScale, vregOne, vregScale, preg5);
+            AscendC::Reg::Muls(vregNegScale, vregScale, NEGATIVE_ONE, preg5);
+            AscendC::Reg::Duplicate(vregDupRecip, vregInvScale, preg1);
+            AscendC::Reg::Duplicate(vregDupNegScale, vregNegScale, preg1);
             AscendC::Reg::StoreUnAlign<float, AscendC::Reg::PostLiteral::POST_MODE_UPDATE>(scaleAddr, vregScale, ureg0,
                                                                                            1);
         } else if constexpr (isSymmetrical == false) {
@@ -380,11 +397,14 @@ private:
         {
             AscendC::Reg::RegTensor<float> vregDupScale;
             AscendC::Reg::RegTensor<float> vregDupOffset;
+            AscendC::Reg::RegTensor<float> vregDupRecip;
+            AscendC::Reg::RegTensor<float> vregDupNegScale;
 
             for (uint16_t indexRow = 0; indexRow < (uint16_t)multiRow; indexRow++) {
                 ComputeScaleVF(xAddr, smoothAddr, scaleAddr + indexRow, offsetAddr + indexRow, vregDupScale,
-                               vregDupOffset, indexRow);
-                ComputeYVF(xAddr, smoothAddr, yAddr, vregDupScale, vregDupOffset, indexRow);
+                               vregDupOffset, vregDupRecip, vregDupNegScale, indexRow);
+                ComputeYVF(xAddr, smoothAddr, yAddr, vregDupScale, vregDupOffset, vregDupRecip, vregDupNegScale,
+                           indexRow);
             }
         }
     }
