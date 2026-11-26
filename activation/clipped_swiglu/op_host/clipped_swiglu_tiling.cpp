@@ -371,8 +371,8 @@ ge::graphStatus ClippedSwigluTiling::CountMaxPair()
                                    DB_BUFFER * ((groupNum_ * static_cast<int64_t>(sizeof(int64_t))) + BLOCK_SIZE - 1) /
                                        BLOCK_SIZE * BLOCK_SIZE :
                                    0;
-    int64_t tmpBuffer1 = SWI_FACTOR * DTYPE_FACTOR;
-    int64_t tmpBuffer2 = SWI_FACTOR * DTYPE_FACTOR;
+    int64_t tmpBuffer1 = (isInterleaved_ != 0 || isGroup_ != 0) ? SWI_FACTOR * DTYPE_FACTOR : 0;
+    int64_t tmpBuffer2 = (isInterleaved_ != 0) ? SWI_FACTOR * DTYPE_FACTOR : 0;
     int64_t numerator = static_cast<int64_t>(ubSize_) - UB_RESERVE - groupindexBuffer;
     ubMaxPair_ = ((numerator / (xBuffer + yBuffer + tmpBuffer1 + tmpBuffer2) / BLOCK_SIZE * BLOCK_SIZE) -
                   (BLOCK_SIZE - 1)) /
@@ -384,6 +384,15 @@ ge::graphStatus ClippedSwigluTiling::CountMaxPair()
             std::string("The group_index buffer leaves no usable UB tile: group_count=") + std::to_string(groupNum_) +
                 ", availableUB=" + std::to_string(ubSize_) + ", remainingBytes=" + std::to_string(numerator)),
         return ge::GRAPH_FAILED);
+    constexpr int64_t periodPairs = 512 / sizeof(float); // 128 pairs
+    constexpr int64_t halfPeriodPairs = periodPairs / 2; // 64 pairs
+    // BF16、无分组、非交错。
+    if (xDtype_ == ge::DT_BF16 && isGroup_ == 0 && isInterleaved_ == 0) {
+        // 按 Y/X0/X1 分配，FP32 半区占 4P 字节；要求 4P % 512 == 256，即 P % 128 == 64。
+        // 此时每块 X 占 8P 字节，为 512 的整数倍，两块 X 的 Div、Mul 读源均保持错位。
+        // 减去超出的余数，向下取满足条件的最大 P（如 9744 -> 9664）。
+        ubMaxPair_ -= (ubMaxPair_ - halfPeriodPairs) % periodPairs;
+    }
     isLongH_ = ubMaxPair_ * SWI_FACTOR < dim2H_ ? 1 : 0;
 
     return ge::GRAPH_SUCCESS;

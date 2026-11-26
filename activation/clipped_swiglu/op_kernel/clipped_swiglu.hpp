@@ -41,6 +41,7 @@ public:
     __aicore__ inline void CopyInInterLeaved(LocalTensor<inType>& xDTypeLocal, int64_t xOffset);
     __aicore__ inline void Compute(LocalTensor<float>& xFloatLocal, LocalTensor<float>& tmpUbF32,
                                    LocalTensor<float>& yFloatLocal);
+    __aicore__ inline void ComputeInPlace(LocalTensor<float>& xFloatLocal, LocalTensor<float>& yFloatLocal);
     __aicore__ inline void GetAB(LocalTensor<float>& tmpA, LocalTensor<float>& tmpB, LocalTensor<float>& xFloatLocal);
     __aicore__ inline void CopyOut(int64_t yOffset);
     __aicore__ inline void InitZeroBuffer();
@@ -97,10 +98,20 @@ __aicore__ inline void ClippedSwigluBase<inType>::Init(GM_ADDR x, GM_ADDR groupI
         groupIndexGm_.SetGlobalBuffer((__gm__ int64_t*)groupIndex);
         pipe_->InitBuffer(groupQueue_, DB_BUFFER, AlignBytes(tl_->groupNum * static_cast<int64_t>(sizeof(int64_t))));
     }
+    // 半区字节数对 512 取余为 256 时，两个 X buffer 中的 A 都与 Y、B 错开 256 字节。
+    if (tl_->isGroup == 0 && tl_->isInterleaved == 0 && (xQueSpace_ / SWI_FACTOR) % 512 == 256) {
+        pipe_->InitBuffer(yQueue_, 1, xQueSpace_ / SWI_FACTOR);
+        pipe_->InitBuffer(xQueue_, DB_BUFFER, xQueSpace_);
+        return;
+    }
     pipe_->InitBuffer(xQueue_, DB_BUFFER, xQueSpace_);
     pipe_->InitBuffer(yQueue_, 1, DTYPE_FACTOR * AlignBytes(ubMaxPair_ * static_cast<int64_t>(sizeof(bfloat16_t))));
-    pipe_->InitBuffer(tmpBuf1_, xQueSpace_);
-    pipe_->InitBuffer(tmpBuf2_, xQueSpace_);
+    if (tl_->isInterleaved != 0 || tl_->isGroup != 0) {
+        pipe_->InitBuffer(tmpBuf1_, xQueSpace_);
+    }
+    if (tl_->isInterleaved != 0) {
+        pipe_->InitBuffer(tmpBuf2_, xQueSpace_);
+    }
 }
 
 template <typename inType>
@@ -248,9 +259,13 @@ __aicore__ inline void ClippedSwigluBase<inType>::ProcessSingleLoop(int64_t xOff
     }
 
 #endif
-    LocalTensor<float> tmpUbF32 = tmpBuf1_.Get<float>(); // 用于装A\B矩阵
     LocalTensor<float> yFloatLocal = yQueue_.AllocTensor<float>();
-    Compute(xFloatLocal, tmpUbF32, yFloatLocal);
+    if (tl_->isInterleaved == 0 && tl_->isGroup == 0) {
+        ComputeInPlace(xFloatLocal, yFloatLocal);
+    } else {
+        LocalTensor<float> tmpUbF32 = tmpBuf1_.Get<float>(); // 用于装A\B矩阵
+        Compute(xFloatLocal, tmpUbF32, yFloatLocal);
+    }
     LocalTensor<inType> yDTypeLocal = yFloatLocal.template ReinterpretCast<inType>();
 #if (ORIG_DTYPE_X == DT_BF16)
     Cast(yDTypeLocal, yFloatLocal, RoundMode::CAST_RINT, calPairNum_);
@@ -350,6 +365,37 @@ __aicore__ inline void ClippedSwigluBase<inType>::Compute(LocalTensor<float>& xF
     xQueue_.FreeTensor(xFloatLocal);
     Mul(yFloatLocal, tmpB, tmpA, calPairNum_);
     PipeBarrier<PIPE_V>();
+}
+
+template <typename inType>
+__aicore__ inline void ClippedSwigluBase<inType>::ComputeInPlace(LocalTensor<float>& xFloatLocal,
+                                                                 LocalTensor<float>& yFloatLocal)
+{
+    // 直接在输入的 A/B 两个半区原地计算，输出 buffer 暂存分母。
+    LocalTensor<float> tmpA = xFloatLocal;
+    LocalTensor<float> tmpB = xFloatLocal[xQueSpace_ / sizeof(float) / SWI_FACTOR];
+
+    Mins(tmpB, tmpB, tl_->gluLimit, calPairNum_);
+    PipeBarrier<PIPE_V>();
+    Maxs(tmpB, tmpB, -1 * tl_->gluLimit, calPairNum_);
+    PipeBarrier<PIPE_V>();
+    Adds(tmpB, tmpB, tl_->gluBias, calPairNum_);
+    PipeBarrier<PIPE_V>();
+
+    Mins(tmpA, tmpA, tl_->gluLimit, calPairNum_);
+    PipeBarrier<PIPE_V>();
+    Muls(yFloatLocal, tmpA, -1 * tl_->gluAlpha, calPairNum_);
+    PipeBarrier<PIPE_V>();
+    Exp(yFloatLocal, yFloatLocal, calPairNum_);
+    PipeBarrier<PIPE_V>();
+    Adds(yFloatLocal, yFloatLocal, (float)1.0, calPairNum_);
+    PipeBarrier<PIPE_V>();
+    Div(tmpA, tmpA, yFloatLocal, calPairNum_);
+    PipeBarrier<PIPE_V>();
+    Mul(yFloatLocal, tmpB, tmpA, calPairNum_);
+    PipeBarrier<PIPE_V>();
+    // Mul 是此路径中最后读取输入的操作，等待其完成后归还输入 buffer。
+    xQueue_.FreeTensor(xFloatLocal);
 }
 
 template <typename inType>
