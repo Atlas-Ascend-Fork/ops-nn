@@ -43,9 +43,9 @@
 //   - MatmulQuantToFixpipeFusionPass 实现额外依赖 OriginDataType 公共 API（同版本号的不同 CANN 包
 //     API 可用性可能不同），桩单独复刻弱符号探测
 // 白名单说明（对照 opbase 仓 scripts/fusion_config/fusion_pass/config/support_fusion_pass.json，
-// 实际生效以部署环境 OPP 白名单为准）：68 个中 64 个在 3510(ascend950) 名单内、正常生效；
-// 其余 4 个（仅 5102 名单的 Conv2DTransposeWeightTransFusionPass，及名单暂未收录的
-// QuantBatchMatmulV3TransposeLimitFusionPass、WeightQuantBatchMatmulV2TransposeNZFusionPass、FIXPIPEFUSIONPASS）
+// 实际生效以部署环境 OPP 白名单为准）：67 个中 64 个在 3510(ascend950) 名单内、正常生效；
+// 其余 3 个（仅 5102 名单的 Conv2DTransposeWeightTransFusionPass，及名单暂未收录的
+// QuantBatchMatmulV3TransposeLimitFusionPass、WeightQuantBatchMatmulV2TransposeNZFusionPass）
 // fe 会 force close 跳过，待白名单侧补录后生效，故保留登记
 
 // ===== 编译门槛 9.0 组（22 个）：实现无编译守卫或守卫为 90000000 =====
@@ -127,10 +127,10 @@ static ::fe::FusionPassRegistrar* stub_reg_matmul_quant_to_fixpipe __attribute__
 #endif // GE_COMPILER_VERSION_NUM >= 90200000
 
 #if GE_COMPILER_VERSION_NUM >= 90300000
-// ===== 编译门槛 9.3 组（11 个）：实现编译守卫 90300000，固定 kCompatibleInherited（运行门槛 9.0）=====
-// fixpipe 4 个：canndev 注册类型 FixPipeAbilityProcessPass/FIXPIPEAPREQUANTFUSIONPASS/FIXPIPEARELUQUANTFusionPass
+// ===== 编译门槛 9.3 组（10 个）：实现编译守卫 90300000，固定 kCompatibleInherited（运行门槛 9.0）=====
+// fixpipe 3 个：canndev 注册类型 FixPipeAbilityProcessPass/FIXPIPEAPREQUANTFUSIONPASS/FIXPIPEARELUQUANTFusionPass
 // 为 GetGraphFusionPassType()（运行时按 npu_arch，3510 不在 SecondStage 集合 → BUILT_IN_GRAPH_PASS，
-// 桩在 ascend950 门控下照抄 A5 取值）；FIXPIPEFUSIONPASS canndev 硬编码 SECOND_ROUND_BUILT_IN_GRAPH_PASS；
+// 桩在 ascend950 门控下照抄 A5 取值）
 // attr NEED_SORT=0x02|SINGLE_SCENE_OPEN|FORBIDDEN_CLOSE=0x07（位值与 GE graph_fusion_pass_base.h 一致）
 STUB_REG_PASS("AABiasaddConvFusion", fe::BUILT_IN_GRAPH_PASS, 0x01, 90000000);
 STUB_REG_PASS("BatchMatmulV2QuantProcessFusionPass", fe::BUILT_IN_QUANT_OPTIMIZATION_GRAPH_PASS, 0x04, 90000000);
@@ -141,7 +141,6 @@ STUB_REG_PASS("DWConv2DQuantProcessFusionPass", fe::BUILT_IN_QUANT_OPTIMIZATION_
 STUB_REG_PASS("FixPipeAbilityProcessPass", fe::BUILT_IN_GRAPH_PASS, 0x07, 90000000);
 STUB_REG_PASS("FIXPIPEAPREQUANTFUSIONPASS", fe::BUILT_IN_GRAPH_PASS, 0x04, 90000000);
 STUB_REG_PASS("FIXPIPEARELUQUANTFUSIONPASS", fe::BUILT_IN_GRAPH_PASS, 0, 90000000);
-STUB_REG_PASS("FIXPIPEFUSIONPASS", fe::SECOND_ROUND_BUILT_IN_GRAPH_PASS, 0x07, 90000000);
 STUB_REG_PASS("MatmulV2QuantProcessFusionPass", fe::BUILT_IN_QUANT_OPTIMIZATION_GRAPH_PASS, 0x04, 90000000);
 #endif // GE_COMPILER_VERSION_NUM >= 90300000
 
