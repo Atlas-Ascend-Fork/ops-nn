@@ -31,13 +31,13 @@
   * Update gate $z_t = \sigma(W_{iz}x_t + b_{iz} + W_{hz}h_{t-1} + b_{hz})$
   * Candidate hidden state $n_t = \tanh(W_{in}x_t + b_{in} + r_t \odot (W_{hn}h_{t-1} + b_{hn}))$
   * Hidden state $h_t = (1-z_t) \odot n_t + z_t \odot h_{t-1}$
-* Backward computation formula:
+* Backward computation formula (where $h_n = W_{hn}h_{t-1} + b_{hn}$ is the linear term in the candidate gate pre-activation):
   * $\text{ Total upstream gradient:} \quad dh_t = dy_t + dh_{next} \quad $($dy_t$ is the gradient from the upper layer, and $dh_{next}$ is the gradient passed back at time step t+1)
   * $\text{ Update gate gradient:} \quad dz_t = dh_t * (h_{t-1} - n_t) * z_t * (1 - z_t)$
   * $\text{ Candidate state gradient:} \quad dh_{nt} = dh_t * (1 - z_t) * (1 - n_t^2)$
-  * $\text{ Reset gate gradient:} \quad dr_t = dh_{nt} * lin_{hh}[2*hidden\_size:3*hidden\_size] * r_t * (1 - r_t)$
+  * $\text{ Reset gate gradient:} \quad dr_t = dh_{nt} * h_n * r_t * (1 - r_t)$
   * $\text{ Linear transformation gradient decomposition:}$
-    $\quad dlin_{ih} = [dz_t; dr_t; dh_{nt}], \quad dlin_{hh} = [dz_t; dr_t; dh_{nt} * r_t]$
+    $\quad dlin_{ih} = [dr_t; dz_t; dh_{nt}], \quad dlin_{hh} = [dr_t; dz_t; dh_{nt} * r_t]$
   * $\text{ Input gradient (passed to the lower layer):} \quad dx_t = W_{ih}^T @ dlin_{ih}$
   * $\text{ Previous hidden state gradient (passed to t-1):} \quad dh_{prev} = W_{hh}^T @ dlin_{hh} + dh_t * z_t$
   * $\text{ Weight/bias gradient accumulation:}$

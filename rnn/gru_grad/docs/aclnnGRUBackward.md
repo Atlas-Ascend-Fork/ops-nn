@@ -29,11 +29,11 @@
   * 更新门 $z_t = \sigma(W_{iz}x_t + b_{iz} + W_{hz}h_{t-1} + b_{hz})$
   * 候选隐藏状态 $n_t = \tanh(W_{in}x_t + b_{in} + r_t \odot (W_{hn}h_{t-1} + b_{hn}))$
   * 隐藏状态 $h_t = (1-z_t) \odot n_t + z_t \odot h_{t-1}$
-* 反向计算公式：
+* 反向计算公式（其中 $h_n = W_{hn}h_{t-1} + b_{hn}$ 为候选门预激活中的线性项）：
   * $\text{上游总梯度：} \quad dh_t = dy_t + dh_{next} \quad $($dy_t$为上层梯度，$dh_{next}$为t+1时刻传回的梯度)
   * $\text{更新门梯度：} \quad dz_t = dh_t * (h_{t-1} - n_t) * z_t * (1 - z_t)$
   * $\text{候选态梯度：} \quad dh_{nt} = dh_t * (1 - z_t) * (1 - n_t^2)$
-  * $\text{重置门梯度：} \quad dr_t = dh_{nt} * W_{hr} * r_t * (1 - r_t)$
+  * $\text{重置门梯度：} \quad dr_t = dh_{nt} * h_n * r_t * (1 - r_t)$
   * $\text{线性变换梯度拆分：}$
     $\quad dlin_{ih} = [dr_t; dz_t; dh_{nt}], \quad dlin_{hh} = [dr_t; dz_t; dh_{nt} * r_t]$
   * $\text{输入梯度（传给下层）：} \quad dx_t = W_{ih}^T @ dlin_{ih}$
