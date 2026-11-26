@@ -74,10 +74,32 @@
 #include "exe_graph/runtime/storage_shape.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
+#include "base/err_mgr.h"
 
 using namespace ut_util;
 using namespace std;
 using namespace ge;
+
+static void ResetErrMgr()
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    // INTERNAL_MODE records against a work stream; the default id 0 is invalid,
+    // so bind a stable non-zero id before observing the tiling call.
+    auto context = error_message::GetErrMgrContext();
+    context.work_stream_id = 1U;
+    error_message::SetErrMgrContext(context);
+    (void)error_message::GetErrMgrRawErrorMessages();
+}
+
+static std::string ArgValue(const error_message::ErrMsgRawItem* item, const std::string& key)
+{
+    for (size_t i = 0; i < item->args_key.size() && i < item->args_value.size(); ++i) {
+        if (item->args_key[i] != nullptr && key == item->args_key[i].get()) {
+            return item->args_value[i] != nullptr ? item->args_value[i].get() : "";
+        }
+    }
+    return "";
+}
 
 class TestInplaceApplyAdadeltaTiling : public testing::Test {
 protected:
@@ -547,4 +569,74 @@ TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_grad_origin_format
         /*useLocking=*/false, /*normalizeVarRankZeroStorage=*/false, /*inputDtypes=*/nullptr, &originFormats,
         &storageFormats);
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+}
+
+// =====================================================================
+// First-report regression: the inner constraint helpers report exactly one
+// formal code; the outer GetShapeAndDataType wrapper only logs (no second
+// EZ9999).
+// =====================================================================
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c1_reports_single_ez0010)
+{
+    ResetErrMgr();
+    auto result = DoInplaceApplyAdadeltaTilingCase(
+        /*var=*/{2048}, /*accum=*/{1024}, /*accum_update=*/{2048},
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_STREQ(errors[0].error_id.get(), "EZ0010");
+    EXPECT_EQ(ArgValue(&errors[0], "param_names"), "var, accum");
+    EXPECT_NE(ArgValue(&errors[0], "incorrect_shapes").find("[1024]"), std::string::npos);
+}
+
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c3_reports_single_ez0011)
+{
+    ResetErrMgr();
+    auto result = DoInplaceApplyAdadeltaTilingCase(
+        /*var=*/{2048}, /*accum=*/{2048}, /*accum_update=*/{2048},
+        /*lr=*/{2}, /*rho=*/{}, /*epsilon=*/{}, /*grad=*/{2048}, ge::DT_FLOAT, ge::FORMAT_ND, /*useLocking=*/false);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_STREQ(errors[0].error_id.get(), "EZ0011");
+    EXPECT_EQ(ArgValue(&errors[0], "param_name"), "lr");
+    EXPECT_EQ(ArgValue(&errors[0], "incorrect_dim"), "1");
+    EXPECT_EQ(ArgValue(&errors[0], "correct_dim"), "0");
+}
+
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_c2_reports_single_ez0021)
+{
+    ResetErrMgr();
+    auto result = DoInplaceApplyAdadeltaDtypeMismatchCase(1);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_STREQ(errors[0].error_id.get(), "EZ0021");
+    EXPECT_EQ(ArgValue(&errors[0], "param_names"), "var, accum");
+    EXPECT_NE(ArgValue(&errors[0], "incorrect_dtypes").find("FLOAT16"), std::string::npos);
+}
+
+TEST_F(TestInplaceApplyAdadeltaTiling, inplace_apply_adadelta_format_reports_single_ez0035)
+{
+    ResetErrMgr();
+    std::array<ge::Format, 7> originFormats = {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,  ge::FORMAT_ND,
+                                               ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_NCHW};
+    std::array<ge::Format, 7> storageFormats = {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND,
+                                                ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND};
+    auto result = DoInplaceApplyAdadeltaTilingCase(
+        /*var=*/{1, 1, 1, 4}, /*accum=*/{1, 1, 1, 4}, /*accum_update=*/{1, 1, 1, 4},
+        /*lr=*/{}, /*rho=*/{}, /*epsilon=*/{}, /*grad=*/{1, 1, 1, 4}, ge::DT_FLOAT, ge::FORMAT_ND,
+        /*useLocking=*/false, /*normalizeVarRankZeroStorage=*/false, /*inputDtypes=*/nullptr, &originFormats,
+        &storageFormats);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_STREQ(errors[0].error_id.get(), "EZ0035");
+    EXPECT_EQ(ArgValue(&errors[0], "param_name"), "grad");
+    EXPECT_NE(ArgValue(&errors[0], "incorrect_format").find("NCHW"), std::string::npos);
 }

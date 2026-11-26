@@ -162,6 +162,23 @@ constexpr size_t kIdxGrad = 6;
 constexpr size_t kInputCount = 7;
 constexpr size_t kOutputCount = 3;
 
+static const char* InputName(size_t idx)
+{
+    static const char* kNames[kInputCount] = {"var", "accum", "accum_update", "lr", "rho", "epsilon", "grad"};
+    return idx < kInputCount ? kNames[idx] : "input";
+}
+
+static const char* OutputName(size_t idx)
+{
+    static const char* kNames[kOutputCount] = {"var", "accum", "accum_update"};
+    return idx < kOutputCount ? kNames[idx] : "output";
+}
+
+static std::string OriginAndStorage(const gert::Shape& origin, const gert::Shape& storage)
+{
+    return Ops::Base::ToString(origin) + " (origin) / " + Ops::Base::ToString(storage) + " (storage)";
+}
+
 // All inputs and outputs are registered as ND-only. Check both the logical
 // origin format and the physical storage format because GE may normalize a
 // contiguous NCHW tensor to ND storage before invoking tiling.
@@ -172,15 +189,25 @@ static ge::graphStatus CheckFormat(gert::TilingContext* context)
         OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
         OP_CHECK_IF(
             inputDesc->GetOriginFormat() != ge::FORMAT_ND || inputDesc->GetFormat().GetStorageFormat() != ge::FORMAT_ND,
-            OP_LOGE(context->GetNodeName(), "input %zu only supports ND format", inputIndex), return ge::GRAPH_FAILED);
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), InputName(inputIndex),
+                                                   (Ops::Base::ToString(inputDesc->GetOriginFormat()) + "/" +
+                                                    Ops::Base::ToString(inputDesc->GetFormat().GetStorageFormat()))
+                                                       .c_str(),
+                                                   "only FORMAT_ND is supported"),
+            return ge::GRAPH_FAILED);
     }
     for (size_t outputIndex = 0; outputIndex < kOutputCount; ++outputIndex) {
         auto outputDesc = context->GetOutputDesc(outputIndex);
         OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
-        OP_CHECK_IF(outputDesc->GetOriginFormat() != ge::FORMAT_ND ||
-                        outputDesc->GetFormat().GetStorageFormat() != ge::FORMAT_ND,
-                    OP_LOGE(context->GetNodeName(), "output %zu only supports ND format", outputIndex),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            outputDesc->GetOriginFormat() != ge::FORMAT_ND ||
+                outputDesc->GetFormat().GetStorageFormat() != ge::FORMAT_ND,
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), OutputName(outputIndex),
+                                                   (Ops::Base::ToString(outputDesc->GetOriginFormat()) + "/" +
+                                                    Ops::Base::ToString(outputDesc->GetFormat().GetStorageFormat()))
+                                                       .c_str(),
+                                                   "only FORMAT_ND is supported"),
+            return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -197,15 +224,30 @@ static ge::graphStatus CheckShapeC1(gert::TilingContext* context, const gert::St
 
     OP_CHECK_IF(!ShapeEqual(varShape->GetOriginShape(), accumShape->GetOriginShape()) ||
                     !ShapeEqual(varShape->GetStorageShape(), accumShape->GetStorageShape()),
-                OP_LOGE(context->GetNodeName(), "C1 shape mismatch: shape(var) != shape(accum)"),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "var, accum",
+                    (OriginAndStorage(varShape->GetOriginShape(), varShape->GetStorageShape()) + ", " +
+                     OriginAndStorage(accumShape->GetOriginShape(), accumShape->GetStorageShape()))
+                        .c_str(),
+                    "shape of accum must equal shape of var"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!ShapeEqual(varShape->GetOriginShape(), accumUpdateShape->GetOriginShape()) ||
                     !ShapeEqual(varShape->GetStorageShape(), accumUpdateShape->GetStorageShape()),
-                OP_LOGE(context->GetNodeName(), "C1 shape mismatch: shape(var) != shape(accum_update)"),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "var, accum_update",
+                    (OriginAndStorage(varShape->GetOriginShape(), varShape->GetStorageShape()) + ", " +
+                     OriginAndStorage(accumUpdateShape->GetOriginShape(), accumUpdateShape->GetStorageShape()))
+                        .c_str(),
+                    "shape of accum_update must equal shape of var"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!ShapeEqual(varShape->GetOriginShape(), gradShape->GetOriginShape()) ||
                     !ShapeEqual(varShape->GetStorageShape(), gradShape->GetStorageShape()),
-                OP_LOGE(context->GetNodeName(), "C1 shape mismatch: shape(var) != shape(grad)"),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "var, grad",
+                    (OriginAndStorage(varShape->GetOriginShape(), varShape->GetStorageShape()) + ", " +
+                     OriginAndStorage(gradShape->GetOriginShape(), gradShape->GetStorageShape()))
+                        .c_str(),
+                    "shape of grad must equal shape of var"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -219,11 +261,17 @@ static ge::graphStatus CheckScalarsC3(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, rhoShape);
     auto epsShape = context->GetInputShape(kIdxEps);
     OP_CHECK_NULL_WITH_CONTEXT(context, epsShape);
-    OP_CHECK_IF(!IsScalarShape(*lrShape), OP_LOGE(context, "C3: lr must be a rank-0 scalar Tensor"),
+    OP_CHECK_IF(!IsScalarShape(*lrShape),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "lr",
+                                             std::to_string(lrShape->GetOriginShape().GetDimNum()).c_str(), "0"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!IsScalarShape(*rhoShape), OP_LOGE(context, "C3: rho must be a rank-0 scalar Tensor"),
+    OP_CHECK_IF(!IsScalarShape(*rhoShape),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "rho",
+                                             std::to_string(rhoShape->GetOriginShape().GetDimNum()).c_str(), "0"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(!IsScalarShape(*epsShape), OP_LOGE(context, "C3: epsilon must be a rank-0 scalar Tensor"),
+    OP_CHECK_IF(!IsScalarShape(*epsShape),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "epsilon",
+                                             std::to_string(epsShape->GetOriginShape().GetDimNum()).c_str(), "0"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -240,7 +288,10 @@ static ge::graphStatus CheckDataTypeC2(gert::TilingContext* context)
         auto inputDesc = context->GetInputDesc(inputIndex);
         OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
         OP_CHECK_IF(inputDesc->GetDataType() != varType,
-                    OP_LOGE(context->GetNodeName(), "C2 dtype mismatch: input %zu must match var", inputIndex),
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        context->GetNodeName(), (std::string("var, ") + InputName(inputIndex)).c_str(),
+                        (Ops::Base::ToString(varType) + ", " + Ops::Base::ToString(inputDesc->GetDataType())).c_str(),
+                        "dtype of every input must equal dtype of var"),
                     return ge::GRAPH_FAILED);
     }
     return ge::GRAPH_SUCCESS;
@@ -252,12 +303,12 @@ static ge::graphStatus GetShapeAndDataType(gert::TilingContext* context, int64_t
     OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
 
     OP_CHECK_IF(CheckShapeC1(context, varShape) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "CheckShapeC1 failed"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckScalarsC3(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "CheckScalarsC3 failed"),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CheckShapeC1 failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckScalarsC3(context) != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context, "CheckScalarsC3 failed"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckDataTypeC2(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "CheckDataTypeC2 failed"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckFormat(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "CheckFormat failed"),
+    OP_CHECK_IF(CheckDataTypeC2(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "CheckDataTypeC2 failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(CheckFormat(context) != ge::GRAPH_SUCCESS, OP_LOGE_WITHOUT_REPORT(context, "CheckFormat failed"),
                 return ge::GRAPH_FAILED);
 
     totalNum = varShape->GetStorageShape().GetShapeSize();
@@ -295,7 +346,7 @@ static ge::graphStatus InitTilingData(gert::TilingContext* context, int64_t tota
     tiling = context->GetTilingData<InplaceApplyAdadeltaTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     OP_CHECK_IF(memset_s(tiling, sizeof(*tiling), 0, sizeof(*tiling)) != EOK,
-                OP_LOGE(context->GetNodeName(), "set tiling data error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "set tiling data error"), return ge::GRAPH_FAILED);
     tiling->totalNum = totalNum;
     return ge::GRAPH_SUCCESS;
 }
@@ -306,19 +357,19 @@ static ge::graphStatus InplaceApplyAdadeltaTilingFunc(gert::TilingContext* conte
     uint64_t ubSize;
     int64_t coreNum;
     OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     int64_t totalNum = 0;
     ge::DataType dataType = ge::DT_FLOAT;
     OP_CHECK_IF(GetShapeAndDataType(context, totalNum, dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "GetShapeAndDataType error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GetShapeAndDataType error"), return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(SetWorkspace(context) != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "SetWorkspace error"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(SetWorkspace(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "SetWorkspace error"), return ge::GRAPH_FAILED);
 
     InplaceApplyAdadeltaTilingData* tiling = nullptr;
     OP_CHECK_IF(InitTilingData(context, totalNum, tiling) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "InitTilingData error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "InitTilingData error"), return ge::GRAPH_FAILED);
 
     if (totalNum == 0) {
         return HandleEmptyTensor(context, tiling);
@@ -330,7 +381,6 @@ static ge::graphStatus InplaceApplyAdadeltaTilingFunc(gert::TilingContext* conte
     int64_t usedCoreNum = ComputeSplit(tiling, dataType, ubSize, coreNum, ubBlockSize, bufferMode);
     OP_CHECK_IF(tiling->ubFactor <= 0, OP_LOGE(context->GetNodeName(), "ubFactor must be > 0"),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(usedCoreNum <= 0, OP_LOGE(context->GetNodeName(), "usedCoreNum must be > 0"), return ge::GRAPH_FAILED);
 
     // Optional use_locking attr (informational only; kernel does not enforce locking)
     tiling->useLocking = ParseUseLocking(context);

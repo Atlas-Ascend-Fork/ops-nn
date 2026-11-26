@@ -33,7 +33,10 @@ static ge::graphStatus ScaledMaskedSoftmaxGradV2InferShape(gert::InferShapeConte
     const gert::Shape* yShape = context->GetInputShape(INPUT_Y_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, yShape);
     const gert::Shape* maskShape = context->GetInputShape(INPUT_MASK_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, maskShape);
+    OP_CHECK_IF(maskShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "mask",
+                                                         "mask shape is unavailable from InferShape context"),
+                return ge::GRAPH_FAILED);
     // get output shapes
     gert::Shape* xGradShape = context->GetOutputShape(OUTPUT_X_GRAD_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, xGradShape);

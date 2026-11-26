@@ -220,7 +220,7 @@ void ReverseSequenceBSTiling::DoUBTiling()
 ge::graphStatus ReverseSequenceBSTiling::DoOpTiling()
 {
     OP_CHECK_IF(InitializationVars() != ge::GRAPH_SUCCESS,
-                OP_LOGE(context_->GetNodeName(), "ub size:%lu is less than Dcache size:128k", ubSize_),
+                OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "ub size:%lu is less than Dcache size:128k", ubSize_),
                 return ge::GRAPH_FAILED);
     DoUBTiling();
     DoBlockTiling();

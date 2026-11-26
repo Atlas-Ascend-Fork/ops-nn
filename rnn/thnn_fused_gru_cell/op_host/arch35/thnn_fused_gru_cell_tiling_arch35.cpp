@@ -557,6 +557,8 @@ private:
     ge::graphStatus ValidateChain()
     {
         const char* node = ctx_->GetNodeName();
+        static const char* const inputNames[] = {"input_gates", "hidden_gates", "hx", "input_bias", "hidden_bias"};
+        static const char* const outputNames[] = {"hy", "storage"};
 
         // 0) 空指针：必选输入 desc 非空；可选 bias 空指针 = 缺省，合法
         const auto* gatesDesc = ctx_->GetInputDesc(thnn_fused_gru_cell::INPUT_GATES_IDX);
@@ -570,14 +572,16 @@ private:
         const ge::DataType dtype = gatesDesc->GetDataType();
         dtype_ = dtype; // 缓存派发锚点 dtype（paddedHidden 行对齐填充口径）
         if (thnn_fused_gru_cell::SUPPORTED_DTYPES.find(dtype) == thnn_fused_gru_cell::SUPPORTED_DTYPES.end()) {
-            OP_LOGE(node, "dtype_not_supported: input_gates dtype(%d) not in {bfloat16, float16, float}",
-                    static_cast<int>(dtype));
+            OP_LOGE_FOR_INVALID_DTYPE(node, "input_gates", Ops::Base::ToString(dtype).c_str(), "FLOAT, FLOAT16, BF16");
             return ge::GRAPH_FAILED;
         }
-        for (const auto* desc : {hgDesc, hxDesc}) {
+        for (size_t idx : {thnn_fused_gru_cell::HIDDEN_GATES_IDX, thnn_fused_gru_cell::HX_IDX}) {
+            const auto* desc = ctx_->GetInputDesc(idx);
             if (desc->GetDataType() != dtype) {
-                OP_LOGE(node, "dtype_not_supported: in-place input dtype(%d) != input_gates dtype(%d)",
-                        static_cast<int>(desc->GetDataType()), static_cast<int>(dtype));
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    node, (std::string("input_gates, ") + inputNames[idx]).c_str(),
+                    (Ops::Base::ToString(dtype) + ", " + Ops::Base::ToString(desc->GetDataType())).c_str(),
+                    "all in-place inputs must have the same dtype as input_gates");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -589,19 +593,22 @@ private:
             const auto* desc = ctx_->GetOptionalInputDesc(idx);
             OP_CHECK_NULL_WITH_CONTEXT(ctx_, desc);
             if (desc->GetDataType() != dtype) {
-                OP_LOGE(node, "dtype_not_supported: bias input(%lu) dtype(%d) != input_gates dtype(%d)",
-                        static_cast<unsigned long>(idx), static_cast<int>(desc->GetDataType()),
-                        static_cast<int>(dtype));
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    node, (std::string("input_gates, ") + inputNames[idx]).c_str(),
+                    (Ops::Base::ToString(dtype) + ", " + Ops::Base::ToString(desc->GetDataType())).c_str(),
+                    "bias inputs must have the same dtype as input_gates when present");
                 return ge::GRAPH_FAILED;
             }
         }
 
         // 2) format：全部输入 + 输出 storage format ∈ {ND}
-        for (const auto* desc : {gatesDesc, hgDesc, hxDesc}) {
+        for (size_t idx : {thnn_fused_gru_cell::INPUT_GATES_IDX, thnn_fused_gru_cell::HIDDEN_GATES_IDX,
+                           thnn_fused_gru_cell::HX_IDX}) {
+            const auto* desc = ctx_->GetInputDesc(idx);
             if (thnn_fused_gru_cell::SUPPORTED_FORMATS.find(desc->GetStorageFormat()) ==
                 thnn_fused_gru_cell::SUPPORTED_FORMATS.end()) {
-                OP_LOGE(node, "format_not_supported: input storage format(%d) != FORMAT_ND",
-                        static_cast<int>(desc->GetStorageFormat()));
+                OP_LOGE_FOR_INVALID_FORMAT(node, inputNames[idx], Ops::Base::ToString(desc->GetStorageFormat()).c_str(),
+                                           "ND");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -613,8 +620,8 @@ private:
             const auto* desc = ctx_->GetOptionalInputDesc(idx);
             if (thnn_fused_gru_cell::SUPPORTED_FORMATS.find(desc->GetStorageFormat()) ==
                 thnn_fused_gru_cell::SUPPORTED_FORMATS.end()) {
-                OP_LOGE(node, "format_not_supported: bias input(%lu) storage format(%d) != FORMAT_ND",
-                        static_cast<unsigned long>(idx), static_cast<int>(desc->GetStorageFormat()));
+                OP_LOGE_FOR_INVALID_FORMAT(node, inputNames[idx], Ops::Base::ToString(desc->GetStorageFormat()).c_str(),
+                                           "ND");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -623,24 +630,28 @@ private:
             OP_CHECK_NULL_WITH_CONTEXT(ctx_, desc);
             if (thnn_fused_gru_cell::SUPPORTED_FORMATS.find(desc->GetStorageFormat()) ==
                 thnn_fused_gru_cell::SUPPORTED_FORMATS.end()) {
-                OP_LOGE(node, "format_not_supported: output(%lu) storage format(%d) != FORMAT_ND",
-                        static_cast<unsigned long>(i), static_cast<int>(desc->GetStorageFormat()));
+                OP_LOGE_FOR_INVALID_FORMAT(node, outputNames[i], Ops::Base::ToString(desc->GetStorageFormat()).c_str(),
+                                           "ND");
                 return ge::GRAPH_FAILED;
             }
         }
 
         // 3) 维度上限：全部 IO rank ≤ MAX_RANK=8
-        for (const auto& dims : rawInputShapes_) {
+        for (size_t idx = 0; idx < rawInputShapes_.size(); ++idx) {
+            const auto& dims = rawInputShapes_[idx];
             if (static_cast<int64_t>(dims.size()) > thnn_fused_gru_cell::MAX_RANK) {
-                OP_LOGE(node, "shape_mismatch: input rank(%lu) exceeds max supported dim %ld",
-                        static_cast<unsigned long>(dims.size()), thnn_fused_gru_cell::MAX_RANK);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    node, inputNames[idx], std::to_string(dims.size()).c_str(),
+                    (std::string("rank must not exceed ") + std::to_string(thnn_fused_gru_cell::MAX_RANK)).c_str());
                 return ge::GRAPH_FAILED;
             }
         }
-        for (const auto& dims : rawOutputShapes_) {
+        for (size_t idx = 0; idx < rawOutputShapes_.size(); ++idx) {
+            const auto& dims = rawOutputShapes_[idx];
             if (static_cast<int64_t>(dims.size()) > thnn_fused_gru_cell::MAX_RANK) {
-                OP_LOGE(node, "shape_mismatch: output rank(%lu) exceeds max supported dim %ld",
-                        static_cast<unsigned long>(dims.size()), thnn_fused_gru_cell::MAX_RANK);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    node, outputNames[idx], std::to_string(dims.size()).c_str(),
+                    (std::string("rank must not exceed ") + std::to_string(thnn_fused_gru_cell::MAX_RANK)).c_str());
                 return ge::GRAPH_FAILED;
             }
         }
@@ -651,29 +662,46 @@ private:
         const std::vector<int64_t>& hx = rawInputShapes_[thnn_fused_gru_cell::HX_IDX];
         // rank(input_gates) == 2
         if (gates.size() != 2) {
-            OP_LOGE(node, "shape_mismatch: input_gates rank(%lu) != 2", static_cast<unsigned long>(gates.size()));
+            OP_LOGE_FOR_INVALID_SHAPEDIM(node, "input_gates", std::to_string(gates.size()).c_str(), "2");
             return ge::GRAPH_FAILED;
         }
         // hidden_gates.shape == input_gates.shape
         if (hiddenGates != gates) {
-            OP_LOGE(node, "shape_mismatch: hidden_gates shape != input_gates shape");
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                node, "hidden_gates, input_gates",
+                (Arr2String(hiddenGates.data(), static_cast<int64_t>(hiddenGates.size())) + ", " +
+                 Arr2String(gates.data(), static_cast<int64_t>(gates.size())))
+                    .c_str(),
+                "shape of hidden_gates must equal shape of input_gates");
             return ge::GRAPH_FAILED;
         }
         // rank(hx) == 2
         if (hx.size() != 2) {
-            OP_LOGE(node, "shape_mismatch: hx rank(%lu) != 2", static_cast<unsigned long>(hx.size()));
+            OP_LOGE_FOR_INVALID_SHAPEDIM(node, "hx", std::to_string(hx.size()).c_str(), "2");
             return ge::GRAPH_FAILED;
         }
         const int64_t batch = gates[0];
         const int64_t hidden = hx[1];
         // input_gates.shape[1] == 3 * hx.shape[1]（门控三等分与 hx 对齐）
         if (gates[1] != thnn_fused_gru_cell::GATE_CNT_PER_HIDDEN * hidden) {
-            OP_LOGE(node, "shape_mismatch: input_gates.shape[1](%ld) != 3 * hx.shape[1](%ld)", gates[1], hidden);
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                node, "input_gates, hx",
+                (Arr2String(gates.data(), static_cast<int64_t>(gates.size())) + ", " +
+                 Arr2String(hx.data(), static_cast<int64_t>(hx.size())))
+                    .c_str(),
+                (std::string("shape[1] of input_gates must equal 3 * hx.shape[1] = ") +
+                 std::to_string(thnn_fused_gru_cell::GATE_CNT_PER_HIDDEN * hidden))
+                    .c_str());
             return ge::GRAPH_FAILED;
         }
         // hx.shape[0] == input_gates.shape[0]（batch 维一致）
         if (hx[0] != batch) {
-            OP_LOGE(node, "shape_mismatch: hx.shape[0](%ld) != input_gates.shape[0](%ld)", hx[0], batch);
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                node, "hx, input_gates",
+                (Arr2String(hx.data(), static_cast<int64_t>(hx.size())) + ", " +
+                 Arr2String(gates.data(), static_cast<int64_t>(gates.size())))
+                    .c_str(),
+                (std::string("shape[0] of hx must equal input_gates.shape[0] = ") + std::to_string(batch)).c_str());
             return ge::GRAPH_FAILED;
         }
         // bias 在位时：rank == 1 且 numel == 3*H（两 bias 同 size 联动锁定）
@@ -685,8 +713,12 @@ private:
             const std::vector<int64_t>& bias = rawInputShapes_[idx];
             if (bias.size() != 1 ||
                 thnn_fused_gru_cell::Numel(bias) != thnn_fused_gru_cell::GATE_CNT_PER_HIDDEN * hidden) {
-                OP_LOGE(node, "shape_mismatch: bias(%lu) must be rank-1 with numel == 3*H(%ld)",
-                        static_cast<unsigned long>(idx), thnn_fused_gru_cell::GATE_CNT_PER_HIDDEN * hidden);
+                const char* biasName = idx == thnn_fused_gru_cell::INPUT_BIAS_IDX ? "input_bias" : "hidden_bias";
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    node, biasName, Arr2String(bias.data(), static_cast<int64_t>(bias.size())).c_str(),
+                    (std::string("bias must be rank-1 with numel equal to 3 * H = ") +
+                     std::to_string(thnn_fused_gru_cell::GATE_CNT_PER_HIDDEN * hidden))
+                        .c_str());
                 return ge::GRAPH_FAILED;
             }
         }

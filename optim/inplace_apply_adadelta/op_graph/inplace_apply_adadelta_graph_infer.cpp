@@ -42,7 +42,11 @@ static ge::graphStatus InferDataType4InplaceApplyAdadelta(gert::InferDataTypeCon
                                                         INPUT_RHO_INDEX,   INPUT_EPSILON_INDEX,      INPUT_GRAD_INDEX};
     for (const int64_t inputIndex : INPUTS_TO_MATCH) {
         if (context->GetInputDataType(inputIndex) != varType) {
-            OP_LOGE(context->GetNodeName(), "all inputs must have the same dtype as var");
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context->GetNodeName(), "var, input",
+                (Ops::Base::ToString(varType) + ", " + Ops::Base::ToString(context->GetInputDataType(inputIndex)))
+                    .c_str(),
+                "all inputs must have the same dtype as var");
             return ge::GRAPH_FAILED;
         }
     }

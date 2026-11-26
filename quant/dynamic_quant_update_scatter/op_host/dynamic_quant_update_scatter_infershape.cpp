@@ -24,9 +24,21 @@ static ge::graphStatus InferShape4DynamicQuantUpdateScatter(gert::InferShapeCont
 {
     OP_LOGD(context->GetNodeName(), "Begin to do Infershape of InferShape4DynamicQuantUpdateScatter.");
     const gert::Shape* varShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
+    OP_CHECK_IF(
+        varShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            Ops::Base::GetOpInfo(context).c_str(), "var",
+            "the shape of required input var is unavailable in the InferShape stage; the infer-shape context does not "
+            "provide shape metadata for this required input"),
+        return ge::GRAPH_FAILED);
     const gert::Shape* varScaleShape = context->GetInputShape(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, varScaleShape);
+    OP_CHECK_IF(
+        varScaleShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            Ops::Base::GetOpInfo(context).c_str(), "var_scale",
+            "the shape of required input var_scale is unavailable in the InferShape stage; the infer-shape context "
+            "does not provide shape metadata for this required input"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape* varOutputShape = context->GetOutputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, varOutputShape);

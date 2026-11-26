@@ -254,7 +254,18 @@ ge::graphStatus GetShapesAndDtypes(const gert::TilingContext* context, TilingInp
 
     if (inputs.hasSmoothScales) {
         auto smoothDesc = context->GetOptionalInputDesc(INDEX_SMOOTH_SCALES);
-        OP_CHECK_NULL_WITH_CONTEXT(context, smoothDesc);
+        if (smoothDesc == nullptr) {
+            const std::string opName = context->GetNodeName() == nullptr ? "DynamicQuantUpdateScatter" :
+                                                                           context->GetNodeName();
+            const std::string reason = "optional input smooth_scales shape is present but GetOptionalInputDesc "
+                                       "returned nullptr; expected a "
+                                       "valid descriptor for the instantiated optional input";
+            const std::vector<const char*> keys = {"opName", "reason"};
+            const std::vector<const char*> values = {opName.c_str(), reason.c_str()};
+            OP_LOGE_WITHOUT_REPORT(opName.c_str(), "%s", reason.c_str());
+            REPORT_PREDEFINED_ERR_MSG("EZ1008", keys, values);
+            return ge::GRAPH_FAILED;
+        }
         OP_CHECK_IF(smoothDesc->GetDataType() != updatesDtype,
                     OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "smooth_scales", "dtype mismatch",
                                                           "smooth_scales dtype must match updates dtype"),
@@ -437,16 +448,17 @@ ge::graphStatus Tiling4DynamicQuantUpdateScatterRegbase(gert::TilingContext* con
     }
     TilingInputs inputs;
     int64_t axis = 0;
-    OP_CHECK_IF(GetPlatformInfo(context, inputs) != ge::GRAPH_SUCCESS,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "platform",
-                                                         "failed to get AscendC platform information"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(GetShapesAndDtypes(context, inputs, axis) != ge::GRAPH_SUCCESS,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "input", "input validation failed"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        GetPlatformInfo(context, inputs) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GetPlatformInfo failed; propagate lower-layer first error"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        GetShapesAndDtypes(context, inputs, axis) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "GetShapesAndDtypes failed; propagate lower-layer first error"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(
         CheckShapeRelations(context, inputs, axis) != ge::GRAPH_SUCCESS,
-        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "shape", "shape relation validation failed"),
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CheckShapeRelations failed; propagate lower-layer first error"),
         return ge::GRAPH_FAILED);
     return FillTilingData(context, inputs);
 }

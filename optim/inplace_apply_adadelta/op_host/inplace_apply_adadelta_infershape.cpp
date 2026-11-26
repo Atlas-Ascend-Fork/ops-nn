@@ -59,6 +59,11 @@ static bool ShapeEqual(const gert::Shape& lhs, const gert::Shape& rhs)
     return true;
 }
 
+static std::string OriginAndStorage(const gert::Shape& origin, const gert::Shape& storage)
+{
+    return Ops::Base::ToString(origin) + " (origin) / " + Ops::Base::ToString(storage) + " (storage)";
+}
+
 static ge::graphStatus InferShape4InplaceApplyAdadelta(gert::InferShapeContext* context)
 {
     const gert::Shape* inputShape = context->GetInputShape(INPUT_VAR_INDEX);
@@ -77,7 +82,12 @@ static ge::graphStatus InferShape4InplaceApplyAdadelta(gert::InferShapeContext* 
         }
         if (!ShapeEqual(var->GetOriginShape(), input->GetOriginShape()) ||
             !ShapeEqual(var->GetStorageShape(), input->GetStorageShape())) {
-            OP_LOGE(context->GetNodeName(), "var and %s must have the same origin and storage shapes", MAIN_NAMES[i]);
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), (std::string("var, ") + MAIN_NAMES[i]).c_str(),
+                (OriginAndStorage(var->GetOriginShape(), var->GetStorageShape()) + ", " +
+                 OriginAndStorage(input->GetOriginShape(), input->GetStorageShape()))
+                    .c_str(),
+                "origin and storage shapes must be the same as var");
             return ge::GRAPH_FAILED;
         }
     }
@@ -91,8 +101,12 @@ static ge::graphStatus InferShape4InplaceApplyAdadelta(gert::InferShapeContext* 
             return ge::GRAPH_FAILED;
         }
         if (input->GetOriginShape().GetDimNum() != 0 || input->GetStorageShape().GetShapeSize() != 1) {
-            OP_LOGE(context->GetNodeName(), "%s must be a rank-0 scalar tensor, got rank %zu with %ld storage elements",
-                    SCALAR_NAMES[i], input->GetOriginShape().GetDimNum(), input->GetStorageShape().GetShapeSize());
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                context->GetNodeName(), SCALAR_NAMES[i],
+                (std::string("must be a rank-0 scalar tensor, got rank ") +
+                 std::to_string(input->GetOriginShape().GetDimNum()) + " with " +
+                 std::to_string(input->GetStorageShape().GetShapeSize()) + " storage elements")
+                    .c_str());
             return ge::GRAPH_FAILED;
         }
     }

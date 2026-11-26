@@ -30,8 +30,9 @@ static ge::graphStatus InferShapeSoftplusGrad(gert::InferShapeContext* context)
         const auto inputShape = context->GetInputShape(i);
         OP_CHECK_NULL_WITH_CONTEXT(context, inputShape);
         if (inputShape->GetDimNum() > MAX_TENSOR_RANK) {
-            OP_LOGE(context->GetNodeName(), "SoftplusGrad input %zu rank %zu exceeds the maximum supported rank %zu.",
-                    i, inputShape->GetDimNum(), MAX_TENSOR_RANK);
+            OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), i == 0 ? "gradients" : "features",
+                                         std::to_string(inputShape->GetDimNum()).c_str(),
+                                         (std::string("not greater than ") + std::to_string(MAX_TENSOR_RANK)).c_str());
             return ge::GRAPH_FAILED;
         }
     }

@@ -143,16 +143,12 @@ inline ge::graphStatus CheckInputParams(gert::TilingContext* context)
         return ge::GRAPH_FAILED);
 
     auto dtype = context->GetInputDesc(INPUT_IDX)->GetDataType();
-    int32_t typeSize = ge::GetSizeByDataType(dtype);
 
     OP_CHECK_IF(
         dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16 && dtype != ge::DT_FLOAT,
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", std::to_string(static_cast<int>(dtype)),
                                               "input dtype only supports fp16, fp32, bf16 currently, please check."),
         return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF((typeSize <= 0), OP_LOGE(context, "typeSize is invalid %d, please check.", typeSize),
-                return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }

@@ -25,7 +25,29 @@
 
 #include "infershape_test_util.h"
 #include "ut_op_common.h"
+#include "base/err_mgr.h"
 #include "../../../op_graph/inplace_apply_adadelta_proto.h"
+
+namespace {
+static void ResetErrMgr()
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    auto context = error_message::GetErrMgrContext();
+    context.work_stream_id = 1U;
+    error_message::SetErrMgrContext(context);
+    (void)error_message::GetErrMgrRawErrorMessages();
+}
+
+static std::string ErrorValue(const error_message::ErrMsgRawItem& error, const std::string& key)
+{
+    for (size_t i = 0; i < error.args_key.size() && i < error.args_value.size(); ++i) {
+        if (error.args_key[i] != nullptr && key == error.args_key[i].get()) {
+            return error.args_value[i] == nullptr ? "" : error.args_value[i].get();
+        }
+    }
+    return "<missing:" + key + ">";
+}
+} // namespace
 
 class InplaceApplyAdadelta : public testing::Test {
 protected:
@@ -149,6 +171,21 @@ TEST_F(InplaceApplyAdadelta, infershape_logical_shapes_must_match)
     inputs[2].MutableStorageShape() = gert::Shape({1});
     inputs[6].MutableStorageShape() = gert::Shape({1});
     EXPECT_EQ(RunInferShape(inputs).status, ge::GRAPH_FAILED);
+}
+
+TEST_F(InplaceApplyAdadelta, infershape_storage_only_mismatch_reports_both_storage_shapes)
+{
+    ResetErrMgr();
+    auto inputs = ValidInputs({2, 3});
+    inputs[1] = gert::StorageShape({2, 3}, {6});
+    EXPECT_EQ(RunInferShape(inputs).status, ge::GRAPH_FAILED);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_STREQ(errors[0].error_id.get(), "EZ0010");
+    EXPECT_EQ(ErrorValue(errors[0], "param_names"), "var, accum");
+    EXPECT_EQ(ErrorValue(errors[0], "incorrect_shapes"),
+              "[2, 3] (origin) / [2, 3] (storage), [2, 3] (origin) / [6] (storage)");
 }
 
 TEST_F(InplaceApplyAdadelta, infershape_scalar_inputs_must_have_rank_0)

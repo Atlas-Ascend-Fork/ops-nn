@@ -82,6 +82,26 @@ constexpr int64_t TILE_A_SMALL_R_ROWS = 64;
 constexpr int64_t TILE_A_SMALL_R_STAT_SLOTS = 12;
 constexpr uint64_t DMA_STRIDE_LIMIT_BYTES = 1ULL << 40;
 
+static std::string Int128ToString(__int128 value)
+{
+    if (value == 0) {
+        return "0";
+    }
+    const bool negative = value < 0;
+    unsigned __int128 magnitude = negative ? static_cast<unsigned __int128>(-(value + 1)) + 1U :
+                                             static_cast<unsigned __int128>(value);
+    std::string digits;
+    while (magnitude != 0) {
+        digits.push_back(static_cast<char>('0' + static_cast<int>(magnitude % 10)));
+        magnitude /= 10;
+    }
+    if (negative) {
+        digits.push_back('-');
+    }
+    std::reverse(digits.begin(), digits.end());
+    return digits;
+}
+
 namespace mvn_v2_host {
 
 inline int64_t ElemBytes(ge::DataType dt) { return (dt == ge::DT_FLOAT) ? 4 : 2; }
@@ -612,16 +632,24 @@ static ge::graphStatus ReadXShape(gert::TilingContext* ctx, int64_t shape[MAX_IN
     const gert::Shape& s = xShape->GetStorageShape();
     const size_t dimNum = s.GetDimNum();
     OP_CHECK_IF(dimNum != static_cast<size_t>(REQUIRED_INPUT_RANK),
-                OP_LOGE(ctx->GetNodeName(), "MVNV2 expects 4-D NCHW input, got rank %zu.", dimNum),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(ctx->GetNodeName(), "x", std::to_string(dimNum).c_str(),
+                                             std::to_string(REQUIRED_INPUT_RANK).c_str()),
                 return ge::GRAPH_FAILED);
     rank = static_cast<int32_t>(dimNum);
     int64_t numel = 1;
     for (int32_t d = 0; d < rank; ++d) {
         const int64_t dim = s.GetDim(d);
-        OP_CHECK_IF(dim < 0, OP_LOGE(ctx->GetNodeName(), "MVNV2: input dim[%d]=%ld must be non-negative.", d, dim),
+        OP_CHECK_IF(dim < 0,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        ctx->GetNodeName(), "x", std::to_string(dim).c_str(),
+                        (std::string("dim[") + std::to_string(d) + "] of x must be non-negative").c_str()),
                     return ge::GRAPH_FAILED);
         OP_CHECK_IF(dim > 0 && numel > std::numeric_limits<int64_t>::max() / dim,
-                    OP_LOGE(ctx->GetNodeName(), "MVNV2: input shape product overflows INT64 at dim[%d]=%ld.", d, dim),
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        ctx->GetNodeName(), "x", Ops::Base::ToString(s).c_str(),
+                        (std::string("product of dims must be representable by INT64 (overflow at dim ") +
+                         std::to_string(d) + ")")
+                            .c_str()),
                     return ge::GRAPH_FAILED);
         numel *= dim;
         shape[d] = dim;
@@ -665,48 +693,58 @@ ge::graphStatus MVNV2Tiling::Run()
     auto* inputDesc = context->GetInputDesc(INPUT_X_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
     ge::DataType dtype = inputDesc->GetDataType();
-    OP_CHECK_IF(
-        dtype != ge::DT_FLOAT16 && dtype != ge::DT_FLOAT,
-        OP_LOGE(context->GetNodeName(), "MVNV2: input dtype %s is not supported, only support FLOAT16 and FLOAT.",
-                ge::TypeUtils::DataTypeToSerialString(dtype).c_str()),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(dtype != ge::DT_FLOAT16 && dtype != ge::DT_FLOAT,
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "x",
+                                          ge::TypeUtils::DataTypeToSerialString(dtype).c_str(), "FLOAT16, FLOAT"),
+                return ge::GRAPH_FAILED);
     auto* outputDesc = context->GetOutputDesc(OUTPUT_Y_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
-    OP_CHECK_IF(outputDesc->GetDataType() != dtype,
-                OP_LOGE(context->GetNodeName(), "MVNV2: output dtype %s must equal input dtype %s.",
-                        ge::TypeUtils::DataTypeToSerialString(outputDesc->GetDataType()).c_str(),
-                        ge::TypeUtils::DataTypeToSerialString(dtype).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        outputDesc->GetDataType() != dtype,
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(context->GetNodeName(), "y, x",
+                                               (ge::TypeUtils::DataTypeToSerialString(outputDesc->GetDataType()) +
+                                                ", " + ge::TypeUtils::DataTypeToSerialString(dtype))
+                                                   .c_str(),
+                                               "output dtype must equal input dtype"),
+        return ge::GRAPH_FAILED);
     const auto* outputShape = context->GetOutputShape(OUTPUT_Y_INDEX);
     OP_CHECK_NULL_WITH_CONTEXT(context, outputShape);
     const gert::Shape& outputStorageShape = outputShape->GetStorageShape();
     OP_CHECK_IF(outputStorageShape.GetDimNum() != static_cast<size_t>(rank),
-                OP_LOGE(context->GetNodeName(), "MVNV2: output rank %zu must equal input rank %d.",
-                        outputStorageShape.GetDimNum(), rank),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "y",
+                                             std::to_string(outputStorageShape.GetDimNum()).c_str(),
+                                             std::to_string(rank).c_str()),
                 return ge::GRAPH_FAILED);
     for (int32_t d = 0; d < rank; ++d) {
         OP_CHECK_IF(outputStorageShape.GetDim(d) != shape[d],
-                    OP_LOGE(context->GetNodeName(), "MVNV2: output dim[%d]=%ld must equal input dim %ld.", d,
-                            outputStorageShape.GetDim(d), shape[d]),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "y", std::to_string(outputStorageShape.GetDim(d)).c_str(),
+                        (std::string("dim[") + std::to_string(d) + "] of y must equal the corresponding x dim " +
+                         std::to_string(shape[d]))
+                            .c_str()),
                     return ge::GRAPH_FAILED);
     }
     OP_CHECK_IF(inputDesc->GetOriginFormat() != ge::FORMAT_NCHW,
-                OP_LOGE(context->GetNodeName(), "MVNV2: input origin format %s must be FORMAT_NCHW.",
-                        ge::TypeUtils::FormatToSerialString(inputDesc->GetOriginFormat()).c_str()),
+                OP_LOGE_FOR_INVALID_FORMAT(context->GetNodeName(), "x",
+                                           ge::TypeUtils::FormatToSerialString(inputDesc->GetOriginFormat()).c_str(),
+                                           "FORMAT_NCHW"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(outputDesc->GetOriginFormat() != ge::FORMAT_NCHW,
-                OP_LOGE(context->GetNodeName(), "MVNV2: output origin format %s must be FORMAT_NCHW.",
-                        ge::TypeUtils::FormatToSerialString(outputDesc->GetOriginFormat()).c_str()),
+                OP_LOGE_FOR_INVALID_FORMAT(context->GetNodeName(), "y",
+                                           ge::TypeUtils::FormatToSerialString(outputDesc->GetOriginFormat()).c_str(),
+                                           "FORMAT_NCHW"),
                 return ge::GRAPH_FAILED);
     ge::Format inputFormat = inputDesc->GetStorageFormat();
     OP_CHECK_IF(inputFormat != ge::FORMAT_ND && inputFormat != ge::FORMAT_NCHW,
-                OP_LOGE(context->GetNodeName(), "MVNV2: input storage format %s must be FORMAT_NCHW or FORMAT_ND.",
-                        ge::TypeUtils::FormatToSerialString(inputFormat).c_str()),
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "x",
+                                                       ge::TypeUtils::FormatToSerialString(inputFormat).c_str(),
+                                                       "storage format of x must be FORMAT_NCHW or FORMAT_ND"),
                 return ge::GRAPH_FAILED);
     ge::Format outputFormat = outputDesc->GetStorageFormat();
     OP_CHECK_IF(outputFormat != ge::FORMAT_ND && outputFormat != ge::FORMAT_NCHW,
-                OP_LOGE(context->GetNodeName(), "MVNV2: output storage format %s must be FORMAT_NCHW or FORMAT_ND.",
-                        ge::TypeUtils::FormatToSerialString(outputFormat).c_str()),
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "y",
+                                                       ge::TypeUtils::FormatToSerialString(outputFormat).c_str(),
+                                                       "storage format of y must be FORMAT_NCHW or FORMAT_ND"),
                 return ge::GRAPH_FAILED);
 
     double eps = DEFAULT_EPS;
@@ -739,7 +777,10 @@ ge::graphStatus MVNV2Tiling::Run()
     }
     for (size_t i = 0; i < axesVec.size(); ++i) {
         OP_CHECK_IF(axesVec[i] < 0 || axesVec[i] >= rank,
-                    OP_LOGE(context->GetNodeName(), "MVNV2: axes[%zu]=%ld out of range [0, %d).", i, axesVec[i], rank),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "axes", std::to_string(axesVec[i]).c_str(),
+                        (std::string("axes elements must be in [0, ") + std::to_string(rank) + ") after normalization")
+                            .c_str()),
                     return ge::GRAPH_FAILED);
     }
 
@@ -784,9 +825,12 @@ ge::graphStatus MVNV2Tiling::Run()
     const int32_t lastAIdx = mvn_v2_host::LastAIdx(fuse.axisNum);
     const __int128 rowStrideBytes = static_cast<__int128>(fuse.axisShape[lastAIdx]) * mvn_v2_host::ElemBytes(dtype);
     OP_CHECK_IF(rowStrideBytes >= static_cast<__int128>(DMA_STRIDE_LIMIT_BYTES),
-                OP_LOGE(context->GetNodeName(),
-                        "MVNV2: DMA row stride for axis size %ld and element size %ld must be less than 2^40 bytes.",
-                        fuse.axisShape[lastAIdx], mvn_v2_host::ElemBytes(dtype)),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context->GetNodeName(), "x", Int128ToString(rowStrideBytes).c_str(),
+                    (std::string("DMA row stride must be less than 2^40 bytes (axis index ") +
+                     std::to_string(lastAIdx) + ", axis size " + std::to_string(fuse.axisShape[lastAIdx]) +
+                     ", element bytes " + std::to_string(mvn_v2_host::ElemBytes(dtype)) + ")")
+                        .c_str()),
                 return ge::GRAPH_FAILED);
 
     mvn_v2_host::UbSplitResult sp;
@@ -859,8 +903,9 @@ ge::graphStatus MVNV2Tiling::Run()
         tilingRet = mvn_v2_host::ComputeBranch0Tiling(in, *td);
     }
     if (tilingRet != 0) {
-        OP_LOGE(context->GetNodeName(), "MVNV2: ComputeBranchTiling failed (isTailR=%d useGroup=%d ret=%d)",
-                fuse.isTailR, useGroup, tilingRet);
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                               "MVNV2: ComputeBranchTiling failed (isTailR=%d useGroup=%d ret=%d)", fuse.isTailR,
+                               useGroup, tilingRet);
         return ge::GRAPH_FAILED;
     }
 
@@ -908,12 +953,12 @@ ge::graphStatus MVNV2Tiling::Run()
         td->usedCoreNum = static_cast<int32_t>(std::min<int64_t>(workItems, coreNum));
     }
 
-    OP_CHECK_IF(
-        !mvn_v2_host::FitsUbBudget(td->preReduceUbSize, td->tmpBufUbSize, td->cacheBufUbSize,
-                                   static_cast<int64_t>(ubSize)),
-        OP_LOGE(context->GetNodeName(), "MVNV2: UB plan exceeds capacity, pre=%ld, tmp=%ld, cache=%ld, ubSize=%lu.",
-                td->preReduceUbSize, td->tmpBufUbSize, td->cacheBufUbSize, ubSize),
-        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(!mvn_v2_host::FitsUbBudget(td->preReduceUbSize, td->tmpBufUbSize, td->cacheBufUbSize,
+                                           static_cast<int64_t>(ubSize)),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(),
+                                       "MVNV2: UB plan exceeds capacity, pre=%ld, tmp=%ld, cache=%ld, ubSize=%lu.",
+                                       td->preReduceUbSize, td->tmpBufUbSize, td->cacheBufUbSize, ubSize),
+                return ge::GRAPH_FAILED);
 
     context->SetTilingKey(GET_TPL_TILING_KEY(MVN_V2_RANK_4));
 

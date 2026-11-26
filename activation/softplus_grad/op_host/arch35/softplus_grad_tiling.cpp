@@ -96,8 +96,9 @@ static ge::graphStatus DoBroadcastTiling(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, outShapePtr);
     const gert::Shape& outShape = outShapePtr->GetStorageShape();
     if (!IsSoftplusGradRankSupported(outShape)) {
-        OP_LOGE(context->GetNodeName(), "SoftplusGrad output rank %zu exceeds the maximum supported rank %zu.",
-                outShape.GetDimNum(), MAX_SOFTPLUS_GRAD_RANK);
+        OP_LOGE_FOR_INVALID_SHAPEDIM(
+            context->GetNodeName(), "backprops", std::to_string(outShape.GetDimNum()).c_str(),
+            (std::string("not greater than ") + std::to_string(MAX_SOFTPLUS_GRAD_RANK)).c_str());
         return ge::GRAPH_FAILED;
     }
     for (uint32_t i = 0; i < context->GetComputeNodeInputNum(); i++) {
@@ -105,8 +106,9 @@ static ge::graphStatus DoBroadcastTiling(gert::TilingContext* context)
         OP_CHECK_NULL_WITH_CONTEXT(context, inShapePtr);
         const gert::Shape& inShape = context->InputIsView(i) ? inShapePtr->GetShape() : inShapePtr->GetStorageShape();
         if (!IsSoftplusGradRankSupported(inShape)) {
-            OP_LOGE(context->GetNodeName(), "SoftplusGrad input %u rank %zu exceeds the maximum supported rank %zu.", i,
-                    inShape.GetDimNum(), MAX_SOFTPLUS_GRAD_RANK);
+            OP_LOGE_FOR_INVALID_SHAPEDIM(
+                context->GetNodeName(), i == 0 ? "gradients" : "features", std::to_string(inShape.GetDimNum()).c_str(),
+                (std::string("not greater than ") + std::to_string(MAX_SOFTPLUS_GRAD_RANK)).c_str());
             return ge::GRAPH_FAILED;
         }
     }
@@ -129,12 +131,16 @@ static ge::graphStatus DoBroadcastTiling(gert::TilingContext* context)
     // Only known positive dimensions participate in the int64 capacity check. Dynamic -1/-2 dimensions remain for
     // the shared dynamic-shape path instead of being converted to large unsigned values.
     if (!IsSoftplusGradKnownElementCountSupported(outShape)) {
-        OP_LOGE(context->GetNodeName(), "SoftplusGrad: known output element count exceeds int64 range.");
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "backprops",
+            (std::string("element count of backprops ") + Ops::Base::ToString(outShape) +
+             " exceeds INT64_MAX (9223372036854775807)"));
         return ge::GRAPH_FAILED;
     }
     Ops::Base::BroadcastBaseTiling<typename SoftplusGradDag<T>::OpDag> brcBaseTiling(context);
     OP_CHECK_IF(brcBaseTiling.DoTiling() == ge::GRAPH_FAILED,
-                OP_LOGE(context->GetNodeName(), "BroadcastBaseTiling DoTiling failed"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "BroadcastBaseTiling DoTiling failed"),
+                return ge::GRAPH_FAILED);
     context->SetTilingKey(GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode()));
     return ge::GRAPH_SUCCESS;
 }

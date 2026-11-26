@@ -115,8 +115,12 @@ static ge::graphStatus ReadScalarAsFp32(gert::TilingContext* context, int32_t in
         }
         *value = static_cast<float>(Ops::Base::fp16_t(*data));
     } else {
-        OP_LOGE(context, "InplaceApplyCenteredRMSProp: scalar input %d invalid dtype=%d", index,
-                static_cast<int>(dtype));
+        OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(),
+                                  index == 4 ? "lr" :
+                                  index == 5 ? "rho" :
+                                  index == 6 ? "momentum" :
+                                               "epsilon",
+                                  Ops::Base::ToString(dtype).c_str(), "FLOAT16, FLOAT");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -147,8 +151,9 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     auto varShape = context->GetInputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, varShape);
     OP_CHECK_IF(varShape->GetStorageShape().GetDimNum() > MAX_TENSOR_RANK,
-                OP_LOGE(context, "InplaceApplyCenteredRMSProp: var rank=%zu exceeds max supported rank %zu",
-                        varShape->GetStorageShape().GetDimNum(), MAX_TENSOR_RANK),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(
+                    context->GetNodeName(), "var", std::to_string(varShape->GetStorageShape().GetDimNum()).c_str(),
+                    (std::string("not greater than ") + std::to_string(MAX_TENSOR_RANK)).c_str()),
                 return ge::GRAPH_FAILED);
     auto varStorageShape = EnsureNotScalar(varShape->GetStorageShape());
     int64_t varSize = varStorageShape.GetShapeSize();
@@ -159,15 +164,21 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     for (size_t i = 0; i < sizeof(tensorInputIndices) / sizeof(tensorInputIndices[0]); i++) {
         auto shape = context->GetInputShape(tensorInputIndices[i]);
         OP_CHECK_NULL_WITH_CONTEXT(context, shape);
-        OP_CHECK_IF(shape->GetStorageShape().GetDimNum() > MAX_TENSOR_RANK,
-                    OP_LOGE(context, "InplaceApplyCenteredRMSProp: %s rank=%zu exceeds max supported rank %zu",
-                            tensorInputNames[i], shape->GetStorageShape().GetDimNum(), MAX_TENSOR_RANK),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            shape->GetStorageShape().GetDimNum() > MAX_TENSOR_RANK,
+            OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), tensorInputNames[i],
+                                         std::to_string(shape->GetStorageShape().GetDimNum()).c_str(),
+                                         (std::string("not greater than ") + std::to_string(MAX_TENSOR_RANK)).c_str()),
+            return ge::GRAPH_FAILED);
         auto storageShape = EnsureNotScalar(shape->GetStorageShape());
         int64_t size = storageShape.GetShapeSize();
         OP_CHECK_IF(size != varSize,
-                    OP_LOGE(context, "InplaceApplyCenteredRMSProp: shape mismatch, var=%ld, %s=%ld", varSize,
-                            tensorInputNames[i], size),
+                    OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+                        context->GetNodeName(), (std::string("var, ") + tensorInputNames[i]).c_str(),
+                        (std::string("var=") + std::to_string(varSize) + ", " + tensorInputNames[i] + "=" +
+                         std::to_string(size))
+                            .c_str(),
+                        "all tensor inputs must have the same shape size as var"),
                     return ge::GRAPH_FAILED);
     }
 
@@ -179,7 +190,8 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
     OP_CHECK_NULL_WITH_CONTEXT(context, varDesc);
     *dataType = varDesc->GetDataType();
     OP_CHECK_IF(supportedDtype.count(*dataType) == 0,
-                OP_LOGE(context, "InplaceApplyCenteredRMSProp: invalid dtype=%d", static_cast<int>(*dataType)),
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "var", Ops::Base::ToString(*dataType).c_str(),
+                                          "FLOAT16, FLOAT"),
                 return ge::GRAPH_FAILED);
 
     // 校验 mg/ms/mom/grad dtype 与 var 一致
@@ -188,8 +200,10 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
         OP_CHECK_NULL_WITH_CONTEXT(context, desc);
         ge::DataType dtype = desc->GetDataType();
         OP_CHECK_IF(dtype != *dataType,
-                    OP_LOGE(context, "InplaceApplyCenteredRMSProp: dtype mismatch, var=%d, %s=%d",
-                            static_cast<int>(*dataType), tensorInputNames[i], static_cast<int>(dtype)),
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        context->GetNodeName(), (std::string("var, ") + tensorInputNames[i]).c_str(),
+                        (Ops::Base::ToString(*dataType) + ", " + Ops::Base::ToString(dtype)).c_str(),
+                        "all tensor inputs must have the same dtype as var"),
                     return ge::GRAPH_FAILED);
     }
 
@@ -202,22 +216,28 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t* 
         auto scalarShape = context->GetInputShape(scalarInputIndices[i]);
         OP_CHECK_NULL_WITH_CONTEXT(context, scalarShape);
         // rank 必须 ≤ 1（标量或仅含一个元素的一维张量）
-        OP_CHECK_IF(scalarShape->GetStorageShape().GetDimNum() > 1,
-                    OP_LOGE(context, "InplaceApplyCenteredRMSProp: %s rank=%zu must be scalar or 1-D",
-                            scalarInputNames[i], scalarShape->GetStorageShape().GetDimNum()),
-                    return ge::GRAPH_FAILED);
-        // 元素数必须为 1
         OP_CHECK_IF(
-            EnsureNotScalar(scalarShape->GetStorageShape()).GetShapeSize() != 1,
-            OP_LOGE(context, "InplaceApplyCenteredRMSProp: %s must have exactly 1 element", scalarInputNames[i]),
+            scalarShape->GetStorageShape().GetDimNum() > 1,
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), scalarInputNames[i],
+                                                     std::to_string(scalarShape->GetStorageShape().GetDimNum()).c_str(),
+                                                     "rank must be 0 (scalar) or 1 (single-element tensor)"),
             return ge::GRAPH_FAILED);
+        // 元素数必须为 1
+        const int64_t scalarSize = EnsureNotScalar(scalarShape->GetStorageShape()).GetShapeSize();
+        OP_CHECK_IF(scalarSize != 1,
+                    OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), scalarInputNames[i],
+                                                              std::to_string(scalarSize).c_str(),
+                                                              "scalar input must contain exactly 1 element"),
+                    return ge::GRAPH_FAILED);
         // dtype 必须与 var 一致（FP16/FP32）
         auto scalarDesc = context->GetInputDesc(scalarInputIndices[i]);
         OP_CHECK_NULL_WITH_CONTEXT(context, scalarDesc);
         ge::DataType scalarDtype = scalarDesc->GetDataType();
         OP_CHECK_IF(scalarDtype != *dataType,
-                    OP_LOGE(context, "InplaceApplyCenteredRMSProp: %s dtype=%d mismatch var=%d", scalarInputNames[i],
-                            static_cast<int>(scalarDtype), static_cast<int>(*dataType)),
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        context->GetNodeName(), (std::string("var, ") + scalarInputNames[i]).c_str(),
+                        (Ops::Base::ToString(*dataType) + ", " + Ops::Base::ToString(scalarDtype)).c_str(),
+                        "dtype of scalar input must equal dtype of var"),
                     return ge::GRAPH_FAILED);
     }
 
@@ -245,24 +265,24 @@ static ge::graphStatus InplaceApplyCenteredRmsPropTilingFunc(gert::TilingContext
     uint64_t ubSize = 0;
     int64_t availableCoreNum = 0;
     OP_CHECK_IF(GetPlatformInfo(context, &ubSize, &availableCoreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
 
     // Step 2: 获取 shape、dtype 信息
     int64_t dim0 = 0;
     ge::DataType dataType = ge::DT_FLOAT;
     OP_CHECK_IF(GetShapeAttrsInfo(context, &dim0, &dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
 
     // Step 3: 获取 WorkspaceSize
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
 
     // Step 4: 设置 TilingData
     InplaceApplyCenteredRmsPropTilingData* tiling = context->GetTilingData<InplaceApplyCenteredRmsPropTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     OP_CHECK_IF(memset_s(tiling, sizeof(InplaceApplyCenteredRmsPropTilingData), 0,
                          sizeof(InplaceApplyCenteredRmsPropTilingData)) != EOK,
-                OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context, "set tiling data error"), return ge::GRAPH_FAILED);
 
     // Step 5: 读取 4 标量参数（lr/rho/momentum/epsilon），统一转换到 FP32
     // 输入顺序：var(0), mg(1), ms(2), mom(3), lr(4), rho(5), momentum(6), epsilon(7), grad(8)

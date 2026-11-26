@@ -19,6 +19,7 @@
 #include "ut_op_util.h"
 #include "ut_op_common.h"
 #include "platform/platform_infos_def.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 
 using namespace ut_util;
 using namespace std;
@@ -777,4 +778,68 @@ TEST_F(DynamicQuantUpdateScatterTiling, dynamic_quant_update_scatter_tiling_07)
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
     std::cout << tiling_data_result << std::endl;
+}
+
+TEST_F(DynamicQuantUpdateScatterTiling, MissingRequiredInputReportsSingleEz0037)
+{
+    static gert::StorageShape var_shape = {{24, 1, 128}, {24, 1, 128}};
+    static gert::StorageShape var_scales_shape = {{24, 1, 1}, {24, 1, 1}};
+    static gert::StorageShape indices_shape = {{24}, {24}};
+    static gert::StorageShape updates_shape = {{24, 1, 128}, {24, 1, 128}};
+    static gert::StorageShape smooth_shape = {{128}, {128}};
+    static gert::StorageShape y_shape = {{24, 1, 128}, {24, 1, 128}};
+    static gert::StorageShape scale_shape = {{24, 1, 1}, {24, 1, 1}};
+    static optiling::DynamicQuantUpdateScatterCompileInfo compile_info;
+    static fe::PlatFormInfos platform_info;
+    static auto param = gert::TilingData::CreateCap(4096);
+    static auto workspace_holder = gert::ContinuousVector::Create<size_t>(4096);
+    static auto workspace = reinterpret_cast<gert::ContinuousVector*>(workspace_holder.get());
+
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("DynamicQuantUpdateScatter"), nullptr);
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl("DynamicQuantUpdateScatter")->tiling;
+    ASSERT_NE(tiling_func, nullptr);
+    ASSERT_EQ(ErrorManager::GetInstance().Init(), 0);
+
+    for (size_t null_index : {size_t{0}, size_t{2}}) {
+        auto holder = gert::TilingContextFaker()
+                          .NodeIoNum(5, 2)
+                          .IrInstanceNum({1, 1, 1, 1, 1})
+                          .InputShapes({&var_shape, &var_scales_shape, &indices_shape, &updates_shape, &smooth_shape})
+                          .OutputShapes({&y_shape, &scale_shape})
+                          .CompileInfo(&compile_info)
+                          .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                          .NodeInputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeInputTd(2, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeInputTd(3, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeInputTd(4, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeOutputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                          .NodeAttrs({{"reduce", Ops::NN::AnyValue::CreateFrom<string>("update")},
+                                      {"axis", Ops::NN::AnyValue::CreateFrom<int64_t>(-2)}})
+                          .TilingData(param.get())
+                          .Workspace(workspace)
+                          .Build();
+        auto* context = holder.GetContext<gert::TilingContext>();
+        ASSERT_NE(context, nullptr);
+        reinterpret_cast<gert::KernelContext*>(context)->MutableInput(null_index)->Set(nullptr, nullptr);
+
+        auto& manager = ErrorManager::GetInstance();
+        manager.GetRawErrorMessages();
+        EXPECT_EQ(tiling_func(context), ge::GRAPH_FAILED);
+        auto errors = manager.GetRawErrorMessages();
+        ASSERT_EQ(errors.size(), 1U);
+        EXPECT_EQ(errors[0].error_id, "EZ0037");
+        const char* expectedParam = null_index == 0 ? "var" : "indices";
+        auto param = errors[0].args_map.find("param_name");
+        ASSERT_NE(param, errors[0].args_map.end());
+        EXPECT_EQ(param->second, expectedParam);
+        auto opName = errors[0].args_map.find("op_name");
+        ASSERT_NE(opName, errors[0].args_map.end());
+        EXPECT_FALSE(opName->second.empty());
+        auto reason = errors[0].args_map.find("reason");
+        ASSERT_NE(reason, errors[0].args_map.end());
+        EXPECT_NE(reason->second.find("shape"), std::string::npos);
+        EXPECT_NE(reason->second.find("Tiling"), std::string::npos);
+    }
 }

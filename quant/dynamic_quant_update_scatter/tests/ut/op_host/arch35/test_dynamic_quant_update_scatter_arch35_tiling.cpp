@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "exe_graph/runtime/storage_shape.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "kernel_run_context_facker.h"
 #include "platform/platform_infos_def.h"
 #include "test_cube_util.h"
@@ -53,7 +54,8 @@ gert::StorageShape MakeShape(const std::vector<int64_t>& dims)
 TilingResult RunTiling(const std::vector<int64_t>& varDims, const std::vector<int64_t>& updatesDims,
                        const std::vector<int64_t>& indicesDims, ge::DataType updatesDtype, ge::DataType indicesDtype,
                        int64_t axis, bool hasSmooth = true, const std::vector<int64_t>& varScaleOverride = {},
-                       const std::vector<int64_t>& smoothOverride = {})
+                       const std::vector<int64_t>& smoothOverride = {}, bool breakSmoothDesc = false,
+                       std::vector<ErrorManager::ErrorItem>* errors = nullptr)
 {
     std::string compileInfoString = R"({
         "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
@@ -164,8 +166,22 @@ TilingResult RunTiling(const std::vector<int64_t>& varDims, const std::vector<in
     context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
+    if (breakSmoothDesc) {
+        auto* nodeInfo = const_cast<gert::ComputeNodeInfo*>(context->GetComputeNodeInfo());
+        auto* instanceInfo = nodeInfo == nullptr ? nullptr : nodeInfo->MutableInputInstanceInfo(4);
+        if (instanceInfo == nullptr) {
+            return {};
+        }
+        instanceInfo->SetInstanceStart(5);
+    }
+
     TilingResult result;
+    auto& manager = ErrorManager::GetInstance();
+    manager.GetRawErrorMessages();
     result.status = opImpl->tiling(context);
+    if (errors != nullptr) {
+        *errors = manager.GetRawErrorMessages();
+    }
     if (result.status == ge::GRAPH_SUCCESS) {
         result.key = context->GetTilingKey();
         result.blockDim = context->GetBlockDim();
@@ -237,4 +253,19 @@ TEST(DynamicQuantUpdateScatterTilingArch35, RejectInvalidSmoothShape)
 {
     auto result = RunTiling({2, 1, 4, 128}, {2, 1, 1, 128}, {2}, ge::DT_FLOAT16, ge::DT_INT32, -2, true, {}, {2, 64});
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+}
+
+TEST(DynamicQuantUpdateScatterTilingArch35, MissingSmoothDescReportsSingleEz1008)
+{
+    ASSERT_EQ(ErrorManager::GetInstance().Init(), 0);
+    std::vector<ErrorManager::ErrorItem> errors;
+    auto result = RunTiling({8, 2, 4, 128}, {8, 2, 2, 128}, {8}, ge::DT_FLOAT16, ge::DT_INT32, -2, true, {}, {}, true,
+                            &errors);
+    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ1008");
+    auto reason = errors[0].args_map.find("reason");
+    ASSERT_NE(reason, errors[0].args_map.end());
+    EXPECT_NE(reason->second.find("smooth_scales"), std::string::npos);
+    EXPECT_NE(reason->second.find("descriptor"), std::string::npos);
 }

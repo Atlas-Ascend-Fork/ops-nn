@@ -347,13 +347,13 @@ static ge::graphStatus CheckShapeParams(gert::TilingContext* context, ReverseInp
 ge::graphStatus GetReverseSequenceShapeAttrsInfo(gert::TilingContext* context, ReverseInputInfo& inputData)
 {
     OP_CHECK_IF(CheckDTypeParams(context, inputData) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "CheckDTypeParams failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CheckDTypeParams failed."), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(CheckAttrParams(context, inputData) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "CheckAttrParams failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CheckAttrParams failed."), return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(CheckShapeParams(context, inputData) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "CheckShapeParams failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CheckShapeParams failed."), return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }

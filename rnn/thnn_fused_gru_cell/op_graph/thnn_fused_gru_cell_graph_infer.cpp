@@ -48,27 +48,33 @@ static ge::graphStatus InferDataTypeForThnnFusedGruCell(gert::InferDataTypeConte
     // 派发锚点：input_gates dtype 必须在 3 个声明组合内
     const ge::DataType anchorDataType = context->GetInputDataType(INPUT_GATES_IDX);
     OP_CHECK_IF(!IsSupportedGruCellDtype(anchorDataType),
-                OP_LOGE(context, "ThnnFusedGruCell: input_gates dtype(%d) not in {float32, float16, bfloat16}",
-                        static_cast<int>(anchorDataType)),
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "input_gates",
+                                          Ops::Base::ToString(anchorDataType).c_str(), "FLOAT, FLOAT16, BF16"),
                 return ge::GRAPH_FAILED);
 
     // 在位输入必须与锚点同 dtype；可选 bias 为 DT_UNDEFINED 表示缺省（≡ 全零），不要求匹配
     for (const size_t idx : {HIDDEN_GATES_IDX, HX_IDX}) {
         const ge::DataType dtype = context->GetInputDataType(idx);
-        OP_CHECK_IF(dtype != anchorDataType,
-                    OP_LOGE(context, "ThnnFusedGruCell: input[%zu] dtype(%d) != input_gates dtype(%d)", idx,
-                            static_cast<int>(dtype), static_cast<int>(anchorDataType)),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            dtype != anchorDataType,
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context->GetNodeName(), idx == HIDDEN_GATES_IDX ? "input_gates, hidden_gates" : "input_gates, hx",
+                (Ops::Base::ToString(anchorDataType) + ", " + Ops::Base::ToString(dtype)).c_str(),
+                "all in-place inputs must have the same dtype as input_gates"),
+            return ge::GRAPH_FAILED);
     }
     for (const size_t idx : {INPUT_BIAS_IDX, HIDDEN_BIAS_IDX}) {
         const ge::DataType biasDataType = context->GetInputDataType(idx);
         if (biasDataType == ge::DT_UNDEFINED) {
             continue;
         }
-        OP_CHECK_IF(biasDataType != anchorDataType,
-                    OP_LOGE(context, "ThnnFusedGruCell: bias input[%zu] dtype(%d) != input_gates dtype(%d)", idx,
-                            static_cast<int>(biasDataType), static_cast<int>(anchorDataType)),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            biasDataType != anchorDataType,
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                context->GetNodeName(), idx == INPUT_BIAS_IDX ? "input_gates, input_bias" : "input_gates, hidden_bias",
+                (Ops::Base::ToString(anchorDataType) + ", " + Ops::Base::ToString(biasDataType)).c_str(),
+                "bias inputs must have the same dtype as input_gates when present"),
+            return ge::GRAPH_FAILED);
     }
 
     // 全部输出（hy, storage）继承锚点输入 dtype

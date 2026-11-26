@@ -54,7 +54,7 @@ constexpr uint64_t LARGE_HEADDIM_TILING_KEY = 2000;
 namespace optiling {
 class ScaledMaskedSoftmaxGradV2Tiling {
 public:
-    explicit ScaledMaskedSoftmaxGradV2Tiling(gert::TilingContext* tilingContext) : context(tilingContext){};
+    explicit ScaledMaskedSoftmaxGradV2Tiling(gert::TilingContext* tilingContext) : context(tilingContext) {};
     ge::graphStatus DoTiling();
     void PrintInfo();
 
@@ -121,15 +121,19 @@ ge::graphStatus ScaledMaskedSoftmaxGradV2Tiling::CheckInputShape()
     OP_CHECK_NULL_WITH_CONTEXT(context, yGradShapePtr);
     auto yGradShape = yGradShapePtr->GetStorageShape();
     int64_t yGradDimNum = yGradShape.GetDimNum();
-    OP_CHECK_IF((yGradDimNum != DIM_NUM), OP_LOGE(context->GetNodeName(), "yGradDimNum must be 4."),
+    OP_CHECK_IF((yGradDimNum != DIM_NUM),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "yGrad", std::to_string(yGradDimNum).c_str(),
+                                             std::to_string(DIM_NUM).c_str()),
                 return ge::GRAPH_FAILED);
     batch = yGradShape.GetDim(DIM_0);
     channel = yGradShape.GetDim(DIM_1);
     seqLength = yGradShape.GetDim(DIM_2);
     headDim = yGradShape.GetDim(DIM_3);
-    OP_CHECK_IF((batch <= 0 || channel <= 0 || seqLength <= 0 || headDim <= 0),
-                OP_LOGE(context->GetNodeName(), "The length of yGradDim must be greater than 0."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (batch <= 0 || channel <= 0 || seqLength <= 0 || headDim <= 0),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "yGrad", Ops::Base::ToString(yGradShape).c_str(),
+                                              "all dimensions of yGrad must be greater than 0"),
+        return ge::GRAPH_FAILED);
 
     auto PlatformInfo = context->GetPlatformInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context, PlatformInfo);
@@ -138,23 +142,36 @@ ge::graphStatus ScaledMaskedSoftmaxGradV2Tiling::CheckInputShape()
         lastDimLimit = LAST_DIM_MAX_SIZE_D;
     }
 
-    OP_CHECK_IF((headDim > lastDimLimit),
-                OP_LOGE(context->GetNodeName(), "The length yGrad dim 3 must be less than or equal to 4096."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (headDim > lastDimLimit),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "yGrad", std::to_string(headDim).c_str(),
+            (std::string("last dimension of yGrad must be less than or equal to ") + std::to_string(lastDimLimit))
+                .c_str()),
+        return ge::GRAPH_FAILED);
 
     // check y
     auto yShapePtr = context->GetInputShape(INPUT_Y_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, yShapePtr);
     auto yShape = yShapePtr->GetStorageShape();
-    OP_CHECK_IF((yShape != yGradShape), OP_LOGE(context->GetNodeName(), "yShape should be same as yGradShape"),
+    OP_CHECK_IF((yShape != yGradShape),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "y, yGrad",
+                    (Ops::Base::ToString(yShape) + ", " + Ops::Base::ToString(yGradShape)).c_str(),
+                    "shape of y must be the same as shape of yGrad"),
                 return ge::GRAPH_FAILED);
 
     // check mask
     auto maskShapePtr = context->GetInputShape(INPUT_MASK_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, maskShapePtr);
+    OP_CHECK_IF(maskShapePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "mask",
+                                                         "mask shape is unavailable from tiling context"),
+                return ge::GRAPH_FAILED);
     auto maskShape = maskShapePtr->GetStorageShape();
     int64_t maskDimNum = maskShape.GetDimNum();
-    OP_CHECK_IF((maskDimNum != DIM_NUM), OP_LOGE(context->GetNodeName(), "maskDimNum must be 4."),
+    OP_CHECK_IF((maskDimNum != DIM_NUM),
+                OP_LOGE_FOR_INVALID_SHAPEDIM(context->GetNodeName(), "mask", std::to_string(maskDimNum).c_str(),
+                                             std::to_string(DIM_NUM).c_str()),
                 return ge::GRAPH_FAILED);
 
     // check input and mask dim
@@ -162,15 +179,22 @@ ge::graphStatus ScaledMaskedSoftmaxGradV2Tiling::CheckInputShape()
     maskChannel = maskShape.GetDim(DIM_1);
     uint64_t maskSeqLength = maskShape.GetDim(DIM_2);
     uint64_t maskHeadDim = maskShape.GetDim(DIM_3);
-    OP_CHECK_IF(
-        (seqLength != maskSeqLength || headDim != maskHeadDim),
-        OP_LOGE(context->GetNodeName(), "The last two dims of mask must be equal to the last two dims of yGrad."),
-        return ge::GRAPH_FAILED);
-    OP_CHECK_IF((maskBatch <= 0 || maskChannel <= 0),
-                OP_LOGE(context->GetNodeName(), "The length of maskDim must be greater than 0."),
+    OP_CHECK_IF((seqLength != maskSeqLength || headDim != maskHeadDim),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "mask, yGrad",
+                    (Ops::Base::ToString(maskShape) + ", " + Ops::Base::ToString(yGradShape)).c_str(),
+                    "the last two dims of mask must be equal to the last two dims of yGrad"),
                 return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (maskBatch <= 0 || maskChannel <= 0),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "mask", Ops::Base::ToString(maskShape).c_str(),
+                                              "all dimensions of mask must be greater than 0"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF(((batch != maskBatch && maskBatch != 1) || (channel != maskChannel && maskChannel != 1)),
-                OP_LOGE(context->GetNodeName(), "mask shape must be broadcast to yGrad shape."),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                    context->GetNodeName(), "mask, yGrad",
+                    (Ops::Base::ToString(maskShape) + ", " + Ops::Base::ToString(yGradShape)).c_str(),
+                    "mask shape must be broadcastable to yGrad shape"),
                 return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
@@ -182,7 +206,9 @@ ge::graphStatus ScaledMaskedSoftmaxGradV2Tiling::CheckInputDtype()
     OP_CHECK_NULL_WITH_CONTEXT(context, inputYGrad);
     auto yGradDtype = inputYGrad->GetDataType();
     OP_CHECK_IF((yGradDtype != ge::DT_FLOAT16 && yGradDtype != ge::DT_FLOAT && yGradDtype != ge::DT_BF16),
-                OP_LOGE(context->GetNodeName(), "yGradDtype should be FP16/BF16/FP32"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "yGrad", Ops::Base::ToString(yGradDtype).c_str(),
+                                          "FLOAT16, FLOAT, BF16"),
+                return ge::GRAPH_FAILED);
 
     dataType = yGradDtype;
     if (dataType == ge::DT_FLOAT) {
@@ -195,14 +221,23 @@ ge::graphStatus ScaledMaskedSoftmaxGradV2Tiling::CheckInputDtype()
     auto inputY = context->GetInputDesc(INPUT_Y_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, inputY);
     auto yDtype = inputY->GetDataType();
-    OP_CHECK_IF((yDtype != yGradDtype), OP_LOGE(context->GetNodeName(), "yDtype should be same as yGradDtype"),
+    OP_CHECK_IF((yDtype != yGradDtype),
+                OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                    context->GetNodeName(), "y, yGrad",
+                    (Ops::Base::ToString(yDtype) + ", " + Ops::Base::ToString(yGradDtype)).c_str(),
+                    "dtype of y must be the same as dtype of yGrad"),
                 return ge::GRAPH_FAILED);
 
     auto inputMask = context->GetInputDesc(INPUT_MASK_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputMask);
-    auto maskDtype = inputMask->GetDataType();
-    OP_CHECK_IF((maskDtype != ge::DT_BOOL), OP_LOGE(context->GetNodeName(), "maskDtype should be bool"),
+    OP_CHECK_IF(inputMask == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "mask",
+                                                         "mask tensor descriptor is unavailable from tiling context"),
                 return ge::GRAPH_FAILED);
+    auto maskDtype = inputMask->GetDataType();
+    OP_CHECK_IF(
+        (maskDtype != ge::DT_BOOL),
+        OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "mask", Ops::Base::ToString(maskDtype).c_str(), "BOOL"),
+        return ge::GRAPH_FAILED);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -349,12 +384,13 @@ ge::graphStatus ScaledMaskedSoftmaxGradV2Tiling::SetTilingParams()
 ge::graphStatus ScaledMaskedSoftmaxGradV2Tiling::DoTiling()
 {
     OP_LOGD(context, "Start running Tiling4ScaledMaskedSoftmaxGradV2.");
-    OP_CHECK_IF((CheckInputShape() != ge::GRAPH_SUCCESS), OP_LOGE(context->GetNodeName(), "InputShape is invalid."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF((CheckInputDtype() != ge::GRAPH_SUCCESS), OP_LOGE(context->GetNodeName(), "InputShape is invalid."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckInputShape() != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "InputShape is invalid."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((CheckInputDtype() != ge::GRAPH_SUCCESS),
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "InputDtype is invalid."), return ge::GRAPH_FAILED);
     OP_CHECK_IF((CheckCoreInfo() != ge::GRAPH_SUCCESS),
-                OP_LOGE(context->GetNodeName(), "CoreNum or ubSize is invalid."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "CoreNum or ubSize is invalid."),
+                return ge::GRAPH_FAILED);
 
     CalcTilingParams();
 

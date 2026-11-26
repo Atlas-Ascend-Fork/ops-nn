@@ -26,6 +26,7 @@
 #include "ut_op_util.h"
 #include "ut_op_common.h"
 #include "platform/platform_infos_def.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "../../../../op_host/arch35/reverse_sequence_tiling.h"
 #include "../../../../op_host/arch35/reverse_sequence_simt_tiling.h"
 #include "../../../../op_host/arch35/reverse_sequence_bs_tiling.h"
@@ -55,7 +56,8 @@ static string to_string(void* buf, size_t size)
 
 static void ExecuteTestCase(ge::DataType data_dtype, ge::DataType seq_dtype, gert::StorageShape data_shape,
                             gert::StorageShape seq_shape, int64_t batchDim, int64_t seqDim, uint64_t tilingKeyValue,
-                            string expectTilingData, ge::graphStatus status = ge::GRAPH_SUCCESS)
+                            string expectTilingData, ge::graphStatus status = ge::GRAPH_SUCCESS,
+                            std::vector<ErrorManager::ErrorItem>* errors = nullptr)
 {
     string compile_info_string = R"({
         "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
@@ -128,7 +130,15 @@ static void ExecuteTestCase(ge::DataType data_dtype, ge::DataType seq_dtype, ger
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
     // workspaces nullptr return failed
+    if (errors != nullptr) {
+        auto& manager = ErrorManager::GetInstance();
+        ASSERT_EQ(manager.Init(), 0);
+        manager.GetRawErrorMessages();
+    }
     EXPECT_EQ(tiling_func(tiling_context), status);
+    if (errors != nullptr) {
+        *errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    }
     if (status == ge::GRAPH_FAILED) {
         return;
     }
@@ -236,4 +246,29 @@ TEST_F(ReverseSequenceTiling, test_tiling_ascendc_int8) // SAB
     int64_t seqDim = 0;
 
     ExecuteTestCase(ge::DT_INT8, ge::DT_INT64, shape1, shape2, batchDim, seqDim, tilingKeyValue, expectTilingData, 0);
+}
+
+// 负例：seq_lengths dtype 非法（仅支持 INT32/INT64），内层正式码首报后外层包装仅日志
+TEST_F(ReverseSequenceTiling, test_tiling_ascendc_invalid_seq_dtype)
+{
+    gert::StorageShape shape1 = {{3, 5}, {3, 5}};
+    gert::StorageShape shape2 = {{3}, {3}};
+
+    std::vector<ErrorManager::ErrorItem> errors;
+    ExecuteTestCase(ge::DT_FLOAT16, ge::DT_FLOAT, shape1, shape2, 0, 1, 0, "", ge::GRAPH_FAILED, &errors);
+
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0020");
+    auto param = errors[0].args_map.find("param_name");
+    ASSERT_NE(param, errors[0].args_map.end());
+    EXPECT_EQ(param->second, "seq_lengths");
+    auto opName = errors[0].args_map.find("op_name");
+    ASSERT_NE(opName, errors[0].args_map.end());
+    EXPECT_FALSE(opName->second.empty());
+    auto incorrectDtype = errors[0].args_map.find("incorrect_dtype");
+    ASSERT_NE(incorrectDtype, errors[0].args_map.end());
+    EXPECT_NE(incorrectDtype->second.find("FLOAT"), std::string::npos);
+    auto reason = errors[0].args_map.find("reason");
+    ASSERT_NE(reason, errors[0].args_map.end());
+    EXPECT_NE(reason->second.find("seq_lengths"), std::string::npos);
 }

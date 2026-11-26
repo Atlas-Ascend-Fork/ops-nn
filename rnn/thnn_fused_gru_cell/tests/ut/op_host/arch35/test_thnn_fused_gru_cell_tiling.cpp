@@ -20,6 +20,7 @@
 
 #include "tiling_case_executor.h"
 #include "exe_graph/runtime/storage_shape.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "../../../../op_host/arch35/thnn_fused_gru_cell_tiling_arch35.h"
 #include "../../../../op_kernel/arch35/thnn_fused_gru_cell_struct.h"
 #include "../../../../op_kernel/arch35/thnn_fused_gru_cell_tiling_struct.h"
@@ -46,7 +47,7 @@ protected:
 static void RunThnnFusedGruCellTiling(const vector<TensorDesc>& inputs, const vector<TensorDesc>& outputs,
                                       const vector<uint32_t>& inputInstances, const vector<uint32_t>& outputInstances,
                                       ge::DataType dataType, ge::graphStatus expectStatus, uint64_t expectTilingKey,
-                                      bool verifyFields = true)
+                                      bool verifyFields = true, std::vector<ErrorManager::ErrorItem>* errors = nullptr)
 {
     (void)dataType;
     // CompileInfo 由 TilingParse 产物口径预填（coreNum / ubSize），ReadPlatform 源①直接采纳
@@ -55,7 +56,15 @@ static void RunThnnFusedGruCellTiling(const vector<TensorDesc>& inputs, const ve
                                  UT_CORE_NUM, UT_UB_SIZE, UT_TILING_DATA_SIZE);
 
     TilingInfo info;
+    if (errors != nullptr) {
+        auto& manager = ErrorManager::GetInstance();
+        ASSERT_EQ(manager.Init(), 0);
+        manager.GetRawErrorMessages();
+    }
     const bool succeeded = ExecuteTiling(para, info);
+    if (errors != nullptr) {
+        *errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    }
     EXPECT_EQ(succeeded, expectStatus == ge::GRAPH_SUCCESS);
     if (!succeeded) {
         return;
@@ -305,4 +314,74 @@ TEST_F(ThnnFusedGruCellTiling, thnn_fused_gru_cell_bias_numel_mismatch)
     vector<uint32_t> outputInstances = {1, 1};
     RunThnnFusedGruCellTiling(inputs, outputs, inputInstances, outputInstances, ge::DT_FLOAT, ge::GRAPH_FAILED, 0,
                               false);
+}
+
+// 负例7: hidden_gates dtype 与 input_gates 不一致（EZ0021 多参数 dtype 诊断）
+TEST_F(ThnnFusedGruCellTiling, thnn_fused_gru_cell_inplace_dtype_mismatch)
+{
+    gert::StorageShape gatesShape = {{4, 24}, {4, 24}};
+    gert::StorageShape commonShape = {{4, 8}, {4, 8}};
+    gert::StorageShape storageShape = {{4, 40}, {4, 40}};
+
+    vector<TensorDesc> inputs = {
+        {gatesShape, ge::DT_FLOAT, ge::FORMAT_ND},
+        {gatesShape, ge::DT_FLOAT16, ge::FORMAT_ND}, // hidden_gates 与锚点不一致
+        {commonShape, ge::DT_FLOAT, ge::FORMAT_ND},
+    };
+    vector<TensorDesc> outputs = {
+        {commonShape, ge::DT_FLOAT, ge::FORMAT_ND},
+        {storageShape, ge::DT_FLOAT, ge::FORMAT_ND},
+    };
+    vector<uint32_t> inputInstances = {1, 1, 1, 0, 0};
+    vector<uint32_t> outputInstances = {1, 1};
+    std::vector<ErrorManager::ErrorItem> errors;
+    RunThnnFusedGruCellTiling(inputs, outputs, inputInstances, outputInstances, ge::DT_FLOAT, ge::GRAPH_FAILED, 0,
+                              false, &errors);
+
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0021");
+    auto paramNames = errors[0].args_map.find("param_names");
+    ASSERT_NE(paramNames, errors[0].args_map.end());
+    EXPECT_NE(paramNames->second.find("hidden_gates"), std::string::npos);
+    auto incorrectDtypes = errors[0].args_map.find("incorrect_dtypes");
+    ASSERT_NE(incorrectDtypes, errors[0].args_map.end());
+    EXPECT_NE(incorrectDtypes->second.find("FLOAT16"), std::string::npos);
+    auto reason = errors[0].args_map.find("reason");
+    ASSERT_NE(reason, errors[0].args_map.end());
+    EXPECT_FALSE(reason->second.empty());
+}
+
+// 负例8: input_gates storage format != ND（EZ0017 单参数 format 诊断）
+TEST_F(ThnnFusedGruCellTiling, thnn_fused_gru_cell_input_format_not_nd)
+{
+    gert::StorageShape gatesShape = {{4, 24}, {4, 24}};
+    gert::StorageShape commonShape = {{4, 8}, {4, 8}};
+    gert::StorageShape storageShape = {{4, 40}, {4, 40}};
+
+    vector<TensorDesc> inputs = {
+        {gatesShape, ge::DT_FLOAT, ge::FORMAT_FRACTAL_NZ},
+        {gatesShape, ge::DT_FLOAT, ge::FORMAT_ND},
+        {commonShape, ge::DT_FLOAT, ge::FORMAT_ND},
+    };
+    vector<TensorDesc> outputs = {
+        {commonShape, ge::DT_FLOAT, ge::FORMAT_ND},
+        {storageShape, ge::DT_FLOAT, ge::FORMAT_ND},
+    };
+    vector<uint32_t> inputInstances = {1, 1, 1, 0, 0};
+    vector<uint32_t> outputInstances = {1, 1};
+    std::vector<ErrorManager::ErrorItem> errors;
+    RunThnnFusedGruCellTiling(inputs, outputs, inputInstances, outputInstances, ge::DT_FLOAT, ge::GRAPH_FAILED, 0,
+                              false, &errors);
+
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0017");
+    auto param = errors[0].args_map.find("param_name");
+    ASSERT_NE(param, errors[0].args_map.end());
+    EXPECT_EQ(param->second, "input_gates");
+    auto correctFormat = errors[0].args_map.find("correct_format");
+    ASSERT_NE(correctFormat, errors[0].args_map.end());
+    EXPECT_EQ(correctFormat->second, "ND");
+    auto incorrectFormat = errors[0].args_map.find("incorrect_format");
+    ASSERT_NE(incorrectFormat, errors[0].args_map.end());
+    EXPECT_FALSE(incorrectFormat->second.empty());
 }

@@ -15,6 +15,8 @@
 #include "kernel_run_context_facker.h"
 #include "infershape_test_util.h"
 #include "ut_op_common.h"
+#include "base/context_builder/op_infer_shape_context_builder.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "register/op_impl_registry.h"
 #include "log/log.h"
 #include "platform/platform_info.h"
@@ -194,6 +196,71 @@ TEST_F(DynamicQuantUpdateScatter, DynamicQuantUpdateScatter_InferDtype_case_1)
         EXPECT_EQ(context->GetOutputDataType(0), output_var);
         EXPECT_EQ(context->GetOutputDataType(1), output_var_scale);
     }
+}
+
+TEST_F(DynamicQuantUpdateScatter, InferShapeMissingVarReportsSingleEz0037)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("DynamicQuantUpdateScatter")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+    ASSERT_EQ(ErrorManager::GetInstance().Init(), 0);
+    ErrorManager::GetInstance().GetRawErrorMessages();
+
+    gert::OpInferShapeContextBuilder builder;
+    builder.OpType("DynamicQuantUpdateScatter").OpName("dqs_infershape_missing_var");
+    builder.IONum(2, 2);
+    builder.OutputTensorDesc(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND);
+    builder.OutputTensorDesc(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    auto holder = builder.Build();
+    auto* context = holder.GetContext();
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(context->GetInputShape(0), nullptr);
+
+    EXPECT_EQ(inferShapeFunc(context), ge::GRAPH_FAILED);
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0037");
+    ASSERT_EQ(errors[0].args_map.count("param_name"), 1U);
+    EXPECT_EQ(errors[0].args_map.at("param_name"), "var");
+    ASSERT_EQ(errors[0].args_map.count("op_name"), 1U);
+    EXPECT_FALSE(errors[0].args_map.at("op_name").empty());
+    ASSERT_EQ(errors[0].args_map.count("reason"), 1U);
+    EXPECT_NE(errors[0].args_map.at("reason").find("shape"), std::string::npos);
+    EXPECT_NE(errors[0].args_map.at("reason").find("InferShape"), std::string::npos);
+}
+
+TEST_F(DynamicQuantUpdateScatter, InferShapeMissingVarScaleReportsSingleEz0037)
+{
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("DynamicQuantUpdateScatter")->infer_shape;
+    ASSERT_NE(inferShapeFunc, nullptr);
+    ASSERT_EQ(ErrorManager::GetInstance().Init(), 0);
+    ErrorManager::GetInstance().GetRawErrorMessages();
+
+    gert::Tensor varTensor;
+    varTensor.MutableOriginShape() = gert::Shape{24, 1, 128};
+    varTensor.MutableStorageShape() = gert::Shape{24, 1, 128};
+    gert::OpInferShapeContextBuilder builder;
+    builder.OpType("DynamicQuantUpdateScatter").OpName("dqs_infershape_missing_var_scale");
+    builder.IONum(2, 2);
+    builder.InputTensors({&varTensor});
+    builder.OutputTensorDesc(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND);
+    builder.OutputTensorDesc(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    auto holder = builder.Build();
+    auto* context = holder.GetContext();
+    ASSERT_NE(context, nullptr);
+    ASSERT_NE(context->GetInputShape(0), nullptr);
+    ASSERT_EQ(context->GetInputShape(1), nullptr);
+
+    EXPECT_EQ(inferShapeFunc(context), ge::GRAPH_FAILED);
+    auto errors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0].error_id, "EZ0037");
+    ASSERT_EQ(errors[0].args_map.count("param_name"), 1U);
+    EXPECT_EQ(errors[0].args_map.at("param_name"), "var_scale");
+    ASSERT_EQ(errors[0].args_map.count("op_name"), 1U);
+    EXPECT_FALSE(errors[0].args_map.at("op_name").empty());
+    ASSERT_EQ(errors[0].args_map.count("reason"), 1U);
+    EXPECT_NE(errors[0].args_map.at("reason").find("shape"), std::string::npos);
+    EXPECT_NE(errors[0].args_map.at("reason").find("InferShape"), std::string::npos);
 }
 
 } // namespace

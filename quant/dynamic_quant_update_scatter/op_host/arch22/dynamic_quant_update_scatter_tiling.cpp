@@ -766,9 +766,21 @@ static ge::graphStatus TilingForDynamicQuantUpdateScatter(gert::TilingContext* c
     OP_LOGD(context->GetNodeName(), "TilingForDynamicQuantUpdateScatter in");
 
     auto dataShape = context->GetInputShape(0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, dataShape);
+    OP_CHECK_IF(
+        dataShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            Ops::Base::GetOpInfo(context).c_str(), "var",
+            "the shape of required input var is unavailable in the Tiling stage; the tiling context does not provide "
+            "shape metadata for this required input"),
+        return ge::GRAPH_FAILED);
     auto indicesShape = context->GetInputShape(INDEX_INDICES);
-    OP_CHECK_NULL_WITH_CONTEXT(context, indicesShape);
+    OP_CHECK_IF(
+        indicesShape == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            Ops::Base::GetOpInfo(context).c_str(), "indices",
+            "the shape of required input indices is unavailable in the Tiling stage; the tiling context does not "
+            "provide shape metadata for this required input"),
+        return ge::GRAPH_FAILED);
 
     const auto& indicesOriginShape = EnsureNotScalar(indicesShape->GetOriginShape());
 

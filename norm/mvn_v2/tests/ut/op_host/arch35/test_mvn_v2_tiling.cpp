@@ -29,6 +29,7 @@
 #include "register/op_impl_registry.h"
 #include "test_cube_util.h"
 #include "ut_op_util.h"
+#include "base/err_mgr.h"
 #include "../../../../op_host/arch35/mvn_v2_tiling_arch35.h"
 #include "../../../../op_kernel/arch35/mvn_v2_struct.h"
 
@@ -168,6 +169,59 @@ TilingResult RunTiling(const std::vector<int64_t>& inputDims, const std::vector<
 
 constexpr float EPS_DEFAULT = 1.0e-9f;
 const std::vector<int64_t> AXES_DEFAULT = {0, 2, 3};
+
+void ResetErrMgr()
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    // INTERNAL_MODE records against a work stream; the default id 0 is invalid,
+    // so bind a stable non-zero id before observing the tiling call.
+    auto context = error_message::GetErrMgrContext();
+    context.work_stream_id = 1U;
+    error_message::SetErrMgrContext(context);
+    (void)error_message::GetErrMgrRawErrorMessages();
+}
+
+using ErrMsgs = std::vector<error_message::ErrMsgRawItem>;
+
+bool HasEZCode(const ErrMsgs& errors, const std::string& code)
+{
+    for (const auto& e : errors) {
+        if (e.error_id != nullptr && code == e.error_id.get()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+size_t CountEZCode(const ErrMsgs& errors, const std::string& code)
+{
+    size_t count = 0;
+    for (const auto& e : errors) {
+        if (e.error_id != nullptr && code == e.error_id.get()) {
+            ++count;
+        }
+    }
+    return count;
+}
+const error_message::ErrMsgRawItem* FindEZCode(const ErrMsgs& errors, const std::string& code)
+{
+    for (const auto& e : errors) {
+        if (e.error_id != nullptr && code == e.error_id.get()) {
+            return &e;
+        }
+    }
+    return nullptr;
+}
+
+static std::string ArgValue(const error_message::ErrMsgRawItem* item, const std::string& key)
+{
+    for (size_t i = 0; i < item->args_key.size() && i < item->args_value.size(); ++i) {
+        if (item->args_key[i] != nullptr && key == item->args_key[i].get()) {
+            return item->args_value[i] != nullptr ? item->args_value[i].get() : "";
+        }
+    }
+    return "";
+}
 } // namespace
 
 TEST(MvnV2Tiling, IsRegistered)
@@ -351,8 +405,18 @@ TEST(MvnV2Tiling, EnforcesArch35DmaStrideLimit)
     const std::vector<int64_t> axesChannel = {1};
     constexpr int64_t fp32ElemsAtLimit = 1LL << 38;
     EXPECT_EQ(RunTiling({1, 1, 1, fp32ElemsAtLimit - 1}, &axesChannel, EPS_DEFAULT).status, ge::GRAPH_SUCCESS);
-    EXPECT_EQ(RunTiling({1, 1, 1, fp32ElemsAtLimit}, &axesChannel, EPS_DEFAULT).status, ge::GRAPH_FAILED);
     EXPECT_EQ(RunTiling({1, 1, 1, fp32ElemsAtLimit + 1}, &axesChannel, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+
+    ResetErrMgr();
+    EXPECT_EQ(RunTiling({1, 1, 1, fp32ElemsAtLimit}, &axesChannel, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    const auto& strideError = errors.front();
+    ASSERT_NE(strideError.error_id, nullptr);
+    EXPECT_STREQ(strideError.error_id.get(), "EZ0015");
+    EXPECT_EQ(ArgValue(&strideError, "param_name"), "x");
+    EXPECT_EQ(ArgValue(&strideError, "incorrect_size"), "1099511627776");
+    EXPECT_NE(ArgValue(&strideError, "reason").find("2^40"), std::string::npos);
 }
 
 TEST(MvnV2Tiling, HandlesInt64CapacityBoundariesWithoutPrivateInt32Cap)
@@ -379,10 +443,25 @@ TEST(MvnV2Tiling, HandlesInt64CapacityBoundariesWithoutPrivateInt32Cap)
     ASSERT_EQ(largeProduct.status, ge::GRAPH_SUCCESS);
     EXPECT_GT(largeProduct.workspace, 0U);
     EXPECT_LE(PlannedUbBytes(largeProduct.data), 253952);
+    ResetErrMgr();
     EXPECT_EQ(RunTiling({3037000500LL, 3037000500LL, 1, 1}, &axesChannel, EPS_DEFAULT).status, ge::GRAPH_FAILED);
+    const auto productErrors = error_message::GetErrMgrRawErrorMessages();
+    EXPECT_TRUE(HasEZCode(productErrors, "EZ0009"));
+    EXPECT_EQ(CountEZCode(productErrors, "EZ0009"), 1U);
+    EXPECT_FALSE(HasEZCode(productErrors, "EZ9999"));
+    const auto* overflowItem = FindEZCode(productErrors, "EZ0009");
+    ASSERT_NE(overflowItem, nullptr);
+    ASSERT_GE(overflowItem->args_value.size(), 4U);
+    EXPECT_EQ(ArgValue(overflowItem, "param_name"), "x");
+    EXPECT_NE(ArgValue(overflowItem, "reason").find("overflow at dim"), std::string::npos);
+    EXPECT_EQ(ArgValue(overflowItem, "incorrect_shape"), "[3037000500, 3037000500, 1, 1]");
 
+    ResetErrMgr();
     EXPECT_EQ(RunTiling({std::numeric_limits<int64_t>::max(), 2, 1, 1}, &axesFirst, EPS_DEFAULT).status,
               ge::GRAPH_FAILED);
+    const auto int64Errors = error_message::GetErrMgrRawErrorMessages();
+    EXPECT_TRUE(HasEZCode(int64Errors, "EZ0009"));
+    EXPECT_FALSE(HasEZCode(int64Errors, "EZ9999"));
 
     const std::vector<int64_t> axesFirstAndHeight = {0, 2};
     const auto alignmentInflation = RunTiling({2, 1LL << 59, 2, 2}, &axesFirstAndHeight, EPS_DEFAULT, ge::DT_FLOAT16,
