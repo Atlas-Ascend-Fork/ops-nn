@@ -8,6 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include <algorithm>
 #include <gtest/gtest.h>
 #include <iostream>
 #include <map>
@@ -24,6 +25,8 @@
 #include "ut_op_util.h"
 #include "ut_op_common.h"
 #include "platform/platform_infos_def.h"
+#include "../../../../op_kernel/arch35/ascend_requant_flat_route.h"
+#include "../../../../op_kernel/arch35/ascend_requant_tiling_data.h"
 
 using namespace ut_util;
 using namespace std;
@@ -39,6 +42,8 @@ constexpr char kCompileInfo[] = R"({
                     "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
                     "CORE_NUM": 24}
 })";
+
+constexpr int64_t kUtCoreNum = 24;
 
 struct AscendRequantCompileInfoForTest {};
 
@@ -66,6 +71,32 @@ void SetupKernelHolder(fe::PlatFormInfos& platformInfo, AscendRequantCompileInfo
     kernelHolder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     kernelHolder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes(
         "AICoreintrinsicDtypeMap", const_cast<map<string, string>&>(intrinsics));
+}
+
+template <int64_t R>
+AscendRequantTilingData<R>* FetchTilingData(gert::TilingContext* tilingContext)
+{
+    auto* tilingData = tilingContext->GetTilingData<AscendRequantTilingData<R>>();
+    EXPECT_NE(tilingData, nullptr);
+    return tilingData;
+}
+
+void CheckFlatTilingInvariants(const FlatRouteTiling& flat)
+{
+    EXPECT_EQ(flat.tileElems % ASCEND_REQUANT_FLAT_ALIGN_ELEMS, 0);
+    EXPECT_EQ(flat.totalTiles, (flat.flatElems + flat.tileElems - 1) / flat.tileElems);
+    EXPECT_EQ(flat.numCores, std::min(flat.totalTiles, kUtCoreNum));
+    EXPECT_EQ(flat.tilesMain, flat.totalTiles / flat.numCores);
+    EXPECT_EQ(flat.coresTail, flat.totalTiles % flat.numCores);
+    if (flat.route == ASCEND_REQUANT_ROUTE_PERIODIC) {
+        EXPECT_LE(flat.scalePeriod, ASCEND_REQUANT_FLAT_VEC_ELEMS);
+        EXPECT_EQ(ASCEND_REQUANT_FLAT_VEC_ELEMS % flat.scalePeriod, 0);
+        EXPECT_LE(flat.scaleInitElems, flat.scalePeriod);
+    } else if (flat.route == ASCEND_REQUANT_ROUTE_CONTIG) {
+        EXPECT_LE(flat.tileElems, flat.scalePeriod);
+        EXPECT_EQ((flat.scalePeriod * ASCEND_REQUANT_FLAT_S_BYTES) % ASCEND_REQUANT_FLAT_MTE_ALIGN_BYTES, 0);
+        EXPECT_EQ(flat.scaleInitElems, 0);
+    }
 }
 
 } // namespace
@@ -688,4 +719,228 @@ TEST_F(AscendRequantTilingTest, tiling_total_elements_overflow_rejected)
                       .Workspace(wsSize)
                       .Build();
     EXPECT_NE(tilingFunc(holder.GetContext<gert::TilingContext>()), ge::GRAPH_SUCCESS);
+}
+
+TEST_F(AscendRequantTilingTest, tiling_flat_scalar_route_rank8)
+{
+    fe::PlatFormInfos platformInfo;
+    map<string, string> socInfos, aicoreSpec, intrinsics;
+    SetupPlatform(platformInfo, socInfos, aicoreSpec, intrinsics);
+    AscendRequantCompileInfoForTest compileInfo;
+    gert::KernelRunContextHolder kernelHolder;
+    SetupKernelHolder(platformInfo, compileInfo, socInfos, aicoreSpec, intrinsics, kernelHolder);
+
+    gert::StorageShape xShape = {{2, 64, 64, 64, 8, 2, 2, 2}, {2, 64, 64, 64, 8, 2, 2, 2}};
+    gert::StorageShape sShape = {{1}, {1}};
+    gert::StorageShape yShape = {{2, 64, 64, 64, 8, 2, 2, 2}, {2, 64, 64, 64, 8, 2, 2, 2}};
+
+    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("AscendRequant")->tiling;
+    ASSERT_NE(tilingFunc, nullptr);
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto* wsSize = reinterpret_cast<gert::ContinuousVector*>(wsHolder.get());
+
+    bool reluFlag = false;
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("AscendRequant")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&xShape, &sShape})
+                      .OutputShapes({&yShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_UINT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"relu_flag", Ops::NN::AnyValue::CreateFrom<bool>(reluFlag)}})
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+    auto* tilingContext = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tilingContext, nullptr);
+    EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
+
+    auto* tilingData = FetchTilingData<8>(tilingContext);
+    ASSERT_NE(tilingData, nullptr);
+    EXPECT_EQ(tilingData->rank, 8);
+    EXPECT_EQ(tilingData->flat.route, ASCEND_REQUANT_ROUTE_SCALAR);
+    EXPECT_EQ(tilingData->flat.flatElems, 33554432);
+    EXPECT_EQ(tilingData->flat.tileElems, 51840);
+    EXPECT_EQ(tilingData->flat.totalTiles, 648);
+    EXPECT_EQ(tilingData->flat.numCores, 24);
+    EXPECT_EQ(tilingData->flat.tilesMain, 27);
+    EXPECT_EQ(tilingData->flat.coresTail, 0);
+    EXPECT_EQ(tilingData->flat.scalePeriod, 1);
+    EXPECT_EQ(tilingData->flat.scaleInitElems, 1);
+    EXPECT_EQ(tilingContext->GetBlockDim(), static_cast<uint32_t>(kUtCoreNum));
+    CheckFlatTilingInvariants(tilingData->flat);
+}
+
+TEST_F(AscendRequantTilingTest, tiling_flat_legacy_route_rank4)
+{
+    fe::PlatFormInfos platformInfo;
+    map<string, string> socInfos, aicoreSpec, intrinsics;
+    SetupPlatform(platformInfo, socInfos, aicoreSpec, intrinsics);
+    AscendRequantCompileInfoForTest compileInfo;
+    gert::KernelRunContextHolder kernelHolder;
+    SetupKernelHolder(platformInfo, compileInfo, socInfos, aicoreSpec, intrinsics, kernelHolder);
+
+    gert::StorageShape xShape = {{8, 16, 16, 16}, {8, 16, 16, 16}};
+    gert::StorageShape sShape = {{8, 1, 16, 1}, {8, 1, 16, 1}};
+    gert::StorageShape yShape = {{8, 16, 16, 16}, {8, 16, 16, 16}};
+
+    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("AscendRequant")->tiling;
+    ASSERT_NE(tilingFunc, nullptr);
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto* wsSize = reinterpret_cast<gert::ContinuousVector*>(wsHolder.get());
+
+    bool reluFlag = true;
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("AscendRequant")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&xShape, &sShape})
+                      .OutputShapes({&yShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_UINT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"relu_flag", Ops::NN::AnyValue::CreateFrom<bool>(reluFlag)}})
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+    auto* tilingContext = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tilingContext, nullptr);
+    EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
+
+    auto* tilingData = FetchTilingData<4>(tilingContext);
+    ASSERT_NE(tilingData, nullptr);
+    EXPECT_EQ(tilingData->rank, 4);
+    EXPECT_EQ(tilingData->flat.route, ASCEND_REQUANT_ROUTE_LEGACY);
+    EXPECT_EQ(tilingData->flat.flatElems, 0);
+    EXPECT_EQ(tilingData->flat.tileElems, 0);
+    EXPECT_EQ(tilingData->flat.totalTiles, 0);
+    EXPECT_EQ(tilingData->flat.numCores, 0);
+    EXPECT_EQ(tilingData->flat.tilesMain, 0);
+    EXPECT_EQ(tilingData->flat.coresTail, 0);
+    EXPECT_EQ(tilingData->flat.scalePeriod, 0);
+    EXPECT_EQ(tilingData->flat.scaleInitElems, 0);
+    EXPECT_GE(tilingData->multicore.numCores, 1);
+    EXPECT_EQ(tilingContext->GetBlockDim(), static_cast<uint32_t>(tilingData->multicore.numCores));
+}
+
+TEST_F(AscendRequantTilingTest, tiling_flat_periodic_route_rank3)
+{
+    fe::PlatFormInfos platformInfo;
+    map<string, string> socInfos, aicoreSpec, intrinsics;
+    SetupPlatform(platformInfo, socInfos, aicoreSpec, intrinsics);
+    AscendRequantCompileInfoForTest compileInfo;
+    gert::KernelRunContextHolder kernelHolder;
+    SetupKernelHolder(platformInfo, compileInfo, socInfos, aicoreSpec, intrinsics, kernelHolder);
+
+    gert::StorageShape xShape = {{1000000, 2, 4}, {1000000, 2, 4}};
+    gert::StorageShape sShape = {{1, 2, 1}, {1, 2, 1}};
+    gert::StorageShape yShape = {{1000000, 2, 4}, {1000000, 2, 4}};
+
+    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("AscendRequant")->tiling;
+    ASSERT_NE(tilingFunc, nullptr);
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto* wsSize = reinterpret_cast<gert::ContinuousVector*>(wsHolder.get());
+
+    bool reluFlag = false;
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("AscendRequant")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&xShape, &sShape})
+                      .OutputShapes({&yShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_UINT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"relu_flag", Ops::NN::AnyValue::CreateFrom<bool>(reluFlag)}})
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+    auto* tilingContext = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tilingContext, nullptr);
+    EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
+
+    auto* tilingData = FetchTilingData<4>(tilingContext);
+    ASSERT_NE(tilingData, nullptr);
+    EXPECT_EQ(tilingData->rank, 3);
+    EXPECT_EQ(tilingData->flat.route, ASCEND_REQUANT_ROUTE_PERIODIC);
+    EXPECT_EQ(tilingData->flat.flatElems, 8000000);
+    EXPECT_EQ(tilingData->flat.tileElems, 47680);
+    EXPECT_EQ(tilingData->flat.totalTiles, 168);
+    EXPECT_EQ(tilingData->flat.numCores, 24);
+    EXPECT_EQ(tilingData->flat.tilesMain, 7);
+    EXPECT_EQ(tilingData->flat.coresTail, 0);
+    EXPECT_EQ(tilingData->flat.scalePeriod, 8);
+    EXPECT_EQ(tilingData->flat.scaleInitElems, 2);
+    EXPECT_EQ(tilingContext->GetBlockDim(), static_cast<uint32_t>(kUtCoreNum));
+    CheckFlatTilingInvariants(tilingData->flat);
+}
+
+TEST_F(AscendRequantTilingTest, tiling_flat_contig_route_rank2)
+{
+    fe::PlatFormInfos platformInfo;
+    map<string, string> socInfos, aicoreSpec, intrinsics;
+    SetupPlatform(platformInfo, socInfos, aicoreSpec, intrinsics);
+    AscendRequantCompileInfoForTest compileInfo;
+    gert::KernelRunContextHolder kernelHolder;
+    SetupKernelHolder(platformInfo, compileInfo, socInfos, aicoreSpec, intrinsics, kernelHolder);
+
+    gert::StorageShape xShape = {{48, 8192}, {48, 8192}};
+    gert::StorageShape sShape = {{1, 8192}, {1, 8192}};
+    gert::StorageShape yShape = {{48, 8192}, {48, 8192}};
+
+    auto tilingFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("AscendRequant")->tiling;
+    ASSERT_NE(tilingFunc, nullptr);
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsHolder = gert::ContinuousVector::Create<size_t>(4096);
+    auto* wsSize = reinterpret_cast<gert::ContinuousVector*>(wsHolder.get());
+
+    bool reluFlag = false;
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("AscendRequant")
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&xShape, &sShape})
+                      .OutputShapes({&yShape})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .NodeInputTd(0, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_UINT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"relu_flag", Ops::NN::AnyValue::CreateFrom<bool>(reluFlag)}})
+                      .TilingData(param.get())
+                      .Workspace(wsSize)
+                      .Build();
+    auto* tilingContext = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tilingContext, nullptr);
+    EXPECT_EQ(tilingFunc(tilingContext), ge::GRAPH_SUCCESS);
+
+    auto* tilingData = FetchTilingData<4>(tilingContext);
+    ASSERT_NE(tilingData, nullptr);
+    EXPECT_EQ(tilingData->rank, 2);
+    EXPECT_EQ(tilingData->flat.route, ASCEND_REQUANT_ROUTE_CONTIG);
+    EXPECT_EQ(tilingData->flat.flatElems, 393216);
+    EXPECT_EQ(tilingData->flat.tileElems, 8192);
+    EXPECT_EQ(tilingData->flat.totalTiles, 48);
+    EXPECT_EQ(tilingData->flat.numCores, 24);
+    EXPECT_EQ(tilingData->flat.tilesMain, 2);
+    EXPECT_EQ(tilingData->flat.coresTail, 0);
+    EXPECT_EQ(tilingData->flat.scalePeriod, 8192);
+    EXPECT_EQ(tilingData->flat.scaleInitElems, 0);
+    EXPECT_EQ(tilingContext->GetBlockDim(), static_cast<uint32_t>(kUtCoreNum));
+    CheckFlatTilingInvariants(tilingData->flat);
 }

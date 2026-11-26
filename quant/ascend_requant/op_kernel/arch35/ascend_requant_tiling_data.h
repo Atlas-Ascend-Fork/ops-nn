@@ -30,6 +30,20 @@ struct MultiCoreResult {
     int64_t coresTail;
 };
 
+// Flat 1-D data-path tiling. route == ASCEND_REQUANT_ROUTE_LEGACY keeps the baseline ND data path, so
+// the legacy split/multicore fields above stay the single source of truth for that route.
+struct FlatRouteTiling {
+    int64_t route;
+    int64_t flatElems;
+    int64_t tileElems;
+    int64_t totalTiles;
+    int64_t numCores;
+    int64_t tilesMain;
+    int64_t coresTail;
+    int64_t scalePeriod;
+    int64_t scaleInitElems;
+};
+
 template <int64_t RANK>
 struct AscendRequantTilingData {
     SplitResult split;
@@ -44,4 +58,5 @@ struct AscendRequantTilingData {
     int64_t inputStrides[MAX_INPUT_SLOTS][RANK];
     int64_t outputShapes[MAX_OUTPUT_SLOTS][RANK];
     int64_t outputStrides[MAX_OUTPUT_SLOTS][RANK];
+    FlatRouteTiling flat;
 };

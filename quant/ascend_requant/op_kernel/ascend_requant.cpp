@@ -11,6 +11,7 @@
 #include "kernel_operator.h"
 #include "arch35/ascend_requant_kernel.h"
 #include "arch35/ascend_requant_tiling_data.h"
+#include "arch35/ascend_requant_flat_kernel.h"
 
 using TilingData4 = AscendRequantTilingData<4>;
 using TilingData8 = AscendRequantTilingData<8>;
@@ -26,12 +27,12 @@ __global__ __aicore__ void ascend_requant(GM_ADDR x, GM_ADDR req_scale, GM_ADDR 
 
     if constexpr (RANK == 4) {
         GET_TILING_DATA_WITH_STRUCT(TilingData4, td, tiling);
-        AscendRequantKernel<4, DO_RELU> kernel;
+        AscendRequantRouteKernel<4, DO_RELU> kernel;
         kernel.Init(ins, outs, &td);
         kernel.Process();
     } else {
         GET_TILING_DATA_WITH_STRUCT(TilingData8, td, tiling);
-        AscendRequantKernel<8, DO_RELU> kernel;
+        AscendRequantRouteKernel<8, DO_RELU> kernel;
         kernel.Init(ins, outs, &td);
         kernel.Process();
     }

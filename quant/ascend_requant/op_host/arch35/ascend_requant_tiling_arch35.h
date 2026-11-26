@@ -55,6 +55,9 @@ int64_t FindSplitAxis(const std::vector<int64_t>& maxBroShape, int64_t maxDtypeS
 int64_t MultiCoreSplit(const std::vector<int64_t>& maxBroShape, const SplitResult& ubSplit, int64_t maxCores,
                        MultiCoreResult& out);
 
+int64_t SolveFlatTiling(const std::vector<int64_t>& maxBroShape, const std::vector<int64_t>& scaleShape,
+                        int64_t maxCores, int64_t ubBytes, FlatRouteTiling& out);
+
 int64_t MapRankToTemplate(int64_t rank);
 
 int64_t ValidateDtype(ge::DataType xDtype, ge::DataType scaleDtype);

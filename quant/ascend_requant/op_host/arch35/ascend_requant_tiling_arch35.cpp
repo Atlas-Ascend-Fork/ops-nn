@@ -16,6 +16,7 @@
 #include "graph/types.h"
 
 #include "ascend_requant_tiling_arch35.h"
+#include "../../op_kernel/arch35/ascend_requant_flat_route.h"
 
 #ifndef ASCEND_REQUANT_TILING_UT
 #include "register/op_def_registry.h"
@@ -248,6 +249,112 @@ int64_t MultiCoreSplit(const std::vector<int64_t>& maxBroShape, const SplitResul
         out.numCores = 1;
     out.tilesMain = out.totalTiles / out.numCores;
     out.coresTail = out.totalTiles % out.numCores;
+    return kOk;
+}
+/*!
+ * \brief Route the req_scale by structural class and solve the flat tile extent from real bytes.
+ *
+ * Leaves route == ASCEND_REQUANT_ROUTE_LEGACY (and every flat field zero) whenever the shapes cannot be
+ * served by the 1-D data path, which keeps the baseline ND path for those inputs.
+ */
+int64_t SolveFlatTiling(const std::vector<int64_t>& maxBroShape, const std::vector<int64_t>& scaleShape,
+                        int64_t maxCores, int64_t ubBytes, FlatRouteTiling& out)
+{
+    out.route = ASCEND_REQUANT_ROUTE_LEGACY;
+    out.flatElems = 0;
+    out.tileElems = 0;
+    out.totalTiles = 0;
+    out.numCores = 0;
+    out.tilesMain = 0;
+    out.coresTail = 0;
+    out.scalePeriod = 0;
+    out.scaleInitElems = 0;
+
+    int64_t rank = static_cast<int64_t>(maxBroShape.size());
+    if (rank < 1 || static_cast<int64_t>(scaleShape.size()) != rank || maxCores < 1)
+        return kOk;
+
+    __int128 total = 1;
+    for (int64_t d = 0; d < rank; d++)
+        total *= static_cast<__int128>(maxBroShape[d]);
+    if (total <= 0 || total > static_cast<__int128>(INT64_MAX))
+        return kOk;
+    int64_t flatElems = static_cast<int64_t>(total);
+
+    // The PERIODIC route stages the whole req_scale prefix once, so its element count must stay inside
+    // one VL of int64. period >= prod(scaleShape) holds for every broadcast req_scale, so the period
+    // bound below already implies it; the explicit term keeps the kernel-side staging bounded even if
+    // that relation is ever broken.
+    int64_t scaleElems = 1;
+    for (int64_t d = 0; d < rank; d++)
+        scaleElems *= scaleShape[d];
+
+    int64_t period = AscendRequantFlatScalePeriod(maxBroShape.data(), scaleShape.data(), rank,
+                                                  ASCEND_REQUANT_FLAT_VEC_ELEMS);
+    int64_t route = ASCEND_REQUANT_ROUTE_LEGACY;
+    if (period == 1) {
+        route = ASCEND_REQUANT_ROUTE_SCALAR;
+    } else if (period <= ASCEND_REQUANT_FLAT_VEC_ELEMS && ASCEND_REQUANT_FLAT_VEC_ELEMS % period == 0 &&
+               scaleElems <= period) {
+        route = ASCEND_REQUANT_ROUTE_PERIODIC;
+    } else {
+        int64_t contigPeriod = AscendRequantFlatContigPeriod(maxBroShape.data(), scaleShape.data(), rank);
+        // Tile starts and tile extents are 64-element aligned, so the wrapped req_scale offsets stay
+        // 32 B aligned exactly when one period is a whole number of 32 B blocks.
+        bool contigAligned = (contigPeriod * ASCEND_REQUANT_FLAT_S_BYTES) % ASCEND_REQUANT_FLAT_MTE_ALIGN_BYTES == 0;
+        if (contigPeriod >= ASCEND_REQUANT_FLAT_MIN_CONTIG_PERIOD && contigAligned) {
+            route = ASCEND_REQUANT_ROUTE_CONTIG;
+            period = contigPeriod;
+        }
+    }
+    if (route == ASCEND_REQUANT_ROUTE_LEGACY)
+        return kOk;
+
+    int64_t bytesPerElem = ASCEND_REQUANT_FLAT_X_BYTES + ASCEND_REQUANT_FLAT_Y_BYTES +
+                           ((route == ASCEND_REQUANT_ROUTE_CONTIG) ? ASCEND_REQUANT_FLAT_S_BYTES : 0);
+    int64_t tile = AscendRequantFlatAlignDown((ubBytes - ASCEND_REQUANT_FLAT_UB_RESERVE_BYTES) / bytesPerElem);
+    if (tile < ASCEND_REQUANT_FLAT_ALIGN_ELEMS)
+        tile = ASCEND_REQUANT_FLAT_ALIGN_ELEMS;
+    if (route == ASCEND_REQUANT_ROUTE_CONTIG) {
+        // One tile never spans more than one req_scale period, so at most two copies are issued.
+        tile = std::min(tile, AscendRequantFlatAlignDown(period));
+    }
+    tile = std::min(tile, AscendRequantFlatAlignUp(flatElems));
+    if (tile < ASCEND_REQUANT_FLAT_MIN_TILE_ELEMS && flatElems >= ASCEND_REQUANT_FLAT_MIN_TILE_ELEMS) {
+        return kOk;
+    }
+
+    // Rebalance once so that the contiguous per-core range bound stays ceil(N / cores) + tile.
+    int64_t tiles = (flatElems + tile - 1) / tile;
+    int64_t perCore = (tiles + maxCores - 1) / maxCores;
+    // A small SCALAR/PERIODIC tensor otherwise runs on `tiles` (< maxCores) cores only, and that
+    // under-filled launch costs more than the legacy ND path for 64 K-1 M element inputs. Spread
+    // those over every core; CONTIG keeps its period-aligned tile because a tile must not cross a
+    // req_scale period. The per-core fill may drop below the declared minimum tile extent here.
+    bool spreadSmall = (route != ASCEND_REQUANT_ROUTE_CONTIG) && tiles > 1 && tiles < maxCores;
+    if (perCore > 1 || spreadSmall) {
+        int64_t lanes = (perCore > 1) ? (maxCores * perCore) : maxCores;
+        int64_t balanced = AscendRequantFlatAlignUp((flatElems + lanes - 1) / lanes);
+        bool keepsMinimum = (balanced >= ASCEND_REQUANT_FLAT_MIN_TILE_ELEMS) ||
+                            (flatElems < ASCEND_REQUANT_FLAT_MIN_TILE_ELEMS) || spreadSmall;
+        if (balanced < tile && keepsMinimum)
+            tile = balanced;
+    }
+
+    tiles = (flatElems + tile - 1) / tile;
+    int64_t cores = (tiles < maxCores) ? tiles : maxCores;
+    if (cores < 1)
+        cores = 1;
+
+    out.route = route;
+    out.flatElems = flatElems;
+    out.tileElems = tile;
+    out.totalTiles = tiles;
+    out.numCores = cores;
+    out.tilesMain = tiles / cores;
+    out.coresTail = tiles % cores;
+    out.scalePeriod = period;
+    out.scaleInitElems = (route == ASCEND_REQUANT_ROUTE_CONTIG) ? 0 : scaleElems;
     return kOk;
 }
 
@@ -735,7 +842,24 @@ private:
         FillSlots<R>(tiling->outputShapes, tiling->outputStrides, normal_output_shapes_, out_strides, num_out,
                      MAX_OUTPUT_SLOTS, delta);
 
-        ctx_->SetBlockDim(tiling->multicore.numCores);
+        int64_t flatRet = ascend_requant::public_api::SolveFlatTiling(
+            max_bro_shape_, normal_input_shapes_[1], static_cast<int64_t>(coreNum_), ub_per_core, tiling->flat);
+        if (flatRet != ascend_requant::public_api::kOk) {
+            OP_LOGE(ctx_->GetNodeName(), "SolveFlatTiling failed: %lld", flatRet);
+            return ge::GRAPH_FAILED;
+        }
+        OP_LOGI(ctx_->GetNodeName(),
+                "FlatTiling: route=%lld flatElems=%lld tile=%lld tiles=%lld cores=%lld main=%lld coresTail=%lld "
+                "scalePeriod=%lld scaleInitElems=%lld",
+                tiling->flat.route, tiling->flat.flatElems, tiling->flat.tileElems, tiling->flat.totalTiles,
+                tiling->flat.numCores, tiling->flat.tilesMain, tiling->flat.coresTail, tiling->flat.scalePeriod,
+                tiling->flat.scaleInitElems);
+
+        if (tiling->flat.route == ASCEND_REQUANT_ROUTE_LEGACY) {
+            ctx_->SetBlockDim(tiling->multicore.numCores);
+        } else {
+            ctx_->SetBlockDim(tiling->flat.numCores);
+        }
         LogTilingData<R>(tiling, num_in, num_out);
         return ge::GRAPH_SUCCESS;
     }
