@@ -219,15 +219,66 @@ TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_7_unknown_rank)
     EXPECT_EQ(outDims[0], -2);
 }
 
-// rank 0 (scalar storage) violates the documented rank contract for the state tensors
-// and the {1} shape contract for the scalar parameters, so this gate must reject it.
+// rank 0 violates the documented rank contract for the state tensors, so this gate must
+// reject it regardless of the scalar form.
 TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_8_rank0)
 {
     gert::StorageShape varShape = {{}, {}};
-    gert::StorageShape scalarShape = {{}, {}};
+    gert::StorageShape scalarShape = {{1}, {1}};
     std::vector<int64_t> outDims;
 
     ASSERT_EQ(RunAndGetOutputShape(varShape, scalarShape, outDims), ge::GRAPH_FAILED);
+}
+
+// A TF rank-0 scalar reaches InferShape as origin {} with the GE-normalized storage {1}.
+TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_8a_scalar_tf_form)
+{
+    gert::StorageShape varShape = {{2, 4}, {2, 4}};
+    gert::StorageShape scalarShape = {{}, {1}};
+    std::vector<int64_t> outDims;
+
+    ASSERT_EQ(RunAndGetOutputShape(varShape, scalarShape, outDims), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(outDims.size(), 2u);
+    EXPECT_EQ(outDims[0], 2);
+    EXPECT_EQ(outDims[1], 4);
+}
+
+// A 0-D storage scalar carries one element as well and is accepted by the scalar gate.
+TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_8b_scalar_0d_storage)
+{
+    gert::StorageShape varShape = {{2, 4}, {2, 4}};
+    gert::StorageShape scalarShape = {{}, {}};
+    std::vector<int64_t> outDims;
+
+    ASSERT_EQ(RunAndGetOutputShape(varShape, scalarShape, outDims), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(outDims.size(), 2u);
+    EXPECT_EQ(outDims[0], 2);
+    EXPECT_EQ(outDims[1], 4);
+}
+
+// Dynamic scalar markers pass here and are re-checked once Tiling resolves them.
+TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_8c_scalar_unknown_dim)
+{
+    gert::StorageShape varShape = {{2, 4}, {2, 4}};
+    gert::StorageShape scalarShape = {{-1}, {-1}};
+    std::vector<int64_t> outDims;
+
+    ASSERT_EQ(RunAndGetOutputShape(varShape, scalarShape, outDims), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(outDims.size(), 2u);
+    EXPECT_EQ(outDims[0], 2);
+    EXPECT_EQ(outDims[1], 4);
+}
+
+TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_8d_scalar_unknown_rank)
+{
+    gert::StorageShape varShape = {{2, 4}, {2, 4}};
+    gert::StorageShape scalarShape = {{-2}, {-2}};
+    std::vector<int64_t> outDims;
+
+    ASSERT_EQ(RunAndGetOutputShape(varShape, scalarShape, outDims), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(outDims.size(), 2u);
+    EXPECT_EQ(outDims[0], 2);
+    EXPECT_EQ(outDims[1], 4);
 }
 
 TEST_F(InplaceApplyRMSProp, InplaceApplyRMSProp_infershape_case_9_state_shape_mismatch)

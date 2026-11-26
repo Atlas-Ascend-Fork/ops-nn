@@ -135,7 +135,17 @@ struct InplaceApplyRMSPropTilingArgs {
     bool hasUseLockingAttr = true;
     // 0 = do not inject AICoreSpec vector_reg_width (the tiling falls back to its default)
     int64_t vectorRegWidth = 0;
+    // TF form: scalar inputs keep origin shape {} and the GE-normalized storage shape {1}.
+    bool tfScalarForm = false;
 };
+
+static gert::StorageShape MakeScalarStorage(const std::initializer_list<int64_t>& originShape, bool tfScalarForm)
+{
+    if (tfScalarForm) {
+        return gert::StorageShape(std::initializer_list<int64_t>{}, originShape);
+    }
+    return gert::StorageShape(originShape, originShape);
+}
 
 static inline ge::DataType ResolveDtype(ge::DataType override, ge::DataType base)
 {
@@ -225,10 +235,10 @@ static InplaceApplyRMSPropTilingResult DoInplaceApplyRMSPropTilingCase(const Inp
     gert::StorageShape varStorage = {args.varShape, args.varShape};
     gert::StorageShape msStorage = {args.msShape, args.msShape};
     gert::StorageShape momStorage = {args.momShape, args.momShape};
-    gert::StorageShape lrStorage = {args.lrShape, args.lrShape};
-    gert::StorageShape rhoStorage = {args.rhoShape, args.rhoShape};
-    gert::StorageShape momentumStorage = {args.momentumShape, args.momentumShape};
-    gert::StorageShape epsilonStorage = {args.epsilonShape, args.epsilonShape};
+    gert::StorageShape lrStorage = MakeScalarStorage(args.lrShape, args.tfScalarForm);
+    gert::StorageShape rhoStorage = MakeScalarStorage(args.rhoShape, args.tfScalarForm);
+    gert::StorageShape momentumStorage = MakeScalarStorage(args.momentumShape, args.tfScalarForm);
+    gert::StorageShape epsilonStorage = MakeScalarStorage(args.epsilonShape, args.tfScalarForm);
     gert::StorageShape gradStorage = {args.gradShape, args.gradShape};
 
     InplaceApplyRMSPropUtCompileInfo compileInfo;
@@ -604,13 +614,28 @@ TEST_F(TestInplaceApplyRMSPropTiling, inplace_apply_rms_prop_scalar_rank_2_inval
     EXPECT_EQ(result.status, ge::GRAPH_FAILED);
 }
 
-TEST_F(TestInplaceApplyRMSPropTiling, inplace_apply_rms_prop_scalar_rank_0_invalid)
+// A rank-0 storage scalar carries exactly one element, so the C3 gate must accept it.
+TEST_F(TestInplaceApplyRMSPropTiling, inplace_apply_rms_prop_scalar_rank_0_accepted)
 {
     InplaceApplyRMSPropTilingArgs args{/*var=*/{2048},  /*ms=*/{2048}, /*mom=*/{2048},
                                        /*lr=*/{},       /*rho=*/{1},   /*momentum=*/{1}, /*epsilon=*/{1},
                                        /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND,    /*useLocking=*/false};
     auto result = DoInplaceApplyRMSPropTilingCase(args);
-    EXPECT_EQ(result.status, ge::GRAPH_FAILED);
+    ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(result.tilingKey, TILING_KEY_FP32_DOUBLE);
+}
+
+// The TF path hands rank-0 scalars through as origin shape {} with the GE-normalized
+// storage shape {1}; the C3 gate must accept that form.
+TEST_F(TestInplaceApplyRMSPropTiling, inplace_apply_rms_prop_scalar_tf_form_accepted)
+{
+    InplaceApplyRMSPropTilingArgs args{/*var=*/{2048},  /*ms=*/{2048}, /*mom=*/{2048},
+                                       /*lr=*/{1},      /*rho=*/{1},   /*momentum=*/{1}, /*epsilon=*/{1},
+                                       /*grad=*/{2048}, ge::DT_FLOAT,  ge::FORMAT_ND,    /*useLocking=*/false};
+    args.tfScalarForm = true;
+    auto result = DoInplaceApplyRMSPropTilingCase(args);
+    ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+    EXPECT_EQ(result.tilingKey, TILING_KEY_FP32_DOUBLE);
 }
 
 // ms/mom/grad must be rank-checked independently: when only one of them exceeds the
