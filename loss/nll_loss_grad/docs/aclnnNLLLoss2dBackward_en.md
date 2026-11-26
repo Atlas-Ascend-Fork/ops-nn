@@ -93,7 +93,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
         <td>self (aclTensor*)</td>
         <td>Input</td>
         <td>Input aclTensor.</td>
-        <td><ul><li>The shape is 4D. The first dimension N indicates the batch size, and the second dimension C indicates the number of classes.</li><li>The shape of the 0th, 2nd, and 3rd dimensions of self must be consistent with that of the 0th, 1st, and 2nd dimensions of target; otherwise, false is returned.</li></ul></td>
+        <td><ul><li>The shape is 4D, for example [N,C,H,W]. The first dimension N indicates the batch size, and the second dimension C indicates the number of classes.</li><li>The shape of the 0th, 2nd, and 3rd dimensions of self must be consistent with that of the 0th, 1st, and 2nd dimensions of target; otherwise, false is returned.</li></ul></td>
         <td>FLOAT, FLOAT16, BFLOAT16</td>
         <td>ND</td>
         <td>-</td>
@@ -103,7 +103,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
         <td>target (aclTensor*)</td>
         <td>Input</td>
         <td>Represents the ground-truth labels.</td>
-        <td><ul><li>y in the formula, with a 3D shape.</li><li>The shape of the 0th, 1st, and 2nd dimensions of target must be consistent with that of the 0th, 2nd, and 3rd dimensions of self.</li><li>The value range of each element is [0, C - 1].</li></ul></td>
+        <td><ul><li>y in the formula, with a 3D shape.</li><li>The shape of the 0th, 1st, and 2nd dimensions of target must be consistent with that of the 0th, 2nd, and 3rd dimensions of self.</li><li>The value range of each element is [0, C - 1], or equal to ignoreIndex (the value is ignored).</li></ul></td>
         <td>INT64, UINT8, INT32</td>
         <td>ND</td>
         <td>-</td>
@@ -123,7 +123,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
         <td>reduction(int64_t)</td>
         <td>Input</td>
         <td>Specifies the reduction to apply to the output.</td>
-        <td><ul>Supported values: 0(none)|1(mean)|2(sum).<li>'none' means no reduction is applied</li><li>'mean' means the sum of the output is divided by the number of elements in the output</li><li>'sum' means the output is summed</li><li>When reduction is 0, target and gradOutput must have consistent shapes. Otherwise, false is returned.</li></ul></td>
+        <td><ul>Supported values: 0(none)|1(mean)|2(sum).<li>'none' means no reduction is applied</li><li>'mean' means the sum of the output is divided by the total weight (totalWeight, that is, the sum of weights computed from target, weight, and ignoreIndex)</li><li>'sum' means the output is summed</li><li>When reduction is 0, target and gradOutput must have consistent shapes. Otherwise, false is returned.</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>

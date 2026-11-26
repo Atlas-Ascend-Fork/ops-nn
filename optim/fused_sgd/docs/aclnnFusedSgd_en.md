@@ -311,7 +311,7 @@ aclnnStatus aclnnFusedSgd(
       <tr>
       <td>workspaceSize</td>
       <td>Input</td>
-      <td>Size of the workspace requested on the device. It is obtained by calling the first-phase API aclnnFusedSgd.</td>
+      <td>Size of the workspace requested on the device. It is obtained by calling the first-phase API aclnnFusedSgdGetWorkspaceSize.</td>
       </tr>
       <tr>
       <td>executor</td>
@@ -378,7 +378,7 @@ void PrintOutResult(std::vector<int64_t> &shape, void **deviceAddr) {
   CHECK_RET(
       ret == ACL_SUCCESS,
       LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret);
-      return );
+      return);
   for (int64_t i = 0; i < size; i++) {
     LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
   }
@@ -399,6 +399,7 @@ int Init(int32_t deviceId, aclrtStream *stream) {
   return 0;
 }
 
+// Encapsulate aclrtMalloc/aclrtMemcpy/aclCreateTensor to copy host data to the device and create an aclTensor.
 template <typename T>
 int CreateAclTensor(const std::vector<T> &hostData,
                     const std::vector<int64_t> &shape, void **deviceAddr,
@@ -425,13 +426,16 @@ int CreateAclTensor(const std::vector<T> &hostData,
   return 0;
 }
 
+// Main flow: initialize ACL, construct two groups of Tensor and TensorList inputs, call aclnnFusedSgdGetWorkspaceSize and aclnnFusedSgd in sequence, and finally release resources.
 int main() {
+  // 1. Boilerplate: initialize the device/stream.
   int32_t deviceId = 0;
   aclrtStream stream;
   auto ret = Init(deviceId, &stream);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret);
             return ret);
 
+  // 2. Construct the inputs and outputs, creating Tensors and TensorLists by group.
   std::vector<float> paramsRefHostData1 = {1, 2, 3, 4, 5, 6, 7, 8};
   std::vector<float> gradsRefHostData1 = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8};
   std::vector<float> momentumHostData1 = {0, 0, 0, 0, 0, 0, 0, 0};
@@ -489,6 +493,7 @@ int main() {
   bool maximize = false;
   bool isFirstStep = true;
 
+  // 3. Call the first-phase API to obtain workspaceSize and executor.
   uint64_t workspaceSize = 0;
   aclOpExecutor *executor;
 
@@ -501,6 +506,7 @@ int main() {
       LOG_PRINT("aclnnFusedSgdGetWorkspaceSize failed. ERROR: %d\n", ret);
       return ret);
 
+  // Allocate device memory using the workspaceSize returned by the first-phase API.
   void *workspaceAddr = nullptr;
   if (workspaceSize > 0) {
     ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
@@ -509,16 +515,19 @@ int main() {
               return ret);
   }
 
+  // Call the second-phase API to perform the computation.
   ret = aclnnFusedSgd(workspaceAddr, workspaceSize, executor, stream);
   CHECK_RET(ret == ACL_SUCCESS,
             LOG_PRINT("aclnnFusedSgd failed. ERROR: %d\n", ret);
             return ret);
 
+  // 4. Boilerplate: wait for the task execution to finish.
   ret = aclrtSynchronizeStream(stream);
   CHECK_RET(ret == ACL_SUCCESS,
             LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret);
             return ret);
 
+  // 5. Print the expected results: the updated paramsRef and gradsRef, and the momentum buffers.
   LOG_PRINT("====== Tensor 1 paramsRef results ======\n");
   PrintOutResult(inputShape1, &paramsRef1DeviceAddr);
   LOG_PRINT("====== Tensor 1 gradsRef results ======\n");
@@ -532,6 +541,7 @@ int main() {
   LOG_PRINT("------ Momentum buffer 2 ------\n");
   PrintOutResult(inputShape2, &momentum2DeviceAddr);
 
+  // 6. Release aclTensorList, aclTensor, and device resources.
   aclDestroyTensorList(paramsRefList);
   aclDestroyTensorList(gradsRefList);
   aclDestroyTensorList(momentumList);

@@ -204,7 +204,7 @@ aclnnStatus aclnnMultilabelMarginLoss(
     <tr>
       <td class="tg-0pky" rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
       <td class="tg-0pky" rowspan="6">161002</td>
-      <td class="tg-0pky">self的数据类型不在支持的范围之内（仅支持FLOAT/FLOAT16/BFLOAT16）。</td>
+      <td class="tg-0pky">self的数据类型不在支持的范围之内（Ascend 950PR&950DT、Atlas A3、Atlas A2系列产品支持FLOAT/FLOAT16/BFLOAT16，Atlas训练系列产品支持FLOAT/FLOAT16）。</td>
     </tr>
     <tr>
       <td class="tg-0pky">out或isTarget的数据类型与self不一致（aclnn路径校验out==self、isTarget==self，三者须为同一浮点类型）。</td>
@@ -306,7 +306,7 @@ int64_t GetShapeSize(const std::vector<int64_t>& shape) {
 }
 
 int Init(int32_t deviceId, aclrtStream* stream) {
- // 固定写法，资源初始化
+  // 固定写法，资源初始化
   auto ret = aclInit(nullptr);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclInit failed. ERROR: %d\n", ret); return ret);
   ret = aclrtSetDevice(deviceId);

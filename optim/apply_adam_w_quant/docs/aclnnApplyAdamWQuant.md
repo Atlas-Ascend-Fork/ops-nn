@@ -44,7 +44,7 @@
   $$
 
   $$
-  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{t}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t-1}
+  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{t}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t}
   $$
 
 ## 函数原型
@@ -259,16 +259,6 @@ aclnnStatus aclnnApplyAdamWQuant(
       <td class="tg-0lax">-</td>
     </tr>
     <tr>
-      <td class="tg-0pky">blockSize（int64_t）</td>
-      <td class="tg-0pky">输入</td>
-      <td class="tg-0pky">每个block参与计算的size大小，固定为256。如上述absmax中所说，每blockSize选择一个最大值。</td>
-      <td class="tg-0pky">-</td>
-      <td class="tg-0pky">INT64</td>
-      <td class="tg-0pky">-</td>
-      <td class="tg-0pky">-</td>
-      <td class="tg-0pky">-</td>
-    </tr>
-    <tr>
       <td class="tg-0lax">quantModeOptional（char*）</td>
       <td class="tg-0lax">输入</td>
       <td class="tg-0lax">保留参数暂无意义</td>
@@ -277,6 +267,16 @@ aclnnStatus aclnnApplyAdamWQuant(
       <td class="tg-0lax">-</td>
       <td class="tg-0lax">-</td>
       <td class="tg-0lax">-</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">blockSize（int64_t）</td>
+      <td class="tg-0pky">输入</td>
+      <td class="tg-0pky">每个block参与计算的size大小，固定为256。为上述absmax中所说，每blockSize选择一个最大值。</td>
+      <td class="tg-0pky">-</td>
+      <td class="tg-0pky">INT64</td>
+      <td class="tg-0pky">-</td>
+      <td class="tg-0pky">-</td>
+      <td class="tg-0pky">-</td>
     </tr>
     <tr>
       <td class="tg-0pky">workspaceSize（uint64_t*）</td>
@@ -508,16 +508,16 @@ std::vector<float> inputabsmaxMHostData = {5};
 std::vector<float> inputabsmaxVHostData = {3};
 std::vector<int64_t> inputstepHostData(1);
 
-const float lr = 0.1;
-const float beta1 = 0.1;
-const float beta2 = 0.1;
-const float weightDecay = 0.1;
-const float eps = 0.01;
-const float gnormScale = 0.1;
+const double lr = 0.1;
+const double beta1 = 0.9;
+const double beta2 = 0.999;
+const double weightDecay = 0.1;
+const double eps = 1e-8;
+const double gnormScale = 0.999;
 const int64_t blockSize = 256;
-char* quantModeOptional = "BLOCKWISE";
+char quantModeOptional[] = "BLOCKWISE";
 
-// 创建gradOutput aclTensor
+// 创建varRef aclTensor
 ret = CreateAclTensor(inputVarHostData, VarRefShape, &VarRefDeviceAddr, aclDataType::ACL_FLOAT, &varRef);
 CHECK_RET(ret == ACL_SUCCESS, return FAILED);
 
@@ -545,7 +545,7 @@ CHECK_RET(ret == ACL_SUCCESS, return FAILED);
 ret = CreateAclTensor(inputstepHostData, stepShape, &stepDeviceAddr, aclDataType::ACL_INT64, &step);
 CHECK_RET(ret == ACL_SUCCESS, return FAILED);
 
-// 3. 调用CANN算子库API，需要修改为具体的API
+// 3. 调用CANN算子库API执行计算
 uint64_t workspaceSize = 0;
 aclOpExecutor* executor;
 // 调用aclnnApplyAdamWQuantGetWorkspaceSize第一段接口
@@ -573,7 +573,7 @@ CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed.
 for (int64_t i = 0; i < size; i++) {
 LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
   }
-// 6. 释放aclTensor，需要根据具体API的接口定义修改
+// 6. 释放aclTensor
 aclDestroyTensor(varRef);
 aclDestroyTensor(grad);
 aclDestroyTensor(mRef);
@@ -584,7 +584,7 @@ aclDestroyTensor(absmaxMRef);
 aclDestroyTensor(absmaxVRef);
 aclDestroyTensor(step);
 
-// 7. 释放device资源，需要根据具体API的接口定义修改
+// 7. 释放device资源
 aclrtFree(VarRefDeviceAddr);
 aclrtFree(GradDeviceAddr);
 aclrtFree(mRefDeviceAddr);

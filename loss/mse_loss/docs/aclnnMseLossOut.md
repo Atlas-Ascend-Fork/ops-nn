@@ -23,24 +23,24 @@
 
 ## 功能说明
 
-- 接口功能：计算输入x和目标y中每个元素之间的均方误差。reduction指定要应用到输出的缩减，支持'none'、'mean'、'sum'。'mean'表示输出将被reduce 0轴求均值，'sum'表示输出将被reduce 0轴求和。
+- 接口功能：计算输入x和目标y中每个元素之间的均方误差。reduction指定要应用到输出的缩减，支持'none'、'mean'、'sum'。'none'表示不应用缩减，'mean'表示输出将被reduce 0轴求均值，'sum'表示输出将被reduce 0轴求和。
 
 - 计算公式：
 
   当`reduction`为`none`时，
 
   $$
-  \ell(x, y) = L = \{l_1,\dots,l_N\}^\top, \quad
-  l_n = \left( x_n - y_n \right)^2,
+  \ell(x, y) = L, \quad
+  L = \left( x - y \right)^2,
   $$
 
-  其中$x$是self，$y$是target，$N$是batch的大小。如果`reduction`不是`none`，那么：
+  其中$x$是self，$y$是target，$L$为逐元素平方误差张量，其shape为self与target做broadcast后的结果。如果`reduction`不是`none`，那么：
 
   $$
   \ell(x, y) =
   \begin{cases}
-      \operatorname{mean}(L), &  \text{if reduction} = \text{'mean';}\\
-      \operatorname{sum}(L),  &  \text{if reduction} = \text{'sum'.}
+      \operatorname{mean}(L, \text{dim}=0), &  \text{if reduction} = \text{'mean';}\\
+      \operatorname{sum}(L, \text{dim}=0),  &  \text{if reduction} = \text{'sum'.}
   \end{cases}
   $$
 
@@ -116,7 +116,7 @@ aclnnStatus aclnnMseLossOut(
       <td class="tg-0pky">reduction（int64_t）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">指定要应用到输出的缩减，公式中的参数reduction。</td>
-      <td class="tg-0pky">支持0(none)|1(mean)|2(sum)。<br>'none'表示不应用缩减<br>'mean'表示输出的总和将除以输出中的元素数<br>'sum'表示输出将被求和</td>
+      <td class="tg-0pky">支持0(none)|1(mean)|2(sum)。<br>'none'表示不应用缩减<br>'mean'表示输出将被reduce 0轴求均值（即沿第0轴求和后除以第0轴的元素数）<br>'sum'表示输出将被reduce 0轴求和</td>
       <td class="tg-0pky">INT64</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">-</td>

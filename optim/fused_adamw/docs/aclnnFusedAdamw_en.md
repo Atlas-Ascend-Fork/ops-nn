@@ -50,7 +50,7 @@
   $$
 
   $$
-  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{t}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t-1}
+  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{t}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t}
   $$
 
 ## Function Prototype
@@ -425,6 +425,7 @@ int Init(int32_t deviceId, aclrtStream* stream)
     return 0;
 }
 
+// Encapsulate aclrtMalloc/aclrtMemcpy/aclCreateTensor to copy host data to the device and create an aclTensor.
 template <typename T>
 int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
                     aclDataType dataType, aclTensor** tensor)
@@ -445,13 +446,16 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
     return 0;
 }
 
+// Example: construct two groups of TensorList inputs, call aclnnFusedAdamw to update parameters, and print the results.
 int main()
 {
+    // 1. Boilerplate: initialize the device/stream.
     int32_t deviceId = 0;
     aclrtStream stream;
     auto ret = Init(deviceId, &stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
+    // 2. Construct the inputs and outputs. The dimensions of the host data and shape must be consistent (each stateSteps Tensor contains only 1 element).
     std::vector<float> paramsRefHostData1 = {1, 2, 3, 4, 5, 6, 7, 8};
     std::vector<float> gradsHostData1 = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8};
     std::vector<float> expavgsHostData1 = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8};
@@ -518,7 +522,7 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(maxexpavgsqsHostData1, inputShape1, &maxexpavgsqs1DeviceAddr, aclDataType::ACL_FLOAT, &maxexpavgsqs1);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(stepsHostData1, inputShape1, &steps1DeviceAddr, aclDataType::ACL_FLOAT, &steps1);
+    ret = CreateAclTensor(stepsHostData1, scalarShape, &steps1DeviceAddr, aclDataType::ACL_FLOAT, &steps1);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     ret = CreateAclTensor(paramsRefHostData2, inputShape2, &paramsRef2DeviceAddr, aclDataType::ACL_FLOAT, &paramsRef2);
@@ -531,7 +535,7 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(maxexpavgsqsHostData2, inputShape2, &maxexpavgsqs2DeviceAddr, aclDataType::ACL_FLOAT, &maxexpavgsqs2);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(stepsHostData2, inputShape2, &steps2DeviceAddr, aclDataType::ACL_FLOAT, &steps2);
+    ret = CreateAclTensor(stepsHostData2, scalarShape, &steps2DeviceAddr, aclDataType::ACL_FLOAT, &steps2);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     ret = CreateAclTensor(gradScaleOptionalHostData, scalarShape, &gradScaleOptionalDeviceAddr, aclDataType::ACL_FLOAT,
@@ -559,6 +563,7 @@ int main()
     bool amsgrad = true;
     bool maximize = false;
 
+    // 3. Call the first-phase API to obtain workspaceSize and executor.
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
 
@@ -567,18 +572,22 @@ int main()
                                         eps, amsgrad, maximize, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnFusedAdamwGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
 
+    // Allocate device memory using the workspaceSize returned by the first-phase API.
     void* workspaceAddr = nullptr;
     if (workspaceSize > 0) {
         ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
         CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
     }
 
+    // 4. Call the second-phase API to perform the computation.
     ret = aclnnFusedAdamw(workspaceAddr, workspaceSize, executor, stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnFusedAdamw failed. ERROR: %d\n", ret); return ret);
 
+    // Wait for the task execution to finish.
     ret = aclrtSynchronizeStream(stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
+    // 5. Print the expected results: the updated paramsRef, expAvgsRef, expAvgSqsRef, and maxExpAvgSqsRef.
     LOG_PRINT("====== Tensor 1 paramsRef1 results ======\n");
     PrintOutResult(inputShape1, &paramsRef1DeviceAddr);
     LOG_PRINT("====== Tensor 2 expavgs1 results ======\n");
@@ -597,6 +606,7 @@ int main()
     LOG_PRINT("====== Tensor 8 maxexpavgsqs2 results ======\n");
     PrintOutResult(inputShape2, &maxexpavgsqs2DeviceAddr);
 
+    // 6. Release the aclTensor and device resources.
     aclDestroyTensorList(paramsRefList);
     aclDestroyTensorList(gradsList);
     aclDestroyTensorList(expavgsList);

@@ -309,7 +309,7 @@ aclnnStatus aclnnFusedSgd(
       <tr>
       <td>workspaceSize</td>
       <td>输入</td>
-      <td>在Device侧申请的workspace大小，由第一段接口aclnnFusedSgd获取。</td>
+      <td>在Device侧申请的workspace大小，由第一段接口aclnnFusedSgdGetWorkspaceSize获取。</td>
       </tr>
       <tr>
       <td>executor</td>
@@ -376,7 +376,7 @@ void PrintOutResult(std::vector<int64_t> &shape, void **deviceAddr) {
   CHECK_RET(
       ret == ACL_SUCCESS,
       LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret);
-      return );
+      return);
   for (int64_t i = 0; i < size; i++) {
     LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
   }
@@ -397,6 +397,7 @@ int Init(int32_t deviceId, aclrtStream *stream) {
   return 0;
 }
 
+// 封装aclrtMalloc/aclrtMemcpy/aclCreateTensor，将host数据拷贝到device并创建aclTensor
 template <typename T>
 int CreateAclTensor(const std::vector<T> &hostData,
                     const std::vector<int64_t> &shape, void **deviceAddr,
@@ -423,13 +424,16 @@ int CreateAclTensor(const std::vector<T> &hostData,
   return 0;
 }
 
+// 主流程：初始化ACL，构造两组Tensor及TensorList入参，依次调用aclnnFusedSgdGetWorkspaceSize与aclnnFusedSgd，最后释放资源
 int main() {
+  // 1.(固定写法)device/stream初始化
   int32_t deviceId = 0;
   aclrtStream stream;
   auto ret = Init(deviceId, &stream);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret);
             return ret);
 
+  // 2.构造输入与输出，按组创建Tensor及TensorList
   std::vector<float> paramsRefHostData1 = {1, 2, 3, 4, 5, 6, 7, 8};
   std::vector<float> gradsRefHostData1 = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8};
   std::vector<float> momentumHostData1 = {0, 0, 0, 0, 0, 0, 0, 0};
@@ -487,6 +491,7 @@ int main() {
   bool maximize = false;
   bool isFirstStep = true;
 
+  // 3.调用第一段接口获取workspaceSize与executor
   uint64_t workspaceSize = 0;
   aclOpExecutor *executor;
 
@@ -499,6 +504,7 @@ int main() {
       LOG_PRINT("aclnnFusedSgdGetWorkspaceSize failed. ERROR: %d\n", ret);
       return ret);
 
+  // 根据第一段接口返回的workspaceSize申请device内存
   void *workspaceAddr = nullptr;
   if (workspaceSize > 0) {
     ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
@@ -507,16 +513,19 @@ int main() {
               return ret);
   }
 
+  // 调用第二段接口执行计算
   ret = aclnnFusedSgd(workspaceAddr, workspaceSize, executor, stream);
   CHECK_RET(ret == ACL_SUCCESS,
             LOG_PRINT("aclnnFusedSgd failed. ERROR: %d\n", ret);
             return ret);
 
+  // 4.(固定写法)同步等待任务执行结束
   ret = aclrtSynchronizeStream(stream);
   CHECK_RET(ret == ACL_SUCCESS,
             LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret);
             return ret);
 
+  // 5.打印预期结果：更新后的paramsRef与gradsRef，以及动量buffer
   LOG_PRINT("====== Tensor 1 paramsRef results ======\n");
   PrintOutResult(inputShape1, &paramsRef1DeviceAddr);
   LOG_PRINT("====== Tensor 1 gradsRef results ======\n");
@@ -530,6 +539,7 @@ int main() {
   LOG_PRINT("------ Momentum buffer 2 ------\n");
   PrintOutResult(inputShape2, &momentum2DeviceAddr);
 
+  // 6.释放aclTensorList、aclTensor与device资源
   aclDestroyTensorList(paramsRefList);
   aclDestroyTensorList(gradsRefList);
   aclDestroyTensorList(momentumList);

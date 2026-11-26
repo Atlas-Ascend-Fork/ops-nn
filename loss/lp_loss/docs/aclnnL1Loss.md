@@ -34,7 +34,7 @@
   l_n = \left| x_n - y_n \right|,
   $$
 
-  其中$x$是self，$y$是target，$N$是batch的大小。如果`reduction`不是`'none'`，那么
+  其中$x$是self，$y$是target，$N$是输出元素的总数（与缩减说明一致）。如果`reduction`不是`'none'`，那么
 
   $$
   \ell(x, y) =

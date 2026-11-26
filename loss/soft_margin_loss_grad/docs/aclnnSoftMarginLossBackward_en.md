@@ -100,7 +100,7 @@ aclnnStatus aclnnSoftMarginLossBackward(
         <td class="tg-0pky">target (aclTensor*)</td>
         <td class="tg-0pky">Input</td>
         <td class="tg-0pky">Actual label, corresponding to input y in the formula.</td>
-        <td class="tg-0pky">The shape must satisfy the <a href="../../../docs/en/context/broadcast_relationship.md" target="_blank">broadcast relationship</a> with gradOutput and self.<br>The data type and the data types of gradOutput and target must satisfy the data type derivation rule (see also <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">mutual conversion relationship</a>).</td>
+        <td class="tg-0pky">The shape must satisfy the <a href="../../../docs/en/context/broadcast_relationship.md" target="_blank">broadcast relationship</a> with gradOutput and self.<br>The data type and the data types of gradOutput and self must satisfy the data type derivation rule (see also <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">mutual conversion relationship</a>).</td>
         <td class="tg-0pky">FLOAT, FLOAT16, BFLOAT16</td>
         <td class="tg-0pky">ND</td>
         <td class="tg-0pky">1-8</td>

@@ -48,7 +48,7 @@
   $$
 
   $$
-  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{t}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t-1}
+  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{t}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t}
   $$
 
 ## 函数原型
@@ -423,6 +423,7 @@ int Init(int32_t deviceId, aclrtStream* stream)
     return 0;
 }
 
+// 封装aclrtMalloc/aclrtMemcpy/aclCreateTensor，将host数据拷贝到device并创建aclTensor
 template <typename T>
 int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
                     aclDataType dataType, aclTensor** tensor)
@@ -443,13 +444,16 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
     return 0;
 }
 
+// 示例：构造两组TensorList入参，调用aclnnFusedAdamw更新参数并打印结果
 int main()
 {
+    // 1.(固定写法)device/stream初始化
     int32_t deviceId = 0;
     aclrtStream stream;
     auto ret = Init(deviceId, &stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
+    // 2.构造输入与输出，host数据与shape的维度需保持一致（stateSteps每个Tensor仅1个元素）
     std::vector<float> paramsRefHostData1 = {1, 2, 3, 4, 5, 6, 7, 8};
     std::vector<float> gradsHostData1 = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8};
     std::vector<float> expavgsHostData1 = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8};
@@ -516,7 +520,7 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(maxexpavgsqsHostData1, inputShape1, &maxexpavgsqs1DeviceAddr, aclDataType::ACL_FLOAT, &maxexpavgsqs1);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(stepsHostData1, inputShape1, &steps1DeviceAddr, aclDataType::ACL_FLOAT, &steps1);
+    ret = CreateAclTensor(stepsHostData1, scalarShape, &steps1DeviceAddr, aclDataType::ACL_FLOAT, &steps1);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     ret = CreateAclTensor(paramsRefHostData2, inputShape2, &paramsRef2DeviceAddr, aclDataType::ACL_FLOAT, &paramsRef2);
@@ -529,7 +533,7 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     ret = CreateAclTensor(maxexpavgsqsHostData2, inputShape2, &maxexpavgsqs2DeviceAddr, aclDataType::ACL_FLOAT, &maxexpavgsqs2);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(stepsHostData2, inputShape2, &steps2DeviceAddr, aclDataType::ACL_FLOAT, &steps2);
+    ret = CreateAclTensor(stepsHostData2, scalarShape, &steps2DeviceAddr, aclDataType::ACL_FLOAT, &steps2);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     ret = CreateAclTensor(gradScaleOptionalHostData, scalarShape, &gradScaleOptionalDeviceAddr, aclDataType::ACL_FLOAT,
@@ -557,6 +561,7 @@ int main()
     bool amsgrad = true;
     bool maximize = false;
 
+    // 3.调用第一段接口获取workspaceSize与executor
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
 
@@ -565,18 +570,22 @@ int main()
                                         eps, amsgrad, maximize, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnFusedAdamwGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
 
+    // 根据第一段接口返回的workspaceSize申请device内存
     void* workspaceAddr = nullptr;
     if (workspaceSize > 0) {
         ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
         CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
     }
 
+    // 4.调用第二段接口执行计算
     ret = aclnnFusedAdamw(workspaceAddr, workspaceSize, executor, stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnFusedAdamw failed. ERROR: %d\n", ret); return ret);
 
+    // 同步等待任务执行结束
     ret = aclrtSynchronizeStream(stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
+    // 5.打印预期结果：更新后的paramsRef、expAvgsRef、expAvgSqsRef、maxExpAvgSqsRef
     LOG_PRINT("====== Tensor 1 paramsRef1 results ======\n");
     PrintOutResult(inputShape1, &paramsRef1DeviceAddr);
     LOG_PRINT("====== Tensor 2 expavgs1 results ======\n");
@@ -595,6 +604,7 @@ int main()
     LOG_PRINT("====== Tensor 8 maxexpavgsqs2 results ======\n");
     PrintOutResult(inputShape2, &maxexpavgsqs2DeviceAddr);
 
+    // 6.释放aclTensor与device资源
     aclDestroyTensorList(paramsRefList);
     aclDestroyTensorList(gradsList);
     aclDestroyTensorList(expavgsList);

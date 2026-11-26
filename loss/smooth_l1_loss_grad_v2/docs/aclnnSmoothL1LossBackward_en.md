@@ -41,9 +41,9 @@
   In this formula, x is self, y is target; beta is the threshold that switches between the L1 and L2 losses (corresponding to the operator attribute sigma), and it must be non-negative. sign(x) denotes the sign function of x, that is:
   $
   sign(x) =\begin{cases}
-  1,& if　x>0 \\
-  0,& if　x=0 \\
-  -1,& if　x<0
+  1,& if x>0 \\
+  0,& if x=0 \\
+  -1,& if x<0
   \end{cases}
   $
 
@@ -100,7 +100,7 @@ aclnnStatus aclnnSmoothL1LossBackward(
     <tr>
       <td class="tg-0pky">gradOut (aclTensor*)</td>
       <td class="tg-0pky">Input</td>
-      <td class="tg-0pky">Gradient input for backward propagation, corresponding to SmoothL1Loss in the formula.</td>
+      <td class="tg-0pky">Gradient input for backward propagation (upstream gradient), by which the backward propagation output needs to be multiplied; SmoothL1Loss in the formula is the function being differentiated.</td>
       <td class="tg-0pky">The shape must satisfy the <a href="../../../docs/en/context/broadcast_relationship.md" target="_blank">broadcast relationship</a> with self and target.<br>The data type must satisfy the data type derivation rule with the data types of self and target.</td>
       <td class="tg-0pky">FLOAT, FLOAT16, BFLOAT16</td>
       <td class="tg-0pky">ND</td>
@@ -121,7 +121,7 @@ aclnnStatus aclnnSmoothL1LossBackward(
       <td class="tg-0pky">target (aclTensor*)</td>
       <td class="tg-0pky">Input</td>
       <td class="tg-0pky">Actual label, that is, the input y in the formula.</td>
-      <td class="tg-0pky">shape must satisfy the <a href="../../../docs/en/context/broadcast_relationship.md" target="_blank">broadcast relationship</a> with gradOut and self.<br>The data type must satisfy the data type derivation rule with the data types of gradOut and target.</td>
+      <td class="tg-0pky">shape must satisfy the <a href="../../../docs/en/context/broadcast_relationship.md" target="_blank">broadcast relationship</a> with gradOut and self.<br>The data type must satisfy the data type derivation rule with the data types of gradOut and self.</td>
       <td class="tg-0pky">FLOAT, FLOAT16, BFLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">1-8</td>

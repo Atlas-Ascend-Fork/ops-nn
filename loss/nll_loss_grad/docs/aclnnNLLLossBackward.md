@@ -29,8 +29,8 @@
 
     $$
     x\_grad_{target(t)} =\begin{cases}
-    (-gradOutput * w_{(target(t))}) / totalWeight &, target(t)=1 \\
-    0 &, target(t)=0
+    (-gradOutput * w_{(target(t))}) / totalweight &, target(t) \neq ignoreIndex \\
+    0 &, target(t) = ignoreIndex
     \end{cases}
     $$
 
@@ -38,8 +38,8 @@
 
     $$
     x\_grad_{target(t)} =\begin{cases}
-    -gradOutput * w_{(target(t))} &, target(t)=1 \\
-    0 &, target(t)=0
+    -gradOutput * w_{(target(t))} &, target(t) \neq ignoreIndex \\
+    0 &, target(t) = ignoreIndex
     \end{cases}
     $$
 
@@ -47,8 +47,8 @@
 
     $$
     x\_grad_{target(t)} =\begin{cases}
-    -gradOutput_t * w_{(target(t))} &, target(t)=1 \\
-    0 &, target(t)=0
+    -gradOutput_t * w_{(target(t))} &, target(t) \neq ignoreIndex \\
+    0 &, target(t) = ignoreIndex
     \end{cases}
     $$
 
@@ -128,7 +128,7 @@ aclnnStatus aclnnNLLLossBackward(
         <td>target（aclTensor*）</td>
         <td>输入</td>
         <td>表示真实标签。</td>
-        <td>shape为(N)或者()，其中每个元素的取值范围是[0, C - 1]。</td>
+        <td>shape为(N)或者()，其中有效类别元素的取值范围是[0, C - 1]；被忽略的目标元素应设置为ignoreIndex。</td>
         <td>INT64、UINT8、INT32</td>
         <td>ND</td>
         <td>-</td>
@@ -229,7 +229,7 @@ aclnnStatus aclnnNLLLossBackward(
       <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的gradOutput、self、target、weight、out、reduction、totalWeight为空指针。</td>
+      <td>传入的gradOutput、self、target、weight、out、totalWeight为空指针。</td>
       </tr>
       <tr>
       <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>

@@ -91,7 +91,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
         <td>self（aclTensor*）</td>
         <td>输入</td>
         <td>输入aclTensor。</td>
-        <td><ul><li>shape为四维，第一维是N表示batch size，第二维是C表示类别。</li><li>要求self的第0维、第2维、第3维的shape分别与target的第0维、第1维、第2维的shape一致，否则返回false。</li></ul></td>
+        <td><ul><li>shape为四维例如[N,C,H,W]，第一维是N表示batch size，第二维是C表示类别。</li><li>要求self的第0维、第2维、第3维的shape分别与target的第0维、第1维、第2维的shape一致，否则返回false。</li></ul></td>
         <td>FLOAT、FLOAT16、BFLOAT16</td>
         <td>ND</td>
         <td>-</td>
@@ -101,7 +101,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
         <td>target（aclTensor*）</td>
         <td>输入</td>
         <td>表示真实标签。</td>
-        <td><ul><li>公式中的y，shape为3维</li><li>target的第0维、第1维、第2维的shape分别与self的第0维、第2维、第3维的shape一致</li><li>其中每个元素的取值范围是[0, C - 1]</li></ul></td>
+        <td><ul><li>公式中的y，shape为3维</li><li>target的第0维、第1维、第2维的shape分别与self的第0维、第2维、第3维的shape一致</li><li>其中每个元素的取值范围是[0, C - 1]，或等于ignoreIndex（该值被忽略）</li></ul></td>
         <td>INT64、UINT8、INT32</td>
         <td>ND</td>
         <td>-</td>
@@ -121,7 +121,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
         <td>reduction（int64_t）</td>
         <td>输入</td>
         <td>指定要应用到输出的缩减。</td>
-        <td><ul>支持0(none)|1(mean)|2(sum)。<li>'none'表示不应用缩减</li><li>'mean'表示输出的总和将除以输出中的元素数</li><li>'sum'表示输出将被求和</li><li>当reduction为0时，要求target的shape与gradOutput的shape一致，否则返回false。</li></ul></td>
+        <td><ul>支持0(none)|1(mean)|2(sum)。<li>'none'表示不应用缩减</li><li>'mean'表示输出的总和将除以总权重（totalWeight，即按target、weight和ignoreIndex计算得到的权重和）</li><li>'sum'表示输出将被求和</li><li>当reduction为0时，要求target的shape与gradOutput的shape一致，否则返回false。</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>

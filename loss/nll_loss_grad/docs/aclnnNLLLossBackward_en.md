@@ -31,8 +31,8 @@
 
     $$
     x\_grad_{target(t)} =\begin{cases}
-    (-gradOutput * w_{(target(t))}) / totalweight &, target(t)=1 \\
-    0 &, target(t)=0
+    (-gradOutput * w_{(target(t))}) / totalweight &, target(t) \neq ignoreIndex \\
+    0 &, target(t) = ignoreIndex
     \end{cases}
     $$
 
@@ -40,8 +40,8 @@
 
     $$
     x\_grad_{target(t)} =\begin{cases}
-    -gradOutput * w_{(target(t))} &, target(t)=1 \\
-    0 &, target(t)=0
+    -gradOutput * w_{(target(t))} &, target(t) \neq ignoreIndex \\
+    0 &, target(t) = ignoreIndex
     \end{cases}
     $$
 
@@ -49,8 +49,8 @@
 
     $$
     x\_grad_{target(t)} =\begin{cases}
-    -gradOutput_t * w_{(target(t))} &, target(t)=1 \\
-    0 &, target(t)=0
+    -gradOutput_t * w_{(target(t))} &, target(t) \neq ignoreIndex \\
+    0 &, target(t) = ignoreIndex
     \end{cases}
     $$
 
@@ -130,7 +130,7 @@ aclnnStatus aclnnNLLLossBackward(
         <td>target (aclTensor*)</td>
         <td>Input</td>
         <td>Denotes the ground-truth labels.</td>
-        <td>The shape is (N) or (), with each element in the range [0, C - 1].</td>
+        <td>The shape is (N) or (), where the value range of valid class elements is [0, C - 1]; ignored target elements should be set to ignoreIndex.</td>
         <td>INT64, UINT8, INT32</td>
         <td>ND</td>
         <td>-</td>
@@ -231,7 +231,7 @@ aclnnStatus aclnnNLLLossBackward(
       <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>gradOutput, self, target, weight, out, reduction, or totalWeight is a null pointer.</td>
+      <td>gradOutput, self, target, weight, out, or totalWeight is a null pointer.</td>
       </tr>
       <tr>
       <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>

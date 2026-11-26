@@ -112,7 +112,7 @@ aclnnStatus aclnnSmoothL1Loss(
     <tr>
       <td class="tg-0pky">target（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
-      <td class="tg-0pky">真实标签，公式中的输入y。</td>
+      <td class="tg-0pky">真实标签，公式中的输入target。</td>
       <td class="tg-0pky">shape需要与self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型需满足与self数据类型推导规则（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND、NCL、NCHW、NHWC</td>
@@ -354,19 +354,19 @@ int main() {
   std::vector<int64_t> resultShape = {2, 2, 7, 7};
 
   // 创建self aclTensor
-  std::vector<float> selfData(GetShapeSize(selfShape)* 2, 1);
+  std::vector<float> selfData(GetShapeSize(selfShape), 1);
   aclTensor* self = nullptr;
   void *selfDeviceAddr = nullptr;
   ret = CreateAclTensor(selfData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 创建target aclTensor
-  std::vector<float> targetData(GetShapeSize(targetShape)* 2, 1);
+  std::vector<float> targetData(GetShapeSize(targetShape), 1);
   aclTensor* target = nullptr;
   void *targetDeviceAddr = nullptr;
   ret = CreateAclTensor(targetData, targetShape, &targetDeviceAddr, aclDataType::ACL_FLOAT, &target);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // 创建result aclTensor
-  std::vector<float> resultData(GetShapeSize(resultShape)* 2, 1);
+  std::vector<float> resultData(GetShapeSize(resultShape), 1);
   aclTensor* result = nullptr;
   void *resultDeviceAddr = nullptr;
   ret = CreateAclTensor(resultData, resultShape, &resultDeviceAddr, aclDataType::ACL_FLOAT, &result);
@@ -408,7 +408,7 @@ int main() {
   aclDestroyTensor(self);
   aclDestroyTensor(target);
   aclDestroyTensor(result);
-  // 7. 释放device资源，需要根据具体API的接口定义参数
+  // 7. 释放device资源，需要根据具体API的接口定义修改
   aclrtFree(selfDeviceAddr);
   aclrtFree(targetDeviceAddr);
   aclrtFree(resultDeviceAddr);

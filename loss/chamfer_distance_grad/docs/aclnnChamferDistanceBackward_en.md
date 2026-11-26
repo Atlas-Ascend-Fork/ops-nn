@@ -131,7 +131,7 @@ aclnnStatus aclnnChamferDistanceBackward(
       <td class="tg-0pky">xyz2 (aclTensor*)</td>
       <td class="tg-0pky">Input</td>
       <td class="tg-0pky">Coordinates of point set 2 in the operator forward input.</td>
-      <td class="tg-0pky">The shape is (B,M,2).</td>
+      <td class="tg-0pky">The shape is (B,N,2).</td>
       <td class="tg-0pky">FLOAT, FLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">3</td>
@@ -449,7 +449,7 @@ int main() {
     void* workspaceAddr = nullptr;
     if (workspaceSize > 0) {
         ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret;);
+        CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
     }
     // Call the second-phase API of aclnnChamferDistanceBackward.
     ret = aclnnChamferDistanceBackward(workspaceAddr, workspaceSize, executor, stream);

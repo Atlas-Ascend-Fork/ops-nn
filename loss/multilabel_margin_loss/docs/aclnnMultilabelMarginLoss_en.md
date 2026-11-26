@@ -206,7 +206,7 @@ aclnnStatus aclnnMultilabelMarginLoss(
     <tr>
       <td class="tg-0pky" rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
       <td class="tg-0pky" rowspan="6">161002</td>
-      <td class="tg-0pky">The data type of self is not in the supported range (only FLOAT/FLOAT16/BFLOAT16 is supported).</td>
+      <td class="tg-0pky">The data type of self is not in the supported range (Ascend 950PR&950DT, Atlas A3, and Atlas A2 products support FLOAT/FLOAT16/BFLOAT16, and Atlas training products support FLOAT/FLOAT16).</td>
     </tr>
     <tr>
       <td class="tg-0pky">The data type of out or isTarget is inconsistent with that of self (the aclnn path checks out==self and isTarget==self, and the three must be of the same floating-point type).</td>
@@ -308,7 +308,7 @@ int64_t GetShapeSize(const std::vector<int64_t>& shape) {
 }
 
 int Init(int32_t deviceId, aclrtStream* stream) {
- // Boilerplate: resource initialization.
+  // Boilerplate: resource initialization.
   auto ret = aclInit(nullptr);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclInit failed. ERROR: %d\n", ret); return ret);
   ret = aclrtSetDevice(deviceId);

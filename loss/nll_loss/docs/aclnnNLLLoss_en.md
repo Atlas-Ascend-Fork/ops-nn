@@ -136,7 +136,7 @@ aclnnStatus aclnnNLLLoss(
       <td>reduction (int64_t)</td>
       <td>Input</td>
       <td>Specifies the reduction to apply to the output.</td>
-      <td><ul>Supported values: 0(none)|1(mean)|2(sum).<li>'none': no reduction is applied</li><li>'mean': the sum of the output is divided by the number of elements in the output</li><li>'sum': the output is summed</li></ul></td>
+      <td><ul>Supported values: 0(none)|1(mean)|2(sum).<li>'none': no reduction is applied</li><li>'mean': the sum of the output is divided by the sum of the weights totalWeight (that is, ∑w_{y_n})</li><li>'sum': the output is summed</li></ul></td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
@@ -166,7 +166,7 @@ aclnnStatus aclnnNLLLoss(
     <tr>
       <td>totalWeightOut (aclTensor*)</td>
       <td>Output</td>
-      <td>totalWeightOut in the formula.</td>
+      <td>totalWeight in the formula.</td>
       <td>The output is valid when reduction is non-zero (not none). The shape is (1,).</td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
@@ -283,8 +283,8 @@ aclnnStatus aclnnNLLLoss(
 
 - Deterministic computation
 
-  <!-- npu="A3,910b,910,310p,310b" id7 -->
-  - <term>Atlas A3 products</term>, <term>Atlas A2 products</term>, <term>Atlas 200I/500 A2 inference products</term>, <term>Atlas inference products</term>, <term>Atlas training products</term>: aclnnNLLLoss defaults to a non-deterministic implementation. You can enable deterministic computation through aclrtCtxSetSysParamOpt.
+  <!-- npu="A3,910b,910,310p" id7 -->
+  - <term>Atlas A3 products</term>, <term>Atlas A2 products</term>, <term>Atlas inference products</term>, <term>Atlas training products</term>: aclnnNLLLoss defaults to a non-deterministic implementation. You can enable deterministic computation through aclrtCtxSetSysParamOpt.
   <!-- end id7 -->
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT products</term>: aclnnNLLLoss defaults to a deterministic implementation.

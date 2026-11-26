@@ -388,17 +388,17 @@ aclnnStatus aclnnCtcLoss(
     // 2. 构造输入与输出，需要根据API的接口自定义构造
     std::vector<int64_t> logProbsShape = {12, 4, 5};
     std::vector<int64_t> targetsShape = {4, 7};
-    std::vector<int64_t> negLoglikelihoodOutShape = {4};
+    std::vector<int64_t> negLogLikelihoodOutShape = {4};
     std::vector<int64_t> logAlphaOutShape = {4, 12, 16};
     void* logProbsDeviceAddr = nullptr;
     void* targetsDeviceAddr = nullptr;
-    void* negLoglikelihoodOutDeviceAddr = nullptr;
+    void* negLogLikelihoodOutDeviceAddr = nullptr;
     void* logAlphaOutDeviceAddr = nullptr;
     aclTensor* logProbs = nullptr;
     aclTensor* targets = nullptr;
     aclIntArray* inputLengths = nullptr;
     aclIntArray* targetLengths = nullptr;
-    aclTensor* negLoglikelihoodOut = nullptr;
+    aclTensor* negLogLikelihoodOut = nullptr;
     aclTensor* logAlphaOut = nullptr;
     std::vector<float> logProbsHostData = {
       -1.0894, -2.7162, -0.9764, -1.9126, -2.6162,
@@ -466,7 +466,7 @@ aclnnStatus aclnnCtcLoss(
       4, 2, 1, 4, 3, 1, 4,
       4, 1, 4, 2, 2, 2, 3};
 
-    std::vector<float> negLoglikelihoodOutHostData = {0, 0, 0, 0};
+    std::vector<float> negLogLikelihoodOutHostData = {0, 0, 0, 0};
     std::vector<float> logAlphaOutHostData = {
       0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
       0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -533,8 +533,8 @@ aclnnStatus aclnnCtcLoss(
     targetLengths = aclCreateIntArray(targetLengthsSizeData.data(), 4);
     CHECK_RET(targetLengths != nullptr, return ACL_ERROR_BAD_ALLOC);
 
-    // 创建negLoglikelihoodOut aclTensor
-    ret = CreateAclTensor(negLoglikelihoodOutHostData, negLoglikelihoodOutShape, &negLoglikelihoodOutDeviceAddr, aclDataType::ACL_FLOAT, &negLoglikelihoodOut);
+    // 创建negLogLikelihoodOut aclTensor
+    ret = CreateAclTensor(negLogLikelihoodOutHostData, negLogLikelihoodOutShape, &negLogLikelihoodOutDeviceAddr, aclDataType::ACL_FLOAT, &negLogLikelihoodOut);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建logAlphaOut aclTensor
     ret = CreateAclTensor(logAlphaOutHostData, logAlphaOutShape, &logAlphaOutDeviceAddr, aclDataType::ACL_FLOAT, &logAlphaOut);
@@ -544,7 +544,7 @@ aclnnStatus aclnnCtcLoss(
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // 调用aclnnCtcLoss第一段接口
-    ret = aclnnCtcLossGetWorkspaceSize(logProbs, targets, inputLengths, targetLengths, 0, false, negLoglikelihoodOut, logAlphaOut, &workspaceSize, &executor);
+    ret = aclnnCtcLossGetWorkspaceSize(logProbs, targets, inputLengths, targetLengths, 0, false, negLogLikelihoodOut, logAlphaOut, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCtcLossGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
     // 根据第一段接口计算出的workspaceSize申请device内存
     void* workspaceAddr = nullptr;
@@ -558,14 +558,14 @@ aclnnStatus aclnnCtcLoss(
     // 4.（固定写法）同步等待任务执行结束
     ret = aclrtSynchronizeStream(stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
-    // 5. 获取输出的negLoglikelihoodOut值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
-    auto size = GetShapeSize(negLoglikelihoodOutShape);
+    // 5. 获取输出的negLogLikelihoodOut值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
+    auto size = GetShapeSize(negLogLikelihoodOutShape);
     std::vector<float> resultData(size, 0);
-    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), negLoglikelihoodOutDeviceAddr, size * sizeof(float),
+    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), negLogLikelihoodOutDeviceAddr, size * sizeof(float),
                       ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
     for (int64_t i = 0; i < size; i++) {
-      LOG_PRINT("negLoglikelihoodOut result[%ld] is: %f\n", i, resultData[i]);
+      LOG_PRINT("negLogLikelihoodOut result[%ld] is: %f\n", i, resultData[i]);
     }
 
     // 6. 获取输出的logAlphaOut值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
@@ -583,13 +583,13 @@ aclnnStatus aclnnCtcLoss(
     aclDestroyTensor(targets);
     aclDestroyIntArray(inputLengths);
     aclDestroyIntArray(targetLengths);
-    aclDestroyTensor(negLoglikelihoodOut);
+    aclDestroyTensor(negLogLikelihoodOut);
     aclDestroyTensor(logAlphaOut);
 
     // 8. 释放device资源，需要根据具体API的接口定义修改
     aclrtFree(logProbsDeviceAddr);
     aclrtFree(targetsDeviceAddr);
-    aclrtFree(negLoglikelihoodOutDeviceAddr);
+    aclrtFree(negLogLikelihoodOutDeviceAddr);
     aclrtFree(logAlphaOutDeviceAddr);
     if (workspaceSize > 0) {
       aclrtFree(workspaceAddr);
@@ -677,17 +677,17 @@ aclnnStatus aclnnCtcLoss(
     // 2. 构造输入与输出，需要根据API的接口自定义构造
     std::vector<int64_t> logProbsShape = {12, 4, 5};
     std::vector<int64_t> targetsShape = {4, 7};
-    std::vector<int64_t> negLoglikelihoodOutShape = {4};
+    std::vector<int64_t> negLogLikelihoodOutShape = {4};
     std::vector<int64_t> logAlphaOutShape = {4, 12, 11};
     void* logProbsDeviceAddr = nullptr;
     void* targetsDeviceAddr = nullptr;
-    void* negLoglikelihoodOutDeviceAddr = nullptr;
+    void* negLogLikelihoodOutDeviceAddr = nullptr;
     void* logAlphaOutDeviceAddr = nullptr;
     aclTensor* logProbs = nullptr;
     aclTensor* targets = nullptr;
     aclIntArray* inputLengths = nullptr;
     aclIntArray* targetLengths = nullptr;
-    aclTensor* negLoglikelihoodOut = nullptr;
+    aclTensor* negLogLikelihoodOut = nullptr;
     aclTensor* logAlphaOut = nullptr;
     std::vector<float> logProbsHostData = {
       -1.0894, -2.7162, -0.9764, -1.9126, -2.6162,
@@ -755,7 +755,7 @@ aclnnStatus aclnnCtcLoss(
       4, 2, 1, 4, 3, 1, 4,
       4, 1, 4, 2, 2, 2, 3};
 
-    std::vector<float> negLoglikelihoodOutHostData = {0, 0, 0, 0};
+    std::vector<float> negLogLikelihoodOutHostData = {0, 0, 0, 0};
     std::vector<float> logAlphaOutHostData = {
       0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
       0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -822,8 +822,8 @@ aclnnStatus aclnnCtcLoss(
     targetLengths = aclCreateIntArray(targetLengthsSizeData.data(), 4);
     CHECK_RET(targetLengths != nullptr, return ACL_ERROR_BAD_ALLOC);
 
-    // 创建negLoglikelihoodOut aclTensor
-    ret = CreateAclTensor(negLoglikelihoodOutHostData, negLoglikelihoodOutShape, &negLoglikelihoodOutDeviceAddr, aclDataType::ACL_FLOAT, &negLoglikelihoodOut);
+    // 创建negLogLikelihoodOut aclTensor
+    ret = CreateAclTensor(negLogLikelihoodOutHostData, negLogLikelihoodOutShape, &negLogLikelihoodOutDeviceAddr, aclDataType::ACL_FLOAT, &negLogLikelihoodOut);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建logAlphaOut aclTensor
     ret = CreateAclTensor(logAlphaOutHostData, logAlphaOutShape, &logAlphaOutDeviceAddr, aclDataType::ACL_FLOAT, &logAlphaOut);
@@ -833,7 +833,7 @@ aclnnStatus aclnnCtcLoss(
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // 调用aclnnCtcLoss第一段接口
-    ret = aclnnCtcLossGetWorkspaceSize(logProbs, targets, inputLengths, targetLengths, 0, false, negLoglikelihoodOut, logAlphaOut, &workspaceSize, &executor);
+    ret = aclnnCtcLossGetWorkspaceSize(logProbs, targets, inputLengths, targetLengths, 0, false, negLogLikelihoodOut, logAlphaOut, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCtcLossGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
     // 根据第一段接口计算出的workspaceSize申请device内存
     void* workspaceAddr = nullptr;
@@ -847,14 +847,14 @@ aclnnStatus aclnnCtcLoss(
     // 4.（固定写法）同步等待任务执行结束
     ret = aclrtSynchronizeStream(stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
-    // 5. 获取输出的negLoglikelihoodOut值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
-    auto size = GetShapeSize(negLoglikelihoodOutShape);
+    // 5. 获取输出的negLogLikelihoodOut值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
+    auto size = GetShapeSize(negLogLikelihoodOutShape);
     std::vector<float> resultData(size, 0);
-    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), negLoglikelihoodOutDeviceAddr, size * sizeof(float),
+    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), negLogLikelihoodOutDeviceAddr, size * sizeof(float),
                       ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
     for (int64_t i = 0; i < size; i++) {
-      LOG_PRINT("negLoglikelihoodOut result[%ld] is: %f\n", i, resultData[i]);
+      LOG_PRINT("negLogLikelihoodOut result[%ld] is: %f\n", i, resultData[i]);
     }
 
     // 6. 获取输出的logAlphaOut值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
@@ -872,13 +872,13 @@ aclnnStatus aclnnCtcLoss(
     aclDestroyTensor(targets);
     aclDestroyIntArray(inputLengths);
     aclDestroyIntArray(targetLengths);
-    aclDestroyTensor(negLoglikelihoodOut);
+    aclDestroyTensor(negLogLikelihoodOut);
     aclDestroyTensor(logAlphaOut);
 
     // 8. 释放device资源，需要根据具体API的接口定义修改
     aclrtFree(logProbsDeviceAddr);
     aclrtFree(targetsDeviceAddr);
-    aclrtFree(negLoglikelihoodOutDeviceAddr);
+    aclrtFree(negLogLikelihoodOutDeviceAddr);
     aclrtFree(logAlphaOutDeviceAddr);
     if (workspaceSize > 0) {
       aclrtFree(workspaceAddr);

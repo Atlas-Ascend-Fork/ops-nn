@@ -226,7 +226,7 @@ aclnnStatus aclnnApplyFusedEmaAdam(
     <tr>
       <td class="tg-0pky">beta2（double）</td>
       <td class="tg-0pky">输入</td>
-      <td class="tg-0pky">计算二阶动量的系数，公式中beta2参数，推荐0.9，范围0~1。</td>
+      <td class="tg-0pky">计算二阶动量的系数，公式中beta2参数，推荐0.999，范围0~1。</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">DOUBLE</td>
       <td class="tg-0pky">-</td>
@@ -414,7 +414,7 @@ void PrintOutResult(std::vector<int64_t> &shape, void **deviceAddr) {
   CHECK_RET(
       ret == ACL_SUCCESS,
       LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret);
-      return );
+      return);
   for (int64_t i = 0; i < size; i++) {
     LOG_PRINT("mean result[%ld] is: %f\n", i, resultData[i]);
   }
@@ -514,14 +514,14 @@ int main() {
   std::vector<int64_t> outShape = {2, 2, 2};
 
   // attr
-  float lr = 0.001f;
-  float emaDecay = 0.5f;
-  float beta1 = 0.9f;
-  float beta2 = 0.999f;
-  float eps = 1e-8f;
+  double lr = 0.001;
+  double emaDecay = 0.5;
+  double beta1 = 0.9;
+  double beta2 = 0.999;
+  double eps = 1e-8;
   int64_t mode = 1;
-  bool bias = true;
-  float weightDecay = 0.5f;
+  bool biasCorrection = true;
+  double weightDecay = 0.5;
 
   uint64_t workspaceSize = 0;
   aclOpExecutor *executor;
@@ -529,7 +529,7 @@ int main() {
   // 3. 调用CANN算子库API，需要修改为具体的API名称
   // 调用aclnnApplyFusedEmaAdam第一段接口
   ret = aclnnApplyFusedEmaAdamGetWorkspaceSize(grad, var, m, v, s, step, lr, emaDecay, beta1, beta2, eps,
-                                               mode, bias, weightDecay, &workspaceSize, &executor);
+                                               mode, biasCorrection, weightDecay, &workspaceSize, &executor);
   CHECK_RET(
       ret == ACL_SUCCESS,
       LOG_PRINT("aclnnApplyFusedEmaAdamGetWorkspaceSize failed. ERROR: %d\n",

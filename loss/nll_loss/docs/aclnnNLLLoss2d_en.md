@@ -103,7 +103,7 @@ aclnnStatus aclnnNLLLoss2d(
         <td>self (aclTensor*)</td>
         <td>Input</td>
         <td>Tensor to be computed.</td>
-        <td>Input x in the formula. The shape is 4D. The 2nd dimension is C, indicating the number of classes.</td>
+        <td>Input x in the formula. The shape is 4D, for example [N,C,H,W]. The 2nd dimension is C, indicating the number of classes.</td>
         <td>FLOAT, FLOAT16, BFLOAT16</td>
         <td>ND</td>
         <td>4</td>
@@ -375,7 +375,7 @@ int main() {
   aclTensor* out = nullptr;
   aclTensor* totalWeightOut = nullptr;
   std::vector<float> selfHostData = {0.1, 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1, 8.1, 9.1, 10.1, 11.1};
-  std::vector<int32_t> targetHostData = {1, 0, 1, 1, 2, 1};
+  std::vector<int32_t> targetHostData = {1, 0, 1, 1, 1, 1};
   std::vector<float> weightHostData = {1.1, 1.2};
   std::vector<float> outHostData = {0, 0, 0, 0, 0, 0};
   std::vector<float> totalWeightOutHostData = {0};

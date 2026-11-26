@@ -392,14 +392,13 @@ int main() {
   // logProbsShape (T, N, C)
   std::vector<int64_t> logProbsShape = {12, 4, 5};
   std::vector<int64_t> targetsShape = {4, 7};
-  std::vector<int64_t> negLoglikelihoodShape = {4};
-  // logAlphaShape (N, T, X)  X = ((max(targetLengths) * 2 + 1) + 7) / 8 * 8;
+  std::vector<int64_t> negLogLikelihoodShape = {4};
   std::vector<int64_t> logAlphaShape = {4, 12, 16};
   std::vector<int64_t> outShape = {12, 4, 5};
   void* gradOutDeviceAddr = nullptr;
   void* logProbsDeviceAddr = nullptr;
   void* targetsDeviceAddr = nullptr;
-  void* negLoglikelihoodDeviceAddr = nullptr;
+  void* negLogLikelihoodDeviceAddr = nullptr;
   void* logAlphaDeviceAddr = nullptr;
   void* outDeviceAddr = nullptr;
   aclTensor* gradOut = nullptr;
@@ -407,7 +406,7 @@ int main() {
   aclTensor* targets = nullptr;
   aclIntArray* inputLengths = nullptr;
   aclIntArray* targetLengths = nullptr;
-  aclTensor* negLoglikelihood = nullptr;
+  aclTensor* negLogLikelihood = nullptr;
   aclTensor* logAlpha = nullptr;
   aclTensor* out = nullptr;
   std::vector<float> gradOutHostData = {1, 1, 1, 1};
@@ -477,7 +476,7 @@ int main() {
     4, 2, 1, 4, 3, 1, 4,
     4, 1, 4, 2, 2, 2, 3};
 
-  std::vector<float> negLoglikelihoodHostData = {10.1999, 16.1340, 14.9006,  9.3596};
+  std::vector<float> negLogLikelihoodHostData = {10.1999, 16.1340, 14.9006,  9.3596};
   std::vector<float> logAlphaHostData = {
     -1.0894, -2.7162, -99999, -99999, -99999, -99999, -99999, -99999, -99999, -99999, -99999, -99999, -99999, -99999, -99999, -99999,
     -4.8653, -2.2842, -6.4921, -3.9711, -99999, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
@@ -610,8 +609,8 @@ int main() {
   targetLengths = aclCreateIntArray(targetLengthsSizeData.data(), 4);
   CHECK_RET(targetLengths != nullptr, return ACL_ERROR_BAD_ALLOC);
 
-  // Create the negLoglikelihood aclTensor.
-  ret = CreateAclTensor(negLoglikelihoodHostData, negLoglikelihoodShape, &negLoglikelihoodDeviceAddr, aclDataType::ACL_FLOAT, &negLoglikelihood);
+  // Create the negLogLikelihood aclTensor.
+  ret = CreateAclTensor(negLogLikelihoodHostData, negLogLikelihoodShape, &negLogLikelihoodDeviceAddr, aclDataType::ACL_FLOAT, &negLogLikelihood);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // Create the logAlpha aclTensor.
   ret = CreateAclTensor(logAlphaHostData, logAlphaShape, &logAlphaDeviceAddr, aclDataType::ACL_FLOAT, &logAlpha);
@@ -624,13 +623,13 @@ int main() {
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
   // Call the first-phase API of aclnnCtcLossBackward.
-  ret = aclnnCtcLossBackwardGetWorkspaceSize(gradOut, logProbs, targets, inputLengths, targetLengths, negLoglikelihood, logAlpha, 0, false, out, &workspaceSize, &executor);
+  ret = aclnnCtcLossBackwardGetWorkspaceSize(gradOut, logProbs, targets, inputLengths, targetLengths, negLogLikelihood, logAlpha, 0, false, out, &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCtcLossBackwardGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
   // Allocate device memory based on the workspaceSize calculated by the first-phase API.
   void* workspaceAddr = nullptr;
   if (workspaceSize > 0) {
     ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret;);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
   }
   // Call the second-phase API of aclnnCtcLossBackward.
   ret = aclnnCtcLossBackward(workspaceAddr, workspaceSize, executor, stream);
@@ -654,7 +653,7 @@ int main() {
   aclDestroyTensor(targets);
   aclDestroyIntArray(inputLengths);
   aclDestroyIntArray(targetLengths);
-  aclDestroyTensor(negLoglikelihood);
+  aclDestroyTensor(negLogLikelihood);
   aclDestroyTensor(logAlpha);
   aclDestroyTensor(out);
 
@@ -662,7 +661,7 @@ int main() {
   aclrtFree(gradOutDeviceAddr);
   aclrtFree(logProbsDeviceAddr);
   aclrtFree(targetsDeviceAddr);
-  aclrtFree(negLoglikelihoodDeviceAddr);
+  aclrtFree(negLogLikelihoodDeviceAddr);
   aclrtFree(logAlphaDeviceAddr);
   aclrtFree(outDeviceAddr);
   if (workspaceSize > 0) {
@@ -674,3 +673,5 @@ int main() {
   return 0;
 }
 ```
+
+In the preceding example, the shape of logAlpha is (N, T, X), where X is derived by the formula $X = ((max(targetLengths) * 2 + 1) + 7) / 8 * 8$.

@@ -46,7 +46,7 @@
   $$
 
   $$
-  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{t}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t-1}
+  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{t}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t}
   $$
 
 ## Function Prototype
@@ -261,16 +261,6 @@ aclnnStatus aclnnApplyAdamWQuant(
       <td class="tg-0lax">-</td>
     </tr>
     <tr>
-      <td class="tg-0pky">blockSize (int64_t)</td>
-      <td class="tg-0pky">Input</td>
-      <td class="tg-0pky">The size of each block participating in the computation, fixed to 256. As described for absmax above, a maximum value is selected for each blockSize.</td>
-      <td class="tg-0pky">-</td>
-      <td class="tg-0pky">INT64</td>
-      <td class="tg-0pky">-</td>
-      <td class="tg-0pky">-</td>
-      <td class="tg-0pky">-</td>
-    </tr>
-    <tr>
       <td class="tg-0lax">quantModeOptional(char*)</td>
       <td class="tg-0lax">Input</td>
       <td class="tg-0lax">Reserved parameter, currently meaningless.</td>
@@ -279,6 +269,16 @@ aclnnStatus aclnnApplyAdamWQuant(
       <td class="tg-0lax">-</td>
       <td class="tg-0lax">-</td>
       <td class="tg-0lax">-</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">blockSize (int64_t)</td>
+      <td class="tg-0pky">Input</td>
+      <td class="tg-0pky">The size of each block participating in the computation, fixed to 256. For the absmax mentioned above, a maximum value is selected for each blockSize.</td>
+      <td class="tg-0pky">-</td>
+      <td class="tg-0pky">INT64</td>
+      <td class="tg-0pky">-</td>
+      <td class="tg-0pky">-</td>
+      <td class="tg-0pky">-</td>
     </tr>
     <tr>
       <td class="tg-0pky">workspaceSize (uint64_t*)</td>
@@ -510,16 +510,16 @@ std::vector<float> inputabsmaxMHostData = {5};
 std::vector<float> inputabsmaxVHostData = {3};
 std::vector<int64_t> inputstepHostData(1);
 
-const float lr = 0.1;
-const float beta1 = 0.1;
-const float beta2 = 0.1;
-const float weightDecay = 0.1;
-const float eps = 0.01;
-const float gnormScale = 0.1;
+const double lr = 0.1;
+const double beta1 = 0.9;
+const double beta2 = 0.999;
+const double weightDecay = 0.1;
+const double eps = 1e-8;
+const double gnormScale = 0.999;
 const int64_t blockSize = 256;
-char* quantModeOptional = "BLOCKWISE";
+char quantModeOptional[] = "BLOCKWISE";
 
-// Create the gradOutput aclTensor.
+// Create the varRef aclTensor.
 ret = CreateAclTensor(inputVarHostData, VarRefShape, &VarRefDeviceAddr, aclDataType::ACL_FLOAT, &varRef);
 CHECK_RET(ret == ACL_SUCCESS, return FAILED);
 
@@ -547,7 +547,7 @@ CHECK_RET(ret == ACL_SUCCESS, return FAILED);
 ret = CreateAclTensor(inputstepHostData, stepShape, &stepDeviceAddr, aclDataType::ACL_INT64, &step);
 CHECK_RET(ret == ACL_SUCCESS, return FAILED);
 
-// 3. Call the CANN operator library API. Replace it with the specific API.
+// 3. Call the CANN operator library API to perform the computation.
 uint64_t workspaceSize = 0;
 aclOpExecutor* executor;
 // Call the first-phase API aclnnApplyAdamWQuantGetWorkspaceSize.
@@ -575,7 +575,7 @@ CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed.
 for (int64_t i = 0; i < size; i++) {
 LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
   }
-// 6. Release aclTensor, which needs to be modified according to the specific API definition.
+// 6. Release aclTensor.
 aclDestroyTensor(varRef);
 aclDestroyTensor(grad);
 aclDestroyTensor(mRef);
@@ -586,7 +586,7 @@ aclDestroyTensor(absmaxMRef);
 aclDestroyTensor(absmaxVRef);
 aclDestroyTensor(step);
 
-// 7. Release device resources, which needs to be modified according to the specific API definition.
+// 7. Release device resources.
 aclrtFree(VarRefDeviceAddr);
 aclrtFree(GradDeviceAddr);
 aclrtFree(mRefDeviceAddr);

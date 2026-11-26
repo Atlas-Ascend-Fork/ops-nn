@@ -25,24 +25,24 @@
 
 ## Function
 
-- Description: Computes the mean squared error between each element of input x and target y. reduction specifies the reduction to apply to the output. The supported values are 'none', 'mean', and 'sum'. 'mean' indicates the output will be reduced along axis 0 to compute the mean, and 'sum' indicates the output will be reduced along axis 0 to compute the sum.
+- Description: Computes the mean squared error between each element of input x and target y. reduction specifies the reduction to apply to the output. The supported values are 'none', 'mean', and 'sum'. 'none' indicates no reduction is applied, 'mean' indicates the output will be reduced along axis 0 to compute the mean, and 'sum' indicates the output will be reduced along axis 0 to compute the sum.
 
 - Formula:
 
   When `reduction` is `none`,
 
   $$
-  \ell(x, y) = L = \{l_1,\dots,l_N\}^\top, \quad
-  l_n = \left( x_n - y_n \right)^2,
+  \ell(x, y) = L, \quad
+  L = \left( x - y \right)^2,
   $$
 
-  where $x$ is self, $y$ is target, and $N$ is the batch size. If `reduction` is not `none`, then:
+  where $x$ is self, $y$ is target, and $L$ is the element-wise squared error tensor, whose shape is the result of broadcasting self and target. If `reduction` is not `none`, then:
 
   $$
   \ell(x, y) =
   \begin{cases}
-      \operatorname{mean}(L), &  \text{if reduction} = \text{'mean';}\\
-      \operatorname{sum}(L),  &  \text{if reduction} = \text{'sum'.}
+      \operatorname{mean}(L, \text{dim}=0), &  \text{if reduction} = \text{'mean';}\\
+      \operatorname{sum}(L, \text{dim}=0),  &  \text{if reduction} = \text{'sum'.}
   \end{cases}
   $$
 
@@ -118,7 +118,7 @@ aclnnStatus aclnnMseLossOut(
       <td class="tg-0pky">reduction (int64_t)</td>
       <td class="tg-0pky">Input</td>
       <td class="tg-0pky">Specifies the reduction to apply to the output, corresponding to the parameter reduction in the formula.</td>
-      <td class="tg-0pky">Supports 0(none)|1(mean)|2(sum).<br>'none' indicates no reduction is applied<br>'mean' indicates the sum of the output is divided by the number of elements in the output<br>'sum' indicates the output is summed</td>
+      <td class="tg-0pky">Supports 0(none)|1(mean)|2(sum).<br>'none' indicates no reduction is applied<br>'mean' indicates the output will be reduced along axis 0 to compute the mean (that is, the sum along axis 0 divided by the number of elements along axis 0)<br>'sum' indicates the output will be reduced along axis 0 to compute the sum</td>
       <td class="tg-0pky">INT64</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">-</td>

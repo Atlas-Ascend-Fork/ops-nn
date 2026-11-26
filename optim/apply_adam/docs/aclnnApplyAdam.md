@@ -39,12 +39,12 @@
   v_t = \beta_2 \times v_{t-1} + (1 - \beta_2) \times g_t^2
   $$
 
-  若use_nesterov = true:
+  若useNesterov = true:
   $$
   var_t = var_{t-1} - lr_t \times \frac{\beta_1 \times m_t + (1 - \beta_1) \times g_t}{\sqrt{v_t} + \epsilon}
   $$
 
-  若use_nesterov = false:
+  若useNesterov = false:
   $$
   var_t = var_{t-1} - lr_t \times \frac{m_t}{\sqrt{v_t} + \epsilon}
   $$
@@ -343,6 +343,7 @@ aclnnStatus aclnnApplyAdam(
 示例代码如下，仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
 
 ```Cpp
+// 示例：构造varRef等输入张量，调用aclnnApplyAdam更新参数，并将结果拷贝回host侧打印
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"
@@ -378,6 +379,7 @@ int Init(int32_t deviceId, aclrtStream* stream) {
   return 0;
 }
 
+// 封装aclrtMalloc/aclrtMemcpy/aclCreateTensor，将host数据拷贝到device并创建aclTensor
 template <typename T>
 int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
                     aclDataType dataType, aclTensor** tensor) {
@@ -399,11 +401,13 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
 }
 
 int main() {
+  // 1.(固定写法)device/stream初始化
   int32_t deviceId = 0;
   aclrtStream stream;
   auto ret = Init(deviceId, &stream);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
+  // 2.构造输入与输出：varRef与m/v/grad同shape，其余标量入参shape为{1}
   std::vector<int64_t> varShape = {2, 2};
   std::vector<int64_t> mShape = {2, 2};
   std::vector<int64_t> vShape = {2, 2};
@@ -468,23 +472,28 @@ int main() {
   ret = CreateAclTensor(gradHostData, gradShape, &gradDeviceAddr, aclDataType::ACL_FLOAT, &grad);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
 
+  // 3.调用API：第一段接口获取workspaceSize与executor
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
   ret = aclnnApplyAdamGetWorkspaceSize(var, m, v, beta1Power, beta2Power, lr, beta1, beta2, epsilon, grad, useLocking, useNesterov, &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnApplyAdamGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
 
+  // 根据第一段接口返回的workspaceSize申请device内存
   void* workspaceAddr = nullptr;
   if (workspaceSize > 0) {
     ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
   }
 
+  // 调用第二段接口执行计算
   ret = aclnnApplyAdam(workspaceAddr, workspaceSize, executor, stream);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnApplyAdam failed. ERROR: %d\n", ret); return ret);
 
+  // 4.(固定写法)同步等待任务执行结束
   ret = aclrtSynchronizeStream(stream);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
+  // 5.获取输出的值(varRef被原地更新)，打印预期结果
   auto size = GetShapeSize(varShape);
   std::vector<float> resultData(size, 0);
   ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), varDeviceAddr, size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
@@ -493,6 +502,7 @@ int main() {
     LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
   }
 
+  // 6.释放aclTensor与device资源
   aclDestroyTensor(var);
   aclDestroyTensor(m);
   aclDestroyTensor(v);

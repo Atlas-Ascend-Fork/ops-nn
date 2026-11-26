@@ -542,7 +542,7 @@ int main()
     ret = CreateAclTensor(maxexpavgsqsHostData1, inputShape1, &maxexpavgsqs1DeviceAddr, aclDataType::ACL_FLOAT,
                           &maxexpavgsqs1);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(stepsHostData1, inputShape1, &steps1DeviceAddr, aclDataType::ACL_FLOAT, &steps1);
+    ret = CreateAclTensor(stepsHostData1, scalarShape, &steps1DeviceAddr, aclDataType::ACL_FLOAT, &steps1);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     ret = CreateAclTensor(paramsRefHostData2, inputShape2, &paramsRef2DeviceAddr, aclDataType::ACL_FLOAT, &paramsRef2);
@@ -556,7 +556,7 @@ int main()
     ret = CreateAclTensor(maxexpavgsqsHostData2, inputShape2, &maxexpavgsqs2DeviceAddr, aclDataType::ACL_FLOAT,
                           &maxexpavgsqs2);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(stepsHostData2, inputShape2, &steps2DeviceAddr, aclDataType::ACL_FLOAT, &steps2);
+    ret = CreateAclTensor(stepsHostData2, scalarShape, &steps2DeviceAddr, aclDataType::ACL_FLOAT, &steps2);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     ret = CreateAclTensor(gradScaleOptionalHostData, scalarShape, &gradScaleOptionalDeviceAddr, aclDataType::ACL_FLOAT,
@@ -576,10 +576,10 @@ int main()
     aclTensorList* maxexpavgsqsList = aclCreateTensorList(maxexpavgsqsData.data(), maxexpavgsqsData.size());
     aclTensorList* stepsList = aclCreateTensorList(stepsListData.data(), stepsListData.size());
 
-    double lr = 0.001f;
-    double beta1 = 0.9f;
-    double beta2 = 0.999f;
-    double weightDecay = 0.0f;
+    double lr = 0.001;
+    double beta1 = 0.9;
+    double beta2 = 0.999;
+    double weightDecay = 0.0;
     double eps = 1e-8;
     bool amsgrad = true;
     bool maximize = false;
@@ -597,7 +597,7 @@ int main()
         ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
         CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
     }
-    // Call the second-phase API aclnnXxx.
+    // Call the second-phase API aclnnFusedAdam.
     ret = aclnnFusedAdam(workspaceAddr, workspaceSize, executor, stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnFusedAdam failed. ERROR: %d\n", ret); return ret);
 

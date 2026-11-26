@@ -27,6 +27,40 @@
 
 Performs logits computation on the input `self`, and then performs backward propagation of `BCELoss` using the resulting values together with the label values `target`.
 
+- Formula:
+
+  Let $x$ be the input `self` (logits), $y$ be the label `target`, $g$ be the input `gradOutput`, $w$ be `weightOptional`, $p$ be `posWeightOptional`, $\sigma(x)=\frac{1}{1+e^{-x}}$, and $N$ be the total number of output elements after broadcast.
+
+  The backward gradient is computed according to the following branches:
+
+  $$
+  grad_i =
+  \begin{cases}
+  \sigma(x_i) - y_i, & \text{if } posWeightOptional \text{ is empty} \\
+  (p_i \cdot y_i + 1 - y_i) \cdot \sigma(x_i) - p_i \cdot y_i, & \text{if } posWeightOptional \text{ is not empty}
+  \end{cases}
+  $$
+
+  $$
+  tmp_i =
+  \begin{cases}
+  g_i \cdot grad_i, & \text{if } weightOptional \text{ is empty} \\
+  g_i \cdot w_i \cdot grad_i, & \text{if } weightOptional \text{ is not empty}
+  \end{cases}
+  $$
+
+  $$
+  out_i =
+  \begin{cases}
+  tmp_i, & \text{if } reduction = none \text{ or } reduction = sum \\
+  \frac{1}{N} \cdot tmp_i, & \text{if } reduction = mean
+  \end{cases}
+  $$
+
+  `weightOptional` and `posWeightOptional` are aligned with `self`, `target`, and `gradOutput` according to the broadcast rule and then participate in the element-wise computation.
+
+  On Atlas training products (Ascend 910), $x$ is clamped to the lower bound $-\ln(3.4\times10^{38})\approx-88.7$ before the sigmoid computation, that is, $x=\max(x, -\ln(3.4\times10^{38}))$, to avoid overflow in the exponential operation.
+
 ## Function Prototype
 
 Each operator uses a [two-phase API](../../../docs/en/context/two_phase_api.md). First call the "aclnnBinaryCrossEntropyWithLogitsBackwardGetWorkspaceSize" API to obtain the input parameters and calculate the required workspace size, and then call the "aclnnBinaryCrossEntropyWithLogitsBackward" API to perform the computation.

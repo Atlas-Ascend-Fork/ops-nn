@@ -134,7 +134,7 @@ aclnnStatus aclnnNLLLoss(
       <td>reduction（int64_t）</td>
       <td>输入</td>
       <td>表示要应用到输出的缩减。</td>
-      <td><ul>支持0(none)|1(mean)|2(sum)。<li>'none'表示不应用缩减</li><li>'mean'表示输出的总和将除以输出中的元素数</li><li>'sum'表示输出将被求和</li></ul></td>
+      <td><ul>支持0(none)|1(mean)|2(sum)。<li>'none'表示不应用缩减</li><li>'mean'表示输出的总和将除以权重总和totalWeight（即∑w_{y_n}）</li><li>'sum'表示输出将被求和</li></ul></td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
@@ -164,7 +164,7 @@ aclnnStatus aclnnNLLLoss(
     <tr>
       <td>totalWeightOut（aclTensor*）</td>
       <td>输出</td>
-      <td>公式中的totalWeightOut。</td>
+      <td>公式中的totalWeight。</td>
       <td>在reduction为非0(非none)下输出值有效，shape为(1,)。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -281,8 +281,8 @@ aclnnStatus aclnnNLLLoss(
 
 - 确定性计算
 
-  <!-- npu="A3,910b,910,310p,310b" id7 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：aclnnNLLLoss默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
+  <!-- npu="A3,910b,910,310p" id7 -->
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：aclnnNLLLoss默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
   <!-- end id7 -->
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT系列产品</term>：aclnnNLLLoss默认确定性实现。

@@ -114,7 +114,7 @@ aclnnStatus aclnnSmoothL1Loss(
     <tr>
       <td class="tg-0pky">target (aclTensor*)</td>
       <td class="tg-0pky">Input</td>
-      <td class="tg-0pky">Ground truth label, which is input y in the formula.</td>
+      <td class="tg-0pky">Ground truth label, which is input target in the formula.</td>
       <td class="tg-0pky">The shape must satisfy the <a href="../../../docs/en/context/broadcast_relationship.md" target="_blank">broadcast relationship</a> with self.<br>The data type must comply with the data type derivation rule with self (see also <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">conversion relationship</a>).</td>
       <td class="tg-0pky">FLOAT, FLOAT16, BFLOAT16</td>
       <td class="tg-0pky">ND, NCL, NCHW, NHWC</td>
@@ -348,19 +348,19 @@ int main() {
   std::vector<int64_t> resultShape = {2, 2, 7, 7};
 
   // Create the self aclTensor
-  std::vector<float> selfData(GetShapeSize(selfShape)* 2, 1);
+  std::vector<float> selfData(GetShapeSize(selfShape), 1);
   aclTensor* self = nullptr;
   void *selfDeviceAddr = nullptr;
   ret = CreateAclTensor(selfData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT, &self);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // Create the target aclTensor
-  std::vector<float> targetData(GetShapeSize(targetShape)* 2, 1);
+  std::vector<float> targetData(GetShapeSize(targetShape), 1);
   aclTensor* target = nullptr;
   void *targetDeviceAddr = nullptr;
   ret = CreateAclTensor(targetData, targetShape, &targetDeviceAddr, aclDataType::ACL_FLOAT, &target);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // Create the result aclTensor
-  std::vector<float> resultData(GetShapeSize(resultShape)* 2, 1);
+  std::vector<float> resultData(GetShapeSize(resultShape), 1);
   aclTensor* result = nullptr;
   void *resultDeviceAddr = nullptr;
   ret = CreateAclTensor(resultData, resultShape, &resultDeviceAddr, aclDataType::ACL_FLOAT, &result);
@@ -402,7 +402,7 @@ int main() {
   aclDestroyTensor(self);
   aclDestroyTensor(target);
   aclDestroyTensor(result);
-  // 7. Release device resources, which needs to be based on the parameters of the specific API definition
+  // 7. Release device resources, and modify the code based on the actual API definition
   aclrtFree(selfDeviceAddr);
   aclrtFree(targetDeviceAddr);
   aclrtFree(resultDeviceAddr);

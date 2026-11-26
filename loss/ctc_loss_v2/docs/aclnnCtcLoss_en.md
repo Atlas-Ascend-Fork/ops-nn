@@ -390,17 +390,17 @@ The following sample code is for reference only. For details about compilation a
     // 2. Construct the input and output. Customize the construction based on the API.
     std::vector<int64_t> logProbsShape = {12, 4, 5};
     std::vector<int64_t> targetsShape = {4, 7};
-    std::vector<int64_t> negLoglikelihoodOutShape = {4};
+    std::vector<int64_t> negLogLikelihoodOutShape = {4};
     std::vector<int64_t> logAlphaOutShape = {4, 12, 16};
     void* logProbsDeviceAddr = nullptr;
     void* targetsDeviceAddr = nullptr;
-    void* negLoglikelihoodOutDeviceAddr = nullptr;
+    void* negLogLikelihoodOutDeviceAddr = nullptr;
     void* logAlphaOutDeviceAddr = nullptr;
     aclTensor* logProbs = nullptr;
     aclTensor* targets = nullptr;
     aclIntArray* inputLengths = nullptr;
     aclIntArray* targetLengths = nullptr;
-    aclTensor* negLoglikelihoodOut = nullptr;
+    aclTensor* negLogLikelihoodOut = nullptr;
     aclTensor* logAlphaOut = nullptr;
     std::vector<float> logProbsHostData = {
       -1.0894, -2.7162, -0.9764, -1.9126, -2.6162,
@@ -468,7 +468,7 @@ The following sample code is for reference only. For details about compilation a
       4, 2, 1, 4, 3, 1, 4,
       4, 1, 4, 2, 2, 2, 3};
 
-    std::vector<float> negLoglikelihoodOutHostData = {0, 0, 0, 0};
+    std::vector<float> negLogLikelihoodOutHostData = {0, 0, 0, 0};
     std::vector<float> logAlphaOutHostData = {
       0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
       0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -535,8 +535,8 @@ The following sample code is for reference only. For details about compilation a
     targetLengths = aclCreateIntArray(targetLengthsSizeData.data(), 4);
     CHECK_RET(targetLengths != nullptr, return ACL_ERROR_BAD_ALLOC);
 
-    // Create the negLoglikelihoodOut aclTensor
-    ret = CreateAclTensor(negLoglikelihoodOutHostData, negLoglikelihoodOutShape, &negLoglikelihoodOutDeviceAddr, aclDataType::ACL_FLOAT, &negLoglikelihoodOut);
+    // Create the negLogLikelihoodOut aclTensor
+    ret = CreateAclTensor(negLogLikelihoodOutHostData, negLogLikelihoodOutShape, &negLogLikelihoodOutDeviceAddr, aclDataType::ACL_FLOAT, &negLogLikelihoodOut);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // Create the logAlphaOut aclTensor
     ret = CreateAclTensor(logAlphaOutHostData, logAlphaOutShape, &logAlphaOutDeviceAddr, aclDataType::ACL_FLOAT, &logAlphaOut);
@@ -546,7 +546,7 @@ The following sample code is for reference only. For details about compilation a
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // Call the first-phase API of aclnnCtcLoss
-    ret = aclnnCtcLossGetWorkspaceSize(logProbs, targets, inputLengths, targetLengths, 0, false, negLoglikelihoodOut, logAlphaOut, &workspaceSize, &executor);
+    ret = aclnnCtcLossGetWorkspaceSize(logProbs, targets, inputLengths, targetLengths, 0, false, negLogLikelihoodOut, logAlphaOut, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCtcLossGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
     // Allocate device memory based on the workspaceSize calculated by the first-phase API
     void* workspaceAddr = nullptr;
@@ -560,14 +560,14 @@ The following sample code is for reference only. For details about compilation a
     // 4. (boilerplate) Wait for the task execution to complete
     ret = aclrtSynchronizeStream(stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
-    // 5. Obtain the output negLoglikelihoodOut value and copy the result from device memory to the host. Modify based on the specific API definition.
-    auto size = GetShapeSize(negLoglikelihoodOutShape);
+    // 5. Obtain the output negLogLikelihoodOut value and copy the result from device memory to the host. Modify based on the specific API definition.
+    auto size = GetShapeSize(negLogLikelihoodOutShape);
     std::vector<float> resultData(size, 0);
-    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), negLoglikelihoodOutDeviceAddr, size * sizeof(float),
+    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), negLogLikelihoodOutDeviceAddr, size * sizeof(float),
                       ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
     for (int64_t i = 0; i < size; i++) {
-      LOG_PRINT("negLoglikelihoodOut result[%ld] is: %f\n", i, resultData[i]);
+      LOG_PRINT("negLogLikelihoodOut result[%ld] is: %f\n", i, resultData[i]);
     }
 
     // 6. Obtain the output logAlphaOut value and copy the result from device memory to the host. Modify based on the specific API definition.
@@ -585,13 +585,13 @@ The following sample code is for reference only. For details about compilation a
     aclDestroyTensor(targets);
     aclDestroyIntArray(inputLengths);
     aclDestroyIntArray(targetLengths);
-    aclDestroyTensor(negLoglikelihoodOut);
+    aclDestroyTensor(negLogLikelihoodOut);
     aclDestroyTensor(logAlphaOut);
 
     // 8. Release device resources. Modify based on the specific API definition.
     aclrtFree(logProbsDeviceAddr);
     aclrtFree(targetsDeviceAddr);
-    aclrtFree(negLoglikelihoodOutDeviceAddr);
+    aclrtFree(negLogLikelihoodOutDeviceAddr);
     aclrtFree(logAlphaOutDeviceAddr);
     if (workspaceSize > 0) {
       aclrtFree(workspaceAddr);
@@ -679,17 +679,17 @@ The following sample code is for reference only. For details about compilation a
     // 2. Construct input and output. Customize the construction based on the API.
     std::vector<int64_t> logProbsShape = {12, 4, 5};
     std::vector<int64_t> targetsShape = {4, 7};
-    std::vector<int64_t> negLoglikelihoodOutShape = {4};
+    std::vector<int64_t> negLogLikelihoodOutShape = {4};
     std::vector<int64_t> logAlphaOutShape = {4, 12, 11};
     void* logProbsDeviceAddr = nullptr;
     void* targetsDeviceAddr = nullptr;
-    void* negLoglikelihoodOutDeviceAddr = nullptr;
+    void* negLogLikelihoodOutDeviceAddr = nullptr;
     void* logAlphaOutDeviceAddr = nullptr;
     aclTensor* logProbs = nullptr;
     aclTensor* targets = nullptr;
     aclIntArray* inputLengths = nullptr;
     aclIntArray* targetLengths = nullptr;
-    aclTensor* negLoglikelihoodOut = nullptr;
+    aclTensor* negLogLikelihoodOut = nullptr;
     aclTensor* logAlphaOut = nullptr;
     std::vector<float> logProbsHostData = {
       -1.0894, -2.7162, -0.9764, -1.9126, -2.6162,
@@ -757,7 +757,7 @@ The following sample code is for reference only. For details about compilation a
       4, 2, 1, 4, 3, 1, 4,
       4, 1, 4, 2, 2, 2, 3};
 
-    std::vector<float> negLoglikelihoodOutHostData = {0, 0, 0, 0};
+    std::vector<float> negLogLikelihoodOutHostData = {0, 0, 0, 0};
     std::vector<float> logAlphaOutHostData = {
       0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
       0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -824,8 +824,8 @@ The following sample code is for reference only. For details about compilation a
     targetLengths = aclCreateIntArray(targetLengthsSizeData.data(), 4);
     CHECK_RET(targetLengths != nullptr, return ACL_ERROR_BAD_ALLOC);
 
-    // Create the negLoglikelihoodOut aclTensor.
-    ret = CreateAclTensor(negLoglikelihoodOutHostData, negLoglikelihoodOutShape, &negLoglikelihoodOutDeviceAddr, aclDataType::ACL_FLOAT, &negLoglikelihoodOut);
+    // Create the negLogLikelihoodOut aclTensor.
+    ret = CreateAclTensor(negLogLikelihoodOutHostData, negLogLikelihoodOutShape, &negLogLikelihoodOutDeviceAddr, aclDataType::ACL_FLOAT, &negLogLikelihoodOut);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // Create the logAlphaOut aclTensor.
     ret = CreateAclTensor(logAlphaOutHostData, logAlphaOutShape, &logAlphaOutDeviceAddr, aclDataType::ACL_FLOAT, &logAlphaOut);
@@ -835,7 +835,7 @@ The following sample code is for reference only. For details about compilation a
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     // Call the first-phase API of aclnnCtcLoss.
-    ret = aclnnCtcLossGetWorkspaceSize(logProbs, targets, inputLengths, targetLengths, 0, false, negLoglikelihoodOut, logAlphaOut, &workspaceSize, &executor);
+    ret = aclnnCtcLossGetWorkspaceSize(logProbs, targets, inputLengths, targetLengths, 0, false, negLogLikelihoodOut, logAlphaOut, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnCtcLossGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
     // Allocate device memory using the workspaceSize calculated by the first-phase API
     void* workspaceAddr = nullptr;
@@ -849,14 +849,14 @@ The following sample code is for reference only. For details about compilation a
     // 4. (Boilerplate) Synchronously wait for the task execution to complete
     ret = aclrtSynchronizeStream(stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
-    // 5. Obtain the value of the output negLoglikelihoodOut, and copy the result on the device to the host. Modify it according to the specific API definition
-    auto size = GetShapeSize(negLoglikelihoodOutShape);
+    // 5. Obtain the value of the output negLogLikelihoodOut, and copy the result on the device to the host. Modify it according to the specific API definition
+    auto size = GetShapeSize(negLogLikelihoodOutShape);
     std::vector<float> resultData(size, 0);
-    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), negLoglikelihoodOutDeviceAddr, size * sizeof(float),
+    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), negLogLikelihoodOutDeviceAddr, size * sizeof(float),
                       ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
     for (int64_t i = 0; i < size; i++) {
-      LOG_PRINT("negLoglikelihoodOut result[%ld] is: %f\n", i, resultData[i]);
+      LOG_PRINT("negLogLikelihoodOut result[%ld] is: %f\n", i, resultData[i]);
     }
 
     // 6. Obtain the value of the output logAlphaOut, and copy the result on the device to the host. Modify it according to the specific API definition
@@ -874,13 +874,13 @@ The following sample code is for reference only. For details about compilation a
     aclDestroyTensor(targets);
     aclDestroyIntArray(inputLengths);
     aclDestroyIntArray(targetLengths);
-    aclDestroyTensor(negLoglikelihoodOut);
+    aclDestroyTensor(negLogLikelihoodOut);
     aclDestroyTensor(logAlphaOut);
 
     // 8. Release device resources. Modify it according to the specific API definition
     aclrtFree(logProbsDeviceAddr);
     aclrtFree(targetsDeviceAddr);
-    aclrtFree(negLoglikelihoodOutDeviceAddr);
+    aclrtFree(negLogLikelihoodOutDeviceAddr);
     aclrtFree(logAlphaOutDeviceAddr);
     if (workspaceSize > 0) {
       aclrtFree(workspaceAddr);

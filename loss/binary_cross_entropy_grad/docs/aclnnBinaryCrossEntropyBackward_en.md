@@ -50,7 +50,7 @@
 
   $$
   out = grad\_output \cdot weight \cdot \frac {x-target}{x(1-x)} \\
-  out = mean(grad\_output) \ if \ reduction = mean
+  out = mean(grad\_output \cdot weight \cdot \frac {x-target}{x(1-x)}) \ if \ reduction = mean
   $$
 
 ## Function Prototype

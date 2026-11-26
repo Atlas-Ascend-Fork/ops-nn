@@ -41,12 +41,12 @@
   v_t = \beta_2 \times v_{t-1} + (1 - \beta_2) \times g_t^2
   $$
 
-  If use_nesterov = true:
+  If useNesterov = true:
   $$
   var_t = var_{t-1} - lr_t \times \frac{\beta_1 \times m_t + (1 - \beta_1) \times g_t}{\sqrt{v_t} + \epsilon}
   $$
 
-  If use_nesterov = false:
+  If useNesterov = false:
   $$
   var_t = var_{t-1} - lr_t \times \frac{m_t}{\sqrt{v_t} + \epsilon}
   $$
@@ -345,6 +345,7 @@ aclnnStatus aclnnApplyAdam(
 The following sample code is for reference only. For details about compilation and execution, see [Compile and Run Samples](../../../docs/en/context/compile_and_run_sample.md).
 
 ```Cpp
+// Example: construct input tensors such as varRef, call aclnnApplyAdam to update parameters, and copy the result back to the host for printing.
 #include <iostream>
 #include <vector>
 #include "acl/acl.h"
@@ -380,6 +381,7 @@ int Init(int32_t deviceId, aclrtStream* stream) {
   return 0;
 }
 
+// Encapsulate aclrtMalloc/aclrtMemcpy/aclCreateTensor to copy host data to the device and create an aclTensor.
 template <typename T>
 int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& shape, void** deviceAddr,
                     aclDataType dataType, aclTensor** tensor) {
@@ -401,11 +403,13 @@ int CreateAclTensor(const std::vector<T>& hostData, const std::vector<int64_t>& 
 }
 
 int main() {
+  // 1. Boilerplate: initialize the device/stream.
   int32_t deviceId = 0;
   aclrtStream stream;
   auto ret = Init(deviceId, &stream);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
+  // 2. Construct the inputs and outputs: varRef has the same shape as m/v/grad, and the remaining scalar inputs have shape {1}.
   std::vector<int64_t> varShape = {2, 2};
   std::vector<int64_t> mShape = {2, 2};
   std::vector<int64_t> vShape = {2, 2};
@@ -470,23 +474,28 @@ int main() {
   ret = CreateAclTensor(gradHostData, gradShape, &gradDeviceAddr, aclDataType::ACL_FLOAT, &grad);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
 
+  // 3. Call the API: the first-phase API obtains workspaceSize and executor.
   uint64_t workspaceSize = 0;
   aclOpExecutor* executor;
   ret = aclnnApplyAdamGetWorkspaceSize(var, m, v, beta1Power, beta2Power, lr, beta1, beta2, epsilon, grad, useLocking, useNesterov, &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnApplyAdamGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
 
+  // Allocate device memory using the workspaceSize returned by the first-phase API.
   void* workspaceAddr = nullptr;
   if (workspaceSize > 0) {
     ret = aclrtMalloc(&workspaceAddr, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
   }
 
+  // Call the second-phase API to perform the computation.
   ret = aclnnApplyAdam(workspaceAddr, workspaceSize, executor, stream);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnApplyAdam failed. ERROR: %d\n", ret); return ret);
 
+  // 4. Boilerplate: wait for the task execution to finish.
   ret = aclrtSynchronizeStream(stream);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
+  // 5. Obtain the output value (varRef is updated in place) and print the expected result.
   auto size = GetShapeSize(varShape);
   std::vector<float> resultData(size, 0);
   ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), varDeviceAddr, size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
@@ -495,6 +504,7 @@ int main() {
     LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
   }
 
+  // 6. Release the aclTensor and device resources.
   aclDestroyTensor(var);
   aclDestroyTensor(m);
   aclDestroyTensor(v);

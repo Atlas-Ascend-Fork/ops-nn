@@ -30,13 +30,13 @@
   当`reduction`为`mean`时：
 
   $$
-  MselossBackward(grad, x, y) = grad * (x - y) * 2 / x.numel()
+  MseLossBackward(grad, x, y) = grad * (x - y) * 2 / x.numel()
   $$
 
   其中`x.numel()`表示`x`中的元素个数。如果`reduction`不是`mean`,那么：
 
   $$
-  MselossBackward(grad, x, y) = grad * (x - y) * 2
+  MseLossBackward(grad, x, y) = grad * (x - y) * 2
   $$
 
 ## 函数原型
@@ -131,7 +131,7 @@ aclnnStatus aclnnMseLossBackward(
     <tr>
       <td class="tg-0pky">out(aclTensor*)</td>
       <td class="tg-0pky">输出</td>
-      <td class="tg-0pky">输出的损失，公式中的输出`MselossBackward(grad, x, y)`。</td>
+      <td class="tg-0pky">输出的梯度，公式中的输出`MseLossBackward(grad, x, y)`。</td>
       <td class="tg-0pky">out与gradOutput、self、target <a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>之后的tensor的shape一致。<br>数据类型需要是self与target推导之后可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND</td>

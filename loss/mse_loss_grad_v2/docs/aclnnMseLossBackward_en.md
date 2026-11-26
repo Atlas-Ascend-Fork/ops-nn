@@ -32,13 +32,13 @@
   When `reduction` is `mean`:
 
   $$
-  MselossBackward(grad, x, y) = grad * (x - y) * 2 / x.numel()
+  MseLossBackward(grad, x, y) = grad * (x - y) * 2 / x.numel()
   $$
 
   In the formula, `x.numel()` indicates the number of elements in `x`. If `reduction` is not `mean`, then:
 
   $$
-  MselossBackward(grad, x, y) = grad * (x - y) * 2
+  MseLossBackward(grad, x, y) = grad * (x - y) * 2
   $$
 
 ## Function Prototype
@@ -133,7 +133,7 @@ aclnnStatus aclnnMseLossBackward(
     <tr>
       <td class="tg-0pky">out(aclTensor*)</td>
       <td class="tg-0pky">Output</td>
-      <td class="tg-0pky">Output loss, which is the output `MselossBackward(grad, x, y)` in the formula.</td>
+      <td class="tg-0pky">Output gradient, which is the output `MseLossBackward(grad, x, y)` in the formula.</td>
       <td class="tg-0pky">The shape of out needs to be consistent with that of the tensor after gradOutput, self, and target are <a href="../../../docs/en/context/broadcast_relationship.md" target="_blank">broadcast</a>.<br>The data type must be a data type that self can be deduced to (see <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">conversion relationship</a>).</td>
       <td class="tg-0pky">FLOAT, FLOAT16, BFLOAT16</td>
       <td class="tg-0pky">ND</td>

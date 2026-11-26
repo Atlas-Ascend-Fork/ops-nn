@@ -36,7 +36,7 @@
   l_n = \left| x_n - y_n \right|,
   $$
 
-  where $x$ is self, $y$ is target, and $N$ is the batch size. If `reduction` is not `'none'`, then
+  where $x$ is self, $y$ is target, and $N$ is the total number of elements in the output (consistent with the reduction description). If `reduction` is not `'none'`, then
 
   $$
   \ell(x, y) =

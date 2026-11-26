@@ -376,7 +376,7 @@ int main() {
   aclDestroyTensor(target);
   aclDestroyTensor(out);
 
- // 7. Release device resources. Modify the code according to the specific API definition.
+  // 7. Release device resources. Modify the code according to the specific API definition.
  aclrtFree(selfDeviceAddr);
  aclrtFree(targetDeviceAddr);
  aclrtFree(outDeviceAddr);

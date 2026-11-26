@@ -120,8 +120,8 @@ aclnnStatus aclnnL1LossBackward(
       <td class="tg-0pky">gradInput (aclTensor*)</td>
       <td class="tg-0pky">Output</td>
       <td class="tg-0pky">Output loss.</td>
-      <td class="tg-0pky">The data type must satisfy the data type deduction rules with self (see <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">conversion relationship</a>).</td>
-      <td class="tg-0pky">FLOAT, FLOAT16, BFLOAT16, DOUBLE</td>
+      <td class="tg-0pky">The shape is the shape after <a href="../../../docs/en/context/broadcast_relationship.md" target="_blank">broadcast</a> of the three inputs gradOutput, self, and target.<br>The data type must satisfy the data type deduction rules with self (see <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">conversion relationship</a>).</td>
+      <td class="tg-0pky">FLOAT, FLOAT16, BFLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">0-8</td>
       <td class="tg-0pky">√</td>

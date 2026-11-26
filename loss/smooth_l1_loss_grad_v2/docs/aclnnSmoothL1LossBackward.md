@@ -39,9 +39,9 @@
   其中x为self，y为target；beta为L1与L2损失的分界阈值（对应算子属性sigma），该值必须是非负的。sign(x)表示x的符号函数，即：
   $$
   sign(x) =\begin{cases}
-  1,& if　x>0 \\
-  0,& if　x=0 \\
-  -1,& if　x<0
+  1,& if x>0 \\
+  0,& if x=0 \\
+  -1,& if x<0
   \end{cases}
   $$
 
@@ -98,7 +98,7 @@ aclnnStatus aclnnSmoothL1LossBackward(
     <tr>
       <td class="tg-0pky">gradOut（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
-      <td class="tg-0pky">梯度反向输入，公式中的SmoothL1Loss。</td>
+      <td class="tg-0pky">梯度反向输入（上游梯度），反向传播输出需乘以该梯度；公式中的SmoothL1Loss为被求导函数。</td>
       <td class="tg-0pky">shape需要与self和target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与self、target的数据类型需满足数据类型推导规则。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND</td>
@@ -119,7 +119,7 @@ aclnnStatus aclnnSmoothL1LossBackward(
       <td class="tg-0pky">target（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">真实的标签，公式中的输入y。</td>
-      <td class="tg-0pky">shape需要与gradOut、self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与gradOut、target的数据类型需满足数据类型推导规则。</td>
+      <td class="tg-0pky">shape需要与gradOut、self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与gradOut、self的数据类型需满足数据类型推导规则。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">1-8</td>

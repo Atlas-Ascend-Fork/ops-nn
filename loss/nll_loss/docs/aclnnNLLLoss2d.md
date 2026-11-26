@@ -101,7 +101,7 @@ aclnnStatus aclnnNLLLoss2d(
         <td>self（aclTensor*）</td>
         <td>输入</td>
         <td>待进行计算的张量。</td>
-        <td>输入公式中的x，shape为4维，第2维是C，C表示类别数。</td>
+        <td>输入公式中的x，shape为4维例如[N,C,H,W]，第2维是C，C表示类别数。</td>
         <td>FLOAT、FLOAT16、BFLOAT16</td>
         <td>ND</td>
         <td>4</td>
@@ -373,7 +373,7 @@ int main() {
   aclTensor* out = nullptr;
   aclTensor* totalWeightOut = nullptr;
   std::vector<float> selfHostData = {0.1, 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1, 8.1, 9.1, 10.1, 11.1};
-  std::vector<int32_t> targetHostData = {1, 0, 1, 1, 2, 1};
+  std::vector<int32_t> targetHostData = {1, 0, 1, 1, 1, 1};
   std::vector<float> weightHostData = {1.1, 1.2};
   std::vector<float> outHostData = {0, 0, 0, 0, 0, 0};
   std::vector<float> totalWeightOutHostData = {0};

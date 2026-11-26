@@ -25,6 +25,40 @@
 
 将输入`self`执行logits计算，将得到的值与标签值`target`一起进行`BCELoss`的反向传播计算。
 
+- 计算公式：
+
+  记 $x$ 为输入`self`（logits），$y$ 为标签`target`，$g$ 为输入`gradOutput`，$w$ 为`weightOptional`，$p$ 为`posWeightOptional`，$\sigma(x)=\frac{1}{1+e^{-x}}$，$N$ 为broadcast后输出元素总数。
+
+  反向梯度计算按以下分支进行：
+
+  $$
+  grad_i =
+  \begin{cases}
+  \sigma(x_i) - y_i, & \text{if } posWeightOptional \text{ 为空} \\
+  (p_i \cdot y_i + 1 - y_i) \cdot \sigma(x_i) - p_i \cdot y_i, & \text{if } posWeightOptional \text{ 不为空}
+  \end{cases}
+  $$
+
+  $$
+  tmp_i =
+  \begin{cases}
+  g_i \cdot grad_i, & \text{if } weightOptional \text{ 为空} \\
+  g_i \cdot w_i \cdot grad_i, & \text{if } weightOptional \text{ 不为空}
+  \end{cases}
+  $$
+
+  $$
+  out_i =
+  \begin{cases}
+  tmp_i, & \text{if } reduction = none \text{ 或 } reduction = sum \\
+  \frac{1}{N} \cdot tmp_i, & \text{if } reduction = mean
+  \end{cases}
+  $$
+
+  `weightOptional`、`posWeightOptional`与`self`、`target`、`gradOutput`按broadcast规则对齐后逐元素参与计算。
+
+  在Atlas训练系列产品（Ascend 910）上，计算sigmoid前会将 $x$ 取下限 $-\ln(3.4\times10^{38})\approx-88.7$，即 $x=\max(x, -\ln(3.4\times10^{38}))$，以避免指数运算溢出。
+
 ## 函数原型
 
 每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnBinaryCrossEntropyWithLogitsBackwardGetWorkspaceSize”接口获取入参并根据流程计算所需workspace大小，再调用“aclnnBinaryCrossEntropyWithLogitsBackward”接口执行计算。

@@ -72,11 +72,11 @@ aclnnStatus aclnnBinaryCrossEntropy(
 
     | <Div Style="Width:150px">Name</Div> | <Div Style="Width:120px">Input/Output</Div> | <Div Style="Width:250px">Description</Div> | <Div Style="Width:250px">Instruction</Div> | <Div Style="Width:150px">Data Type</Div> | <Div Style="Width:102px">Data Format</Div> | <Div Style="Width:102px">Dimension (Shape)</Div> | <Div Style="Width:145px">Non-Contiguous Tensor</Div> |
     | ------------------| ------------------ | --------------|-------------------- | ----------------- | --------------------- | ---------------|---------------------------|
-    | self (aclTensor*) | Input | Represents the predicted probability values, i.e., the input `self` in the formula. | The value ranges from 0 to 1.|  FLOAT16, FLOAT, BFLOAT16|ND|1-8|√|
+    | self (aclTensor*) | Input | Represents the predicted probability values, i.e., the input `self` in the formula. | The value ranges from 0 to 1.|  FLOAT16, FLOAT, BFLOAT16|ND|0-8|√|
     | target (aclTensor*) | Input | Represents the target tensor, i.e., the input `target` in the formula. | The value ranges from 0 to 1.|  Same as `self`|ND|Same as `self`|√|
     | weight (aclTensor*) | Input | Represents the weight tensor, i.e., the input `weight` in the formula. |weight can be nullptr, which is equivalent to all weight values being 1. |  Same as `self`|ND|Same as `self`|√|
     | reduction (int64_t) | Input | Represents the reduction method, i.e., the input `reduction` in the formula, which is an enumeration value for output reduction. | Supports 0 (none), 1 (mean), and 2 (sum). <ul><li>When set to 0, i.e., Reduction::None, no operation is performed.</li><li>When set to 1, i.e., Reduction::Mean, the average of the results is taken.</li><li>When set to 2, i.e., Reduction::Sum, the results are summed.</li></ul>| INT64 |-|-|-|
-    | out (aclTensor*) | Output | Represents the computed output, i.e., $\ell(self,target)$ in the formula. | If reduction = 0, the shape is the same as `self`; otherwise, the shape is [1].|  Same as `self`|ND|Same as `self`|√|
+    | out (aclTensor*) | Output | Represents the computed output, i.e., $\ell(self,target)$ in the formula. | If reduction = 0, the shape is the same as `self`; otherwise, the shape is [1].|  Same as `self`|ND|Same as `self` when reduction = 0; otherwise, [1]|√|
     | workspaceSize (uint64_t*) | Output | Returns the workspace size to be applied on the Device side. | -|  -|-|-|-|
     | executor (aclOpExecutor**) | Output | Returns the op executor, which contains the operator computation flow. | -|  -|-|-|-|
 
@@ -326,3 +326,5 @@ int main() {
   return 0;
 }
 ```
+
+In the preceding example, the shapes of self and target are both 2×2, all elements of weight are 1, and reduction is 0 (none). After the example is run, four loss values (all ranging from 0 to 1) are printed, which can be used to verify whether the computation result meets expectations.
