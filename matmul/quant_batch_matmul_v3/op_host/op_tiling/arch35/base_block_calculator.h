@@ -87,7 +87,7 @@ private:
     uint64_t CalMaxBasicBlockLimited(uint64_t shapeSize, uint64_t alignUnit, uint64_t l0BufferSize,
                                      bool isSplite) const;
     bool IsBalanceAFullLoad(uint64_t baseM, uint64_t baseN) const;
-    void GetBaseK(BaseBlockRes& baseBlockTemp);
+    bool GetBaseK(BaseBlockRes& baseBlockTemp);
     bool IsBaseK64Aligned(ge::DataType dtype) const;
     bool IsDoubleEqual(double a, double b) const;
     bool IsMxKOdd() const;

@@ -50,7 +50,7 @@ REGISTER_TILING_TEMPLATE_WITH_ARCH(QuantBatchMatmulV3, QBMMV3StreamKTiling960, s
 QBMMV3StreamKTiling960::QBMMV3StreamKTiling960(gert::TilingContext* context)
     : QuantBatchMatmulV3TilingBase(context, false), tilingData_(tilingDataSelf_)
 {
-    Reset();
+    ResetTilingData();
     InitCompileInfo();
     inputParams_.Reset();
 }
@@ -59,7 +59,7 @@ QBMMV3StreamKTiling960::QBMMV3StreamKTiling960(gert::TilingContext* context,
                                                DequantBmm::QuantBatchMatmulV3StreamKBasicAPITilingData* out)
     : QuantBatchMatmulV3TilingBase(context, true), tilingData_(*out)
 {
-    Reset();
+    ResetTilingData();
     InitCompileInfo();
     inputParams_.Reset();
 }
@@ -226,7 +226,9 @@ bool QBMMV3StreamKTiling960::IsProfilingBetter()
                           cDtypeBytes};
 
     AicTimeCost aswtResult;
-    aswtEvaluator.EvaluateAicTime(aswtCaseInfo, inputParams_, compileInfo_, aswtResult);
+    if (!aswtEvaluator.EvaluateAicTime(aswtCaseInfo, inputParams_, compileInfo_, aswtResult)) {
+        return false;
+    }
 
     // Evaluate SK cost
     TilingCostEvaluator skEvaluator(socParams);
@@ -239,8 +241,11 @@ bool QBMMV3StreamKTiling960::IsProfilingBetter()
                         skMt.baseN,         skMt.baseK,         skUsedCoreNum,      tilingData_.streamKTiling.kL1,
                         cDtypeBytes};
 
-    StreamKTimeCost skResult = skEvaluator.EvaluateStreamkCost(skCaseInfo, tilingData_.streamKTiling.singleCoreK,
-                                                               inputParams_, compileInfo_);
+    StreamKTimeCost skResult;
+    if (!skEvaluator.EvaluateStreamkCost(skCaseInfo, tilingData_.streamKTiling.singleCoreK, inputParams_, compileInfo_,
+                                         skResult)) {
+        return false;
+    }
     if (skResult.totalTime + SK_VALID_THRESHOLD < aswtResult.totalTime) {
         return true;
     } else {
@@ -304,7 +309,7 @@ ge::graphStatus QBMMV3StreamKTiling960::GetWorkspaceSize()
     return ge::GRAPH_SUCCESS;
 }
 
-void QBMMV3StreamKTiling960::Reset()
+void QBMMV3StreamKTiling960::ResetTilingData()
 {
     isBf16Opt_ = false;
     isUbQuant_ = false;
@@ -349,7 +354,7 @@ ge::graphStatus QBMMV3StreamKTiling960::PostTiling()
         CUBE_INNER_ERR_REPORT(inputParams_.opName, "Tiling data size[%zu] is not aligned to 8.", tilingDataSize_),
         return ge::GRAPH_PARAM_INVALID);
     errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
-                           reinterpret_cast<void*>(&tilingData_), tilingDataSize_);
+                           static_cast<const void*>(&tilingData_), tilingDataSize_);
     if (ret != EOK) {
         OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret=%d", ret);
         return ge::GRAPH_PARAM_INVALID;

@@ -594,18 +594,6 @@ TEST_F(QuantBatchMatmulV3CostEvaluator, Hif4ScaleTrafficIncreasesCostWithoutChan
     EXPECT_GT(withScale.fixpipeTotalTime, withScale.fixpipeLastRoundMaxtime);
     EXPECT_TRUE(std::isfinite(withScale.totalTime));
     EXPECT_GE(withScale.totalTime, withoutScale.totalTime);
-
-    DequantBmm::QuantBatchMatmulV3BasicAPITilingData data{};
-    data.matmulTiling.m = tile.mSize;
-    data.matmulTiling.n = tile.nSize;
-    data.matmulTiling.k = tile.kSize;
-    data.matmulTiling.baseM = tile.baseM;
-    data.matmulTiling.baseN = tile.baseN;
-    data.matmulTiling.baseK = tile.baseK;
-    data.matmulTiling.scaleKL1 = tile.kL1;
-    const auto fromTiling = evaluator.Evaluate(data, params, info);
-    EXPECT_DOUBLE_EQ(fromTiling.totalTime, withScale.totalTime);
-    EXPECT_DOUBLE_EQ(fromTiling.mte2TotalTime, withScale.mte2TotalTime);
 }
 
 TEST_F(QuantBatchMatmulV3CostEvaluator, StreamKSeparatesDataParallelWorkAndReductionCost)
@@ -622,7 +610,8 @@ TEST_F(QuantBatchMatmulV3CostEvaluator, StreamKSeparatesDataParallelWorkAndReduc
         params.mSize = tile.mSize;
         params.nSize = tile.nSize;
         params.kSize = tile.kSize;
-        const auto cost = evaluator.EvaluateStreamkCost(tile, 1024, params, info);
+        StreamKTimeCost cost{};
+        ASSERT_TRUE(evaluator.EvaluateStreamkCost(tile, 1024, params, info, cost));
         EXPECT_TRUE(std::isfinite(cost.totalTime));
         EXPECT_GT(cost.skAicCost.totalTime, 0);
         EXPECT_GT(cost.aivTotalTime, 0);
@@ -637,6 +626,101 @@ TEST_F(QuantBatchMatmulV3CostEvaluator, StreamKSeparatesDataParallelWorkAndReduc
             EXPECT_DOUBLE_EQ(cost.dpAicCost.totalTime, 0);
             EXPECT_DOUBLE_EQ(cost.totalTime, cost.aicCost + cost.aivTotalTime);
         }
+    }
+}
+
+TEST_F(QuantBatchMatmulV3CostEvaluator, RejectsZeroDivisorsWithoutEvaluating)
+{
+    // 除零防护：CaseInfo 基块尺寸/核数、compileInfo 核数、SocParams 带宽/频率、StreamK
+    // 单核 K 任一作为除数的参数为零时，评估接口保守返回 false，不产生除零耗时。
+    FillSocSpecifyParamsFromPlatform(&platform, info.socSpec);
+    BaseBlockCalculator calculator(params, info, 1);
+    SocSpecifyParams specs;
+    ASSERT_TRUE(calculator.GetSocSpecAdjustBalanceInfo(specs));
+    TilingCostEvaluator evaluator(specs);
+    const CaseInfo tile{127, 127, 8192, 128, 128, 128, 32, 512, 2};
+    params.mSize = tile.mSize;
+    params.nSize = tile.nSize;
+    params.kSize = tile.kSize;
+    AicTimeCost aicCost{};
+    StreamKTimeCost skCost{};
+    ASSERT_TRUE(evaluator.EvaluateAicTime(tile, params, info, aicCost));
+    ASSERT_TRUE(evaluator.EvaluateStreamkCost(tile, 1024, params, info, skCost));
+
+    // CaseInfo 关键除数逐一置零：两个评估接口均校验失败。
+    for (size_t field = 0; field < 7UL; ++field) {
+        SCOPED_TRACE(field);
+        CaseInfo zero = tile;
+        switch (field) {
+            case 0:
+                zero.baseM = 0UL;
+                break;
+            case 1:
+                zero.baseN = 0UL;
+                break;
+            case 2:
+                zero.baseK = 0UL;
+                break;
+            case 3:
+                zero.usedCoreNum = 0UL;
+                break;
+            case 4:
+                zero.mSize = 0UL;
+                break;
+            case 5:
+                zero.nSize = 0UL;
+                break;
+            default:
+                zero.kSize = 0UL;
+                break;
+        }
+        AicTimeCost cost{};
+        EXPECT_FALSE(evaluator.EvaluateAicTime(zero, params, info, cost));
+        StreamKTimeCost streamKCost{};
+        EXPECT_FALSE(evaluator.EvaluateStreamkCost(zero, 1024, params, info, streamKCost));
+    }
+
+    // compileInfo 核数与 StreamK 单核 K 为零。
+    QuantBatchMatmulV3CompileInfo zeroCores = info;
+    zeroCores.aicNum = 0;
+    AicTimeCost cost{};
+    EXPECT_FALSE(evaluator.EvaluateAicTime(tile, params, zeroCores, cost));
+    EXPECT_FALSE(evaluator.EvaluateStreamkCost(tile, 1024, params, zeroCores, skCost));
+    zeroCores.aicNum = info.aicNum;
+    zeroCores.aivNum = 0;
+    EXPECT_FALSE(evaluator.EvaluateStreamkCost(tile, 1024, params, zeroCores, skCost));
+    StreamKTimeCost zeroKCcost{};
+    EXPECT_FALSE(evaluator.EvaluateStreamkCost(tile, 0, params, info, zeroKCcost));
+
+    // SocParams 关键除数（带宽/频率）逐一置零。
+    for (size_t field = 0; field < 6UL; ++field) {
+        SCOPED_TRACE(field);
+        SocSpecifyParams zeroSpecs = specs;
+        switch (field) {
+            case 0:
+                zeroSpecs.freq = 0.0;
+                break;
+            case 1:
+                zeroSpecs.l2Bw = 0.0;
+                break;
+            case 2:
+                zeroSpecs.hbmBw = 0.0;
+                break;
+            case 3:
+                zeroSpecs.l0Bw = 0.0;
+                break;
+            case 4:
+                zeroSpecs.l0mxBw = 0.0;
+                break;
+            default:
+                zeroSpecs.l0BwB4KoutterAxis = 0.0;
+                break;
+        }
+        TilingCostEvaluator zeroEvaluator(zeroSpecs);
+        AicTimeCost aicResult{};
+        EXPECT_FALSE(zeroEvaluator.EvaluateAicTime(tile, params, info, aicResult));
+        StreamKTimeCost skResult{};
+        EXPECT_FALSE(zeroEvaluator.EvaluateStreamkCost(tile, 1024, params, info, skResult));
     }
 }
 

@@ -17,8 +17,6 @@
 #include "matmul/common/op_host/math_util_nn.h"
 #include "quant_batch_matmul_v3_tiling_util.h"
 #include <algorithm>
-#include <cerrno>
-#include <cstdlib>
 
 namespace optiling {
 
@@ -49,6 +47,20 @@ static constexpr uint64_t B4_MIN_STEP = 4UL;    // FP4类型最小搬运步长�
 static constexpr uint64_t B4_SPLIT_BASE = 64UL; // B4_MIN_STEP * BLOCK_CUBE，baseM/baseN为64倍数时不拆
 
 TilingCostEvaluator::TilingCostEvaluator(const SocSpecifyParams& socParmas) : socParams_(socParmas) {}
+
+// CaseInfo 关键除数非零校验，避免评估时除零。
+bool TilingCostEvaluator::IsValidCaseInfo(const CaseInfo& caseInfo) const
+{
+    return caseInfo.baseM != 0UL && caseInfo.baseN != 0UL && caseInfo.baseK != 0UL && caseInfo.usedCoreNum != 0UL &&
+           caseInfo.mSize != 0UL && caseInfo.nSize != 0UL && caseInfo.kSize != 0UL;
+}
+
+// SocSpecifyParams 关键除数非零校验，避免评估时除零。
+bool TilingCostEvaluator::IsValidSocParams() const
+{
+    return socParams_.freq != 0.0 && socParams_.l2Bw != 0.0 && socParams_.hbmBw != 0.0 && socParams_.l0Bw != 0.0 &&
+           socParams_.l0mxBw != 0.0 && socParams_.l0BwB4KoutterAxis != 0.0;
+}
 
 double TilingCostEvaluator::GetRealL2Bw(const CaseInfo& caseInfo, const QuantBatchMatmulInfo& inputInfo,
                                         const QuantBatchMatmulV3CompileInfo& compileInfo)
@@ -170,6 +182,28 @@ void TilingCostEvaluator::EsitmateMmadTime(const CaseInfo& caseInfo, const Quant
     }
 }
 
+double TilingCostEvaluator::CalcTileMte1Time(const QuantBatchMatmulInfo& inputInfo, uint64_t mDim, uint64_t nDim,
+                                             uint64_t kDim) const
+{
+    // FP4/HIF4 且 K 为外轴时才使用 l0ABwB4KoutterAxis，其余情况均用 l0ABw
+    bool isFp4Type = (inputInfo.aDtype == ge::DT_FLOAT4_E2M1 || inputInfo.aDtype == ge::DT_FLOAT4_E1M2 ||
+                      inputInfo.aDtype == Ops::NN::DT_HIFLOAT4);
+    double aBw = (isFp4Type && inputInfo.transA) ? socParams_.l0BwB4KoutterAxis : socParams_.l0Bw;
+    double bBw = (isFp4Type && !inputInfo.transB) ? socParams_.l0BwB4KoutterAxis : socParams_.l0Bw;
+    double freqMhz = static_cast<double>(socParams_.freq * GHZ_TO_MHZ);
+
+    double aBytes = GetSizeWithDataType(mDim * kDim, inputInfo.aDtype);
+    double bBytes = GetSizeWithDataType(nDim * kDim, inputInfo.aDtype);
+    double scaleBytes = 0;
+    if (inputInfo.isMxPerGroup) {
+        scaleBytes = static_cast<double>((mDim + nDim) * kDim) / SCALE_GROUP_BYTES_RATIO_MX;
+    } else if (inputInfo.isHif4PerGroup) {
+        scaleBytes = static_cast<double>((mDim + nDim) * kDim) / SCALE_GROUP_BYTES_RATIO_HIF4;
+    }
+    double time = scaleBytes / socParams_.l0mxBw + aBytes / aBw + bBytes / bBw;
+    return time / freqMhz;
+}
+
 void TilingCostEvaluator::EstimateMte1Time(const CaseInfo& caseInfo, const QuantBatchMatmulInfo& inputInfo,
                                            AicTimeCost& res)
 {
@@ -181,31 +215,10 @@ void TilingCostEvaluator::EstimateMte1Time(const CaseInfo& caseInfo, const Quant
     uint64_t fullKIter = caseInfo.kSize / caseInfo.baseK;
     uint64_t kTail = caseInfo.kSize % caseInfo.baseK;
 
-    // FP4/HIF4 且 K 为外轴时才使用 l0ABwB4KoutterAxis，其余情况均用 l0ABw
-    bool isFp4Type = (inputInfo.aDtype == ge::DT_FLOAT4_E2M1 || inputInfo.aDtype == ge::DT_FLOAT4_E1M2 ||
-                      inputInfo.aDtype == Ops::NN::DT_HIFLOAT4);
-    double aBw = (isFp4Type && inputInfo.transA) ? socParams_.l0BwB4KoutterAxis : socParams_.l0Bw;
-    double bBw = (isFp4Type && !inputInfo.transB) ? socParams_.l0BwB4KoutterAxis : socParams_.l0Bw;
-    double freqMhz = static_cast<double>(socParams_.freq * GHZ_TO_MHZ);
-
-    // 计算给定 (mDim, nDim, kDim) 单个 tile 的 MTE1 耗时
-    auto calcTileMte1Time = [&](uint64_t mDim, uint64_t nDim, uint64_t kDim) -> double {
-        double aBytes = GetSizeWithDataType(mDim * kDim, inputInfo.aDtype);
-        double bBytes = GetSizeWithDataType(nDim * kDim, inputInfo.aDtype);
-        double scaleBytes = 0;
-        if (inputInfo.isMxPerGroup) {
-            scaleBytes = static_cast<double>((mDim + nDim) * kDim) / SCALE_GROUP_BYTES_RATIO_MX;
-        } else if (inputInfo.isHif4PerGroup) {
-            scaleBytes = static_cast<double>((mDim + nDim) * kDim) / SCALE_GROUP_BYTES_RATIO_HIF4;
-        }
-        double time = scaleBytes / socParams_.l0mxBw + aBytes / aBw + bBytes / bBw;
-        return time / freqMhz;
-    };
-
-    double oneFullBlockMte1time = calcTileMte1Time(caseInfo.baseM, caseInfo.baseN, caseInfo.baseK);
+    double oneFullBlockMte1time = CalcTileMte1Time(inputInfo, caseInfo.baseM, caseInfo.baseN, caseInfo.baseK);
     double oneRoundMte1Time = oneFullBlockMte1time * static_cast<double>(fullKIter);
     if (kTail != 0UL) {
-        oneRoundMte1Time += calcTileMte1Time(caseInfo.baseM, caseInfo.baseN, kTail);
+        oneRoundMte1Time += CalcTileMte1Time(inputInfo, caseInfo.baseM, caseInfo.baseN, kTail);
     }
 
     bool mHasTail = (caseInfo.mSize % caseInfo.baseM != 0);
@@ -221,9 +234,9 @@ void TilingCostEvaluator::EstimateMte1Time(const CaseInfo& caseInfo, const Quant
         uint64_t ni = t % nCnt;
         uint64_t mDim = (mi == mCnt - 1UL && mHasTail) ? mTail : caseInfo.baseM;
         uint64_t nDim = (ni == nCnt - 1UL && nHasTail) ? nTail : caseInfo.baseN;
-        double tileTime = calcTileMte1Time(mDim, nDim, caseInfo.baseK) * static_cast<double>(fullKIter);
+        double tileTime = CalcTileMte1Time(inputInfo, mDim, nDim, caseInfo.baseK) * static_cast<double>(fullKIter);
         if (kTail != 0UL) {
-            tileTime += calcTileMte1Time(mDim, nDim, kTail);
+            tileTime += CalcTileMte1Time(inputInfo, mDim, nDim, kTail);
         }
         if (tileTime > maxLastRoundTime) {
             maxLastRoundTime = tileTime;
@@ -290,8 +303,8 @@ void TilingCostEvaluator::EstimateMte2Time(const CaseInfo& caseInfo, const Quant
     }
 }
 
-void TilingCostEvaluator::EstimateFixpTime(const CaseInfo& caseInfo, const QuantBatchMatmulInfo& inputInfo,
-                                           const QuantBatchMatmulV3CompileInfo& compileInfo, AicTimeCost& res)
+void TilingCostEvaluator::EstimateFixpTime(const CaseInfo& caseInfo, const QuantBatchMatmulV3CompileInfo& compileInfo,
+                                           AicTimeCost& res)
 {
     uint64_t mCnt = MathUtil::CeilDivision(caseInfo.mSize, caseInfo.baseM);
     uint64_t nCnt = MathUtil::CeilDivision(caseInfo.nSize, caseInfo.baseN);
@@ -344,14 +357,19 @@ void TilingCostEvaluator::EstimateFixpTime(const CaseInfo& caseInfo, const Quant
     }
 }
 
-void TilingCostEvaluator::EvaluateAicTime(const CaseInfo& caseInfo, const QuantBatchMatmulInfo& inputInfo,
+bool TilingCostEvaluator::EvaluateAicTime(const CaseInfo& caseInfo, const QuantBatchMatmulInfo& inputInfo,
                                           const QuantBatchMatmulV3CompileInfo& compileInfo, AicTimeCost& res)
 {
+    // 非零校验：除数为 0 的非法输入返回 false，避免除零。
+    if (!IsValidCaseInfo(caseInfo) || compileInfo.aicNum == 0 || !IsValidSocParams()) {
+        res = {};
+        return false;
+    }
     // 1. 分段耗时估算
     EsitmateMmadTime(caseInfo, inputInfo, res);
     EstimateMte1Time(caseInfo, inputInfo, res);
     EstimateMte2Time(caseInfo, inputInfo, compileInfo, res);
-    EstimateFixpTime(caseInfo, inputInfo, compileInfo, res);
+    EstimateFixpTime(caseInfo, compileInfo, res);
 
     // 2. 根据分段结果计算流水线总耗时
     uint64_t mCnt = MathUtil::CeilDivision(caseInfo.mSize, caseInfo.baseM);
@@ -395,6 +413,7 @@ void TilingCostEvaluator::EvaluateAicTime(const CaseInfo& caseInfo, const QuantB
     }
 
     res.totalTime = totalTime;
+    return true;
 }
 
 void TilingCostEvaluator::EstimateStreamkAivTime(const CaseInfo& caseInfo, const QuantBatchMatmulInfo& inputInfo,
@@ -427,6 +446,7 @@ void TilingCostEvaluator::EstimateStreamkAivTime(const CaseInfo& caseInfo, const
     //   mBurstCnt  = CeilDiv(curML1InAiv, mBurstBase)  <- 真正干活的 AIV 任务数
     //   kCntIndex < mBurstCnt 的 AIV 才搬运，其余 mBurst=0 直接返回
     uint64_t taskRation = (aicNum == 0UL) ? 1UL : aivNum / aicNum;
+    taskRation = (taskRation == 0UL) ? 1UL : taskRation;
     constexpr uint64_t ONE_BLK_ELEMS_FP32 = 32UL; // AscendC::ONE_BLK_SIZE / sizeof(fp32)
     constexpr uint64_t UB2GM_SRCGAP_UNIT = 32UL;
 
@@ -482,7 +502,7 @@ void TilingCostEvaluator::EstimateStreamkAivTime(const CaseInfo& caseInfo, const
     // 4. vecCalCost
     res.vecCalCost = static_cast<double>(maxSKblockPerCore) /
                      (VEC_CAL_BYTES_PER_CYCLE * static_cast<double>(socParams_.freq * GHZ_TO_MHZ) *
-                      (compileInfo.aivNum / compileInfo.aicNum));
+                      static_cast<double>(taskRation));
 
     // 5. ub2GMCost
     uint64_t cDtypeBytes = GetSizeWithDataType(1UL, inputInfo.cDtype);
@@ -495,11 +515,15 @@ void TilingCostEvaluator::EstimateStreamkAivTime(const CaseInfo& caseInfo, const
     res.aivTotalTime = res.vectorHeadCost + res.workspace2UBCost + res.vecCalCost + res.ub2GMCost;
 }
 
-StreamKTimeCost TilingCostEvaluator::EvaluateStreamkCost(const CaseInfo& caseInfo, uint64_t skSingleCoreK,
-                                                         const QuantBatchMatmulInfo& inputInfo,
-                                                         const QuantBatchMatmulV3CompileInfo& compileInfo)
+bool TilingCostEvaluator::EvaluateStreamkCost(const CaseInfo& caseInfo, uint64_t skSingleCoreK,
+                                              const QuantBatchMatmulInfo& inputInfo,
+                                              const QuantBatchMatmulV3CompileInfo& compileInfo, StreamKTimeCost& res)
 {
-    StreamKTimeCost res;
+    // 非零校验：除数为 0 的非法输入返回 false，避免除零。
+    if (!IsValidCaseInfo(caseInfo) || compileInfo.aicNum == 0 || compileInfo.aivNum == 0 || skSingleCoreK == 0UL ||
+        !IsValidSocParams()) {
+        return false;
+    }
 
     uint64_t mCnt = MathUtil::CeilDivision(caseInfo.mSize, caseInfo.baseM);
     uint64_t nCnt = MathUtil::CeilDivision(caseInfo.nSize, caseInfo.baseN);
@@ -534,7 +558,9 @@ StreamKTimeCost TilingCostEvaluator::EvaluateStreamkCost(const CaseInfo& caseInf
         dpCaseInfo.nSize = dpNCoveredSize;
         dpCaseInfo.usedCoreNum = aicNum;
         dpCaseInfo.outTypeSize = cDtypeBytes;
-        EvaluateAicTime(dpCaseInfo, inputInfo, compileInfo, res.dpAicCost);
+        if (!EvaluateAicTime(dpCaseInfo, inputInfo, compileInfo, res.dpAicCost)) {
+            return false;
+        }
 
         int64_t skUsedCoreNum = std::min(tailMNTileNum * static_cast<int64_t>(kCnt), static_cast<int64_t>(aicNum));
         int64_t skNTileNum = MathUtil::CeilDivision(tailMNTileNum, static_cast<int64_t>(mCnt));
@@ -548,7 +574,9 @@ StreamKTimeCost TilingCostEvaluator::EvaluateStreamkCost(const CaseInfo& caseInf
         skCaseInfo.kSize = skSingleCoreK;
         skCaseInfo.usedCoreNum = static_cast<uint64_t>(skUsedCoreNum);
         skCaseInfo.outTypeSize = DATA_SIZE_FP32;
-        EvaluateAicTime(skCaseInfo, inputInfo, compileInfo, res.skAicCost);
+        if (!EvaluateAicTime(skCaseInfo, inputInfo, compileInfo, res.skAicCost)) {
+            return false;
+        }
 
         res.aicCost = res.dpAicCost.totalTime + res.skAicCost.totalTime;
     } else {
@@ -558,7 +586,9 @@ StreamKTimeCost TilingCostEvaluator::EvaluateStreamkCost(const CaseInfo& caseInf
         skCaseInfo.kSize = skSingleCoreK;
         skCaseInfo.usedCoreNum = skUsedCoreNum;
         skCaseInfo.outTypeSize = DATA_SIZE_FP32;
-        EvaluateAicTime(skCaseInfo, inputInfo, compileInfo, res.skAicCost);
+        if (!EvaluateAicTime(skCaseInfo, inputInfo, compileInfo, res.skAicCost)) {
+            return false;
+        }
 
         res.dpAicCost = {};
         res.aicCost = res.skAicCost.totalTime;
@@ -581,24 +611,7 @@ StreamKTimeCost TilingCostEvaluator::EvaluateStreamkCost(const CaseInfo& caseInf
         res.totalTime = res.aicCost + res.aivTotalTime;
     }
 
-    return res;
-}
-
-AicTimeCost TilingCostEvaluator::Evaluate(const DequantBmm::QuantBatchMatmulV3BasicAPITilingData& tilingData,
-                                          const QuantBatchMatmulInfo& inputInfo,
-                                          const QuantBatchMatmulV3CompileInfo& compileInfo)
-{
-    auto& mt = tilingData.matmulTiling;
-    uint64_t mCnt = MathUtil::CeilDivision(mt.m, mt.baseM);
-    uint64_t nCnt = MathUtil::CeilDivision(mt.n, mt.baseN);
-    uint64_t usedCoreNum = std::min(mCnt * nCnt, static_cast<uint64_t>(compileInfo.aicNum));
-    uint64_t cDtypeBytes = GetSizeWithDataType(1UL, inputInfo.cDtype);
-
-    CaseInfo caseInfo{mt.m, mt.n, mt.k, mt.baseM, mt.baseN, mt.baseK, usedCoreNum, mt.scaleKL1, cDtypeBytes};
-    AicTimeCost res;
-    EvaluateAicTime(caseInfo, inputInfo, compileInfo, res);
-
-    return res;
+    return true;
 }
 
 } // namespace optiling

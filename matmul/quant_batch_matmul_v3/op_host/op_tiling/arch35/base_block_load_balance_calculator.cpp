@@ -161,8 +161,14 @@ uint64_t BaseBlockCalculator::CalMaxBasicBlockLimited(uint64_t shapeSize, uint64
     return maxBaseBlock;
 }
 
-void BaseBlockCalculator::GetBaseK(BaseBlockRes& baseBlockTemp)
+bool BaseBlockCalculator::GetBaseK(BaseBlockRes& baseBlockTemp)
 {
+    // 除零保护：baseM/baseN 任一为 0 时无法推算 baseK，直接报错返回。
+    OP_TILING_CHECK(baseBlockTemp.baseM == 0UL || baseBlockTemp.baseN == 0UL,
+                    CUBE_INNER_ERR_REPORT(inputParams_.opName,
+                                          "BaseM and baseN should be greater than 0, but baseM: %lu, baseN: %lu.",
+                                          baseBlockTemp.baseM, baseBlockTemp.baseN),
+                    return false);
     uint64_t baseMax = std::max(baseBlockTemp.baseM, baseBlockTemp.baseN);
     uint64_t baseMin = std::min(baseBlockTemp.baseM, baseBlockTemp.baseN);
 
@@ -192,13 +198,13 @@ void BaseBlockCalculator::GetBaseK(BaseBlockRes& baseBlockTemp)
     if (kValueAlign <= maxBaseK) {
         kValueAlign = kValueAlign > BASEK_LIMIT ? kValueAlign / qmmv3_tiling_const::NUM_HALF : kValueAlign;
         baseBlockTemp.baseK = ops::CeilAlign(kValueAlign, baseKAlignNum);
-        return;
+        return true;
     }
 
     if (inputParams_.transA && !inputParams_.transB) {
         maxBaseK = maxBaseK > BASEK_LIMIT ? maxBaseK / qmmv3_tiling_const::NUM_HALF : maxBaseK;
         baseBlockTemp.baseK = ops::FloorAlign(maxBaseK, baseKAlignNum);
-        return;
+        return true;
     }
 
     if (GetSizeWithDataType(maxBaseK, inputParams_.aDtype) >= qmmv3_tiling_const::BASIC_BLOCK_SIZE_256) {
@@ -206,7 +212,7 @@ void BaseBlockCalculator::GetBaseK(BaseBlockRes& baseBlockTemp)
             maxBaseK, GetShapeWithDataType(qmmv3_tiling_const::BASIC_BLOCK_SIZE_256, inputParams_.aDtype));
         baseBlockTemp.baseK = baseBlockTemp.baseK > BASEK_LIMIT ? baseBlockTemp.baseK / qmmv3_tiling_const::NUM_HALF :
                                                                   baseBlockTemp.baseK;
-        return;
+        return true;
     }
 
     for (uint64_t baseK : LB_BASE_K_CANDIDATE) {
@@ -217,11 +223,12 @@ void BaseBlockCalculator::GetBaseK(BaseBlockRes& baseBlockTemp)
                                 "When BaseK is 32, dtype of x must not be MXFP8, FLOAT4, INT4 or HIFLOAT4, actual "
                                 "BaseK is %lu, dtype of x is %s",
                                 baseK, ge::TypeUtils::DataTypeToSerialString(inputParams_.aDtype).c_str()),
-                            return);
+                            return false);
             baseBlockTemp.baseK = baseK;
-            return;
+            return true;
         }
     }
+    return true;
 }
 
 bool BaseBlockCalculator::GetSocSpecAdjustBalanceInfo(SocSpecifyParams& outInfo) const
@@ -415,7 +422,9 @@ bool BaseBlockCalculator::ComputeBaseBlockLoadBalance()
         baseBlockInit.baseM = curM;
         baseBlockInit.baseN = curN;
     }
-    GetBaseK(baseBlockInit);
+    if (!GetBaseK(baseBlockInit)) {
+        return false;
+    }
     baseBlockRes_ = baseBlockInit;
     return ValidateBaseBlock();
 }
