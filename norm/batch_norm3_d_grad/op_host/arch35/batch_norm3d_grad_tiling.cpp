@@ -713,10 +713,14 @@ ge::graphStatus BatchNorm3DGradRAFullLoadTilingBase::DoOpTiling()
     int64_t weightDtypeSize = weightDtype == ge::DataType::DT_FLOAT ? FLOAT_BYTE_NUMBER : FLOAT16_BYTE_NUMBER;
     int64_t rDim_ = tilingData.baseTilingData.r1Dim;
     int64_t aDim_ = tilingData.baseTilingData.aDim;
-    int64_t power2k = 1L << (63 - __builtin_clzl(rDim_ - 1));
+    // rDim_==1 时 rDim_-1==0，__builtin_clzl(0) 未定义；退化为不做二分（power2k=1）。
+    int64_t power2k = (rDim_ <= 1) ? 1 : (1L << (63 - __builtin_clzl(rDim_ - 1)));
 
     SetBlockFactors(aDim_, dtypeSize);
     CalculateLoopFactors(dtypeSize, weightDtypeSize, rDim_, power2k);
+    // factor=1 都放不进 UB 时 calculateLoopFactors 会留下 0，必须显式报错而不是带 0 下发。
+    OP_CHECK_IF(tilingData.mainALoopFactor <= 0 || (tilingData.tailBlockFactor > 0 && tilingData.tailALoopFactor <= 0),
+                OP_LOGE_WITHOUT_REPORT(context_, "no feasible A loop factor within UB size."), return ge::GRAPH_FAILED);
     SetReduceLoopTimes(power2k, rDim_);
 
     return ge::GRAPH_SUCCESS;
@@ -746,10 +750,13 @@ void BatchNorm3DGradRAFullLoadTilingBase::CalculateLoopFactors(int64_t dtypeSize
         for (int64_t factor = 1; factor <= blockFactor; ++factor) {
             int64_t factorAligned = Ops::Base::CeilDiv(static_cast<uint64_t>(factor * dtypeSize), blockSize) *
                                     blockSize / dtypeSize;
+            // 账本与 kernel InitBuffer 对齐：dbeta/dgamma 两个二分累加 buffer 各
+            // (power2k/2)*factorAligned*4B，合计 power2k*factorAligned*4B；
+            // 且 kernel 仅在 rDim>4 时分配这两个 buffer。
+            int64_t cacheBytes = (rDim_ > 4) ? power2k * factorAligned * FLOAT_BYTE_NUMBER : 0;
             int64_t total_bytes = rDim_ * factorAligned * dtypeSize * DOUBLE_BUFFER * THREE +
                                   factorAligned * FLOAT_BYTE_NUMBER * DOUBLE_BUFFER * TWO +
-                                  factorAligned * weightDtypeSize * DOUBLE_BUFFER * THREE +
-                                  power2k * factorAligned * FLOAT_BYTE_NUMBER * TWO;
+                                  factorAligned * weightDtypeSize * DOUBLE_BUFFER * THREE + cacheBytes;
             if (static_cast<uint64_t>(total_bytes) > ubSize) {
                 break;
             }
@@ -773,7 +780,10 @@ void BatchNorm3DGradRAFullLoadTilingBase::CalculateLoopFactors(int64_t dtypeSize
 void BatchNorm3DGradRAFullLoadTilingBase::SetReduceLoopTimes(int64_t power2k, int64_t rDim_)
 {
     int64_t reduceLoopTimes = power2k / TWO;
-    int64_t reduceRecursionLoop = std::max(static_cast<int64_t>(std::log2(reduceLoopTimes)) - 1, 0L);
+    // power2k<=1（rDim<=1）时 reduceLoopTimes=0，log2(0) 未定义，需跳过。
+    int64_t reduceRecursionLoop = reduceLoopTimes > 0 ?
+                                      std::max(static_cast<int64_t>(std::log2(reduceLoopTimes)) - 1, 0L) :
+                                      0L;
     tilingData.reduceLoopTimes = reduceLoopTimes;
     tilingData.reduceRecursionLoop = reduceRecursionLoop;
 
@@ -857,7 +867,7 @@ ge::graphStatus BatchNorm3DGradRARecomputeTilingBase::DoOpTiling()
     int64_t binaryFoldPoint = (binaryBlockCount <= 1) ?
                                   0 :
                                   1L << (ULONG_BIT_LEN - 1 - __builtin_clzl(binaryBlockCount - 1));
-    int64_t cacheBufferCount = ULONG_BIT_LEN - __builtin_clzl(binaryFoldPoint);
+    int64_t cacheBufferCount = binaryFoldPoint > 0 ? (ULONG_BIT_LEN - __builtin_clzl(binaryFoldPoint)) : 0;
     tilingData.binaryFoldPoint = binaryFoldPoint;
     tilingData.binaryBlockCount = binaryBlockCount;
     tilingData.binaryTailBlock = binaryTailBlock;

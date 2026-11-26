@@ -40,7 +40,11 @@ public:
     {
         blkIdx_ = GetBlockIdx();
         isLastCore_ = blkIdx_ == (tilingData_->usedCoreNums - 1) ? true : false;
-        hRecipVal_ = 1.0f / (float)(tilingData_->r1Dim * tilingData_->r0Dim);
+        countF_ = static_cast<float>(tilingData_->r1Dim * tilingData_->r0Dim);
+        vMte3Event_ = static_cast<event_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::V_MTE3));
+        mte3VEvent_ = static_cast<event_t>(GetTPipePtr()->FetchEventID(AscendC::HardEvent::MTE3_V));
+        // 预置信号：首轮 CalcReduceSum 的 WaitFlag 直接通过
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3VEvent_);
         r0BlockOffset_ = blkIdx_ * tilingData_->r0Inner;
 
         meanGm_.SetGlobalBuffer((__gm__ float*)(mean));
@@ -49,8 +53,12 @@ public:
         dgammaGm_.SetGlobalBuffer((__gm__ WEIGHT_DTYPE*)(dgamma));
         dbetaGm_.SetGlobalBuffer((__gm__ WEIGHT_DTYPE*)(dbeta));
 
+        // 跨核部分和按 hi/lo 两肢分平面落盘：dbetaHi | dbetaLo | dgammaHi | dgammaLo
+        int64_t planeFloats = tilingData_->usedCoreNums * tilingData_->aDimAligned;
         dbetaTmpGm_.SetGlobalBuffer((__gm__ float*)(workspace));
-        dgammaTmpGm_.SetGlobalBuffer((__gm__ float*)(workspace) + tilingData_->usedCoreNums * tilingData_->aDimAligned);
+        dbetaTmpLoGm_.SetGlobalBuffer((__gm__ float*)(workspace) + planeFloats);
+        dgammaTmpGm_.SetGlobalBuffer((__gm__ float*)(workspace) + planeFloats * CONST_TWO);
+        dgammaTmpLoGm_.SetGlobalBuffer((__gm__ float*)(workspace) + planeFloats * 3);
 
         dyGm_.SetGlobalBuffer((__gm__ DY_DTYPE*)(dy));
         xGm_.SetGlobalBuffer((__gm__ DY_DTYPE*)(x));
@@ -77,19 +85,21 @@ public:
         pipe_->InitBuffer(meanInQue_, BUFFER_NUM, meanSize);
         pipe_->InitBuffer(rstdInQue_, BUFFER_NUM, meanSize);
 
-        pipe_->InitBuffer(dbetaTmpOutQue_, BUFFER_NUM, meanSize);
-        pipe_->InitBuffer(dgammaTmpOutQue_, BUFFER_NUM, meanSize);
+        // [hi|lo] 双肢各占 meanSize
+        pipe_->InitBuffer(dbetaTmpOutQue_, BUFFER_NUM, meanSize * CONST_TWO);
+        pipe_->InitBuffer(dgammaTmpOutQue_, BUFFER_NUM, meanSize * CONST_TWO);
 
-        // 核内reducesum结果block对齐存储
-        pipe_->InitBuffer(dbetaCacheBuffer_, meanSize * tilingData_->binAddCacheBufferCount);
-        pipe_->InitBuffer(dgammaCacheBuffer_, meanSize * tilingData_->binAddCacheBufferCount);
+        // 核内reducesum结果block对齐存储：补偿累加只需 [0]=hi、[1]=lo 两个槽位
+        pipe_->InitBuffer(dbetaCacheBuffer_, meanSize * ACC_SLOT_NUM);
+        pipe_->InitBuffer(dgammaCacheBuffer_, meanSize * ACC_SLOT_NUM);
     }
 
     __aicore__ inline void Stage1InitBuffer()
     {
         pipe_->Reset();
 
-        int64_t aSizeIn = tilingData_->aInnerStg1 * sizeof(float) * tilingData_->usedCoreNums;
+        // hi/lo 两平面各占 usedCoreNums 行
+        int64_t aSizeIn = tilingData_->aInnerStg1 * sizeof(float) * tilingData_->usedCoreNums * CONST_TWO;
         pipe_->InitBuffer(dbetaTmpInQue_, BUFFER_NUM, aSizeIn);
         pipe_->InitBuffer(dgammaTmpInQue_, BUFFER_NUM, aSizeIn);
 
@@ -164,6 +174,11 @@ public:
         LocalTensor<float> dbetaCacheTensor = dbetaCacheBuffer_.Get<float>();
         LocalTensor<float> dgammaCacheTensor = dgammaCacheBuffer_.Get<float>();
         reduceInTmpTensor_ = reduceInTmpBuffer_.Get<float>();
+        dbetaCacheTensor_ = dbetaCacheTensor;
+        dgammaCacheTensor_ = dgammaCacheTensor;
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(mte3VEvent_);
+        InitAccumulator(dbetaCacheTensor, tilingData_->aInnerAlignedStg0);
+        InitAccumulator(dgammaCacheTensor, tilingData_->aInnerAlignedStg0);
 
         dbetaMainTmpTensor_ = dbetaTmpOutQue_.template AllocTensor<float>();
         dgammaMainTmpTensor_ = dgammaTmpOutQue_.template AllocTensor<float>();
@@ -215,30 +230,33 @@ public:
                 ProcessFoldBlock(meanLocal, rstdLocal, curAInnerLen, curR1LenFold, curR0LenFold, curR0AlignedLenFold,
                                  dyOffsetFold);
             }
-            int64_t cacheID = GetCacheID(basicBlockIdx);
-            UpdateCache(dbetaCacheTensor, dbetaMainTmpTensor_, cacheID, tilingData_->aInnerAlignedStg0,
-                        tilingData_->aInnerAlignedStg0);
-            UpdateCache(dgammaCacheTensor, dgammaMainTmpTensor_, cacheID, tilingData_->aInnerAlignedStg0,
-                        tilingData_->aInnerAlignedStg0);
+            // 每个块的部分和用补偿加法累加，避免逐块朴素相加把 fp32 舍入误差叠成 O(块数)·ε
+            AccumulateBlock(dbetaCacheTensor, dbetaMainTmpTensor_, tilingData_->aInnerAlignedStg0);
+            AccumulateBlock(dbetaCacheTensor, dbetaMainTmpTensor_[tilingData_->aInnerAlignedStg0],
+                            tilingData_->aInnerAlignedStg0);
+            AccumulateBlock(dgammaCacheTensor, dgammaMainTmpTensor_, tilingData_->aInnerAlignedStg0);
+            AccumulateBlock(dgammaCacheTensor, dgammaMainTmpTensor_[tilingData_->aInnerAlignedStg0],
+                            tilingData_->aInnerAlignedStg0);
         }
 
-        if (basicLoop == 0) { // 直接输出到dbetaMainTmpTensor_，dgammaMainTmpTensor_
+        if (basicLoop == 0) { // 单块同样累加进 (hi,lo)，保证落盘格式统一
             int64_t dyOffset = aOffset * tilingData_->r0Dim + r0BlockOffset_;
             uint32_t r0AlignedLen = isLastCore_ ? tilingData_->r0TailTailAlignedStg0 : r0TailIncore;
             ProcessMainBlock(meanLocal, rstdLocal, curAInnerLen, tilingData_->r1TailStg0, r0TailIncore, r0AlignedLen,
                              dyOffset);
-        } else {
-            // ub to ub copy
-            uint32_t resCacheId = isLastCore_ ? tilingData_->lastCoreBinAddResultCacheID :
-                                                tilingData_->binAddResultCacheID;
-            DataCopy(dbetaMainTmpTensor_, dbetaCacheTensor[resCacheId * tilingData_->aInnerAlignedStg0],
-                     tilingData_->aInnerAlignedStg0); // curAInnerLen < tilingData_->aInnerAlignedStg0
-            DataCopy(dgammaMainTmpTensor_, dgammaCacheTensor[resCacheId * tilingData_->aInnerAlignedStg0],
-                     tilingData_->aInnerAlignedStg0);
+            AccumulateBlock(dbetaCacheTensor, dbetaMainTmpTensor_, tilingData_->aInnerAlignedStg0);
+            AccumulateBlock(dbetaCacheTensor, dbetaMainTmpTensor_[tilingData_->aInnerAlignedStg0],
+                            tilingData_->aInnerAlignedStg0);
+            AccumulateBlock(dgammaCacheTensor, dgammaMainTmpTensor_, tilingData_->aInnerAlignedStg0);
+            AccumulateBlock(dgammaCacheTensor, dgammaMainTmpTensor_[tilingData_->aInnerAlignedStg0],
+                            tilingData_->aInnerAlignedStg0);
         }
+        // hi/lo 两肢直接落 GM，跨核合流前不舍入；唯一一次舍入在 stage1 末尾
+        ClampAccumulatorLo(dbetaCacheTensor, tilingData_->aInnerAlignedStg0);
+        ClampAccumulatorLo(dgammaCacheTensor, tilingData_->aInnerAlignedStg0);
 
-        dbetaTmpOutQue_.EnQue(dbetaMainTmpTensor_);
-        dgammaTmpOutQue_.EnQue(dgammaMainTmpTensor_);
+        dbetaTmpOutQue_.FreeTensor(dbetaMainTmpTensor_);
+        dgammaTmpOutQue_.FreeTensor(dgammaMainTmpTensor_);
     }
 
     __aicore__ inline void ProcessMainBlock(__local_mem__ float* meanLocal, __local_mem__ float* rstdLocal,
@@ -259,23 +277,29 @@ public:
         }
 
         uint32_t fusedRLen = curR0AlignedLen * curR1Len;
-        uint32_t srcShape[2] = {curAInnerLen, fusedRLen};
 
-        // ReduceSum高阶api只输出A轴大小，按block补齐部分仍是0
-        Duplicate(dbetaMainTmpTensor_, float(0.0), tilingData_->aInnerAlignedStg0);
-        Duplicate(dgammaMainTmpTensor_, float(0.0), tilingData_->aInnerAlignedStg0);
+        // 块内补偿归约替代 AR ReduceSum 裸树：[hi|lo] 双肢写入 mainTmp 前后两半
+        Duplicate(dbetaMainTmpTensor_, float(0.0), tilingData_->aInnerAlignedStg0 * CONST_TWO);
+        Duplicate(dgammaMainTmpTensor_, float(0.0), tilingData_->aInnerAlignedStg0 * CONST_TWO);
 
+        __local_mem__ float* dbetaTerms;
         if constexpr (IsSameType<DY_DTYPE, float>::value) {
-            AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(dbetaMainTmpTensor_, dyTensor, srcShape,
-                                                                          false);
-            dyInQue_.FreeTensor(dyTensor);
+            dbetaTerms = (__local_mem__ float*)dyTensor.GetPhyAddr();
         } else {
-            AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(
-                dbetaMainTmpTensor_, reduceInTmpTensor_[reduceTmpBufOffset_], srcShape, false);
+            dbetaTerms = (__local_mem__ float*)reduceInTmpTensor_.GetPhyAddr() + reduceTmpBufOffset_;
         }
-
-        AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(dgammaMainTmpTensor_, reduceInTmpTensor_[0],
-                                                                      srcShape, false);
+        __local_mem__ float* dgammaTerms = (__local_mem__ float*)reduceInTmpTensor_.GetPhyAddr();
+        CompensatedRowReduceHiLo(
+            dbetaTerms, (__local_mem__ float*)dbetaMainTmpTensor_.GetPhyAddr(),
+            (__local_mem__ float*)dbetaMainTmpTensor_.GetPhyAddr() + tilingData_->aInnerAlignedStg0, curAInnerLen,
+            fusedRLen, fusedRLen);
+        CompensatedRowReduceHiLo(
+            dgammaTerms, (__local_mem__ float*)dgammaMainTmpTensor_.GetPhyAddr(),
+            (__local_mem__ float*)dgammaMainTmpTensor_.GetPhyAddr() + tilingData_->aInnerAlignedStg0, curAInnerLen,
+            fusedRLen, fusedRLen);
+        if constexpr (IsSameType<DY_DTYPE, float>::value) {
+            dyInQue_.FreeTensor(dyTensor);
+        }
     }
 
     // fold cast fp32 加到main
@@ -298,29 +322,39 @@ public:
         }
 
         uint32_t fusedRLen = curR0AlignedLen * curR1Len;
-        uint32_t srcShape[2] = {curAInnerLen, fusedRLen};
 
         LocalTensor<float> dbetaFoldTmpTensor = dbetaTmpOutQue_.template AllocTensor<float>();
         LocalTensor<float> dgammaFoldTmpTensor = dgammaTmpOutQue_.template AllocTensor<float>();
 
-        // ReduceSum高阶api只输出A轴大小，按block补齐部分仍是0
-        Duplicate(dbetaFoldTmpTensor, float(0.0), tilingData_->aInnerAlignedStg0);
-        Duplicate(dgammaFoldTmpTensor, float(0.0), tilingData_->aInnerAlignedStg0);
+        // 块内补偿归约替代 AR ReduceSum 裸树：[hi|lo] 双肢写入 foldTmp 前后两半
+        Duplicate(dbetaFoldTmpTensor, float(0.0), tilingData_->aInnerAlignedStg0 * CONST_TWO);
+        Duplicate(dgammaFoldTmpTensor, float(0.0), tilingData_->aInnerAlignedStg0 * CONST_TWO);
 
+        __local_mem__ float* dbetaTerms;
         if constexpr (IsSameType<DY_DTYPE, float>::value) {
-            AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(dbetaFoldTmpTensor, dyTensor, srcShape,
-                                                                          false);
-            dyInQue_.FreeTensor(dyTensor);
+            dbetaTerms = (__local_mem__ float*)dyTensor.GetPhyAddr();
         } else {
-            AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(
-                dbetaFoldTmpTensor, reduceInTmpTensor_[reduceTmpBufOffset_], srcShape, false);
+            dbetaTerms = (__local_mem__ float*)reduceInTmpTensor_.GetPhyAddr() + reduceTmpBufOffset_;
+        }
+        __local_mem__ float* dgammaTerms = (__local_mem__ float*)reduceInTmpTensor_.GetPhyAddr();
+        CompensatedRowReduceHiLo(dbetaTerms, (__local_mem__ float*)dbetaFoldTmpTensor.GetPhyAddr(),
+                                 (__local_mem__ float*)dbetaFoldTmpTensor.GetPhyAddr() + tilingData_->aInnerAlignedStg0,
+                                 curAInnerLen, fusedRLen, fusedRLen);
+        CompensatedRowReduceHiLo(
+            dgammaTerms, (__local_mem__ float*)dgammaFoldTmpTensor.GetPhyAddr(),
+            (__local_mem__ float*)dgammaFoldTmpTensor.GetPhyAddr() + tilingData_->aInnerAlignedStg0, curAInnerLen,
+            fusedRLen, fusedRLen);
+        if constexpr (IsSameType<DY_DTYPE, float>::value) {
+            dyInQue_.FreeTensor(dyTensor);
         }
 
-        AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(dgammaFoldTmpTensor, reduceInTmpTensor_[0],
-                                                                      srcShape, false);
-
-        Add(dbetaMainTmpTensor_, dbetaMainTmpTensor_, dbetaFoldTmpTensor, tilingData_->aInnerAlignedStg0);
-        Add(dgammaMainTmpTensor_, dgammaMainTmpTensor_, dgammaFoldTmpTensor, tilingData_->aInnerAlignedStg0);
+        // fold 部分单独精确累加进 (hi, lo)：先 hi 肢后 lo 肢
+        AccumulateBlock(dbetaCacheTensor_, dbetaFoldTmpTensor, tilingData_->aInnerAlignedStg0);
+        AccumulateBlock(dbetaCacheTensor_, dbetaFoldTmpTensor[tilingData_->aInnerAlignedStg0],
+                        tilingData_->aInnerAlignedStg0);
+        AccumulateBlock(dgammaCacheTensor_, dgammaFoldTmpTensor, tilingData_->aInnerAlignedStg0);
+        AccumulateBlock(dgammaCacheTensor_, dgammaFoldTmpTensor[tilingData_->aInnerAlignedStg0],
+                        tilingData_->aInnerAlignedStg0);
 
         dbetaTmpOutQue_.FreeTensor(dbetaFoldTmpTensor);
         dgammaTmpOutQue_.FreeTensor(dgammaFoldTmpTensor);
@@ -358,8 +392,9 @@ public:
                         LoadOneTensor<DY_DTYPE>(xLocal, regX, pregMask, offset);
 
                         Sub(regX, regX, regMean, pregMask);
-                        Mul(regX, regX, regDy, pregMask);
+                        // 乘序与 golden/契约/三方一致：((x-mean)*rstd)*dy
                         Mul(regX, regX, regRstd, pregMask);
+                        Mul(regX, regX, regDy, pregMask);
                         DataCopy((__local_mem__ float*)dgammaReduceTmpLocal + offset, regX, pregMask);
 
                         if constexpr (!IsSameType<DY_DTYPE, float>::value) {
@@ -371,8 +406,30 @@ public:
         }
     }
 
+    // 残差肢写盘前守卫：hi 非有限时 lo 可能是 NaN（inf-inf），置 0 保持 inf+0=inf
+    __aicore__ inline void ClampAccumulatorLo(const LocalTensor<float>& accTensor, uint32_t aLength)
+    {
+        uint16_t loopTimes = ops::CeilDiv(aLength, VL_FP32);
+        __local_mem__ float* accAddr = (__local_mem__ float*)accTensor.GetPhyAddr();
+        __VEC_SCOPE__
+        {
+            MicroAPI::MaskReg pMask;
+            uint32_t count = aLength;
+            MicroAPI::RegTensor<float> lo;
+            for (uint16_t i = 0; i < loopTimes; ++i) {
+                pMask = AscendC::MicroAPI::UpdateMask<float>(count);
+                DataCopy(lo, accAddr + aLength + i * VL_FP32);
+                ClampResidual(lo, pMask);
+                DataCopy(accAddr + aLength + i * VL_FP32, lo, pMask);
+            }
+        }
+    }
+
     __aicore__ inline void CopyOutDbetaDgammaTmp(const uint32_t curAInnerLen, const int64_t aOffset)
     {
+        // acc 是裸 TBuf（不经队列），GM 写盘前须先等 V 管道的累加/Clamp 写落地
+        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(vMte3Event_);
+        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(vMte3Event_);
         int64_t gmOffset = blkIdx_ * tilingData_->aDimAligned + aOffset;
         DataCopyExtParams copyOutParams;
         copyOutParams.blockCount = 1;
@@ -380,13 +437,16 @@ public:
         copyOutParams.srcStride = 0;
         copyOutParams.dstStride = 0;
 
-        LocalTensor<float> dbetaOutTmpTensor = dbetaTmpOutQue_.DeQue<float>();
-        DataCopyPad<float, PaddingMode::Normal>(dbetaTmpGm_[gmOffset], dbetaOutTmpTensor, copyOutParams);
-        dbetaTmpOutQue_.FreeTensor(dbetaOutTmpTensor);
-
-        LocalTensor<float> dgammaOutTmpTensor = dgammaTmpOutQue_.DeQue<float>();
-        DataCopyPad<float, PaddingMode::Normal>(dgammaTmpGm_[gmOffset], dgammaOutTmpTensor, copyOutParams);
-        dgammaTmpOutQue_.FreeTensor(dgammaOutTmpTensor);
+        LocalTensor<float> dbetaAcc = dbetaCacheBuffer_.Get<float>();
+        LocalTensor<float> dgammaAcc = dgammaCacheBuffer_.Get<float>();
+        DataCopyPad<float, PaddingMode::Normal>(dbetaTmpGm_[gmOffset], dbetaAcc, copyOutParams);
+        DataCopyPad<float, PaddingMode::Normal>(dbetaTmpLoGm_[gmOffset], dbetaAcc[tilingData_->aInnerAlignedStg0],
+                                                copyOutParams);
+        DataCopyPad<float, PaddingMode::Normal>(dgammaTmpGm_[gmOffset], dgammaAcc, copyOutParams);
+        DataCopyPad<float, PaddingMode::Normal>(dgammaTmpLoGm_[gmOffset], dgammaAcc[tilingData_->aInnerAlignedStg0],
+                                                copyOutParams);
+        // 与下一轮 CalcReduceSum 的 V 写配对：GM 读走后才能复写 acc
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(mte3VEvent_);
     }
 
     __aicore__ inline int64_t GetCacheID(const int64_t idx)
@@ -394,31 +454,79 @@ public:
         return ScalarGetCountOfValue<1>(idx ^ (idx + CONST_ONE)) - CONST_ONE;
     }
 
-    __aicore__ inline void UpdateCache(const LocalTensor<float>& dstTensor, const LocalTensor<float>& srcTensor,
-                                       const int64_t cacheID, const uint32_t stride, const uint32_t count)
+    // 归约累加器（hi, lo）清零
+    __aicore__ inline void InitAccumulator(const LocalTensor<float>& accTensor, uint32_t aLength)
     {
-        uint16_t outerLoopTimes = ops::CeilDiv(count, VL_FP32);
-        uint16_t innerLoopTimes = cacheID;
-        uint32_t outerLoopStride = VL_FP32;
-        uint32_t innerLoopStride = stride;
-
-        __local_mem__ float* dst = (__local_mem__ float*)dstTensor.GetPhyAddr();
-        __local_mem__ float* cah = (__local_mem__ float*)dstTensor.GetPhyAddr() + cacheID * stride;
-        __local_mem__ float* src = (__local_mem__ float*)srcTensor.GetPhyAddr();
-
+        uint16_t loopTimes = ops::CeilDiv(aLength, VL_FP32);
+        __local_mem__ float* accAddr = (__local_mem__ float*)accTensor.GetPhyAddr();
         __VEC_SCOPE__
         {
-            uint32_t sreg = static_cast<uint32_t>(count);
-            AscendC::MicroAPI::RegTensor<float> aReg, bReg;
-            AscendC::MicroAPI::MaskReg pMask;
-            for (uint16_t i = 0; i < outerLoopTimes; ++i) {
-                pMask = AscendC::MicroAPI::UpdateMask<float>(sreg);
-                DataCopy(aReg, (__local_mem__ float*)src + i * outerLoopStride);
-                for (uint16_t j = 0; j < innerLoopTimes; ++j) {
-                    DataCopy(bReg, (__local_mem__ float*)dst + i * outerLoopStride + j * innerLoopStride);
-                    Add<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(aReg, aReg, bReg, pMask);
+            MicroAPI::MaskReg pMask;
+            uint32_t count = aLength;
+            MicroAPI::RegTensor<float> zeroReg;
+            for (uint16_t i = 0; i < loopTimes; ++i) {
+                pMask = AscendC::MicroAPI::UpdateMask<float>(count);
+                MicroAPI::Duplicate(zeroReg, 0.0f, pMask);
+                DataCopy(accAddr + i * VL_FP32, zeroReg, pMask);
+                DataCopy(accAddr + aLength + i * VL_FP32, zeroReg, pMask);
+            }
+        }
+    }
+
+    // (hi, lo) += value
+    __aicore__ inline void AccumulateBlock(const LocalTensor<float>& accTensor, const LocalTensor<float>& valTensor,
+                                           uint32_t aLength)
+    {
+        uint16_t loopTimes = ops::CeilDiv(aLength, VL_FP32);
+        __local_mem__ float* accAddr = (__local_mem__ float*)accTensor.GetPhyAddr();
+        __local_mem__ float* valAddr = (__local_mem__ float*)valTensor.GetPhyAddr();
+        __VEC_SCOPE__
+        {
+            MicroAPI::MaskReg pMask;
+            uint32_t count = aLength;
+            MicroAPI::RegTensor<float> hi, lo, val;
+            for (uint16_t i = 0; i < loopTimes; ++i) {
+                pMask = AscendC::MicroAPI::UpdateMask<float>(count);
+                DataCopy(hi, accAddr + i * VL_FP32);
+                DataCopy(lo, accAddr + aLength + i * VL_FP32);
+                DataCopy(val, valAddr + i * VL_FP32);
+                AccumulateWithError(hi, lo, val, pMask);
+                DataCopy(accAddr + i * VL_FP32, hi, pMask);
+                DataCopy(accAddr + aLength + i * VL_FP32, lo, pMask);
+            }
+        }
+    }
+
+    // stage1 核间两肢（hi/lo 平面）精确求和：所有行统一累加后单次舍入
+    __aicore__ inline void CompensatedRowSumTwoLimb(const LocalTensor<float>& dstTensor,
+                                                    const LocalTensor<float>& srcTensor, uint32_t aLength,
+                                                    uint32_t rowStride)
+    {
+        uint16_t loopTimes = ops::CeilDiv(aLength, VL_FP32);
+        uint16_t rowCount = static_cast<uint16_t>(tilingData_->usedCoreNums);
+        int64_t loOffset = static_cast<int64_t>(rowCount) * rowStride;
+        __local_mem__ float* srcAddr = (__local_mem__ float*)srcTensor.GetPhyAddr();
+        __local_mem__ float* dstAddr = (__local_mem__ float*)dstTensor.GetPhyAddr();
+        __VEC_SCOPE__
+        {
+            MicroAPI::MaskReg pMask;
+            uint32_t count = aLength;
+            MicroAPI::RegTensor<float> hi, lo, val;
+            for (uint16_t i = 0; i < loopTimes; ++i) {
+                pMask = AscendC::MicroAPI::UpdateMask<float>(count);
+                MicroAPI::Duplicate(hi, 0.0f, pMask);
+                MicroAPI::Duplicate(lo, 0.0f, pMask);
+                for (uint16_t r = 0; r < rowCount; ++r) {
+                    DataCopy(val, srcAddr + r * rowStride + i * VL_FP32);
+                    AccumulateWithError(hi, lo, val, pMask);
                 }
-                DataCopy((__local_mem__ float*)cah + i * outerLoopStride, aReg, pMask);
+                for (uint16_t r = 0; r < rowCount; ++r) {
+                    DataCopy(val, srcAddr + loOffset + r * rowStride + i * VL_FP32);
+                    AccumulateWithError(hi, lo, val, pMask);
+                }
+                ClampResidual(lo, pMask);
+                MicroAPI::Add<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(hi, hi, lo, pMask);
+                DataCopy(dstAddr + i * VL_FP32, hi, pMask);
             }
         }
     }
@@ -438,11 +546,9 @@ public:
             LocalTensor<float> dbetaTmpOutTensor = dbetaTmpOutQue_.AllocTensor<float>();
             LocalTensor<float> dgammaTmpOutTensor = dgammaTmpOutQue_.AllocTensor<float>();
 
-            uint32_t srcShape[2] = {static_cast<uint32_t>(tilingData_->usedCoreNums),
-                                    static_cast<uint32_t>(tilingData_->aInnerStg1)};
-
-            ReduceSum<float, AscendC::Pattern::Reduce::RA, true>(dbetaTmpOutTensor, dbetaTmpIn, srcShape, false);
-            ReduceSum<float, AscendC::Pattern::Reduce::RA, true>(dgammaTmpOutTensor, dgammaTmpIn, srcShape, false);
+            // 核间 hi/lo 双肢统一精确累加，整条归约只在这里做一次舍入
+            CompensatedRowSumTwoLimb(dbetaTmpOutTensor, dbetaTmpIn, curAInnerLen, tilingData_->aInnerStg1);
+            CompensatedRowSumTwoLimb(dgammaTmpOutTensor, dgammaTmpIn, curAInnerLen, tilingData_->aInnerStg1);
 
             dbetaTmpInQue_.FreeTensor(dbetaTmpIn);
             dgammaTmpInQue_.FreeTensor(dgammaTmpIn);
@@ -498,13 +604,18 @@ public:
         copyInParams.srcStride = (tilingData_->aDimAligned - curALen) * sizeof(float);
         copyInParams.dstStride = (tilingData_->aInnerStg1 - curALen) * sizeof(float) / BLOCK_SIZE;
 
+        int64_t loPlaneOffset = tilingData_->usedCoreNums * tilingData_->aInnerStg1;
         LocalTensor<float> dbetaTmpTensor = dbetaTmpInQue_.AllocTensor<float>();
         DataCopyPad<float, PaddingMode::Normal>(dbetaTmpTensor, dbetaTmpGm_[offset], copyInParams,
+                                                dataCopyPadExtParams);
+        DataCopyPad<float, PaddingMode::Normal>(dbetaTmpTensor[loPlaneOffset], dbetaTmpLoGm_[offset], copyInParams,
                                                 dataCopyPadExtParams);
         dbetaTmpInQue_.EnQue(dbetaTmpTensor);
 
         LocalTensor<float> dgammaTmpTensor = dgammaTmpInQue_.AllocTensor<float>();
         DataCopyPad<float, PaddingMode::Normal>(dgammaTmpTensor, dgammaTmpGm_[offset], copyInParams,
+                                                dataCopyPadExtParams);
+        DataCopyPad<float, PaddingMode::Normal>(dgammaTmpTensor[loPlaneOffset], dgammaTmpLoGm_[offset], copyInParams,
                                                 dataCopyPadExtParams);
         dgammaTmpInQue_.EnQue(dgammaTmpTensor);
     }
@@ -605,6 +716,7 @@ public:
                         MaskReg pregMask;
 
                         RegTensor<float> regMean, regRstd, regGamma, regDbetaTmp, regDgammaTmp, regDy, regX;
+                        RegTensor<float> regCount, regDbetaOverR, regDgammaOverR;
 
                         for (uint16_t i = 0; i < curAInnerLen; i++) {
                             LoadsTensorForDtypeT<float>(meanAddr, regMean, pregMaskAll, i);
@@ -612,6 +724,12 @@ public:
                             LoadsTensorForDtypeT<float>(dbetaTmpAddr, regDbetaTmp, pregMaskAll, i);
                             LoadsTensorForDtypeT<float>(dgammaTmpAddr, regDgammaTmp, pregMaskAll, i);
                             LoadsTensorForDtypeT<WEIGHT_DTYPE>(gammaAddr, regGamma, pregMaskAll, i);
+                            // dbeta/R 用真除法逐项算，避免先在 1e7 量级合成再乘倒数
+                            MicroAPI::Duplicate(regCount, countF_, pregMaskAll);
+                            MicroAPI::Div(regDbetaOverR, regDbetaTmp, regCount, pregMaskAll);
+                            if constexpr (IsSameType<DY_DTYPE, float>::value) {
+                                MicroAPI::Div(regDgammaOverR, regDgammaTmp, regCount, pregMaskAll);
+                            }
 
                             uint32_t sreg = curR0Len;
                             for (uint16_t j = 0; j < loopNum; j++) { // r0
@@ -624,12 +742,18 @@ public:
 
                                     Sub(regX, regX, regMean, pregMask);
                                     Mul(regX, regX, regRstd, pregMask);
-                                    Mul(regX, regX, regDgammaTmp, pregMask);
-                                    Add(regX, regX, regDbetaTmp, pregMask);
-                                    Muls(regX, regX, hRecipVal_, pregMask);
+                                    if constexpr (IsSameType<DY_DTYPE, float>::value) {
+                                        Mul(regX, regX, regDgammaOverR, pregMask);
+                                    } else {
+                                        // fp16 golden 的 dx 为 fp32 级：第三项是 (xhat*dgamma)/R 先乘后除
+                                        Mul(regX, regX, regDgammaTmp, pregMask);
+                                        MicroAPI::Div(regX, regX, regCount, pregMask);
+                                    }
+                                    Sub(regDy, regDy, regDbetaOverR, pregMask);
                                     Sub(regX, regDy, regX, pregMask);
-                                    Mul(regX, regX, regRstd, pregMask);
+                                    // 与 golden/契约/三方一致：(...)*scale*rstd
                                     Mul(regX, regX, regGamma, pregMask);
+                                    Mul(regX, regX, regRstd, pregMask);
 
                                     StoreOneTensor<DY_DTYPE>(dxLocal, regX, pregMask, offset);
                                 }
@@ -795,7 +919,11 @@ private:
     GlobalTensor<float> meanGm_;
     GlobalTensor<float> rstdGm_;
     GlobalTensor<float> dbetaTmpGm_;
+    GlobalTensor<float> dbetaTmpLoGm_;
     GlobalTensor<float> dgammaTmpGm_;
+    GlobalTensor<float> dgammaTmpLoGm_;
+    event_t vMte3Event_;
+    event_t mte3VEvent_;
 
     TQue<QuePosition::VECIN, BUFFER_DEPTH> dyInQue_;
     TQue<QuePosition::VECIN, BUFFER_DEPTH> xInQue_;
@@ -810,6 +938,8 @@ private:
     LocalTensor<float> reduceInTmpTensor_;
     LocalTensor<float> dbetaMainTmpTensor_;
     LocalTensor<float> dgammaMainTmpTensor_;
+    LocalTensor<float> dbetaCacheTensor_;
+    LocalTensor<float> dgammaCacheTensor_;
 
     TQue<QuePosition::VECIN, BUFFER_DEPTH> dbetaTmpInQue_;
     TQue<QuePosition::VECIN, BUFFER_DEPTH> dgammaTmpInQue_;
@@ -825,7 +955,8 @@ private:
 
     int64_t blkIdx_{0};
     int64_t reduceTmpBufOffset_{0};
-    float hRecipVal_{0};
+    static constexpr int32_t ACC_SLOT_NUM = 2; // hi/lo 两个补偿累加槽位
+    float countF_{0.0f};
     bool isLastCore_{false};
     int64_t r0BlockOffset_{0};
 };

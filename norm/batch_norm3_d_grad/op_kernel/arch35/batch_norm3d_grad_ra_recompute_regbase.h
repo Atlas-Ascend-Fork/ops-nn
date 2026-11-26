@@ -56,7 +56,7 @@ public:
         binaryBlockCount = tilingData->binaryBlockCount;
         binaryTailBlock = tilingData->binaryTailBlock;
         cacheBufferCount = tilingData->cacheBufferCount;
-        reciprocal = tilingData->reciprocal;
+        countF_ = static_cast<float>(tilingData->baseTilingData.r1Dim);
         resultCacheId = GetCacheID(binaryFoldPoint - 1);
 
         // init gm tensor
@@ -324,6 +324,7 @@ public:
             AscendC::MicroAPI::MaskReg pMask;
             uint32_t count = factor;
             AscendC::MicroAPI::RegTensor<float> dyReg, xReg, meanReg, rstdReg, gammaReg, dxReg, dbetaReg, dgammaReg;
+            AscendC::MicroAPI::RegTensor<float> countReg, dbetaOverR, dgammaOverR;
             for (uint16_t i = 0; i < outerLoopTimes; ++i) {
                 pMask = AscendC::MicroAPI::UpdateMask<float>(count);
                 LoadOneTensor<float>(meanAddr, meanReg, pMask, i * outerLoopStride);
@@ -331,6 +332,12 @@ public:
                 LoadOneTensor<WEIGHT_TYPE>(gammaAddr, gammaReg, pMask, i * outerLoopStride);
                 LoadOneTensor<float>(dbetaAddr, dbetaReg, pMask, i * outerLoopStride);
                 LoadOneTensor<float>(dgammaAddr, dgammaReg, pMask, i * outerLoopStride);
+                // dbeta/R 用真除法逐项算，避免先在 1e7 量级合成再乘倒数
+                AscendC::MicroAPI::Duplicate(countReg, countF_, pMask);
+                AscendC::MicroAPI::Div(dbetaOverR, dbetaReg, countReg, pMask);
+                if constexpr (IsSameType<DY_TYPE, float>::value) {
+                    AscendC::MicroAPI::Div(dgammaOverR, dgammaReg, countReg, pMask);
+                }
                 for (uint16_t j = 0; j < innerLoopTimes; ++j) {
                     uint32_t offset = i * outerLoopStride + j * innerLoopStride;
                     LoadOneTensor<DY_TYPE>(dyAddr, dyReg, pMask, offset);
@@ -339,16 +346,22 @@ public:
                                                                                              pMask);
                     AscendC::MicroAPI::Mul<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg, rstdReg,
                                                                                              pMask);
-                    AscendC::MicroAPI::Mul<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg, dgammaReg,
+                    if constexpr (IsSameType<DY_TYPE, float>::value) {
+                        AscendC::MicroAPI::Mul<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg,
+                                                                                                 dgammaOverR, pMask);
+                    } else {
+                        // fp16 golden 的 dx 为 fp32 级：第三项是 (xhat*dgamma)/R 先乘后除，逐项同序
+                        AscendC::MicroAPI::Mul<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg, dgammaReg,
+                                                                                                 pMask);
+                        AscendC::MicroAPI::Div<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg, countReg,
+                                                                                                 pMask);
+                    }
+                    AscendC::MicroAPI::Sub<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(dyReg, dyReg, dbetaOverR,
                                                                                              pMask);
-                    AscendC::MicroAPI::Add<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg, dbetaReg,
-                                                                                             pMask);
-                    AscendC::MicroAPI::Muls<float, float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg,
-                                                                                                     reciprocal, pMask);
                     AscendC::MicroAPI::Sub<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(dyReg, dyReg, xReg, pMask);
-                    AscendC::MicroAPI::Mul<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(dxReg, rstdReg, dyReg,
+                    AscendC::MicroAPI::Mul<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(dxReg, dyReg, gammaReg,
                                                                                              pMask);
-                    AscendC::MicroAPI::Mul<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(dxReg, dxReg, gammaReg,
+                    AscendC::MicroAPI::Mul<float, AscendC::MicroAPI::MaskMergeMode::ZEROING>(dxReg, dxReg, rstdReg,
                                                                                              pMask);
                     StoreOneTensor<DY_TYPE>(dxAddr, dxReg, pMask, offset);
                 }
@@ -467,7 +480,7 @@ private:
     int64_t binaryTailBlock;
     int64_t cacheBufferCount;
     int64_t resultCacheId;
-    float reciprocal;
+    float countF_{0.0f};
 
     // global tensor
     GlobalTensor<DY_TYPE> dyGm_, xGm_, dxGm_;

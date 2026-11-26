@@ -24,6 +24,7 @@ namespace optiling {
 static constexpr uint64_t BATCH_NORM3D_GRAD_RAR_SPLIT_CORE_R0_TILING_KEY = 1100;
 static constexpr int64_t DOUBLE_BUFFER = 2;
 static constexpr int64_t CONST_TWO = 2;
+static constexpr int64_t CONST_FOUR = 4;
 static constexpr int32_t ULONG_BIT_LEN = 64;
 static constexpr int64_t CACHE_BUFFER_COUNT_MAX = 63; // 按int64最大值代入计算
 static constexpr int64_t FLOAT32_BYTES = 4;
@@ -333,7 +334,8 @@ uint64_t BatchNorm3DGradRARSplitCoreR0::GetTilingKey() const { return BATCH_NORM
 
 ge::graphStatus BatchNorm3DGradRARSplitCoreR0::GetWorkspaceSize()
 {
-    workspaceSize_ = BNG_WORKSPACE_RESERVED + usedCoreNums_ * aDimAligned_ * FLOAT32_BYTES * CONST_TWO;
+    // dbeta/dgamma 各 hi/lo 两肢，共 4 个平面
+    workspaceSize_ = BNG_WORKSPACE_RESERVED + usedCoreNums_ * aDimAligned_ * FLOAT32_BYTES * CONST_FOUR;
 
     OP_LOGI(context_, "Workspace size: %ld", workspaceSize_);
 

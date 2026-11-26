@@ -26,7 +26,7 @@ constexpr uint64_t STAGE0_A_ELEM_NUM = 4; // mean, rstd, dbeta, dgamma
 constexpr uint64_t STAGE2_A_ELEM_NUM = 5; // mean, rstd, dbeta, dgamma, gamma
 constexpr uint64_t STAGE2_R_ELEM_NUM = 3; // dy, x, dx
 constexpr uint64_t DOUBLE_BUFF = 2;
-constexpr uint64_t WORKSPACE_NUM = 2;
+constexpr uint64_t WORKSPACE_NUM = 4; // dbeta hi/lo + dgamma hi/lo
 constexpr uint64_t ULONG_BIT_LEN = 64;
 constexpr int64_t R_LOOP_FACTOR = 64;
 constexpr int64_t LIMIT_ADIM_FACTOR = 16;
@@ -104,15 +104,16 @@ ge::graphStatus BatchNorm3DGradTilingRASplitR::Stage2UbTiling()
                                                 blockSize / FLOAT_BYTE_SIZE);
     uint64_t rElemUbSize = Ops::Base::CeilAlign(aFactorAlign_ * STAGE2_R_ELEM_NUM * dyTypeSize_ * DOUBLE_BUFF,
                                                 blockSize / dyTypeSize_);
-    OP_CHECK_IF(
-        ubSize < aElemUbSize + rElemUbSize,
-        OP_LOGE_WITHOUT_REPORT(context_, "ubSize %lu less than oneTileUbSize: %lu.", ubSize, aElemUbSize + rElemUbSize),
-        return ge::GRAPH_FAILED);
+    // 相等时 FloorDiv 结果为 0，后续 CeilDiv/取模会除零，必须按不可行处理。
+    OP_CHECK_IF(ubSize <= aElemUbSize + rElemUbSize,
+                OP_LOGE_WITHOUT_REPORT(context_, "ubSize %lu not greater than oneTileUbSize: %lu.", ubSize,
+                                       aElemUbSize + rElemUbSize),
+                return ge::GRAPH_FAILED);
     int64_t dxLoopFactor = Ops::Base::FloorDiv(ubSize - aElemUbSize, rElemUbSize);
-    dxLoopFactor_ = std::min(blockFactor_, dxLoopFactor);
+    dxLoopFactor_ = std::max<int64_t>(1, std::min(blockFactor_, dxLoopFactor));
     dxLoopTimes_ = Ops::Base::CeilDiv(blockFactor_, dxLoopFactor_),
     dxLoopTail_ = (blockFactor_ % dxLoopFactor_ == 0) ? dxLoopFactor_ : blockFactor_ % dxLoopFactor_;
-    dxLastCoreFactor_ = std::min(tailBlockFactor_, dxLoopFactor);
+    dxLastCoreFactor_ = std::min(tailBlockFactor_, dxLoopFactor_);
     dxLastCoreTimes_ = Ops::Base::CeilDiv(tailBlockFactor_, dxLastCoreFactor_),
     dxLastCoreTail_ = (tailBlockFactor_ % dxLastCoreFactor_ == 0) ? dxLastCoreFactor_ :
                                                                     tailBlockFactor_ % dxLastCoreFactor_;

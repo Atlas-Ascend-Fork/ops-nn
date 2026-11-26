@@ -22,6 +22,7 @@
 
 namespace BatchNorm3DGrad {
 using namespace AscendC;
+static constexpr uint16_t SPLIT_R1_VL_LOG2 = 6; // log2(VL_FP32)，VL_FP32=64 时 6 层
 
 template <typename DY_TYPE, typename WEIGHT_TYPE, int BUFFER_NUM = 1>
 class BatchNorm3DGradRARSplitR1 {
@@ -98,6 +99,11 @@ public:
         pipe_->InitBuffer(dgammaOutQue_, BUFFER_NUM, meanBufSize_);
         pipe_->InitBuffer(binaryAddBuf_, binaryAddBufSize_ * BUFFER_NUM);
         pipe_->InitBuffer(cacheBuf_, CACHE_BUFF_SIZE);
+        // 每个层级(level0/1/2) x dbeta/dgamma 各一份 lo 面：双肢必须一直传到最终输出，中间层也不能提前舍入
+        // 每个层级(level0/1/2) x dbeta/dgamma 各一份 lo 面 + fold 缓存的两份 lo 面：
+        // 双肢必须一直传到最终输出，fold 部分和也不能提前压成单个 fp32
+        pipe_->InitBuffer(cacheLoBuf_,
+                          (6 * ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY + 2 * FOLD_CACHE_CAPACITY) * sizeof(float));
 
         V_MTE3_EVENT = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
         MTE3_MTE2_EVENT = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_MTE2));
@@ -111,6 +117,16 @@ public:
         binaryAddTensor_ = binaryAddBuf_.Get<float>();
         cacheLocal_ = cacheBuf_.Get<float>();
         Duplicate(cacheLocal_, 0.0f, CACHE_BUFF_SIZE / sizeof(float));
+        cacheLoLocal_ = cacheLoBuf_.Get<float>();
+        Duplicate(cacheLoLocal_, 0.0f, 6 * ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY + 2 * FOLD_CACHE_CAPACITY);
+        dBetaCacheLo_ = cacheLoLocal_[0];
+        dGammaCacheLo_ = cacheLoLocal_[ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY];
+        dBetaL1Lo_ = cacheLoLocal_[2 * ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY];
+        dGammaL1Lo_ = cacheLoLocal_[3 * ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY];
+        dBetaL2Lo_ = cacheLoLocal_[4 * ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY];
+        dGammaL2Lo_ = cacheLoLocal_[5 * ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY];
+        dBetaFoldLo_ = cacheLoLocal_[6 * ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY];
+        dGammaFoldLo_ = cacheLoLocal_[6 * ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY + FOLD_CACHE_CAPACITY];
         dBetaCacheLocal_ = cacheLocal_[0];
         dGammaCacheLocal_ = cacheLocal_[DGAMA_CACHE_INDEX];
         dBetaFoldCacheLocal_ = cacheLocal_[DBETA_FOLD_CACHE_INDEX];
@@ -159,17 +175,78 @@ public:
 
     __aicore__ inline bool IsNeedUpdateLevel2Cache(uint64_t basiBlockIdx) { return ((basiBlockIdx + 1) & 0xffff) == 0; }
 
+    // 把 fold 块部分和以 TwoSum 并入 level0，并把残差存进 lo 数组
+    __aicore__ inline void FoldTwoSum(const LocalTensor<float>& dstHi, const LocalTensor<float>& dstLo,
+                                      const LocalTensor<float>& src, const LocalTensor<float>& srcLo, uint32_t dstOff,
+                                      uint32_t count)
+    {
+        uint16_t loops = CeilDiv(count, VL_FP32);
+        __local_mem__ float* hi = (__local_mem__ float*)dstHi.GetPhyAddr() + dstOff;
+        __local_mem__ float* lo = (__local_mem__ float*)dstLo.GetPhyAddr();
+        __local_mem__ float* sp = (__local_mem__ float*)src.GetPhyAddr();
+        __local_mem__ float* spl = (__local_mem__ float*)srcLo.GetPhyAddr();
+        __VEC_SCOPE__
+        {
+            MicroAPI::MaskReg pm;
+            uint32_t sreg = count;
+            MicroAPI::RegTensor<float> h, l, v, vl;
+            for (uint16_t i = 0; i < loops; ++i) {
+                pm = MicroAPI::UpdateMask<float>(sreg);
+                DataCopy(h, hi + i * VL_FP32);
+                DataCopy(l, lo + i * VL_FP32);
+                DataCopy(v, sp + i * VL_FP32);
+                DataCopy(vl, spl + i * VL_FP32);
+                AccumulateWithError(h, l, v, pm);
+                AccumulateWithError(h, l, vl, pm);
+                DataCopy(hi + i * VL_FP32, h, pm);
+                DataCopy(lo + i * VL_FP32, l, pm);
+            }
+        }
+    }
+
+    // level0 的 hi+lo 合并回 hi（一次舍入），lo 清零
+    __aicore__ inline void MergeLoIntoLevel0(const LocalTensor<float>& hiT, const LocalTensor<float>& loT,
+                                             uint32_t count)
+    {
+        uint16_t loops = CeilDiv(count, VL_FP32);
+        __local_mem__ float* hi = (__local_mem__ float*)hiT.GetPhyAddr();
+        __local_mem__ float* lo = (__local_mem__ float*)loT.GetPhyAddr();
+        __VEC_SCOPE__
+        {
+            MicroAPI::MaskReg pm;
+            uint32_t sreg = count;
+            MicroAPI::RegTensor<float> h, l, z;
+            for (uint16_t i = 0; i < loops; ++i) {
+                pm = MicroAPI::UpdateMask<float>(sreg);
+                DataCopy(h, hi + i * VL_FP32);
+                DataCopy(l, lo + i * VL_FP32);
+                MicroAPI::Add<float, MicroAPI::MaskMergeMode::ZEROING>(h, h, l, pm);
+                DataCopy(hi + i * VL_FP32, h, pm);
+                MicroAPI::Duplicate(z, 0.0f, pm);
+                DataCopy(lo + i * VL_FP32, z, pm);
+            }
+        }
+    }
+
     __aicore__ inline void UpdateCache(uint64_t basiBlockIdx)
     {
         if (IsNeedUpdateLevel1Cache(basiBlockIdx)) {
             uint64_t updateIdx = ((basiBlockIdx & 0xff00) >> 8);
-            CustomReduceSum(dBetaCacheLocal_[CACHE_LEVEL1_INDEX], dBetaCacheLocal_[CACHE_LEVEL0_INDEX], updateIdx);
-            CustomReduceSum(dGammaCacheLocal_[CACHE_LEVEL1_INDEX], dGammaCacheLocal_[CACHE_LEVEL0_INDEX], updateIdx);
+            CustomReduceSumWithLoSplit(dBetaCacheLocal_[CACHE_LEVEL1_INDEX], dBetaL1Lo_,
+                                       dBetaCacheLocal_[CACHE_LEVEL0_INDEX], dBetaCacheLo_, updateIdx);
+            CustomReduceSumWithLoSplit(dGammaCacheLocal_[CACHE_LEVEL1_INDEX], dGammaL1Lo_,
+                                       dGammaCacheLocal_[CACHE_LEVEL0_INDEX], dGammaCacheLo_, updateIdx);
+            ZeroLo(dBetaCacheLo_, ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY);
+            ZeroLo(dGammaCacheLo_, ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY);
         }
         if (IsNeedUpdateLevel2Cache(basiBlockIdx)) {
             uint64_t updateIdx = (basiBlockIdx >> 16);
-            CustomReduceSum(dBetaCacheLocal_[CACHE_LEVEL2_INDEX], dBetaCacheLocal_[CACHE_LEVEL1_INDEX], updateIdx);
-            CustomReduceSum(dGammaCacheLocal_[CACHE_LEVEL2_INDEX], dGammaCacheLocal_[CACHE_LEVEL1_INDEX], updateIdx);
+            CustomReduceSumWithLoSplit(dBetaCacheLocal_[CACHE_LEVEL2_INDEX], dBetaL2Lo_,
+                                       dBetaCacheLocal_[CACHE_LEVEL1_INDEX], dBetaL1Lo_, updateIdx);
+            CustomReduceSumWithLoSplit(dGammaCacheLocal_[CACHE_LEVEL2_INDEX], dGammaL2Lo_,
+                                       dGammaCacheLocal_[CACHE_LEVEL1_INDEX], dGammaL1Lo_, updateIdx);
+            ZeroLo(dBetaL1Lo_, ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY);
+            ZeroLo(dGammaL1Lo_, ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY);
         }
     }
 
@@ -183,28 +260,32 @@ public:
         if (IsNeedUpdateFoldCache(basiBlockIdx)) {
             uint64_t updateIdx = ((basiBlockIdx & (ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY - 1)) + 1) -
                                  FOLD_CACHE_CAPACITY;
-            Add(dBetaCacheLocal_[updateIdx], dBetaCacheLocal_[updateIdx], dBetaFoldCacheLocal_, FOLD_CACHE_CAPACITY);
-            Add(dGammaCacheLocal_[updateIdx], dGammaCacheLocal_[updateIdx], dGammaFoldCacheLocal_, FOLD_CACHE_CAPACITY);
+            FoldTwoSum(dBetaCacheLocal_, dBetaCacheLo_, dBetaFoldCacheLocal_, dBetaFoldLo_,
+                       static_cast<uint32_t>(updateIdx), FOLD_CACHE_CAPACITY);
+            FoldTwoSum(dGammaCacheLocal_, dGammaCacheLo_, dGammaFoldCacheLocal_, dGammaFoldLo_,
+                       static_cast<uint32_t>(updateIdx), FOLD_CACHE_CAPACITY);
         } else if (basiBlockIdx + 1 == FoldLoopNum) {
             uint32_t updateNum = static_cast<uint32_t>((basiBlockIdx + 1) & (ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY - 1));
             uint32_t updateIdx = CeilDiv(updateNum, FOLD_CACHE_CAPACITY) * FOLD_CACHE_CAPACITY - FOLD_CACHE_CAPACITY;
             updateNum = updateNum & (FOLD_CACHE_CAPACITY - 1);
-            Add(dBetaCacheLocal_[updateIdx], dBetaCacheLocal_[updateIdx], dBetaFoldCacheLocal_, updateNum);
-            Add(dGammaCacheLocal_[updateIdx], dGammaCacheLocal_[updateIdx], dGammaFoldCacheLocal_, updateNum);
+            FoldTwoSum(dBetaCacheLocal_, dBetaCacheLo_, dBetaFoldCacheLocal_, dBetaFoldLo_,
+                       static_cast<uint32_t>(updateIdx), updateNum);
+            FoldTwoSum(dGammaCacheLocal_, dGammaCacheLo_, dGammaFoldCacheLocal_, dGammaFoldLo_,
+                       static_cast<uint32_t>(updateIdx), updateNum);
         }
     }
 
     __aicore__ inline void ProcessSummation(uint64_t basicBlockNum)
     {
         if (basicBlockNum < ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY) {
-            CustomReduceSum(dBetaLocal_, dBetaCacheLocal_[CACHE_LEVEL0_INDEX], 0);
-            CustomReduceSum(dGammaLocal_, dGammaCacheLocal_[CACHE_LEVEL0_INDEX], 0);
+            CustomReduceSumWithLo(dBetaLocal_, dBetaCacheLocal_[CACHE_LEVEL0_INDEX], dBetaCacheLo_, 0);
+            CustomReduceSumWithLo(dGammaLocal_, dGammaCacheLocal_[CACHE_LEVEL0_INDEX], dGammaCacheLo_, 0);
         } else if (basicBlockNum < ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY * ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY) {
-            CustomReduceSum(dBetaLocal_, dBetaCacheLocal_[CACHE_LEVEL1_INDEX], 0);
-            CustomReduceSum(dGammaLocal_, dGammaCacheLocal_[CACHE_LEVEL1_INDEX], 0);
+            CustomReduceSumWithLo(dBetaLocal_, dBetaCacheLocal_[CACHE_LEVEL1_INDEX], dBetaL1Lo_, 0);
+            CustomReduceSumWithLo(dGammaLocal_, dGammaCacheLocal_[CACHE_LEVEL1_INDEX], dGammaL1Lo_, 0);
         } else {
-            CustomReduceSum(dBetaLocal_, dBetaCacheLocal_[CACHE_LEVEL2_INDEX], 0);
-            CustomReduceSum(dGammaLocal_, dGammaCacheLocal_[CACHE_LEVEL2_INDEX], 0);
+            CustomReduceSumWithLo(dBetaLocal_, dBetaCacheLocal_[CACHE_LEVEL2_INDEX], dBetaL2Lo_, 0);
+            CustomReduceSumWithLo(dGammaLocal_, dGammaCacheLocal_[CACHE_LEVEL2_INDEX], dGammaL2Lo_, 0);
         }
     }
 
@@ -213,27 +294,189 @@ public:
     {
         __ubuf__ float* dst = (__ubuf__ float*)dstTensor.GetPhyAddr();
         __ubuf__ float* src = (__ubuf__ float*)srcTensor.GetPhyAddr();
+        // 256 个部分和的收尾归约：全用补偿加法（TwoSum），结果等于真实和的正确舍入值。
+        // 判据是 cross_check（NPU 误差 / 三方误差），三方本身就是近似正确舍入的，
+        // 朴素树形收尾（3 次逐级加 + 一次硬件 ReduceSum）会输掉 1.5 倍门限。
         __VEC_SCOPE__
         {
             MicroAPI::RegTensor<float> x1;
             MicroAPI::RegTensor<float> x2;
             MicroAPI::RegTensor<float> x3;
             MicroAPI::RegTensor<float> x4;
-            MicroAPI::RegTensor<float> sum1;
-            MicroAPI::RegTensor<float> sum2;
-            MicroAPI::RegTensor<float> sum12;
+            MicroAPI::RegTensor<float> sums;
+            MicroAPI::RegTensor<float> rhsSums;
+            MicroAPI::RegTensor<float> low;
+            MicroAPI::RegTensor<float> rhsLow;
             MicroAPI::RegTensor<float> vlSum;
+            AscendC::MicroAPI::RegTensor<uint32_t> evenIdx;
+            AscendC::MicroAPI::RegTensor<uint32_t> oddIdx;
 
             MicroAPI::MaskReg pregAll = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::ALL>();
+            MicroAPI::MaskReg pregOne = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::VL1>();
             MicroAPI::DataCopy(x1, (__local_mem__ float*)(src));
             MicroAPI::DataCopy(x2, (__local_mem__ float*)(src) + 1 * VL_FP32);
             MicroAPI::DataCopy(x3, (__local_mem__ float*)(src) + DIGIT_TWO * VL_FP32);
             MicroAPI::DataCopy(x4, (__local_mem__ float*)(src) + DIGIT_THREE * VL_FP32);
-            MicroAPI::Add(sum1, x1, x3, pregAll);
-            MicroAPI::Add(sum2, x2, x4, pregAll);
-            MicroAPI::Add(sum12, sum1, sum2, pregAll);
-            MicroAPI::ReduceSum(vlSum, sum12, pregAll);
+            Duplicate(sums, 0.0f, pregAll);
+            Duplicate(low, 0.0f, pregAll);
+            AccumulateWithError(sums, low, x1, pregAll);
+            AccumulateWithError(sums, low, x2, pregAll);
+            AccumulateWithError(sums, low, x3, pregAll);
+            AccumulateWithError(sums, low, x4, pregAll);
+
+            // 64 lane 的成对 TwoSum 树（6 层），残差逐级回灌 low
+            AscendC::Reg::Arange((MicroAPI::RegTensor<int32_t>&)evenIdx, static_cast<int32_t>(0));
+            ShiftLefts(evenIdx, evenIdx, static_cast<int16_t>(1), pregAll);
+            Duplicate(oddIdx, static_cast<uint32_t>(VL_FP32 - 1), pregAll);
+            AscendC::Reg::And(evenIdx, evenIdx, oddIdx, pregAll);
+            Adds(oddIdx, evenIdx, static_cast<uint32_t>(1), pregAll);
+#pragma unroll
+            for (uint16_t level = 0; level < SPLIT_R1_VL_LOG2; ++level) {
+                uint32_t activeNum = VL_FP32 >> (level + 1);
+                MicroAPI::MaskReg pregActive = MicroAPI::UpdateMask<float>(activeNum);
+                AscendC::Reg::Gather(rhsSums, sums, oddIdx);
+                AscendC::Reg::Gather(rhsLow, low, oddIdx);
+                AscendC::Reg::Gather(sums, sums, evenIdx);
+                AscendC::Reg::Gather(low, low, evenIdx);
+                Add(low, low, rhsLow, pregActive);
+                AccumulateWithError(sums, low, rhsSums, pregActive);
+            }
+            ClampResidual(low, pregAll);
+            Add(vlSum, sums, low, pregOne);
             MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(dst + idx, vlSum, pregAll);
+        }
+    }
+
+    // lo 面清零：level0 被双肢归约消费后，窗口内的 lo 必须归零再进入下一个窗口
+    __aicore__ inline void ZeroLo(const LocalTensor<float>& loT, uint32_t count)
+    {
+        uint16_t loops = CeilDiv(count, VL_FP32);
+        __local_mem__ float* lo = (__local_mem__ float*)loT.GetPhyAddr();
+        __VEC_SCOPE__
+        {
+            MicroAPI::MaskReg pm;
+            uint32_t sreg = count;
+            MicroAPI::RegTensor<float> z;
+            for (uint16_t i = 0; i < loops; ++i) {
+                pm = MicroAPI::UpdateMask<float>(sreg);
+                MicroAPI::Duplicate(z, 0.0f, pm);
+                DataCopy(lo + i * VL_FP32, z, pm);
+            }
+        }
+    }
+
+    // 双肢版本：level0 的 hi 面与 lo 面一起补偿归约，结果等于 sum(hi_i + lo_i) 的正确舍入值。
+    // 只在"一个窗口(256 block)内直接出结果"的层级使用；level1/level2 仍是单肢。
+    __aicore__ inline void CustomReduceSumWithLo(const LocalTensor<float>& dstTensor,
+                                                 const LocalTensor<float>& srcHiTensor,
+                                                 const LocalTensor<float>& srcLoTensor, uint32_t idx)
+    {
+        __ubuf__ float* dst = (__ubuf__ float*)dstTensor.GetPhyAddr();
+        __ubuf__ float* srcHi = (__ubuf__ float*)srcHiTensor.GetPhyAddr();
+        __ubuf__ float* srcLo = (__ubuf__ float*)srcLoTensor.GetPhyAddr();
+        __VEC_SCOPE__
+        {
+            MicroAPI::RegTensor<float> x1, x2, x3, x4, l1, l2, l3, l4;
+            MicroAPI::RegTensor<float> sums, low, rhsSums, rhsLow, vlSum;
+            AscendC::MicroAPI::RegTensor<uint32_t> evenIdx, oddIdx;
+            MicroAPI::MaskReg pregAll = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::ALL>();
+            MicroAPI::MaskReg pregOne = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::VL1>();
+            MicroAPI::DataCopy(x1, (__local_mem__ float*)(srcHi));
+            MicroAPI::DataCopy(x2, (__local_mem__ float*)(srcHi) + 1 * VL_FP32);
+            MicroAPI::DataCopy(x3, (__local_mem__ float*)(srcHi) + DIGIT_TWO * VL_FP32);
+            MicroAPI::DataCopy(x4, (__local_mem__ float*)(srcHi) + DIGIT_THREE * VL_FP32);
+            MicroAPI::DataCopy(l1, (__local_mem__ float*)(srcLo));
+            MicroAPI::DataCopy(l2, (__local_mem__ float*)(srcLo) + 1 * VL_FP32);
+            MicroAPI::DataCopy(l3, (__local_mem__ float*)(srcLo) + DIGIT_TWO * VL_FP32);
+            MicroAPI::DataCopy(l4, (__local_mem__ float*)(srcLo) + DIGIT_THREE * VL_FP32);
+            Duplicate(sums, 0.0f, pregAll);
+            Duplicate(low, 0.0f, pregAll);
+            AccumulateWithError(sums, low, x1, pregAll);
+            AccumulateWithError(sums, low, x2, pregAll);
+            AccumulateWithError(sums, low, x3, pregAll);
+            AccumulateWithError(sums, low, x4, pregAll);
+            AccumulateWithError(sums, low, l1, pregAll);
+            AccumulateWithError(sums, low, l2, pregAll);
+            AccumulateWithError(sums, low, l3, pregAll);
+            AccumulateWithError(sums, low, l4, pregAll);
+
+            AscendC::Reg::Arange((MicroAPI::RegTensor<int32_t>&)evenIdx, static_cast<int32_t>(0));
+            ShiftLefts(evenIdx, evenIdx, static_cast<int16_t>(1), pregAll);
+            MicroAPI::Duplicate(oddIdx, static_cast<uint32_t>(VL_FP32 - 1), pregAll);
+            AscendC::Reg::And(evenIdx, evenIdx, oddIdx, pregAll);
+            Adds(oddIdx, evenIdx, static_cast<uint32_t>(1), pregAll);
+#pragma unroll
+            for (uint16_t level = 0; level < SPLIT_R1_VL_LOG2; ++level) {
+                uint32_t activeNum = VL_FP32 >> (level + 1);
+                MicroAPI::MaskReg pregActive = MicroAPI::UpdateMask<float>(activeNum);
+                AscendC::Reg::Gather(rhsSums, sums, oddIdx);
+                AscendC::Reg::Gather(rhsLow, low, oddIdx);
+                AscendC::Reg::Gather(sums, sums, evenIdx);
+                AscendC::Reg::Gather(low, low, evenIdx);
+                MicroAPI::Add(low, low, rhsLow, pregActive);
+                AccumulateWithError(sums, low, rhsSums, pregActive);
+            }
+            ClampResidual(low, pregAll);
+            Add(vlSum, sums, low, pregOne);
+            MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(dst + idx, vlSum, pregAll);
+        }
+    }
+
+    // 双肢落盘版：把归约结果以 (hi, lo) 两个 fp32 分别写进 dstHi[idx] / dstLo[idx]，
+    // 不做最后那次合并舍入。用于 level0->level1、level1->level2，让低位一直传到最终输出。
+    __aicore__ inline void CustomReduceSumWithLoSplit(const LocalTensor<float>& dstHiTensor,
+                                                      const LocalTensor<float>& dstLoTensor,
+                                                      const LocalTensor<float>& srcHiTensor,
+                                                      const LocalTensor<float>& srcLoTensor, uint32_t idx)
+    {
+        __ubuf__ float* dstHi = (__ubuf__ float*)dstHiTensor.GetPhyAddr();
+        __ubuf__ float* dstLo = (__ubuf__ float*)dstLoTensor.GetPhyAddr();
+        __ubuf__ float* srcHi = (__ubuf__ float*)srcHiTensor.GetPhyAddr();
+        __ubuf__ float* srcLo = (__ubuf__ float*)srcLoTensor.GetPhyAddr();
+        __VEC_SCOPE__
+        {
+            MicroAPI::RegTensor<float> x1, x2, x3, x4, l1, l2, l3, l4;
+            MicroAPI::RegTensor<float> sums, low, rhsSums, rhsLow;
+            AscendC::MicroAPI::RegTensor<uint32_t> evenIdx, oddIdx;
+            MicroAPI::MaskReg pregAll = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::ALL>();
+            MicroAPI::DataCopy(x1, (__local_mem__ float*)(srcHi));
+            MicroAPI::DataCopy(x2, (__local_mem__ float*)(srcHi) + 1 * VL_FP32);
+            MicroAPI::DataCopy(x3, (__local_mem__ float*)(srcHi) + DIGIT_TWO * VL_FP32);
+            MicroAPI::DataCopy(x4, (__local_mem__ float*)(srcHi) + DIGIT_THREE * VL_FP32);
+            MicroAPI::DataCopy(l1, (__local_mem__ float*)(srcLo));
+            MicroAPI::DataCopy(l2, (__local_mem__ float*)(srcLo) + 1 * VL_FP32);
+            MicroAPI::DataCopy(l3, (__local_mem__ float*)(srcLo) + DIGIT_TWO * VL_FP32);
+            MicroAPI::DataCopy(l4, (__local_mem__ float*)(srcLo) + DIGIT_THREE * VL_FP32);
+            Duplicate(sums, 0.0f, pregAll);
+            Duplicate(low, 0.0f, pregAll);
+            AccumulateWithError(sums, low, x1, pregAll);
+            AccumulateWithError(sums, low, x2, pregAll);
+            AccumulateWithError(sums, low, x3, pregAll);
+            AccumulateWithError(sums, low, x4, pregAll);
+            AccumulateWithError(sums, low, l1, pregAll);
+            AccumulateWithError(sums, low, l2, pregAll);
+            AccumulateWithError(sums, low, l3, pregAll);
+            AccumulateWithError(sums, low, l4, pregAll);
+
+            AscendC::Reg::Arange((MicroAPI::RegTensor<int32_t>&)evenIdx, static_cast<int32_t>(0));
+            ShiftLefts(evenIdx, evenIdx, static_cast<int16_t>(1), pregAll);
+            MicroAPI::Duplicate(oddIdx, static_cast<uint32_t>(VL_FP32 - 1), pregAll);
+            AscendC::Reg::And(evenIdx, evenIdx, oddIdx, pregAll);
+            Adds(oddIdx, evenIdx, static_cast<uint32_t>(1), pregAll);
+#pragma unroll
+            for (uint16_t level = 0; level < SPLIT_R1_VL_LOG2; ++level) {
+                uint32_t activeNum = VL_FP32 >> (level + 1);
+                MicroAPI::MaskReg pregActive = MicroAPI::UpdateMask<float>(activeNum);
+                AscendC::Reg::Gather(rhsSums, sums, oddIdx);
+                AscendC::Reg::Gather(rhsLow, low, oddIdx);
+                AscendC::Reg::Gather(sums, sums, evenIdx);
+                AscendC::Reg::Gather(low, low, evenIdx);
+                MicroAPI::Add(low, low, rhsLow, pregActive);
+                AccumulateWithError(sums, low, rhsSums, pregActive);
+            }
+            ClampResidual(low, pregAll);
+            MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(dstHi + idx, sums, pregAll);
+            MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(dstLo + idx, low, pregAll);
         }
     }
 
@@ -245,13 +488,14 @@ public:
         dyInQue_.EnQue(dyLocal);
         dyLocal = dyInQue_.template DeQue<DY_TYPE>();
 
-        CalcDbeta(dyLocal, dBetaCacheLocal_, binaryAddTensor_, basicBlockIdx, r1Factor * r0Dim_, binaryAddParam_);
+        CalcDbeta(dyLocal, dBetaCacheLocal_, dBetaCacheLo_, binaryAddTensor_, basicBlockIdx, r1Factor * r0Dim_,
+                  binaryAddParam_);
         LocalTensor<DY_TYPE> xLocal = xInQue_.template AllocTensor<DY_TYPE>();
         PrepareInX(xLocal, 0, offset, r1Factor);
         xInQue_.EnQue(xLocal);
         xLocal = xInQue_.template DeQue<DY_TYPE>();
-        CalcDgamma(dyLocal, xLocal, meanLocal_, rstdLocal_, dGammaCacheLocal_, binaryAddTensor_, basicBlockIdx,
-                   r1Factor * r0Dim_, binaryAddParam_);
+        CalcDgamma(dyLocal, xLocal, meanLocal_, rstdLocal_, dGammaCacheLocal_, dGammaCacheLo_, binaryAddTensor_,
+                   basicBlockIdx, r1Factor * r0Dim_, binaryAddParam_);
 
         dyInQue_.FreeTensor(dyLocal);
         xInQue_.FreeTensor(xLocal);
@@ -269,15 +513,15 @@ public:
         dyInQue_.EnQue(dyLocal);
         dyLocal = dyInQue_.template DeQue<DY_TYPE>();
 
-        CalcDbetaFold(dyLocal, dBetaCacheLocal_, binaryAddTensor_, basicBlockIdx, r1Factor * r0Dim_,
+        CalcDbetaFold(dyLocal, dBetaCacheLocal_, dBetaCacheLo_, binaryAddTensor_, basicBlockIdx, r1Factor * r0Dim_,
                       r1TailFactor * r0Dim_, tailBinaryAddParam_);
         LocalTensor<DY_TYPE> xLocal = xInQue_.template AllocTensor<DY_TYPE>();
         PrepareInX(xLocal, 0, offset, r1Factor);
         PrepareInX(xLocal, halfXBufOffset_, tailOffset, r1TailFactor);
         xInQue_.EnQue(xLocal);
         xLocal = xInQue_.template DeQue<DY_TYPE>();
-        CalcDgammaFold(dyLocal, xLocal, meanLocal_, rstdLocal_, dGammaCacheLocal_, binaryAddTensor_, basicBlockIdx,
-                       r1Factor * r0Dim_, r1TailFactor * r0Dim_, tailBinaryAddParam_);
+        CalcDgammaFold(dyLocal, xLocal, meanLocal_, rstdLocal_, dGammaCacheLocal_, dGammaCacheLo_, binaryAddTensor_,
+                       basicBlockIdx, r1Factor * r0Dim_, r1TailFactor * r0Dim_, tailBinaryAddParam_);
 
         dyInQue_.FreeTensor(dyLocal);
         xInQue_.FreeTensor(xLocal);
@@ -292,7 +536,7 @@ public:
         dyInQue_.EnQue(dyLocal);
         dyLocal = dyInQue_.template DeQue<DY_TYPE>();
 
-        CalcDbetaFold(dyLocal, dBetaFoldCacheLocal_, binaryAddTensor_, foldCacheIdx, r1Factor * r0Dim_,
+        CalcDbetaFold(dyLocal, dBetaFoldCacheLocal_, dBetaFoldLo_, binaryAddTensor_, foldCacheIdx, r1Factor * r0Dim_,
                       r1TailTailFactor * r0Dim_, tailBinaryAddParam_);
 
         xLocal = xInQue_.template AllocTensor<DY_TYPE>();
@@ -302,8 +546,8 @@ public:
         }
         xInQue_.EnQue(xLocal);
         xLocal = xInQue_.template DeQue<DY_TYPE>();
-        CalcDgammaFold(dyLocal, xLocal, meanLocal_, rstdLocal_, dGammaFoldCacheLocal_, binaryAddTensor_, foldCacheIdx,
-                       r1Factor * r0Dim_, r1TailTailFactor * r0Dim_, tailBinaryAddParam_);
+        CalcDgammaFold(dyLocal, xLocal, meanLocal_, rstdLocal_, dGammaFoldCacheLocal_, dGammaFoldLo_, binaryAddTensor_,
+                       foldCacheIdx, r1Factor * r0Dim_, r1TailTailFactor * r0Dim_, tailBinaryAddParam_);
 
         dyInQue_.FreeTensor(dyLocal);
         xInQue_.FreeTensor(xLocal);
@@ -401,8 +645,8 @@ public:
     }
 
     __aicore__ inline void CalcDbetaVF(const __local_mem__ DY_TYPE* data, const __local_mem__ float* out,
-                                       const __local_mem__ float* binaryAdd, uint32_t idx, uint32_t r,
-                                       const BinaryAddParam& binaryAddParam)
+                                       const __local_mem__ float* loOut, const __local_mem__ float* binaryAdd,
+                                       uint32_t idx, uint32_t r, const BinaryAddParam& binaryAddParam)
     {
         uint32_t binaryAddQuotient = binaryAddParam.binaryAddQuotient;
         uint32_t binaryAddQuotientOffset = binaryAddQuotient;
@@ -428,49 +672,52 @@ public:
             MicroAPI::MaskReg pregMain = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::ALL>();
             MicroAPI::MaskReg pregMerge = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::VL1>();
 
+            // VL 宽 (hi,lo) 累加器：每 chunk 对整条 VL 向量 TwoSum，收尾 6 层补偿树 + 单次舍入
+            MicroAPI::RegTensor<float> hiAcc, loAcc, rhsSums, rhsLow;
+            AscendC::MicroAPI::RegTensor<uint32_t> evenIdx, oddIdx;
+            MicroAPI::Duplicate(hiAcc, 0.0f, pregMain);
+            MicroAPI::Duplicate(loAcc, 0.0f, pregMain);
             uint32_t sreg0 = binaryAddRemainder;
             for (uint16_t i = 0; i < binaryAddRemainderLoop; i++) {
                 MicroAPI::MaskReg pregLoop = MicroAPI::UpdateMask<float>(sreg0);
                 LoadOneTensor<DY_TYPE>(data, binaryAddQ, pregMain, i * VL_FP32);
                 LoadOneTensor<DY_TYPE>(data, binaryAddR, pregLoop, i * VL_FP32 + binaryAddQuotientOffset);
-                MicroAPI::Add(tmp, binaryAddQ, binaryAddR, pregLoop);
-                MicroAPI::Copy<float, MicroAPI::MaskMergeMode::MERGING>(binaryAddQ, tmp, pregLoop);
-                MicroAPI::ReduceSum(vlSum, binaryAddQ, pregMain);
-                MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    (__local_mem__ float*)binaryAdd + i, vlSum, pregMerge);
+                AccumulateWithError(hiAcc, loAcc, binaryAddQ, pregMain);
+                AccumulateWithError(hiAcc, loAcc, binaryAddR, pregLoop);
             }
 
             for (uint16_t i = 0; i < static_cast<uint16_t>(binaryAddQuotientLoop - binaryAddRemainderLoop); i++) {
                 LoadOneTensor<DY_TYPE>(data, x, pregMain, (i + binaryAddRemainderLoop) * VL_FP32);
-                MicroAPI::ReduceSum(vlSum, x, pregMain);
-                MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    (__local_mem__ float*)binaryAdd + binaryAddRemainderLoop + i, vlSum, pregMerge);
+                AccumulateWithError(hiAcc, loAcc, x, pregMain);
             }
-            MicroAPI::LocalMemBar<MicroAPI::MemType::VEC_STORE, MicroAPI::MemType::VEC_LOAD>();
-            uint16_t curBinaryAddLoop = binaryAddLoop;
-            for (uint16_t i = 0; i < binaryAddKLoop; i++) {
-                curBinaryAddLoop = curBinaryAddLoop / DIGIT_TWO;
-                for (uint16_t j = 0; j < curBinaryAddLoop; j++) {
-                    MicroAPI::DataCopy(binaryAddQ, ((__local_mem__ float*)binaryAdd) + j * VL_FP32);
-                    MicroAPI::DataCopy(binaryAddR,
-                                       ((__local_mem__ float*)binaryAdd) + (j + curBinaryAddLoop) * VL_FP32);
-                    MicroAPI::Add(binaryAddQ, binaryAddQ, binaryAddR, pregMain);
-                    MicroAPI::DataCopy((__local_mem__ float*)binaryAdd + j * VL_FP32, binaryAddQ, pregMain);
-                }
-                MicroAPI::LocalMemBar<MicroAPI::MemType::VEC_STORE, MicroAPI::MemType::VEC_LOAD>();
+            AscendC::Reg::Arange((MicroAPI::RegTensor<int32_t>&)evenIdx, static_cast<int32_t>(0));
+            ShiftLefts(evenIdx, evenIdx, static_cast<int16_t>(1), pregMain);
+            MicroAPI::Duplicate(oddIdx, static_cast<uint32_t>(VL_FP32 - 1), pregMain);
+            AscendC::Reg::And(evenIdx, evenIdx, oddIdx, pregMain);
+            Adds(oddIdx, evenIdx, static_cast<uint32_t>(1), pregMain);
+#pragma unroll
+            for (uint16_t level = 0; level < SPLIT_R1_VL_LOG2; ++level) {
+                uint32_t activeNum = VL_FP32 >> (level + 1);
+                MicroAPI::MaskReg pregActive = MicroAPI::UpdateMask<float>(activeNum);
+                AscendC::Reg::Gather(rhsSums, hiAcc, oddIdx);
+                AscendC::Reg::Gather(rhsLow, loAcc, oddIdx);
+                AscendC::Reg::Gather(hiAcc, hiAcc, evenIdx);
+                AscendC::Reg::Gather(loAcc, loAcc, evenIdx);
+                MicroAPI::Add(loAcc, loAcc, rhsLow, pregActive);
+                AccumulateWithError(hiAcc, loAcc, rhsSums, pregActive);
             }
-            uint32_t sreg2 = binaryAddParam.binaryAddLastNum;
-            MicroAPI::MaskReg pregLast = MicroAPI::UpdateMask<float>(sreg2);
-            MicroAPI::DataCopy(sum, ((__local_mem__ float*)binaryAdd));
-            MicroAPI::ReduceSum(dbeta, sum, pregLast);
+            ClampResidual(loAcc, pregMain);
             MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                ((__local_mem__ float*)out + idxInLevel0Cache), dbeta, pregMerge);
+                ((__local_mem__ float*)out + idxInLevel0Cache), hiAcc, pregMerge);
+            MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
+                ((__local_mem__ float*)loOut + idxInLevel0Cache), loAcc, pregMerge);
         }
     }
 
     __aicore__ inline void CalcDbetaFoldVF(const __local_mem__ DY_TYPE* data, const __local_mem__ float* out,
-                                           const __local_mem__ float* binaryAdd, uint32_t idx, uint32_t r,
-                                           uint32_t tailR, const BinaryAddParam& binaryAddParam)
+                                           const __local_mem__ float* loOut, const __local_mem__ float* binaryAdd,
+                                           uint32_t idx, uint32_t r, uint32_t tailR,
+                                           const BinaryAddParam& binaryAddParam)
     {
         uint32_t binaryAddQuotient = binaryAddParam.binaryAddQuotient;
         uint32_t binaryAddQuotientOffset = binaryAddQuotient;
@@ -501,6 +748,11 @@ public:
             MicroAPI::MaskReg pregMain = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::ALL>();
             MicroAPI::MaskReg pregMerge = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::VL1>();
 
+            // fold 路径同样改成 VL 宽 (hi,lo)：main/tail 四个区段分别累积，不做逐元素朴素 Add
+            MicroAPI::RegTensor<float> hiAcc, loAcc, rhsSums, rhsLow;
+            AscendC::MicroAPI::RegTensor<uint32_t> evenIdx, oddIdx;
+            MicroAPI::Duplicate(hiAcc, 0.0f, pregMain);
+            MicroAPI::Duplicate(loAcc, 0.0f, pregMain);
             uint32_t sreg0 = binaryAddRemainder;
             uint32_t sreg1 = tailMain;
             uint32_t sreg2 = tailRemainder;
@@ -513,15 +765,10 @@ public:
                 LoadOneTensor<DY_TYPE>(data, binaryAddQTail, pregTailLoop, i * VL_FP32 + halfXBufOffset_);
                 LoadOneTensor<DY_TYPE>(data, binaryAddRTail, pregTailReminderLoop,
                                        i * VL_FP32 + binaryAddQuotientOffset + halfXBufOffset_);
-                MicroAPI::Add(tmp1, binaryAddQ, binaryAddQTail, pregTailLoop);
-                MicroAPI::Copy<float, MicroAPI::MaskMergeMode::MERGING>(binaryAddQ, tmp1, pregTailLoop);
-                MicroAPI::Add(tmp2, binaryAddR, binaryAddRTail, pregTailReminderLoop);
-                MicroAPI::Copy<float, MicroAPI::MaskMergeMode::MERGING>(binaryAddR, tmp2, pregTailReminderLoop);
-                MicroAPI::Add(tmp1, binaryAddQ, binaryAddR, pregLoop);
-                MicroAPI::Copy<float, MicroAPI::MaskMergeMode::MERGING>(binaryAddQ, tmp1, pregLoop);
-                MicroAPI::ReduceSum(vlSum, binaryAddQ, pregMain);
-                MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    (__local_mem__ float*)binaryAdd + i, vlSum, pregMerge);
+                AccumulateWithError(hiAcc, loAcc, binaryAddQ, pregMain);
+                AccumulateWithError(hiAcc, loAcc, binaryAddR, pregLoop);
+                AccumulateWithError(hiAcc, loAcc, binaryAddQTail, pregTailLoop);
+                AccumulateWithError(hiAcc, loAcc, binaryAddRTail, pregTailReminderLoop);
             }
 
             for (uint16_t i = 0; i < static_cast<uint16_t>(binaryAddQuotientLoop - binaryAddRemainderLoop); i++) {
@@ -529,36 +776,35 @@ public:
                 LoadOneTensor<DY_TYPE>(data, x, pregMain, (i + binaryAddRemainderLoop) * VL_FP32);
                 LoadOneTensor<DY_TYPE>(data, xTail, pregTailLoop,
                                        (i + binaryAddRemainderLoop) * VL_FP32 + halfXBufOffset_);
-                MicroAPI::Add(tmp2, x, xTail, pregTailLoop);
-                MicroAPI::Copy<float, MicroAPI::MaskMergeMode::MERGING>(x, tmp2, pregTailLoop);
-                MicroAPI::ReduceSum(vlSum, x, pregMain);
-                MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    (__local_mem__ float*)binaryAdd + binaryAddRemainderLoop + i, vlSum, pregMerge);
+                AccumulateWithError(hiAcc, loAcc, x, pregMain);
+                AccumulateWithError(hiAcc, loAcc, xTail, pregTailLoop);
             }
-            MicroAPI::LocalMemBar<MicroAPI::MemType::VEC_STORE, MicroAPI::MemType::VEC_LOAD>();
-            uint16_t curBinaryAddLoop = binaryAddLoop;
-            for (uint16_t i = 0; i < binaryAddKLoop; i++) {
-                curBinaryAddLoop = curBinaryAddLoop / DIGIT_TWO;
-                for (uint16_t j = 0; j < curBinaryAddLoop; j++) {
-                    MicroAPI::DataCopy(binaryAddQ, ((__local_mem__ float*)binaryAdd) + j * VL_FP32);
-                    MicroAPI::DataCopy(binaryAddR,
-                                       ((__local_mem__ float*)binaryAdd) + (j + curBinaryAddLoop) * VL_FP32);
-                    MicroAPI::Add(binaryAddQ, binaryAddQ, binaryAddR, pregMain);
-                    MicroAPI::DataCopy(((__local_mem__ float*)binaryAdd) + j * VL_FP32, binaryAddQ, pregMain);
-                }
-                MicroAPI::LocalMemBar<MicroAPI::MemType::VEC_STORE, MicroAPI::MemType::VEC_LOAD>();
+            AscendC::Reg::Arange((MicroAPI::RegTensor<int32_t>&)evenIdx, static_cast<int32_t>(0));
+            ShiftLefts(evenIdx, evenIdx, static_cast<int16_t>(1), pregMain);
+            MicroAPI::Duplicate(oddIdx, static_cast<uint32_t>(VL_FP32 - 1), pregMain);
+            AscendC::Reg::And(evenIdx, evenIdx, oddIdx, pregMain);
+            Adds(oddIdx, evenIdx, static_cast<uint32_t>(1), pregMain);
+#pragma unroll
+            for (uint16_t level = 0; level < SPLIT_R1_VL_LOG2; ++level) {
+                uint32_t activeNum = VL_FP32 >> (level + 1);
+                MicroAPI::MaskReg pregActive = MicroAPI::UpdateMask<float>(activeNum);
+                AscendC::Reg::Gather(rhsSums, hiAcc, oddIdx);
+                AscendC::Reg::Gather(rhsLow, loAcc, oddIdx);
+                AscendC::Reg::Gather(hiAcc, hiAcc, evenIdx);
+                AscendC::Reg::Gather(loAcc, loAcc, evenIdx);
+                MicroAPI::Add(loAcc, loAcc, rhsLow, pregActive);
+                AccumulateWithError(hiAcc, loAcc, rhsSums, pregActive);
             }
-            uint32_t sreg3 = binaryAddParam.binaryAddLastNum;
-            MicroAPI::MaskReg pregLast = MicroAPI::UpdateMask<float>(sreg3);
-            MicroAPI::DataCopy(sum, ((__local_mem__ float*)binaryAdd));
-            MicroAPI::ReduceSum(dbeta, sum, pregLast);
+            ClampResidual(loAcc, pregMain);
             MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                ((__local_mem__ float*)out) + idxInLevel0Cache, dbeta, pregMerge);
+                ((__local_mem__ float*)out) + idxInLevel0Cache, hiAcc, pregMerge);
+            MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
+                ((__local_mem__ float*)loOut) + idxInLevel0Cache, loAcc, pregMerge);
         }
     }
 
     __aicore__ inline void CalcDbetaLessThanVL64VF(const __local_mem__ DY_TYPE* data, const __local_mem__ float* out,
-                                                   uint32_t idx, uint32_t r)
+                                                   const __local_mem__ float* loOut, uint32_t idx, uint32_t r)
     {
         uint32_t idxInLevel0Cache = idx & (ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY - 1);
         __VEC_SCOPE__
@@ -572,12 +818,16 @@ public:
             MicroAPI::ReduceSum(sum, x, pregLoop);
             MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
                 ((__local_mem__ float*)out) + idxInLevel0Cache, sum, pregMerge);
+            MicroAPI::RegTensor<float> zeroReg;
+            MicroAPI::Duplicate(zeroReg, 0.0f, pregLoop);
+            MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
+                ((__local_mem__ float*)loOut) + idxInLevel0Cache, zeroReg, pregMerge);
         }
     }
 
     __aicore__ inline void CalcDbetaLessThanVL64FoldVF(const __local_mem__ DY_TYPE* data,
-                                                       const __local_mem__ float* out, uint32_t idx, uint32_t r,
-                                                       uint32_t tailR)
+                                                       const __local_mem__ float* out, const __local_mem__ float* loOut,
+                                                       uint32_t idx, uint32_t r, uint32_t tailR)
     {
         uint32_t idxInLevel0Cache = idx & (ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY - 1);
         __VEC_SCOPE__
@@ -598,38 +848,47 @@ public:
             MicroAPI::ReduceSum(sum, x, pregLoop);
             MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
                 ((__local_mem__ float*)out) + idxInLevel0Cache, sum, pregMerge);
+            MicroAPI::RegTensor<float> zeroReg;
+            MicroAPI::Duplicate(zeroReg, 0.0f, pregLoop);
+            MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
+                ((__local_mem__ float*)loOut) + idxInLevel0Cache, zeroReg, pregMerge);
         }
     }
 
-    __aicore__ inline void CalcDbeta(LocalTensor<DY_TYPE>& dy, LocalTensor<float>& dbeta, LocalTensor<float>& binaryAdd,
-                                     uint32_t idx, uint32_t r, const BinaryAddParam& binaryAddParam)
+    __aicore__ inline void CalcDbeta(LocalTensor<DY_TYPE>& dy, LocalTensor<float>& dbeta, LocalTensor<float>& dbetaLo,
+                                     LocalTensor<float>& binaryAdd, uint32_t idx, uint32_t r,
+                                     const BinaryAddParam& binaryAddParam)
     {
         if (r <= VL_FP32) {
             CalcDbetaLessThanVL64VF((__local_mem__ DY_TYPE*)dy.GetPhyAddr(), (__local_mem__ float*)dbeta.GetPhyAddr(),
-                                    idx, r);
+                                    (__local_mem__ float*)dbetaLo.GetPhyAddr(), idx, r);
         } else {
             CalcDbetaVF((__local_mem__ DY_TYPE*)dy.GetPhyAddr(), (__local_mem__ float*)dbeta.GetPhyAddr(),
-                        (__local_mem__ float*)binaryAdd.GetPhyAddr(), idx, r, binaryAddParam);
+                        (__local_mem__ float*)dbetaLo.GetPhyAddr(), (__local_mem__ float*)binaryAdd.GetPhyAddr(), idx,
+                        r, binaryAddParam);
         }
     }
 
     __aicore__ inline void CalcDbetaFold(LocalTensor<DY_TYPE>& dy, LocalTensor<float>& dbeta,
-                                         LocalTensor<float>& binaryAdd, uint32_t idx, uint32_t r, uint32_t tailR,
-                                         const BinaryAddParam& binaryAddParam)
+                                         LocalTensor<float>& dbetaLo, LocalTensor<float>& binaryAdd, uint32_t idx,
+                                         uint32_t r, uint32_t tailR, const BinaryAddParam& binaryAddParam)
     {
         if (r <= VL_FP32) {
             CalcDbetaLessThanVL64FoldVF((__local_mem__ DY_TYPE*)dy.GetPhyAddr(),
-                                        (__local_mem__ float*)dbeta.GetPhyAddr(), idx, r, tailR);
+                                        (__local_mem__ float*)dbeta.GetPhyAddr(),
+                                        (__local_mem__ float*)dbetaLo.GetPhyAddr(), idx, r, tailR);
         } else {
             CalcDbetaFoldVF((__local_mem__ DY_TYPE*)dy.GetPhyAddr(), (__local_mem__ float*)dbeta.GetPhyAddr(),
-                            (__local_mem__ float*)binaryAdd.GetPhyAddr(), idx, r, tailR, binaryAddParam);
+                            (__local_mem__ float*)dbetaLo.GetPhyAddr(), (__local_mem__ float*)binaryAdd.GetPhyAddr(),
+                            idx, r, tailR, binaryAddParam);
         }
     }
 
     __aicore__ inline void CalcDgammaVF(const __local_mem__ DY_TYPE* dyAddr, const __local_mem__ DY_TYPE* xAddr,
                                         const __local_mem__ float* meanAddr, const __local_mem__ float* rstdAddr,
-                                        const __local_mem__ float* dgammaAddr, const __local_mem__ float* binaryAdd,
-                                        uint32_t idx, uint32_t r, const BinaryAddParam& binaryAddParam)
+                                        const __local_mem__ float* dgammaAddr, const __local_mem__ float* dgammaLoAddr,
+                                        const __local_mem__ float* binaryAdd, uint32_t idx, uint32_t r,
+                                        const BinaryAddParam& binaryAddParam)
     {
         uint32_t binaryAddQuotient = binaryAddParam.binaryAddQuotient;
         uint32_t binaryAddQuotientOffset = binaryAddQuotient;
@@ -657,67 +916,66 @@ public:
             MicroAPI::MaskReg pregMerge = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::VL1>();
             MicroAPI::DataCopy<float, MicroAPI::LoadDist::DIST_BRC_B32>(rstdValue, (__local_mem__ float*)(rstdAddr));
             MicroAPI::DataCopy<float, MicroAPI::LoadDist::DIST_BRC_B32>(meanValue, (__local_mem__ float*)(meanAddr));
+            // VL 宽 (hi,lo) 累加器；乘序 ((x-mean)*rstd)*dy，收尾 6 层补偿树 + 单次舍入
+            MicroAPI::RegTensor<float> hiAcc, loAcc, rhsSums, rhsLow;
+            AscendC::MicroAPI::RegTensor<uint32_t> evenIdx, oddIdx;
+            MicroAPI::Duplicate(hiAcc, 0.0f, pregMain);
+            MicroAPI::Duplicate(loAcc, 0.0f, pregMain);
             uint32_t sreg0 = binaryAddRemainder;
             for (uint16_t i = 0; i < binaryAddRemainderLoop; i++) {
                 MicroAPI::MaskReg pregLoop = MicroAPI::UpdateMask<float>(sreg0);
                 LoadOneTensor<DY_TYPE>(dyAddr, binaryAddQ1, pregMain, i * VL_FP32);
                 LoadOneTensor<DY_TYPE>(dyAddr, binaryAddR1, pregLoop, i * VL_FP32 + binaryAddQuotientOffset);
-
                 LoadOneTensor<DY_TYPE>(xAddr, binaryAddQ2, pregMain, i * VL_FP32);
                 LoadOneTensor<DY_TYPE>(xAddr, binaryAddR2, pregLoop, i * VL_FP32 + binaryAddQuotientOffset);
-
                 MicroAPI::Sub(binaryAddQ2, binaryAddQ2, meanValue, pregMain);
+                MicroAPI::Mul(binaryAddQ2, binaryAddQ2, rstdValue, pregMain);
                 MicroAPI::Mul(binaryAddQ2, binaryAddQ2, binaryAddQ1, pregMain);
-
                 MicroAPI::Sub(binaryAddR2, binaryAddR2, meanValue, pregLoop);
+                MicroAPI::Mul(binaryAddR2, binaryAddR2, rstdValue, pregLoop);
                 MicroAPI::Mul(binaryAddR2, binaryAddR2, binaryAddR1, pregLoop);
-
-                MicroAPI::Mul(binaryAddQ1, rstdValue, binaryAddQ2, pregMain);
-                MicroAPI::Mul(binaryAddR1, rstdValue, binaryAddR2, pregLoop);
-                MicroAPI::Add(tmp, binaryAddQ1, binaryAddR1, pregLoop);
-                MicroAPI::Copy<float, MicroAPI::MaskMergeMode::MERGING>(binaryAddQ1, tmp, pregLoop);
-                MicroAPI::ReduceSum(vlSum, binaryAddQ1, pregMain);
-                MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    (__local_mem__ float*)binaryAdd + i, vlSum, pregMerge);
+                AccumulateWithError(hiAcc, loAcc, binaryAddQ2, pregMain);
+                AccumulateWithError(hiAcc, loAcc, binaryAddR2, pregLoop);
             }
 
             for (uint16_t i = 0; i < static_cast<uint16_t>(binaryAddQuotientLoop - binaryAddRemainderLoop); i++) {
                 LoadOneTensor<DY_TYPE>(dyAddr, binaryAddQ1, pregMain, (i + binaryAddRemainderLoop) * VL_FP32);
                 LoadOneTensor<DY_TYPE>(xAddr, binaryAddQ2, pregMain, (i + binaryAddRemainderLoop) * VL_FP32);
                 MicroAPI::Sub(binaryAddQ2, binaryAddQ2, meanValue, pregMain);
+                MicroAPI::Mul(binaryAddQ2, binaryAddQ2, rstdValue, pregMain);
                 MicroAPI::Mul(binaryAddQ2, binaryAddQ2, binaryAddQ1, pregMain);
-                MicroAPI::Mul(binaryAddQ1, rstdValue, binaryAddQ2, pregMain);
-                MicroAPI::ReduceSum(vlSum, binaryAddQ1, pregMain);
-                MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    (__local_mem__ float*)binaryAdd + binaryAddRemainderLoop + i, vlSum, pregMerge);
+                AccumulateWithError(hiAcc, loAcc, binaryAddQ2, pregMain);
             }
-            MicroAPI::LocalMemBar<MicroAPI::MemType::VEC_STORE, MicroAPI::MemType::VEC_LOAD>();
-            uint16_t curBinaryAddLoop = binaryAddLoop;
-            for (uint16_t i = 0; i < binaryAddKLoop; i++) {
-                curBinaryAddLoop = curBinaryAddLoop / DIGIT_TWO;
-                for (uint16_t j = 0; j < curBinaryAddLoop; j++) {
-                    MicroAPI::DataCopy(binaryAddQ1, (__local_mem__ float*)(binaryAdd) + j * VL_FP32);
-                    MicroAPI::DataCopy(binaryAddR1,
-                                       (__local_mem__ float*)(binaryAdd) + (j + curBinaryAddLoop) * VL_FP32);
-                    MicroAPI::Add(binaryAddQ1, binaryAddQ1, binaryAddR1, pregMain);
-                    MicroAPI::DataCopy(((__local_mem__ float*)binaryAdd) + j * VL_FP32, binaryAddQ1, pregMain);
-                }
-                MicroAPI::LocalMemBar<MicroAPI::MemType::VEC_STORE, MicroAPI::MemType::VEC_LOAD>();
+            AscendC::Reg::Arange((MicroAPI::RegTensor<int32_t>&)evenIdx, static_cast<int32_t>(0));
+            ShiftLefts(evenIdx, evenIdx, static_cast<int16_t>(1), pregMain);
+            MicroAPI::Duplicate(oddIdx, static_cast<uint32_t>(VL_FP32 - 1), pregMain);
+            AscendC::Reg::And(evenIdx, evenIdx, oddIdx, pregMain);
+            Adds(oddIdx, evenIdx, static_cast<uint32_t>(1), pregMain);
+#pragma unroll
+            for (uint16_t level = 0; level < SPLIT_R1_VL_LOG2; ++level) {
+                uint32_t activeNum = VL_FP32 >> (level + 1);
+                MicroAPI::MaskReg pregActive = MicroAPI::UpdateMask<float>(activeNum);
+                AscendC::Reg::Gather(rhsSums, hiAcc, oddIdx);
+                AscendC::Reg::Gather(rhsLow, loAcc, oddIdx);
+                AscendC::Reg::Gather(hiAcc, hiAcc, evenIdx);
+                AscendC::Reg::Gather(loAcc, loAcc, evenIdx);
+                MicroAPI::Add(loAcc, loAcc, rhsLow, pregActive);
+                AccumulateWithError(hiAcc, loAcc, rhsSums, pregActive);
             }
-            uint32_t sreg2 = binaryAddParam.binaryAddLastNum;
-            MicroAPI::MaskReg pregLast = MicroAPI::UpdateMask<float>(sreg2);
-            MicroAPI::DataCopy(sum, (__local_mem__ float*)(binaryAdd));
-            MicroAPI::ReduceSum(dgamma, sum, pregLast);
+            ClampResidual(loAcc, pregMain);
             MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                ((__local_mem__ float*)dgammaAddr) + idxInLevel0Cache, dgamma, pregMerge);
+                ((__local_mem__ float*)dgammaAddr) + idxInLevel0Cache, hiAcc, pregMerge);
+            MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
+                ((__local_mem__ float*)dgammaLoAddr) + idxInLevel0Cache, loAcc, pregMerge);
         }
     }
 
     __aicore__ inline void CalcDgammaFoldVF(const __local_mem__ DY_TYPE* dyAddr, const __local_mem__ DY_TYPE* xAddr,
                                             const __local_mem__ float* meanAddr, const __local_mem__ float* rstdAddr,
-                                            const __local_mem__ float* dgammaAddr, const __local_mem__ float* binaryAdd,
-                                            uint32_t idx, uint32_t r, uint32_t tailR,
-                                            const BinaryAddParam& binaryAddParam)
+                                            const __local_mem__ float* dgammaAddr,
+                                            const __local_mem__ float* dgammaLoAddr,
+                                            const __local_mem__ float* binaryAdd, uint32_t idx, uint32_t r,
+                                            uint32_t tailR, const BinaryAddParam& binaryAddParam)
     {
         uint32_t binaryAddQuotient = binaryAddParam.binaryAddQuotient;
         uint32_t binaryAddQuotientOffset = binaryAddQuotient;
@@ -751,6 +1009,11 @@ public:
             MicroAPI::MaskReg pregMerge = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::VL1>();
             MicroAPI::DataCopy<float, MicroAPI::LoadDist::DIST_BRC_B32>(rstdValue, (__local_mem__ float*)(rstdAddr));
             MicroAPI::DataCopy<float, MicroAPI::LoadDist::DIST_BRC_B32>(meanValue, (__local_mem__ float*)(meanAddr));
+            // fold 路径：VL 宽 (hi,lo)，main/tail 四个区段分别累积，不做逐元素朴素 Add
+            MicroAPI::RegTensor<float> hiAcc, loAcc, rhsSums, rhsLow;
+            AscendC::MicroAPI::RegTensor<uint32_t> evenIdx, oddIdx;
+            MicroAPI::Duplicate(hiAcc, 0.0f, pregMain);
+            MicroAPI::Duplicate(loAcc, 0.0f, pregMain);
             uint32_t sreg0 = binaryAddRemainder;
             uint32_t sreg1 = tailMain;
             uint32_t sreg2 = tailRemainder;
@@ -763,40 +1026,27 @@ public:
                 LoadOneTensor<DY_TYPE>(dyAddr, binaryAddQ1Tail, pregTailLoop, i * VL_FP32 + halfXBufOffset_);
                 LoadOneTensor<DY_TYPE>(dyAddr, binaryAddR1Tail, pregTailReminderLoop,
                                        i * VL_FP32 + binaryAddQuotientOffset + halfXBufOffset_);
-
                 LoadOneTensor<DY_TYPE>(xAddr, binaryAddQ2, pregMain, i * VL_FP32);
                 LoadOneTensor<DY_TYPE>(xAddr, binaryAddR2, pregLoop, i * VL_FP32 + binaryAddQuotientOffset);
                 LoadOneTensor<DY_TYPE>(xAddr, binaryAddQ2Tail, pregTailLoop, i * VL_FP32 + halfXBufOffset_);
                 LoadOneTensor<DY_TYPE>(xAddr, binaryAddR2Tail, pregTailReminderLoop,
                                        i * VL_FP32 + binaryAddQuotientOffset + halfXBufOffset_);
-
                 MicroAPI::Sub(binaryAddQ2, binaryAddQ2, meanValue, pregMain);
+                MicroAPI::Mul(binaryAddQ2, binaryAddQ2, rstdValue, pregMain);
                 MicroAPI::Mul(binaryAddQ2, binaryAddQ2, binaryAddQ1, pregMain);
-
                 MicroAPI::Sub(binaryAddR2, binaryAddR2, meanValue, pregLoop);
+                MicroAPI::Mul(binaryAddR2, binaryAddR2, rstdValue, pregLoop);
                 MicroAPI::Mul(binaryAddR2, binaryAddR2, binaryAddR1, pregLoop);
-
-                MicroAPI::Mul(binaryAddQ1, rstdValue, binaryAddQ2, pregMain);
-                MicroAPI::Mul(binaryAddR1, rstdValue, binaryAddR2, pregLoop);
-
                 MicroAPI::Sub(binaryAddQ2Tail, binaryAddQ2Tail, meanValue, pregTailLoop);
+                MicroAPI::Mul(binaryAddQ2Tail, binaryAddQ2Tail, rstdValue, pregTailLoop);
                 MicroAPI::Mul(binaryAddQ2Tail, binaryAddQ2Tail, binaryAddQ1Tail, pregTailLoop);
-
                 MicroAPI::Sub(binaryAddR2Tail, binaryAddR2Tail, meanValue, pregTailReminderLoop);
+                MicroAPI::Mul(binaryAddR2Tail, binaryAddR2Tail, rstdValue, pregTailReminderLoop);
                 MicroAPI::Mul(binaryAddR2Tail, binaryAddR2Tail, binaryAddR1Tail, pregTailReminderLoop);
-
-                MicroAPI::Mul(binaryAddQ1Tail, rstdValue, binaryAddQ2Tail, pregTailLoop);
-                MicroAPI::Mul(binaryAddR1Tail, rstdValue, binaryAddR2Tail, pregTailReminderLoop);
-
-                MicroAPI::Add(tmp1, binaryAddQ1, binaryAddQ1Tail, pregTailLoop);
-                MicroAPI::Copy<float, MicroAPI::MaskMergeMode::MERGING>(binaryAddQ1, tmp1, pregTailLoop);
-                MicroAPI::Add(tmp2, binaryAddR1, binaryAddR1Tail, pregTailReminderLoop);
-                MicroAPI::Copy<float, MicroAPI::MaskMergeMode::MERGING>(binaryAddR1, tmp2, pregTailReminderLoop);
-                MicroAPI::Add(tmp1, binaryAddQ1, binaryAddR1, pregLoop);
-                MicroAPI::Copy<float, MicroAPI::MaskMergeMode::MERGING>(binaryAddQ1, tmp1, pregLoop);
-                MicroAPI::ReduceSum(vlSum, binaryAddQ1, pregMain);
-                MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    (__local_mem__ float*)binaryAdd + i, vlSum, pregMerge);
+                AccumulateWithError(hiAcc, loAcc, binaryAddQ2, pregMain);
+                AccumulateWithError(hiAcc, loAcc, binaryAddR2, pregLoop);
+                AccumulateWithError(hiAcc, loAcc, binaryAddQ2Tail, pregTailLoop);
+                AccumulateWithError(hiAcc, loAcc, binaryAddR2Tail, pregTailReminderLoop);
             }
 
             for (uint16_t i = 0; i < static_cast<uint16_t>(binaryAddQuotientLoop - binaryAddRemainderLoop); i++) {
@@ -808,38 +1058,36 @@ public:
                 LoadOneTensor<DY_TYPE>(xAddr, binaryAddQ2Tail, pregTailLoop,
                                        (i + binaryAddRemainderLoop) * VL_FP32 + halfXBufOffset_);
                 MicroAPI::Sub(binaryAddQ2, binaryAddQ2, meanValue, pregMain);
+                MicroAPI::Mul(binaryAddQ2, binaryAddQ2, rstdValue, pregMain);
                 MicroAPI::Mul(binaryAddQ2, binaryAddQ2, binaryAddQ1, pregMain);
-                MicroAPI::Mul(binaryAddQ1, rstdValue, binaryAddQ2, pregMain);
-
                 MicroAPI::Sub(binaryAddQ2Tail, binaryAddQ2Tail, meanValue, pregTailLoop);
+                MicroAPI::Mul(binaryAddQ2Tail, binaryAddQ2Tail, rstdValue, pregTailLoop);
                 MicroAPI::Mul(binaryAddQ2Tail, binaryAddQ2Tail, binaryAddQ1Tail, pregTailLoop);
-                MicroAPI::Mul(binaryAddQ1Tail, rstdValue, binaryAddQ2Tail, pregTailLoop);
-                MicroAPI::Add(tmp1, binaryAddQ1, binaryAddQ1Tail, pregTailLoop);
-                MicroAPI::Copy<float, MicroAPI::MaskMergeMode::MERGING>(binaryAddQ1, tmp1, pregTailLoop);
+                AccumulateWithError(hiAcc, loAcc, binaryAddQ2, pregMain);
+                AccumulateWithError(hiAcc, loAcc, binaryAddQ2Tail, pregTailLoop);
+            }
 
-                MicroAPI::ReduceSum(vlSum, binaryAddQ1, pregMain);
-                MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                    (__local_mem__ float*)binaryAdd + binaryAddRemainderLoop + i, vlSum, pregMerge);
+            AscendC::Reg::Arange((MicroAPI::RegTensor<int32_t>&)evenIdx, static_cast<int32_t>(0));
+            ShiftLefts(evenIdx, evenIdx, static_cast<int16_t>(1), pregMain);
+            MicroAPI::Duplicate(oddIdx, static_cast<uint32_t>(VL_FP32 - 1), pregMain);
+            AscendC::Reg::And(evenIdx, evenIdx, oddIdx, pregMain);
+            Adds(oddIdx, evenIdx, static_cast<uint32_t>(1), pregMain);
+#pragma unroll
+            for (uint16_t level = 0; level < SPLIT_R1_VL_LOG2; ++level) {
+                uint32_t activeNum = VL_FP32 >> (level + 1);
+                MicroAPI::MaskReg pregActive = MicroAPI::UpdateMask<float>(activeNum);
+                AscendC::Reg::Gather(rhsSums, hiAcc, oddIdx);
+                AscendC::Reg::Gather(rhsLow, loAcc, oddIdx);
+                AscendC::Reg::Gather(hiAcc, hiAcc, evenIdx);
+                AscendC::Reg::Gather(loAcc, loAcc, evenIdx);
+                MicroAPI::Add(loAcc, loAcc, rhsLow, pregActive);
+                AccumulateWithError(hiAcc, loAcc, rhsSums, pregActive);
             }
-            MicroAPI::LocalMemBar<MicroAPI::MemType::VEC_STORE, MicroAPI::MemType::VEC_LOAD>();
-            uint16_t curBinaryAddLoop = binaryAddLoop;
-            for (uint16_t i = 0; i < binaryAddKLoop; i++) {
-                curBinaryAddLoop = curBinaryAddLoop / DIGIT_TWO;
-                for (uint16_t j = 0; j < curBinaryAddLoop; j++) {
-                    MicroAPI::DataCopy(binaryAddQ1, (__local_mem__ float*)(binaryAdd) + j * VL_FP32);
-                    MicroAPI::DataCopy(binaryAddR1,
-                                       (__local_mem__ float*)(binaryAdd) + (j + curBinaryAddLoop) * VL_FP32);
-                    MicroAPI::Add(binaryAddQ1, binaryAddQ1, binaryAddR1, pregMain);
-                    MicroAPI::DataCopy(((__local_mem__ float*)binaryAdd) + j * VL_FP32, binaryAddQ1, pregMain);
-                }
-                MicroAPI::LocalMemBar<MicroAPI::MemType::VEC_STORE, MicroAPI::MemType::VEC_LOAD>();
-            }
-            uint32_t sreg3 = binaryAddParam.binaryAddLastNum;
-            MicroAPI::MaskReg pregLast = MicroAPI::UpdateMask<float>(sreg3);
-            MicroAPI::DataCopy(sum, (__local_mem__ float*)(binaryAdd));
-            MicroAPI::ReduceSum(dgamma, sum, pregLast);
+            ClampResidual(loAcc, pregMain);
             MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
-                ((__local_mem__ float*)dgammaAddr) + idxInLevel0Cache, dgamma, pregMerge);
+                ((__local_mem__ float*)dgammaAddr) + idxInLevel0Cache, hiAcc, pregMerge);
+            MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
+                ((__local_mem__ float*)dgammaLoAddr) + idxInLevel0Cache, loAcc, pregMerge);
         }
     }
 
@@ -847,7 +1095,8 @@ public:
                                                   const __local_mem__ DY_TYPE* xAddr,
                                                   const __local_mem__ float* meanAddr,
                                                   const __local_mem__ float* rstdAddr,
-                                                  const __local_mem__ float* dgammaAddr, uint32_t idx, uint32_t r)
+                                                  const __local_mem__ float* dgammaAddr,
+                                                  const __local_mem__ float* dgammaLoAddr, uint32_t idx, uint32_t r)
     {
         uint32_t idxInLevel0Cache = idx & (ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY - 1);
         __VEC_SCOPE__
@@ -871,15 +1120,17 @@ public:
             MicroAPI::ReduceSum(sum, x, pregLoop);
             MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
                 ((__local_mem__ float*)dgammaAddr) + idxInLevel0Cache, sum, pregMerge);
+            MicroAPI::RegTensor<float> zeroReg;
+            MicroAPI::Duplicate(zeroReg, 0.0f, pregLoop);
+            MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
+                ((__local_mem__ float*)dgammaLoAddr) + idxInLevel0Cache, zeroReg, pregMerge);
         }
     }
 
-    __aicore__ inline void CalcDgammaLessThanVLFoldVF(const __local_mem__ DY_TYPE* dyAddr,
-                                                      const __local_mem__ DY_TYPE* xAddr,
-                                                      const __local_mem__ float* meanAddr,
-                                                      const __local_mem__ float* rstdAddr,
-                                                      const __local_mem__ float* dgammaAddr, uint32_t idx, uint32_t r,
-                                                      uint32_t tailR)
+    __aicore__ inline void CalcDgammaLessThanVLFoldVF(
+        const __local_mem__ DY_TYPE* dyAddr, const __local_mem__ DY_TYPE* xAddr, const __local_mem__ float* meanAddr,
+        const __local_mem__ float* rstdAddr, const __local_mem__ float* dgammaAddr,
+        const __local_mem__ float* dgammaLoAddr, uint32_t idx, uint32_t r, uint32_t tailR)
     {
         uint32_t idxInLevel0Cache = idx & (ONE_LEVEL_BINARRY_ADD_CACHE_CAPACITY - 1);
         __VEC_SCOPE__
@@ -917,40 +1168,46 @@ public:
             MicroAPI::ReduceSum(sum, x, pregLoop);
             MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
                 ((__local_mem__ float*)dgammaAddr) + idxInLevel0Cache, sum, pregMerge);
+            MicroAPI::RegTensor<float> zeroReg;
+            MicroAPI::Duplicate(zeroReg, 0.0f, pregLoop);
+            MicroAPI::DataCopy<float, MicroAPI::StoreDist::DIST_FIRST_ELEMENT_B32>(
+                ((__local_mem__ float*)dgammaLoAddr) + idxInLevel0Cache, zeroReg, pregMerge);
         }
     }
 
     __aicore__ inline void CalcDgamma(LocalTensor<DY_TYPE>& dy, LocalTensor<DY_TYPE>& x, LocalTensor<float>& mean,
                                       LocalTensor<float>& rstd, LocalTensor<float>& dgamma,
-                                      LocalTensor<float>& binaryAdd, uint32_t idx, uint32_t r,
-                                      const BinaryAddParam& binaryAddParam)
+                                      LocalTensor<float>& dgammaLo, LocalTensor<float>& binaryAdd, uint32_t idx,
+                                      uint32_t r, const BinaryAddParam& binaryAddParam)
     {
         if (r <= VL_FP32) {
             CalcDgammaLessThanVLVF((__local_mem__ DY_TYPE*)dy.GetPhyAddr(), (__local_mem__ DY_TYPE*)x.GetPhyAddr(),
                                    (__local_mem__ float*)mean.GetPhyAddr(), (__local_mem__ float*)rstd.GetPhyAddr(),
-                                   (__local_mem__ float*)dgamma.GetPhyAddr(), idx, r);
+                                   (__local_mem__ float*)dgamma.GetPhyAddr(),
+                                   (__local_mem__ float*)dgammaLo.GetPhyAddr(), idx, r);
         } else {
             CalcDgammaVF((__local_mem__ DY_TYPE*)dy.GetPhyAddr(), (__local_mem__ DY_TYPE*)x.GetPhyAddr(),
                          (__local_mem__ float*)mean.GetPhyAddr(), (__local_mem__ float*)rstd.GetPhyAddr(),
-                         (__local_mem__ float*)dgamma.GetPhyAddr(), (__local_mem__ float*)binaryAdd.GetPhyAddr(), idx,
-                         r, binaryAddParam);
+                         (__local_mem__ float*)dgamma.GetPhyAddr(), (__local_mem__ float*)dgammaLo.GetPhyAddr(),
+                         (__local_mem__ float*)binaryAdd.GetPhyAddr(), idx, r, binaryAddParam);
         }
     }
 
     __aicore__ inline void CalcDgammaFold(LocalTensor<DY_TYPE>& dy, LocalTensor<DY_TYPE>& x, LocalTensor<float>& mean,
                                           LocalTensor<float>& rstd, LocalTensor<float>& dgamma,
-                                          LocalTensor<float>& binaryAdd, uint32_t idx, uint32_t r, uint32_t tailR,
-                                          const BinaryAddParam& binaryAddParam)
+                                          LocalTensor<float>& dgammaLo, LocalTensor<float>& binaryAdd, uint32_t idx,
+                                          uint32_t r, uint32_t tailR, const BinaryAddParam& binaryAddParam)
     {
         if (r <= VL_FP32) {
             CalcDgammaLessThanVLFoldVF((__local_mem__ DY_TYPE*)dy.GetPhyAddr(), (__local_mem__ DY_TYPE*)x.GetPhyAddr(),
                                        (__local_mem__ float*)mean.GetPhyAddr(), (__local_mem__ float*)rstd.GetPhyAddr(),
-                                       (__local_mem__ float*)dgamma.GetPhyAddr(), idx, r, tailR);
+                                       (__local_mem__ float*)dgamma.GetPhyAddr(),
+                                       (__local_mem__ float*)dgammaLo.GetPhyAddr(), idx, r, tailR);
         } else {
             CalcDgammaFoldVF((__local_mem__ DY_TYPE*)dy.GetPhyAddr(), (__local_mem__ DY_TYPE*)x.GetPhyAddr(),
                              (__local_mem__ float*)mean.GetPhyAddr(), (__local_mem__ float*)rstd.GetPhyAddr(),
-                             (__local_mem__ float*)dgamma.GetPhyAddr(), (__local_mem__ float*)binaryAdd.GetPhyAddr(),
-                             idx, r, tailR, binaryAddParam);
+                             (__local_mem__ float*)dgamma.GetPhyAddr(), (__local_mem__ float*)dgammaLo.GetPhyAddr(),
+                             (__local_mem__ float*)binaryAdd.GetPhyAddr(), idx, r, tailR, binaryAddParam);
         }
     }
 
@@ -968,7 +1225,7 @@ public:
 
         uint16_t VL = VL_FP32;
         uint16_t loopTimes = (xFactor + VL - 1) / VL;
-        float hRecipValue = 1.0f / (float)r;
+        float countF = (float)r;
         __VEC_SCOPE__
         {
             MicroAPI::RegTensor<float> rstdValue;
@@ -981,6 +1238,9 @@ public:
             MicroAPI::RegTensor<float> dy;
             MicroAPI::RegTensor<float> x;
             MicroAPI::RegTensor<float> mulDgamma;
+            MicroAPI::RegTensor<float> countReg;
+            MicroAPI::RegTensor<float> dbetaOverR;
+            MicroAPI::RegTensor<float> dgammaOverR;
             MicroAPI::RegTensor<float> addDbeta;
             MicroAPI::RegTensor<float> divH;
             MicroAPI::RegTensor<float> subDy;
@@ -993,6 +1253,10 @@ public:
                                                                         (__local_mem__ float*)(dgammaAddr));
             MicroAPI::DataCopy<float, MicroAPI::LoadDist::DIST_BRC_B32>(dbetaValue, (__local_mem__ float*)(dbetaAddr));
             LoadOneElement<WEIGHT_TYPE>(gammaAddr, gammaValue, preg, 0);
+            // dbeta/R、dgamma/R 用真除法逐项算，避免先在 1e7 量级合成再乘倒数
+            MicroAPI::Duplicate(countReg, countF, preg);
+            MicroAPI::Div(dbetaOverR, dbetaValue, countReg, preg);
+            // golden 结合顺序：(xhat*dgamma)/R
 
             uint32_t sregMask = (uint32_t)xFactor;
             for (uint16_t j = 0; j < loopTimes; j++) {
@@ -1004,11 +1268,12 @@ public:
                 MicroAPI::Mul(x, x, rstdValue, pregR);
 
                 MicroAPI::Mul(mulDgamma, x, dgammaValue, pregR);
-                MicroAPI::Add(addDbeta, mulDgamma, dbetaValue, preg);
-                MicroAPI::Muls(divH, addDbeta, hRecipValue, pregR);
-                MicroAPI::Sub(subDy, dy, divH, pregR);
-                MicroAPI::Mul(rstdMulSubDy, rstdValue, subDy, pregR);
-                MicroAPI::Mul(dx, gammaValue, rstdMulSubDy, pregR);
+                MicroAPI::Div(mulDgamma, mulDgamma, countReg, pregR);
+                MicroAPI::Sub(subDy, dy, dbetaOverR, pregR);
+                MicroAPI::Sub(subDy, subDy, mulDgamma, pregR);
+                // 与 golden/契约/三方一致：(...)*scale*rstd
+                MicroAPI::Mul(rstdMulSubDy, subDy, gammaValue, pregR);
+                MicroAPI::Mul(dx, rstdMulSubDy, rstdValue, pregR);
                 StoreOneTensor<DY_TYPE>(xAddr, dx, pregR, VL * j);
             }
         }
@@ -1113,6 +1378,7 @@ private:
     TPipe* pipe_ = nullptr;
     TBuf<TPosition::VECCALC> binaryAddBuf_;
     TBuf<TPosition::VECCALC> cacheBuf_;
+    TBuf<TPosition::VECCALC> cacheLoBuf_;
     TQue<QuePosition::VECIN, BUFFER_NUM> dyInQue_;
     TQue<QuePosition::VECIN, BUFFER_NUM> xInQue_;
     TQue<QuePosition::VECIN, BUFFER_NUM> meanInQue_;
@@ -1167,6 +1433,11 @@ private:
     LocalTensor<float> cacheLocal_;
     LocalTensor<float> dBetaCacheLocal_;
     LocalTensor<float> dGammaCacheLocal_;
+    LocalTensor<float> dBetaCacheLo_, dGammaCacheLo_; // level0 lo
+    LocalTensor<float> dBetaL1Lo_, dGammaL1Lo_;       // level1 lo
+    LocalTensor<float> dBetaL2Lo_, dGammaL2Lo_;       // level2 lo
+    LocalTensor<float> dBetaFoldLo_, dGammaFoldLo_;   // fold cache lo
+    LocalTensor<float> cacheLoLocal_;
     LocalTensor<float> dBetaFoldCacheLocal_;
     LocalTensor<float> dGammaFoldCacheLocal_;
     LocalTensor<float> binaryAddTensor_;

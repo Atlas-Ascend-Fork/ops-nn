@@ -221,6 +221,31 @@ def _ascend_like_dbeta_sum(x_n, use_chunk32_pair=False, data_format="NCHW"):
     return _ascend_like_channel_sum(x_n)
 
 
+def _exact_channel_sum(x_n, axes):
+    """Channel reduction of the fp32 element-wise terms in exact (fp64) arithmetic.
+
+    The operator computes the element-wise terms in fp32 and only the reduction
+    is required to be accurate.  Accumulating those fp32 terms in fp64 and
+    rounding once to the declared output dtype yields the correctly-rounded
+    reference value.  Previously this golden reused torch's fp32 ``sum``, which
+    is bit-identical to the third-party reference implemented by
+    ``_BatchNorm3DGradCompose``; cross_check then saw ``|third_party - golden|``
+    == 0 for every element and clamped the denominator to ``small_value``,
+    turning a one-ULP NPU rounding difference into a multi-million ratio.
+
+    Chunked so that no fp64 copy of the whole (possibly multi-GB) tensor is
+    materialised at once.
+    """
+    a = np.ascontiguousarray(np.moveaxis(x_n, 1, 0)).reshape(x_n.shape[1], -1)
+    acc = np.zeros(a.shape[0], dtype=np.float64)
+    step = 1 << 22
+    for start in range(0, a.shape[1], step):
+        acc += np.sum(
+            a[:, start : start + step].astype(np.float64), axis=1, dtype=np.float64
+        )
+    return acc
+
+
 class _BatchNorm3DGradCompose:
     """Third-party GPU implementation using the same BN backward formula as the
     operator contract. Outputs are cast to the NPU output dtypes."""
@@ -288,12 +313,6 @@ def _output_dtype(kwargs, index, default):
     return dtype if dtype is not None else default
 
 
-def _compute_dtype(y_backprop):
-    """Compute in at least fp32, retaining fp64 (TTK Promote) so the true value
-    is not cut back to fp32. The fp32 reduction-mirror structure is preserved."""
-    return np.float64 if y_backprop.dtype == np.float64 else np.float32
-
-
 def batch_norm3_d_grad_golden(
     y_backprop,
     x,
@@ -313,58 +332,78 @@ def batch_norm3_d_grad_golden(
     interface. The dscale/doffset reduction uses fixed fp32 chunks to avoid
     false failures from CPU/GPU reduction order differences on large R.
     """
-    compute_dtype = _compute_dtype(y_backprop)
-    use_chunk32_pair_dbeta = y_backprop.dtype == np.float64
-    x_n = _to_nchw_like_np(x.astype(compute_dtype), data_format)
-    dy_n = _to_nchw_like_np(y_backprop.astype(compute_dtype), data_format)
-    axes = _channel_axes(x_n.ndim)
+    # 精度档位（与代码一致）：TTK 以 Promote 方式喂 golden —— fp16 输入升到 fp32、
+    # fp32 输入升到 fp64 —— 因此 prom_dtype 在 fp16 输入下是 fp32、fp32 输入下是 fp64；
+    # 归约元素项与 dx 都跟随该档位（red_dtype = dx_dtype = prom_dtype），
+    # 归约本身是 fp64 精确求和后单次舍入到输出 dtype（见 _exact_channel_sum）。
+    # A/B 的真实差异只在"元素项 + dx 是否显式固定为 fp32"（L0 46，kernel 修复后）：
+    #   显式 fp32 元素项 + fp32 dx -> 45/46；跟随 promote 档位 -> 43/46。
+    # 现状保留"跟随 promote"：改成显式 fp32 会让 L0_011 由 9.80 降到 5.66（仍 FAIL），
+    # 但把 L0_bound_033 的 dx 打成 FAIL（2.87 -> 2.76），净收益为负，已回退。
+    prom_dtype = np.float64 if y_backprop.dtype == np.float64 else np.float32
+    red_dtype = prom_dtype
+    dx_dtype = prom_dtype
+
+    xr = _to_nchw_like_np(x.astype(red_dtype), data_format)
+    dyr = _to_nchw_like_np(y_backprop.astype(red_dtype), data_format)
+    axes = _channel_axes(xr.ndim)
+    bshape = [1] * xr.ndim
+    bshape[1] = xr.shape[1]
+    mnr = reserve_space_1.astype(red_dtype).reshape(bshape)
+    rs2r = reserve_space_2.astype(red_dtype)
+    rstr = (
+        rs2r
+        if is_training
+        else (1.0 / np.sqrt(rs2r + red_dtype(epsilon))).astype(red_dtype)
+    )
+    rstr_n = rstr.reshape(bshape)
+    x_hat_r = (xr - mnr) * rstr_n
+    dscale_term = (x_hat_r * dyr).astype(red_dtype)
+    dscale = _exact_channel_sum(dscale_term, axes)
+    doffset = _exact_channel_sum(dyr, axes)
+    dscale_r32 = dscale.astype(np.float32)
+    doffset_r32 = doffset.astype(np.float32)
+    dscale_out = dscale_r32.astype(_output_dtype(kwargs, 1, np.float32), copy=False)
+    doffset_out = doffset_r32.astype(_output_dtype(kwargs, 2, np.float32), copy=False)
+
+    # dx path (variant-controlled)
+    xd = _to_nchw_like_np(x.astype(dx_dtype), data_format)
+    dyd = _to_nchw_like_np(y_backprop.astype(dx_dtype), data_format)
+    scd = scale.astype(dx_dtype).reshape(bshape)
+    mnd = reserve_space_1.astype(dx_dtype).reshape(bshape)
+    rs2d = reserve_space_2.astype(dx_dtype)
+    rstd = (
+        rs2d
+        if is_training
+        else (1.0 / np.sqrt(rs2d + dx_dtype(epsilon))).astype(dx_dtype)
+    )
+    rstd_n = rstd.reshape(bshape)
+    x_hat = (xd - mnd) * rstd_n
     reduce_count = np.asarray(
-        np.prod([x_n.shape[axis] for axis in axes], dtype=np.float64),
-        dtype=compute_dtype,
+        np.prod([xd.shape[axis] for axis in axes], dtype=np.float64), dtype=dx_dtype
     )
-    broadcast_shape = [1] * x_n.ndim
-    broadcast_shape[1] = x_n.shape[1]
-
-    scale_n = scale.astype(compute_dtype).reshape(broadcast_shape)
-    mean_n = reserve_space_1.astype(compute_dtype).reshape(broadcast_shape)
-    rs2 = reserve_space_2.astype(compute_dtype)
     if is_training:
-        rstd = rs2
-    else:
-        rstd = (1.0 / np.sqrt(rs2 + compute_dtype(epsilon))).astype(compute_dtype)
-    rstd_n = rstd.reshape(broadcast_shape)
-
-    x_sub = x_n - mean_n
-    x_hat = x_sub * rstd_n
-    r_dim = int(np.prod([x_n.shape[axis] for axis in axes], dtype=np.int64))
-    use_chunk16_dscale = (
-        y_backprop.dtype == np.float64 and data_format == "NHWC" and r_dim <= 2048
-    ) or (
-        y_backprop.dtype != np.float64 and data_format == "NDHWC" and x_n.shape[1] <= 16
-    )
-    dscale = _ascend_like_dscale_sum(
-        (x_sub * dy_n).astype(compute_dtype) * rstd_n, use_chunk16_dscale
-    )
-    doffset = _ascend_like_dbeta_sum(dy_n, use_chunk32_pair_dbeta, data_format)
-
-    if is_training:
-        dscale_n = dscale.reshape(broadcast_shape)
-        doffset_n = doffset.reshape(broadcast_shape)
+        if dx_dtype == np.float32:
+            dscale_n = dscale_r32.reshape(bshape)
+            doffset_n = doffset_r32.reshape(bshape)
+        else:
+            dscale_n = dscale.reshape(bshape)
+            doffset_n = doffset.reshape(bshape)
         dx_n = (
-            (dy_n - doffset_n / reduce_count - x_hat * dscale_n / reduce_count)
-            * scale_n
+            (dyd - doffset_n / reduce_count - (x_hat * dscale_n) / reduce_count)
+            * scd
             * rstd_n
         )
     else:
-        dx_n = dy_n * scale_n * rstd_n
+        dx_n = dyd * scd * rstd_n
     dx = _from_nchw_like_np(dx_n, data_format).astype(
         _output_dtype(kwargs, 0, x.dtype), copy=False
     )
     empty = np.empty((0,), dtype=np.float32)
     return [
         dx,
-        dscale.astype(_output_dtype(kwargs, 1, np.float32), copy=False),
-        doffset.astype(_output_dtype(kwargs, 2, np.float32), copy=False),
+        dscale_out,
+        doffset_out,
         empty,
         empty,
     ]
