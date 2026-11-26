@@ -71,33 +71,33 @@ int main()
     CHECK_RET(ret == 0, LOG_PRINT("Init acl failed. ERROR: %d\n", ret); return ret);
 
     std::vector<int64_t> shape = {4, 2};
-    void* gradDeviceAddr = nullptr;
-    void* outDeviceAddr = nullptr;
-    void* yDeviceAddr = nullptr;
-    aclTensor* gradients = nullptr;
+    void* gradOutputDeviceAddr = nullptr;
+    void* resultDeviceAddr = nullptr;
+    void* gradInputDeviceAddr = nullptr;
+    aclTensor* gradOutput = nullptr;
     aclTensor* result = nullptr;
-    aclTensor* y = nullptr;
+    aclTensor* gradInput = nullptr;
 
     // SELU 常量
     const float SCALE = 1.0507009873554804f;
     const float ALPHA = 1.6732632423543772f;
     const float SCALE_ALPHA_PRODUCT = SCALE * ALPHA;
 
-    // 构造输入: gradients = 全1, result = [-2, -1, 0, 1, 2, 3, -0.5, 0.5]
-    std::vector<float> gradHostData = {1, 1, 1, 1, 1, 1, 1, 1};
-    std::vector<float> outHostData = {-2, -1, 0, 1, 2, 3, -0.5, 0.5};
-    std::vector<float> yHostData(8, 0);
+    // 构造输入: gradOutput = 全1, result = [-2, -1, 0, 1, 2, 3, -0.5, 0.5]
+    std::vector<float> gradOutputHostData = {1, 1, 1, 1, 1, 1, 1, 1};
+    std::vector<float> resultHostData = {-2, -1, 0, 1, 2, 3, -0.5, 0.5};
+    std::vector<float> gradInputHostData(8, 0);
 
-    ret = CreateAclTensor(gradHostData, shape, &gradDeviceAddr, aclDataType::ACL_FLOAT, &gradients);
+    ret = CreateAclTensor(gradOutputHostData, shape, &gradOutputDeviceAddr, aclDataType::ACL_FLOAT, &gradOutput);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(outHostData, shape, &outDeviceAddr, aclDataType::ACL_FLOAT, &result);
+    ret = CreateAclTensor(resultHostData, shape, &resultDeviceAddr, aclDataType::ACL_FLOAT, &result);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    ret = CreateAclTensor(yHostData, shape, &yDeviceAddr, aclDataType::ACL_FLOAT, &y);
+    ret = CreateAclTensor(gradInputHostData, shape, &gradInputDeviceAddr, aclDataType::ACL_FLOAT, &gradInput);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
 
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
-    ret = aclnnSeluBackwardGetWorkspaceSize(gradients, result, y, &workspaceSize, &executor);
+    ret = aclnnSeluBackwardGetWorkspaceSize(gradOutput, result, gradInput, &workspaceSize, &executor);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSeluBackwardGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
 
     void* workspaceAddr = nullptr;
@@ -112,39 +112,40 @@ int main()
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
     auto size = GetShapeSize(shape);
-    std::vector<float> resultData(size, 0);
-    ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(float), yDeviceAddr, size * sizeof(float),
-                      ACL_MEMCPY_DEVICE_TO_HOST);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result failed. ERROR: %d\n", ret); return ret);
+    std::vector<float> gradInputData(size, 0);
+    ret = aclrtMemcpy(gradInputData.data(), gradInputData.size() * sizeof(float), gradInputDeviceAddr,
+                      size * sizeof(float), ACL_MEMCPY_DEVICE_TO_HOST);
+    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy gradInput failed. ERROR: %d\n", ret); return ret);
 
     LOG_PRINT("\n=== SeluGrad Results ===\n");
-    LOG_PRINT("result >= 0: y = SCALE * gradients = %.6f * grad\n", SCALE);
-    LOG_PRINT("result <  0: y = grad * (result + SCALE_ALPHA) = grad * (out + %.6f)\n\n", SCALE_ALPHA_PRODUCT);
+    LOG_PRINT("result >= 0: gradInput = SCALE * gradOutput = %.6f * grad\n", SCALE);
+    LOG_PRINT("result <  0: gradInput = gradOutput * (result + SCALE_ALPHA) = grad * (result + %.6f)\n\n",
+              SCALE_ALPHA_PRODUCT);
 
     int pass = 0, fail = 0;
     for (int64_t i = 0; i < size; i++) {
         float expected;
-        if (outHostData[i] < 0) {
-            expected = gradHostData[i] * (outHostData[i] + SCALE_ALPHA_PRODUCT);
+        if (resultHostData[i] < 0) {
+            expected = gradOutputHostData[i] * (resultHostData[i] + SCALE_ALPHA_PRODUCT);
         } else {
-            expected = SCALE * gradHostData[i];
+            expected = SCALE * gradOutputHostData[i];
         }
-        bool ok = std::fabs(resultData[i] - expected) < 0.01f;
+        bool ok = std::fabs(gradInputData[i] - expected) < 0.01f;
         if (ok)
             pass++;
         else
             fail++;
-        LOG_PRINT("  [%ld] out=%.2f grad=%.2f => NPU=%.6f  expected=%.6f  %s\n", i, outHostData[i], gradHostData[i],
-                  resultData[i], expected, ok ? "PASS" : "FAIL");
+        LOG_PRINT("  [%ld] result=%.2f grad=%.2f => NPU=%.6f  expected=%.6f  %s\n", i, resultHostData[i],
+                  gradOutputHostData[i], gradInputData[i], expected, ok ? "PASS" : "FAIL");
     }
-    LOG_PRINT("\nTotal: %d PASS, %d FAIL\n", pass, fail);
+    LOG_PRINT("\nTotal: %d PASS, %d FAILED\n", pass, fail);
 
-    aclDestroyTensor(gradients);
+    aclDestroyTensor(gradOutput);
     aclDestroyTensor(result);
-    aclDestroyTensor(y);
-    aclrtFree(gradDeviceAddr);
-    aclrtFree(outDeviceAddr);
-    aclrtFree(yDeviceAddr);
+    aclDestroyTensor(gradInput);
+    aclrtFree(gradOutputDeviceAddr);
+    aclrtFree(resultDeviceAddr);
+    aclrtFree(gradInputDeviceAddr);
     if (workspaceSize > 0) {
         aclrtFree(workspaceAddr);
     }

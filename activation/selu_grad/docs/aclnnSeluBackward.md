@@ -369,7 +369,7 @@ int main()
         LOG_PRINT("  [%ld] result=%.2f grad=%.2f => NPU=%.6f  expected=%.6f  %s\n", i, resultHostData[i], gradOutputHostData[i],
                   gradInputData[i], expected, ok ? "PASS" : "FAIL");
     }
-    LOG_PRINT("\nTotal: %d PASS, %d FAIL\n", pass, fail);
+    LOG_PRINT("\nTotal: %d PASS, %d FAILED\n", pass, fail);
 
     aclDestroyTensor(gradOutput);
     aclDestroyTensor(result);
