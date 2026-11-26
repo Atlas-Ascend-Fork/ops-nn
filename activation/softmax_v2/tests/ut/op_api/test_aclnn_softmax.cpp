@@ -235,3 +235,62 @@ TEST_F(l2_softmax_test, case_zero_dim_num)
     EXPECT_EQ(aclRet, ACLNN_SUCCESS);
     ut.TestPrecision();
 }
+
+TEST_F(l2_softmax_test, ascend950_case_float16_to_float32)
+{
+    // regbase场景FP16输入、FP32输出：置half_to_float并按FP32构造输出，命中half_to_float内核
+    class SocVersionManager testSocVersion(SocVersion::ASCEND950);
+    auto self = TensorDesc({2, 3}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto out = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.001, 0.001);
+    int64_t dim = 0;
+
+    auto ut = OP_API_UT(aclnnSoftmax, INPUT(self, dim), OUTPUT(out));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+    ut.TestPrecision();
+}
+
+TEST_F(l2_softmax_test, ascend950_case_float16_to_float16)
+{
+    // regbase场景同dtype：不置half_to_float，按self dtype构造输出
+    class SocVersionManager testSocVersion(SocVersion::ASCEND950);
+    auto self = TensorDesc({2, 3}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto out = TensorDesc({2, 3}, ACL_FLOAT16, ACL_FORMAT_ND);
+    int64_t dim = 0;
+
+    auto ut = OP_API_UT(aclnnSoftmax, INPUT(self, dim), OUTPUT(out));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
+
+TEST_F(l2_softmax_test, ascend910b_case_float16_to_float32)
+{
+    // 非regbase场景FP16输入、FP32输出：不置half_to_float，按self dtype计算后cast
+    auto self = TensorDesc({2, 3}, ACL_FLOAT16, ACL_FORMAT_ND);
+    auto out = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    int64_t dim = 0;
+
+    auto ut = OP_API_UT(aclnnSoftmax, INPUT(self, dim), OUTPUT(out));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
+
+TEST_F(l2_softmax_test, case_float64_aicpu)
+{
+    // DOUBLE输入走AICPU路径
+    auto self = TensorDesc({2, 3}, ACL_DOUBLE, ACL_FORMAT_ND);
+    auto out = TensorDesc({2, 3}, ACL_DOUBLE, ACL_FORMAT_ND);
+    int64_t dim = 0;
+
+    auto ut = OP_API_UT(aclnnSoftmax, INPUT(self, dim), OUTPUT(out));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}

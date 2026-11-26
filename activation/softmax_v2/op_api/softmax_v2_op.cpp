@@ -13,6 +13,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/make_op_executor.h"
 #include "opdev/aicpu/aicpu_task.h"
+#include "op_api/aclnn_util.h"
 #include "softmax_v2_op.h"
 
 using namespace op;
@@ -26,11 +27,11 @@ static const std::initializer_list<op::DataType> AICORE_DTYPE_SUPPORT_LIST = {
 static bool IsAiCoreSupport(const aclTensor* self) { return CheckType(self->GetDataType(), AICORE_DTYPE_SUPPORT_LIST); }
 
 // AICORE算子kernel
-static const aclTensor* SoftmaxAiCore(const aclTensor* self, aclIntArray* dimList, aclTensor* out,
+static const aclTensor* SoftmaxAiCore(const aclTensor* self, aclIntArray* dimList, aclTensor* out, bool half_to_float,
                                       aclOpExecutor* executor)
 {
     L0_DFX(SoftmaxAiCore);
-    ADD_TO_LAUNCHER_LIST_AICORE(SoftmaxV2, OP_INPUT(self), OP_OUTPUT(out), OP_ATTR(dimList, false));
+    ADD_TO_LAUNCHER_LIST_AICORE(SoftmaxV2, OP_INPUT(self), OP_OUTPUT(out), OP_ATTR(dimList, half_to_float));
     return out;
 }
 
@@ -46,18 +47,39 @@ static const aclTensor* SoftmaxAiCpu(const aclTensor* self, aclIntArray* dimList
     return out;
 }
 
-const aclTensor* SoftmaxV2(const aclTensor* self, int64_t dim, aclOpExecutor* executor)
+// SoftmaxV2公共实现：按指定的输出dtype构造输出并派发kernel
+static const aclTensor* SoftmaxV2Impl(const aclTensor* self, int64_t dim, bool half_to_float, op::DataType outDtype,
+                                      aclOpExecutor* executor)
 {
     // 输出shape和self shape一致
-    auto out = executor->AllocTensor(self->GetStorageShape(), self->GetDataType());
+    auto opOut = executor->AllocTensor(self->GetStorageShape(), outDtype);
     FVector<int64_t> newdim{dim};
     auto dimList = executor->AllocIntArray(newdim.data(), 1);
 
     if (IsAiCoreSupport(self)) {
-        return SoftmaxAiCore(self, dimList, out, executor);
+        return SoftmaxAiCore(self, dimList, opOut, half_to_float, executor);
     } else {
-        return SoftmaxAiCpu(self, dimList, out, executor);
+        return SoftmaxAiCpu(self, dimList, opOut, executor);
     }
+}
+
+const aclTensor* SoftmaxV2(const aclTensor* self, int64_t dim, aclOpExecutor* executor)
+{
+    // 原接口保持既有行为：按self dtype构造输出，half_to_float恒为false
+    return SoftmaxV2Impl(self, dim, false, self->GetDataType(), executor);
+}
+
+const aclTensor* SoftmaxV2(const aclTensor* self, int64_t dim, const aclTensor* out, aclOpExecutor* executor)
+{
+    // regbase场景输入为FP16且输出为FP32时，置half_to_float并按FP32构造输出，走FP32精度路径，其余场景保持不变
+    bool half_to_float = false;
+    auto outDtype = self->GetDataType();
+    if (Ops::NN::AclnnUtil::IsRegbase() && self->GetDataType() == op::DataType::DT_FLOAT16 &&
+        out->GetDataType() == op::DataType::DT_FLOAT) {
+        half_to_float = true;
+        outDtype = op::DataType::DT_FLOAT;
+    }
+    return SoftmaxV2Impl(self, dim, half_to_float, outDtype, executor);
 }
 
 } // namespace l0op
