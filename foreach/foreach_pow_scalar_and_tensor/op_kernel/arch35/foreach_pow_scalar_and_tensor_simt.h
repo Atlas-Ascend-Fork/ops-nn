@@ -124,6 +124,25 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(THREAD_NUM) inline void OpForeachPowScalarAn
 }
 
 /**
+ * \brief SIMT VF for an all-scalar tensor list: one thread per 1-element tensor.
+ */
+template <typename T, typename ST>
+__simt_vf__ __aicore__ LAUNCH_BOUND(THREAD_NUM) inline void OpForeachPowScalarAndTensorScalarList(ST scalarVal,
+                                                                                                  int32_t tensorCount,
+                                                                                                  GM_ADDR xList,
+                                                                                                  GM_ADDR yList)
+{
+    uint64_t tid = static_cast<uint64_t>(AscendC::Simt::GetBlockIdx() * AscendC::Simt::GetThreadNum() +
+                                         AscendC::Simt::GetThreadIdx());
+    if (tid >= static_cast<uint64_t>(tensorCount)) {
+        return;
+    }
+    __gm__ T* xData = SimtGetTensorAddr<T>(xList, static_cast<int64_t>(tid));
+    __gm__ T* yData = SimtGetTensorAddr<T>(yList, static_cast<int64_t>(tid));
+    yData[0] = ComputePow<T, ST>(scalarVal, xData[0]);
+}
+
+/**
  * \brief Process entry: read scalar, launch SIMT VF for foreach_pow_scalar_and_tensor.
  */
 template <typename T, typename ST>
@@ -131,6 +150,15 @@ __aicore__ inline void Process(GM_ADDR scalar, GM_ADDR x, GM_ADDR y,
                                const ForeachPowScalarAndTensorTilingData* tilingGm)
 {
     ST scalarVal = *reinterpret_cast<__gm__ const ST*>(scalar);
+    bool allScalar = tilingGm->tensorCount > 0;
+    for (int32_t i = 0; i < tilingGm->tensorCount && allScalar; i++) {
+        allScalar = (tilingGm->tensorElements[i] == 1);
+    }
+    if (allScalar) {
+        AscendC::Simt::VF_CALL<OpForeachPowScalarAndTensorScalarList<T, ST>>(AscendC::Simt::Dim3(THREAD_NUM), scalarVal,
+                                                                             tilingGm->tensorCount, x, y);
+        return;
+    }
     for (int32_t tensorId = 0; tensorId < tilingGm->tensorCount; tensorId++) {
         int64_t count = tilingGm->tensorElements[tensorId];
         if (count <= 0) {

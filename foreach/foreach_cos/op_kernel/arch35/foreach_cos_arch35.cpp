@@ -43,15 +43,6 @@ __global__ __aicore__ void foreach_cos(GM_ADDR x, GM_ADDR y, GM_ADDR workspace, 
 {
     (void)workspace;
 
-    // An all-empty tensor list carries no work; the flat tiling encodes that as
-    // tensorEndOffsetList[0] == -1.  Reading the sentinel straight from the tiling GM buffer keeps the
-    // prologue of the empty-list cases at the device launch floor: no tiling copy and no TPipe/queue
-    // init when there is nothing to move.
-    if (reinterpret_cast<__gm__ const ForeachFlatTilingData*>(tiling)->tensorEndOffsetList[0] ==
-        static_cast<int64_t>(-1)) {
-        return;
-    }
-
     REGISTER_TILING_DEFAULT(ForeachFlatTilingData);
     GET_TILING_DATA_WITH_STRUCT(ForeachFlatTilingData, tilingData, tiling);
 

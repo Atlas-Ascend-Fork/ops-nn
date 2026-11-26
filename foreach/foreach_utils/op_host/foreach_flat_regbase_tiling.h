@@ -78,7 +78,8 @@ inline void LocateFlatOffset(int64_t flatOffset, uint16_t tensorCount, const int
     tensorOffset = tensorDataCountList[tensorIndex] - 1;
 }
 
-template <uint32_t INPUT_FLOW_COUNT, uint32_t EXTRA_FLOAT_BUFFER_COUNT = 0U, bool USE_OUTPUT_DTYPE = false>
+template <uint32_t INPUT_FLOW_COUNT, uint32_t EXTRA_FLOAT_BUFFER_COUNT = 0U, bool USE_OUTPUT_DTYPE = false,
+          uint32_t LIST_INPUT_INDEX = 0U>
 ge::graphStatus Build(gert::TilingContext* context)
 {
     static_assert(INPUT_FLOW_COUNT > 0U, "a flat foreach tiler needs at least one input flow");
@@ -99,8 +100,9 @@ ge::graphStatus Build(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
 
-    uint16_t tensorCount = static_cast<uint16_t>(computeNodeInfo->GetInputInstanceInfo(0)->GetInstanceNum());
-    ge::DataType dataType = context->GetDynamicInputDesc(0, 0)->GetDataType();
+    uint16_t tensorCount = static_cast<uint16_t>(
+        computeNodeInfo->GetInputInstanceInfo(LIST_INPUT_INDEX)->GetInstanceNum());
+    ge::DataType dataType = context->GetDynamicInputDesc(LIST_INPUT_INDEX, 0)->GetDataType();
     uint32_t storageBytes = GetStorageBytes(dataType);
     if (storageBytes == 0U) {
         OP_LOGE(context, "validator admitted a dtype unsupported by the flat transport");
@@ -129,7 +131,8 @@ ge::graphStatus Build(gert::TilingContext* context)
 
     int64_t totalDataCount = 0;
     for (uint16_t tensorIndex = 0; tensorIndex < tensorCount; ++tensorIndex) {
-        int64_t dataCount = context->GetDynamicInputShape(0, tensorIndex)->GetStorageShape().GetShapeSize();
+        int64_t
+            dataCount = context->GetDynamicInputShape(LIST_INPUT_INDEX, tensorIndex)->GetStorageShape().GetShapeSize();
         if (dataCount < 0 || totalDataCount > std::numeric_limits<int64_t>::max() - dataCount) {
             OP_LOGE(context, "invalid or overflowing tensor-list element count");
             return ge::GRAPH_FAILED;

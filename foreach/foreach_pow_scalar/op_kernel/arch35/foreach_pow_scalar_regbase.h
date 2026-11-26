@@ -297,6 +297,7 @@ __aicore__ inline void PowVF(__ubuf__ T* inAddr, __ubuf__ T* outAddr, int32_t sI
 template <typename T, typename ScalarT>
 struct PowPolicy {
     static constexpr bool kUsesExtraUb = false;
+    static constexpr bool kScalarBatchEnabled = true;
 
     __aicore__ static inline void Run(LocalTensor<T>* inputs, LocalTensor<T> output, ScalarT scalar, uint32_t dataCount)
     {

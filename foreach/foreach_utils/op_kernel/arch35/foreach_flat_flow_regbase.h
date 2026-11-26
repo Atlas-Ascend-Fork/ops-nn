@@ -19,10 +19,20 @@
 #ifndef FOREACH_FLAT_FLOW_REGBASE_H
 #define FOREACH_FLAT_FLOW_REGBASE_H
 
+#include <type_traits>
+
 #include "foreach_regbase_common.h"
 
 namespace ForeachFlatRegbase {
 using namespace AscendC;
+
+// Compute policies opt in to the scalar-list batch transport with
+// `static constexpr bool kScalarBatchEnabled = true;`.
+template <typename Policy, typename = void>
+struct HasScalarBatch : std::false_type {};
+template <typename Policy>
+struct HasScalarBatch<Policy, std::void_t<decltype(Policy::kScalarBatchEnabled)>>
+    : std::integral_constant<bool, Policy::kScalarBatchEnabled> {};
 
 /**
  * Dtype-independent tensor-list dispatcher for multi-flow operators. All input
@@ -45,6 +55,10 @@ public:
     __aicore__ inline void Process(GM_ADDR* inputs, GM_ADDR outputs, TypedMover& mover)
     {
         ListTensorDesc outputDesc(reinterpret_cast<__gm__ void*>(outputs));
+        if (mover.TryProcessScalarBatch(inputs, outputDesc, tensorStart_, tensorEnd_, tensorDataCountList_,
+                                        tensorStartOffset_, tensorEndOffset_)) {
+            return;
+        }
         for (uint16_t tensorIdx = tensorStart_; tensorIdx <= tensorEnd_; ++tensorIdx) {
             int64_t cursorStart = tensorIdx == tensorStart_ ? tensorStartOffset_ : 0;
             int64_t cursorEnd = tensorIdx == tensorEnd_ ? tensorEndOffset_ : tensorDataCountList_[tensorIdx] - 1;
@@ -87,6 +101,86 @@ public:
     __aicore__ inline void SetScalar(ScalarT value) { scalar_ = value; }
 
     __aicore__ inline void SetScalars(__gm__ ScalarT* scalars) { scalars_ = scalars; }
+
+    // Scalar-list fast path: when a core owns a run of 1-element tensors, copy each
+    // scalar into a 32B-aligned slot of one UB tile, run one vector body over the whole
+    // slot range and scatter the first element of each slot back.  Chunking keeps the
+    // outstanding MTE2 descriptors bounded; the per-tensor EnQue/DeQue and vector-op
+    // fixed cost is still paid only once per chunk instead of once per tensor.
+    __aicore__ inline bool TryProcessScalarBatch(GM_ADDR* inputs, ListTensorDesc& outputDesc, uint16_t start,
+                                                 uint16_t end, const int64_t* counts, int64_t startOffset,
+                                                 int64_t endOffset)
+    {
+        if constexpr (!HasScalarBatch<ComputePolicy>::value) {
+            return false;
+        }
+        constexpr uint32_t SLOT_BYTES = 32U;
+        constexpr uint32_t SLOT_ELEMS = (SLOT_BYTES / sizeof(T)) == 0U ? 1U : (SLOT_BYTES / sizeof(T));
+        constexpr uint32_t MIN_BATCH = 8U;
+        constexpr uint32_t MAX_BATCH = 8U;
+        if (startOffset != 0 || endOffset != 0 || scalars_ != nullptr) {
+            return false;
+        }
+        uint32_t n = static_cast<uint32_t>(end - start + 1);
+        if (n < MIN_BATCH || n * SLOT_ELEMS > tileElements_) {
+            return false;
+        }
+        for (uint32_t i = 0; i < n; ++i) {
+            if (counts[start + i] != 1) {
+                return false;
+            }
+        }
+
+        DataCopyPadExtParams<T> padParams;
+        padParams.isPad = true;
+        padParams.leftPadding = 0;
+        padParams.rightPadding = static_cast<uint8_t>(SLOT_ELEMS - 1U);
+        padParams.paddingValue = static_cast<T>(0);
+        DataCopyExtParams copyParams;
+        copyParams.blockCount = 1;
+        copyParams.blockLen = sizeof(T);
+        copyParams.srcStride = 0;
+        copyParams.dstStride = 0;
+
+        for (uint32_t base = 0; base < n; base += MAX_BATCH) {
+            uint32_t m = (n - base < MAX_BATCH) ? (n - base) : MAX_BATCH;
+            ListTensorDesc inputDescs[InputFlows];
+            LocalTensor<T> inputLocals[InputFlows];
+            for (int flow = 0; flow < InputFlows; ++flow) {
+                inputDescs[flow] = ListTensorDesc(reinterpret_cast<__gm__ void*>(inputs[flow]));
+                inputLocals[flow] = inputQueues_[flow].template AllocTensor<T>();
+            }
+            for (uint32_t i = 0; i < m; ++i) {
+                for (int flow = 0; flow < InputFlows; ++flow) {
+                    GlobalTensor<T> src;
+                    src.SetGlobalBuffer(
+                        reinterpret_cast<__gm__ T*>(inputDescs[flow].template GetDataPtr<T>(start + base + i)), 1);
+                    DataCopyPad(inputLocals[flow][i * SLOT_ELEMS], src, copyParams, padParams);
+                }
+            }
+            for (int flow = 0; flow < InputFlows; ++flow) {
+                inputQueues_[flow].EnQue(inputLocals[flow]);
+            }
+            for (int flow = 0; flow < InputFlows; ++flow) {
+                inputLocals[flow] = inputQueues_[flow].template DeQue<T>();
+            }
+            LocalTensor<T> outputLocal = outputQueue_.template AllocTensor<T>();
+            ComputePolicy::Run(inputLocals, outputLocal, scalar_, m * SLOT_ELEMS);
+            for (int flow = 0; flow < InputFlows; ++flow) {
+                inputQueues_[flow].FreeTensor(inputLocals[flow]);
+            }
+            outputQueue_.EnQue(outputLocal);
+            outputLocal = outputQueue_.template DeQue<T>();
+            for (uint32_t i = 0; i < m; ++i) {
+                GlobalTensor<T> dst;
+                dst.SetGlobalBuffer(reinterpret_cast<__gm__ T*>(outputDesc.template GetDataPtr<T>(start + base + i)),
+                                    1);
+                DataCopyPad(dst, outputLocal[i * SLOT_ELEMS], copyParams);
+            }
+            outputQueue_.FreeTensor(outputLocal);
+        }
+        return true;
+    }
 
     __aicore__ inline void ProcessTensor(GM_ADDR* inputs, ListTensorDesc& outputDesc, uint16_t tensorIdx,
                                          int64_t cursorStart, int64_t dataCount)

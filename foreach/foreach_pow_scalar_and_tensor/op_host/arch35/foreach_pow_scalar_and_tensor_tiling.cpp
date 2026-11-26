@@ -23,6 +23,7 @@
 #include "../../op_kernel/arch35/foreach_pow_scalar_and_tensor_tiling_data.h"
 #include "../../op_kernel/arch35/foreach_pow_scalar_and_tensor_tiling_key.h"
 #include "../../../foreach_utils/op_host/foreach_flat_regbase_validator.h"
+#include "../../../foreach_utils/op_host/foreach_flat_regbase_tiling.h"
 
 namespace optiling {
 
@@ -128,41 +129,41 @@ static ge::graphStatus ForeachPowScalarAndTensorTilingFunc(gert::TilingContext* 
                 OP_LOGE(context, "scalar element count[%ld] must be 1", scalarShape->GetStorageShape().GetShapeSize()),
                 return ge::GRAPH_FAILED);
 
-    uint64_t ubSize;
-    int64_t coreNum;
-    OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+    // 1. Shared flat tiling: the TensorList is the second IR input (x), the scalar is input 0.
+    if (ForeachFlatRegbaseTiling::Build<1, 0U, false, X_IDX>(context) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
 
-    uint64_t tensorNum = 0;
-    ge::DataType dataType = ge::DT_FLOAT;
-    OP_CHECK_IF(GetTensorNumAndDtype(context, tensorNum, dataType) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetTensorNumAndDtype error"), return ge::GRAPH_FAILED);
-
-    ForeachPowScalarAndTensorTilingData* tiling = context->GetTilingData<ForeachPowScalarAndTensorTilingData>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
-    OP_CHECK_IF(memset_s(tiling, sizeof(ForeachPowScalarAndTensorTilingData), 0,
-                         sizeof(ForeachPowScalarAndTensorTilingData)) != EOK,
-                OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(tensorNum > static_cast<uint64_t>(MAX_TENSOR_NUM),
-                OP_LOGE(context, "tensorNum[%lu] exceeds MAX_TENSOR_NUM[%u]", tensorNum, MAX_TENSOR_NUM),
-                return ge::GRAPH_FAILED);
-
-    int64_t totalElements = 0;
-    OP_CHECK_IF(FillTensorShapes(context, tensorNum, tiling, totalElements) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "FillTensorShapes error"), return ge::GRAPH_FAILED);
-
-    ComputeBlockDim(context, coreNum, totalElements, tiling);
-
-    size_t* currentWorkspace = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
-    currentWorkspace[0] = WS_SYS_SIZE;
-    context->SetLocalMemorySize(static_cast<uint32_t>(ubSize - DCACHE_SIZE));
-
+    auto xDesc = context->GetDynamicInputDesc(X_IDX, 0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
+    ge::DataType dataType = xDesc->GetDataType();
     uint64_t tilingKey = 0;
     OP_CHECK_IF(GetTilingKeyByDtype(context, dataType, tilingKey) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context, "GetTilingKeyByDtype error"), return ge::GRAPH_FAILED);
     context->SetTilingKey(tilingKey);
 
+    size_t* wsSizes = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, wsSizes);
+    wsSizes[0] = 0;
+
+    uint64_t ubSize = 0;
+    int64_t coreNum = 0;
+    OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
+    ForeachFlatTilingData* tiling = context->GetTilingData<ForeachFlatTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
+    constexpr uint64_t TILING_RESERVE_BYTES = 16384U;
+    constexpr uint64_t TILE_VL_ELEMS = 64U;
+    constexpr uint64_t BUFFER_COPIES = 4U;
+    uint64_t budget = ubSize > TILING_RESERVE_BYTES ? ubSize - TILING_RESERVE_BYTES : 0U;
+    uint64_t storageBytes = (dataType == ge::DT_FLOAT16 || dataType == ge::DT_BF16) ? 2U : 4U;
+    uint64_t maxTileElems = budget / (BUFFER_COPIES * storageBytes);
+    maxTileElems = maxTileElems / TILE_VL_ELEMS * TILE_VL_ELEMS;
+    OP_CHECK_IF(maxTileElems == 0U, OP_LOGE(context, "UB[%lu] is too small for one vector tile", ubSize),
+                return ge::GRAPH_FAILED);
+    if (static_cast<uint64_t>(tiling->tileElems) > maxTileElems) {
+        tiling->tileElems = static_cast<uint32_t>(maxTileElems);
+    }
     return ge::GRAPH_SUCCESS;
 }
 

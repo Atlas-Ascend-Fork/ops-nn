@@ -162,6 +162,7 @@ __aicore__ inline void CosVF(__ubuf__ T* inAddr, __ubuf__ T* outAddr, uint32_t d
 template <typename T>
 struct CosPolicy {
     static constexpr bool kUsesExtraUb = false;
+    static constexpr bool kScalarBatchEnabled = true;
 
     __aicore__ static inline void Run(LocalTensor<T>* inputs, LocalTensor<T> output, float scalar, uint32_t dataCount)
     {
