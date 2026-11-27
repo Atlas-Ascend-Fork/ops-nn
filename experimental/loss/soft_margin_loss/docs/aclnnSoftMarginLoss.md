@@ -28,7 +28,7 @@ aclnnStatus aclnnSoftMarginLossGetWorkspaceSize(
     const aclTensor *self,
     const aclTensor *target,
     int64_t reduction,
-    const aclTensor *out,
+    aclTensor *out,
     uint64_t *workspaceSize,
     aclOpExecutor **executor);
 
