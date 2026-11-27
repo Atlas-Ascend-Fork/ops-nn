@@ -28,7 +28,9 @@ namespace ge {
 *Seven inputs, including:
 * @li var: A ND Tensor. Must be one of the following types: float32, float16, bfloat16.
 * @li accum: A ND Tensor. Must be one of the following types: float32, float16, bfloat16.
-* @li lr: A scalar Tensor. Must be one of the following types: float32, float16, bfloat16.
+* @li lr: Learning rate, a scalar Tensor. Typically in (0, 1); values near
+*        the dtype maximum may overflow intermediate results.
+*        Must be one of the following types: float32, float16, bfloat16.
 * @li l1: A scalar Tensor. Must be one of the following types: float32, float16, bfloat16.
 * @li l2: A scalar Tensor. Must be one of the following types: float32, float16, bfloat16.
 * @li grad: A ND Tensor. Must be one of the following types: float32, float16, bfloat16.
