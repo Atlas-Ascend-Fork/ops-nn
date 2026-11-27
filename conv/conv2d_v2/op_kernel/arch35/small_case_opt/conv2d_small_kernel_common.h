@@ -51,6 +51,7 @@ constexpr event_t EVT_BATCH_BUF1 = static_cast<event_t>(4);
 constexpr event_t EVT_BIAS_DONE = static_cast<event_t>(5);
 constexpr event_t EVT_GROUP_L1_DONE = static_cast<event_t>(6);
 constexpr event_t EVT_GROUP_BIAS_DONE = static_cast<event_t>(7);
+constexpr event_t EVT_GROUP_SCALE_DONE = static_cast<event_t>(3);
 // M<->FIX handshake for the innerbatch single L0C buffer (the unit-flag state
 // machine is disabled there, legacy parity; depthwise-simplify style events).
 constexpr event_t EVT_CL0_DONE = static_cast<event_t>(0);

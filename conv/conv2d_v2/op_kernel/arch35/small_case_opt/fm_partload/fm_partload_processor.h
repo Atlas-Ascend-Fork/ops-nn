@@ -88,11 +88,13 @@ struct FmPartloadProcessor {
         SetFlag<HardEvent::MTE1_MTE2>(EVT_FMAP_BUF1);
         SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
         SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
+        SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_SCALE_DONE);
 
         Process(blockCtx, tiling, state, x, filter, bias, y, ep);
 
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
+        WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_SCALE_DONE);
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_FMAP_BUF0);
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_FMAP_BUF1);
         WaitFlag<HardEvent::M_MTE1>(static_cast<event_t>(0));
@@ -128,6 +130,7 @@ private:
             if (tiling.hasBias) {
                 WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
             }
+            WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_SCALE_DONE);
             loadBiasScale_(blockCtx, tiling, biasGm, scale0Gm, scale1Gm, reluWeight0Gm, reluWeight1Gm, state.l1);
             LocalTensor<WeightT> bl1Full(TPosition::B1, state.l1.bl1OffBytes, state.l1.bl1ElemCount);
             WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
@@ -162,6 +165,7 @@ private:
                 SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
             }
             SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
+            SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_SCALE_DONE);
             needLoadBias = true;
         }
     }
