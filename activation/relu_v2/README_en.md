@@ -45,7 +45,7 @@ $$
       <td>x</td>
       <td>Input</td>
       <td>Input parameter of the ReluV2 computation, which is the input self in the formula.</td>
-      <td>FLOAT, FLOAT16, BFLOAT16, INT8, INT32, UINT8</td>
+      <td>FLOAT, FLOAT16, BFLOAT16, INT8, INT32, INT64, UINT8</td>
       <td>ND</td>
     </tr>
     <tr>

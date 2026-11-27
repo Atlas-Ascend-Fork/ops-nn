@@ -43,7 +43,7 @@ $$
       <td>x</td>
       <td>输入</td>
       <td>待进行ReluV2计算的入参，公式中的输入self。</td>
-      <td>FLOAT、FLOAT16、BFLOAT16、INT8、INT32、UINT8</td>
+      <td>FLOAT、FLOAT16、BFLOAT16、INT8、INT32、INT64、UINT8</td>
       <td>ND</td>
     </tr>
     <tr>

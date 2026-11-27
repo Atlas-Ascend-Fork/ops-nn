@@ -90,7 +90,7 @@ aclnnStatus aclnnInplaceReluV2(
       <td>输入</td>
       <td>待进行Relu计算的入参，公式中的输入self。</td>
       <td><ul><li>支持空Tensor。</li><li>shape需要与out一致。</li></ul></td>
-      <td>FLOAT、FLOAT16、INT8、INT32、INT64、BFLOAT16</td>
+      <td>FLOAT、FLOAT16、INT8、INT16、INT32、INT64、BFLOAT16、UINT8</td>
       <td>ND</td>
       <td>0-8</td>
       <td>√</td>
@@ -100,7 +100,7 @@ aclnnStatus aclnnInplaceReluV2(
       <td>输出</td>
       <td>计算的出参。</td>
       <td>shape需要与self一致。</td>
-      <td>FLOAT、FLOAT16、INT8、INT32、INT64、BFLOAT16</td>
+      <td>FLOAT、FLOAT16、INT8、INT16、INT32、INT64、BFLOAT16、UINT8</td>
       <td>ND</td>
       <td>0-8</td>
       <td>√</td>
@@ -128,7 +128,9 @@ aclnnStatus aclnnInplaceReluV2(
   </tbody>
   </table>
 
-   - <term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16、INT8、INT32、INT64。
+   <!-- npu="910" id1 -->
+   - <term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16、INT8、INT16、INT32、INT64、UINT8。
+   <!-- end id1 -->
 
 - **返回值：**
 
@@ -241,7 +243,7 @@ aclnnStatus aclnnInplaceReluV2(
       <td>输入</td>
       <td>待进行Relu计算的入参。</td>
       <td>支持空Tensor。</td>
-      <td>FLOAT、FLOAT16、INT8、INT32、INT64、BFLOAT16、UINT8</td>
+      <td>FLOAT、FLOAT16、INT8、INT16、INT32、INT64、BFLOAT16、UINT8</td>
       <td>ND</td>
       <td>0-8</td>
       <td>√</td>
@@ -269,7 +271,9 @@ aclnnStatus aclnnInplaceReluV2(
     </tbody>
   </table>
 
-   - <term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16、INT8、INT32、INT64、UINT8。
+   <!-- npu="910" id2 -->
+   - <term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16、INT8、INT16、INT32、INT64、UINT8。
+   <!-- end id2 -->
 
 - **返回值：**
 

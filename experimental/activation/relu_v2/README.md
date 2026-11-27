@@ -43,14 +43,14 @@ $$
       <td>x</td>
       <td>输入</td>
       <td>待进行Relu计算的入参。</td>
-      <td>FLOAT、FLOAT16、INT8、INT32、INT64、BFLOAT16</td>
+      <td>FLOAT、FLOAT16、INT8、INT16、INT32、INT64、BFLOAT16</td>
       <td>ND</td>
    </tr>
    <tr>
       <td>y</td>
       <td>输出</td>
       <td>进行Relu计算后的输出</td>
-      <td>FLOAT、FLOAT16、INT8、INT32、INT64、BFLOAT16</td>
+      <td>FLOAT、FLOAT16、INT8、INT16、INT32、INT64、BFLOAT16</td>
       <td>ND</td>
    </tr>
   </tbody>
@@ -58,7 +58,7 @@ $$
 
 ## 约束说明
 
-- 无
+- 通过ACLNN调用时，aclnnReluV2的self、out以及aclnnInplaceReluV2的selfRef还支持UINT8；图模式的x、y不支持UINT8。
 
 ## 调用说明
 
