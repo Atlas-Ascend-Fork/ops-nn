@@ -392,7 +392,6 @@ public:
                         LoadOneTensor<DY_DTYPE>(xLocal, regX, pregMask, offset);
 
                         Sub(regX, regX, regMean, pregMask);
-                        // 乘序与 golden/契约/三方一致：((x-mean)*rstd)*dy
                         Mul(regX, regX, regRstd, pregMask);
                         Mul(regX, regX, regDy, pregMask);
                         DataCopy((__local_mem__ float*)dgammaReduceTmpLocal + offset, regX, pregMask);
@@ -745,13 +744,11 @@ public:
                                     if constexpr (IsSameType<DY_DTYPE, float>::value) {
                                         Mul(regX, regX, regDgammaOverR, pregMask);
                                     } else {
-                                        // fp16 golden 的 dx 为 fp32 级：第三项是 (xhat*dgamma)/R 先乘后除
                                         Mul(regX, regX, regDgammaTmp, pregMask);
                                         MicroAPI::Div(regX, regX, regCount, pregMask);
                                     }
                                     Sub(regDy, regDy, regDbetaOverR, pregMask);
                                     Sub(regX, regDy, regX, pregMask);
-                                    // 与 golden/契约/三方一致：(...)*scale*rstd
                                     Mul(regX, regX, regGamma, pregMask);
                                     Mul(regX, regX, regRstd, pregMask);
 

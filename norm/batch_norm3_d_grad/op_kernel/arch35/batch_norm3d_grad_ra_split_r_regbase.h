@@ -191,7 +191,7 @@ private:
         }
     }
 
-    // Σ((x-mean)*rstd*dy)：乘序与 golden/契约/三方一致（rstd 在 dy 之前），逐元素 TwoSum。
+    // Σ((x-mean)*rstd*dy)：rstd 在 dy 之前，逐元素 TwoSum。
     __aicore__ inline void AccumulateXSubMeanMulDyExact(const LocalTensor<float>& accTensor,
                                                         const LocalTensor<DY_TYPE>& xTensor,
                                                         const LocalTensor<DY_TYPE>& dyTensor, uint32_t rLength,
@@ -691,7 +691,6 @@ private:
                     if constexpr (IsSameType<DY_TYPE, float>::value) {
                         MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg, dgammaOverR, pMask);
                     } else {
-                        // fp16 golden 的 dx 为 fp32 级：第三项是 (xhat*dgamma)/R 先乘后除，逐项同序
                         MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg, dgammaReg, pMask);
                         MicroAPI::Div<float, MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg, countReg, pMask);
                     }
@@ -762,7 +761,6 @@ private:
                 if constexpr (IsSameType<DY_TYPE, float>::value) {
                     MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg, dgammaOverR, pMask);
                 } else {
-                    // fp16 golden 的 dx 为 fp32 级：第三项是 (xhat*dgamma)/R 先乘后除，逐项同序
                     MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg, dgammaReg, pMask);
                     MicroAPI::Div<float, MicroAPI::MaskMergeMode::ZEROING>(xReg, xReg, countReg, pMask);
                 }
@@ -773,7 +771,6 @@ private:
                     MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(dxReg, rstdReg, dyReg, pMask);
                     MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(dxReg, dxReg, gammaReg, pMask);
                 } else {
-                    // 与 golden/契约/三方一致：(...)*scale*rstd
                     MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(dxReg, dyReg, gammaReg, pMask);
                     MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(dxReg, dxReg, rstdReg, pMask);
                 }

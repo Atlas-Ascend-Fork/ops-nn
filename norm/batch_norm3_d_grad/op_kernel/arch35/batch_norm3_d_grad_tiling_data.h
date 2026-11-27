@@ -18,6 +18,11 @@
 
 #include <cstdint>
 
+// ra_full_load 手工展开特化的最大 R：kernel 对 rDim<=该值走 1/2/3/4 路展开、
+// 大于该值走通用循环；host UB 账本按同一边界决定是否计入二分累加 buffer。
+// 两侧必须共用此常量，扩特化时只改这里。
+constexpr int64_t RA_FULL_LOAD_UNROLL_MAX = 4;
+
 struct BatchNorm3DGradBaseTilingData {
     int64_t r1Dim = 0;
     int64_t aDim = 0;

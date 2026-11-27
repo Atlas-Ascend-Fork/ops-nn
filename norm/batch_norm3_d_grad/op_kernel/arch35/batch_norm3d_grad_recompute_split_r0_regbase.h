@@ -440,7 +440,6 @@ public:
             LoadOneTensor<DY_TYPE>(xAddr, xValue, pregMain, i * VL_FP32);
             LoadOneTensor<DY_TYPE>(dyAddr, dyValue, pregMain, i * VL_FP32);
             MicroAPI::Sub<float, MicroAPI::MaskMergeMode::ZEROING>(xValue, xValue, meanValue, pregMain);
-            // 乘序与 golden/契约/三方一致：((x-mean)*rstd)*dy
             MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(xValue, xValue, rstdValue, pregMain);
             MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(xValue, xValue, dyValue, pregMain);
             AccumulateWithError(hi, lo, xValue, pregMain);
@@ -453,7 +452,6 @@ public:
             LoadOneTensor<DY_TYPE>(xAddr, xValue, pregTail, static_cast<uint32_t>(fullTimes) * VL_FP32);
             LoadOneTensor<DY_TYPE>(dyAddr, dyValue, pregTail, static_cast<uint32_t>(fullTimes) * VL_FP32);
             MicroAPI::Sub<float, MicroAPI::MaskMergeMode::ZEROING>(xValue, xValue, meanValue, pregTail);
-            // 乘序与 golden/契约/三方一致：((x-mean)*rstd)*dy
             MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(xValue, xValue, rstdValue, pregTail);
             MicroAPI::Mul<float, MicroAPI::MaskMergeMode::ZEROING>(xValue, xValue, dyValue, pregTail);
             MicroAPI::Select(xValue, xValue, zeroReg, pregTail);

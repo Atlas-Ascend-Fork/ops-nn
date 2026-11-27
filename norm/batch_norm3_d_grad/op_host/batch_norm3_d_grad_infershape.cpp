@@ -12,7 +12,10 @@
  * \file batch_norm3_d_grad_infershape.cpp
  * \brief
  */
+#include <string>
+
 #include "log/log.h"
+#include "graph/utils/type_utils.h"
 #include "register/op_impl_registry.h"
 #include "op_common/op_host/util/shape_util.h"
 
@@ -28,6 +31,7 @@ static constexpr int64_t DBIAS_OUTPUT_IDX = 2;
 static constexpr int64_t RESERVER_SPACE4_OUTPUT_IDX = 3;
 static constexpr int64_t RESERVER_SPACE5_OUTPUT_IDX = 4;
 
+static constexpr int64_t ATTR_DATA_FORMAT_IDX = 1; // def.cpp 中 Attr 顺序：epsilon, data_format, is_training
 static constexpr int DIM_0 = 0;
 static constexpr int DIM_1 = 1;
 static constexpr int DIM_3 = 3;
@@ -44,6 +48,28 @@ static ge::graphStatus BatchNorm3DGradInferShape(gert::InferShapeContext* contex
     OP_CHECK_NULL_WITH_CONTEXT(context, dyShape);
     const gert::Shape* weightShape = context->GetInputShape(WEIGHT_INPUT_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, weightShape);
+
+    // x 与 y_backprop 的 format 须一致
+    const gert::Tensor* dyTensor = context->GetInputTensor(DY_INPUT_IDX);
+    const gert::Tensor* xTensor = context->GetInputTensor(X_INPUT_IDX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, dyTensor);
+    OP_CHECK_NULL_WITH_CONTEXT(context, xTensor);
+    OP_CHECK_IF(dyTensor->GetStorageFormat() != xTensor->GetStorageFormat(),
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                         "format of x must be the same as y_backprop"),
+                return ge::GRAPH_FAILED);
+    auto attrs = context->GetAttrs();
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    // 输入 format 须与 data_format 一致
+    const char* dataFormat = attrs->GetAttrPointer<char>(ATTR_DATA_FORMAT_IDX);
+    if (dataFormat != nullptr && !Ops::Base::IsUnknownRank(*dyShape)) {
+        const ge::Format attrFormat = ge::TypeUtils::SerialStringToFormat(dataFormat);
+        OP_CHECK_IF(dyTensor->GetStorageFormat() != attrFormat,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "y_backprop",
+                        "format of y_backprop must match data_format (NCDHW/NDHWC/NCHW/NHWC)"),
+                    return ge::GRAPH_FAILED);
+    }
     gert::Shape* dxShape = context->GetOutputShape(DX_OUTPUT_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, dxShape);
     gert::Shape* dweightShape = context->GetOutputShape(DWEIGHT_OUTPUT_IDX);
@@ -89,7 +115,14 @@ static ge::graphStatus BatchNorm3DGradInferDataType(gert::InferDataTypeContext* 
     }
 
     const ge::DataType dyDtype = context->GetInputDataType(DY_INPUT_IDX);
+    const ge::DataType xDtype = context->GetInputDataType(X_INPUT_IDX);
     const ge::DataType weightDtype = context->GetInputDataType(WEIGHT_INPUT_IDX);
+
+    // x 与 y_backprop 的 dtype 须一致
+    OP_CHECK_IF(dyDtype != xDtype,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                         "dtype of y_backprop and x must be the same"),
+                return ge::GRAPH_FAILED);
 
     context->SetOutputDataType(DX_OUTPUT_IDX, dyDtype);
     context->SetOutputDataType(DWEIGHT_OUTPUT_IDX, weightDtype);

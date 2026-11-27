@@ -219,8 +219,8 @@ constexpr static float BNG_MAX_FINITE_FP32 = 3.4028234663852886e38F;
 // ra_split_r 核内累加的扩展指数域：项按 2^-32 精确缩小（2 的幂无舍入）再进补偿累加器，
 // 累加器上界变为 R_max(2^31) × FLT_MAX × 2^-32 < FLT_MAX，中间和永不溢出卡死符号；
 // 跨核合并末尾按 2^32 放大回原域，真值超 fp32 域时在此以正确符号得 ±inf。
-constexpr static float BNG_ACC_SCALE_DOWN = 2.3283064365386963e-10F; // 2^-32
-constexpr static float BNG_ACC_SCALE_UP = 4294967296.0F;             // 2^32
+constexpr static float BNG_ACC_SCALE_DOWN = 0x1p-32F; // 2^-32
+constexpr static float BNG_ACC_SCALE_UP = 0x1p+32F;   // 2^32
 __simd_callee__ inline void ClampResidual(MicroAPI::RegTensor<float>& lo, MicroAPI::MaskReg& mask)
 {
     MicroAPI::RegTensor<float> zeroReg;

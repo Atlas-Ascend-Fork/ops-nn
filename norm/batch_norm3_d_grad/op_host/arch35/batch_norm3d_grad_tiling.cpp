@@ -753,7 +753,7 @@ void BatchNorm3DGradRAFullLoadTilingBase::CalculateLoopFactors(int64_t dtypeSize
             // 账本与 kernel InitBuffer 对齐：dbeta/dgamma 两个二分累加 buffer 各
             // (power2k/2)*factorAligned*4B，合计 power2k*factorAligned*4B；
             // 且 kernel 仅在 rDim>4 时分配这两个 buffer。
-            int64_t cacheBytes = (rDim_ > 4) ? power2k * factorAligned * FLOAT_BYTE_NUMBER : 0;
+            int64_t cacheBytes = (rDim_ > RA_FULL_LOAD_UNROLL_MAX) ? power2k * factorAligned * FLOAT_BYTE_NUMBER : 0;
             int64_t total_bytes = rDim_ * factorAligned * dtypeSize * DOUBLE_BUFFER * THREE +
                                   factorAligned * FLOAT_BYTE_NUMBER * DOUBLE_BUFFER * TWO +
                                   factorAligned * weightDtypeSize * DOUBLE_BUFFER * THREE + cacheBytes;

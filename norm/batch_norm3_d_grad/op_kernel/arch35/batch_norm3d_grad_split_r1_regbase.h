@@ -1271,7 +1271,6 @@ public:
                 MicroAPI::Div(mulDgamma, mulDgamma, countReg, pregR);
                 MicroAPI::Sub(subDy, dy, dbetaOverR, pregR);
                 MicroAPI::Sub(subDy, subDy, mulDgamma, pregR);
-                // 与 golden/契约/三方一致：(...)*scale*rstd
                 MicroAPI::Mul(rstdMulSubDy, subDy, gammaValue, pregR);
                 MicroAPI::Mul(dx, rstdMulSubDy, rstdValue, pregR);
                 StoreOneTensor<DY_TYPE>(xAddr, dx, pregR, VL * j);

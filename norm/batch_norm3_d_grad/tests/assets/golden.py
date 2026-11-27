@@ -273,18 +273,23 @@ class _BatchNorm3DGradCompose:
             rstd = torch.rsqrt(reserve_space_2.to(torch.float32) + self.epsilon)
         rstd_n = rstd.reshape(broadcast_shape)
 
+        # 大张量内存复用（峰值约为原来的 1/2）：原位运算与同表达式新建拷贝逐元素同值
         dy_f = dy_n.to(torch.float32)
-        x_hat = (x_n.to(torch.float32) - mean_n) * rstd_n
+        x_hat = x_n.to(torch.float32)
+        x_hat -= mean_n
+        x_hat *= rstd_n
         dscale = torch.sum(dy_f * x_hat, dim=axes).to(torch.float32)
         doffset = torch.sum(dy_f, dim=axes).to(torch.float32)
         if self.is_training:
             dscale_n = dscale.reshape(broadcast_shape)
             doffset_n = doffset.reshape(broadcast_shape)
-            dx_n = (
-                (dy_f - doffset_n / reduce_count - x_hat * dscale_n / reduce_count)
-                * scale_n
-                * rstd_n
-            )
+            dy_f -= doffset_n / reduce_count
+            x_hat *= dscale_n
+            x_hat /= reduce_count
+            dy_f -= x_hat
+            dy_f *= scale_n
+            dy_f *= rstd_n
+            dx_n = dy_f
         else:
             dx_n = dy_f * scale_n * rstd_n
         dx = _from_nchw_like_torch(dx_n, self.data_format).to(x.dtype)
