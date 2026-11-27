@@ -240,6 +240,9 @@ ge::graphStatus ClippedSwigluTiling::CheckAndGetXAndAttrs()
         return ge::GRAPH_FAILED;
     };
     ParseAttrs(attrs);
+    OP_CHECK_IF(gluLimit_ <= 0.0f,
+                OP_LOGE_FOR_INVALID_VALUE(context_->GetNodeName(), "limit", std::to_string(gluLimit_), "> 0"),
+                return ge::GRAPH_FAILED);
     // 获取x shape
     auto shapeX = context_->GetInputShape(X_INDEX);
     OP_CHECK_IF(shapeX == nullptr, ReportInvalidInput(context_, "x"), return ge::GRAPH_FAILED);
