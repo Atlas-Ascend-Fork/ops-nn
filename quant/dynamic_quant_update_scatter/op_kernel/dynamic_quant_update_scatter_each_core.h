@@ -104,4 +104,4 @@ private:
 private:
 };
 } // namespace DynamicQuantUpdateScatterND
-#endif // DYNAMIC_QUANT
+#endif // DYNAMIC_QUANT_UPDATE_SCATTER_EACH_CORE_H_UPDATE_SCATTER_EACH_CORE_H

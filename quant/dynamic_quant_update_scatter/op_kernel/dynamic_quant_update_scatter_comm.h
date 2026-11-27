@@ -476,4 +476,4 @@ protected:
     bool hasSmoothScales = false;
 };
 } // namespace DynamicQuantUpdateScatterND
-#endif // DYNAMIC_QUANT
+#endif // DYNAMIC_QUANT_UPDATE_SCATTER_COMM_H_UPDATE_SCATTER_COMM_H

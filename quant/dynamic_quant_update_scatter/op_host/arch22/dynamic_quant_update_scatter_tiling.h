@@ -66,4 +66,4 @@ struct DynamicQuantUpdateScatterCompileInfo {
     int64_t ubSize;
 };
 } // namespace optiling
-#endif // AIR_CXX_RUNTIME_V2_OP_IMPL_DYNAMIC_QUANT_TILING_H
+#endif // AIR_CXX_RUNTIME_V2_OP_IMPL_DYNAMIC_QUANT_UPDATE_SCATTER_TILING_H

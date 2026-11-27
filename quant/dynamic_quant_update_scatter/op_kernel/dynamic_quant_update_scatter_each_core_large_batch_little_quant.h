@@ -98,4 +98,4 @@ private:
     /* ascendc variable */
 };
 } // namespace DynamicQuantUpdateScatterND
-#endif // DYNAMIC_QUANT
+#endif // DYNAMIC_QUANT_UPDATE_SCATTER_EACH_CORE_LARGE_BATCH_LITTLE_QUANT_H_UPDATE_SCATTER_EACH_CORE_LARGE_BATCH_LITTLE_QUANT_H
