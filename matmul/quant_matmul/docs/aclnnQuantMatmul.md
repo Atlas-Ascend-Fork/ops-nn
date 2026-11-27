@@ -194,6 +194,11 @@ aclnnStatus aclnnQuantMatmul(
     <tr>
       <td>bias存在且m和n均不为0但k为0的空tensor。</td>
     </tr>
+    <tr>
+      <td>ACLNN_ERR_RUNTIME_ERROR</td>
+      <td>361001</td>
+      <td>当前 Soc Version 不支持该算子（仅 Ascend910B/910_93 系列），第一阶段校验后返回该错误码。</td>
+    </tr>
   </tbody>
   </table>
 

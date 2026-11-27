@@ -196,6 +196,11 @@ aclnnStatus aclnnQuantMatmul(
     <tr>
       <td>bias exists and is an empty tensor where m and n are both non-zero but k is 0.</td>
     </tr>
+    <tr>
+      <td>ACLNN_ERR_RUNTIME_ERROR</td>
+      <td>361001</td>
+      <td>The current Soc Version does not support this operator (only the Ascend910B/910_93 series). The error code is returned after the phase-1 validation.</td>
+    </tr>
   </tbody>
   </table>
 
