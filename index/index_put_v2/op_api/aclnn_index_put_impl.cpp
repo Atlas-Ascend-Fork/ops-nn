@@ -378,6 +378,12 @@ static inline bool CheckShape(const aclTensor* selfRef, const aclTensorList* ind
     return true;
 }
 
+static bool IsNonEmptyBoolMask(const aclTensor* index)
+{
+    return index != nullptr && index->GetViewShape().GetShapeSize() != 0 &&
+           index->GetDataType() == op::DataType::DT_BOOL;
+}
+
 static bool CheckBoolMaskShape(const aclTensor* selfRef, const aclTensorList* indices)
 {
     int64_t indicesSize = static_cast<int64_t>(indices->Size());
@@ -387,8 +393,7 @@ static bool CheckBoolMaskShape(const aclTensor* selfRef, const aclTensorList* in
     bool hasBoolMask = false;
     for (int64_t i = 0; i < indicesSize; i++) {
         const aclTensor* curIndex = (*indices)[i];
-        if (curIndex != nullptr && curIndex->GetViewShape().GetShapeSize() != 0 &&
-            curIndex->GetDataType() == op::DataType::DT_BOOL) {
+        if (IsNonEmptyBoolMask(curIndex)) {
             hasBoolMask = true;
             break;
         }
@@ -398,8 +403,17 @@ static bool CheckBoolMaskShape(const aclTensor* selfRef, const aclTensorList* in
     }
     int64_t selfDimNum = static_cast<int64_t>(selfRef->GetViewShape().GetDimNum());
     int64_t consumedDims = 0;
+    const bool useMixedIndexRules = GetCurrentPlatformInfo().GetCurNpuArch() == Ops::Base::DAV_2201;
     for (int64_t i = 0; i < indicesSize; i++) {
         const aclTensor* curIndex = (*indices)[i];
+        if (useMixedIndexRules && !IsNonEmptyBoolMask(curIndex)) {
+            if (consumedDims >= selfDimNum) {
+                OP_LOGE(ACLNN_ERR_PARAM_INVALID, "No dimension remains in selfRef for index at indices[%ld].", i);
+                return false;
+            }
+            consumedDims++;
+            continue;
+        }
         if (curIndex == nullptr || curIndex->GetViewShape().GetShapeSize() == 0) {
             consumedDims++;
             continue;
@@ -1364,11 +1378,15 @@ aclnnStatus aclnnIndexPutImplGetWorkspaceSize(aclTensor* selfRef, const aclTenso
                                                                                      indicesTensors.size());
             CHECK_RET(IndicesTensorList != nullptr, ACLNN_ERR_INNER_NULLPTR);
             FVector<int64_t, MAX_SUPPORT_DIMS_NUMS> boundsVec;
+            const auto& selfShape = selfRef->GetViewShape();
+            size_t axis = 0;
             for (size_t i = 0; i < dimMask.size(); i++) {
                 if (dimMask[i]) {
-                    int64_t bound = (selfRef->GetViewShape().GetDimNum() == 0) ? 1 : selfRef->GetViewShape().GetDim(i);
+                    int64_t bound = (selfShape.GetDimNum() == 0) ? 1 : selfShape.GetDim(axis);
                     boundsVec.emplace_back(bound);
                 }
+                const aclTensor* curIndex = (*indices)[i];
+                axis += IsNonEmptyBoolMask(curIndex) ? curIndex->GetViewShape().GetDimNum() : 1;
             }
             aclIntArray* boundsArray = uniqueExecutor.get()->AllocIntArray(boundsVec.data(), boundsVec.size());
             const aclTensor* boundsTensor = uniqueExecutor.get()->ConvertToTensor(boundsArray,

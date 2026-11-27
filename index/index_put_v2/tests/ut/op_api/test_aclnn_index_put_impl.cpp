@@ -13,6 +13,7 @@
 #include "../../../op_api/aclnn_index_put_impl.h"
 #include "op_api_ut_common/tensor_desc.h"
 #include "op_api_ut_common/op_api_ut.h"
+#include "opdev/platform.h"
 
 using namespace std;
 class l2_index_put_impl_test : public testing::Test {
@@ -21,6 +22,66 @@ protected:
 
     static void TearDownTestCase() { std::cout << "l2_index_put_impl_test TearDown" << std::endl; }
 };
+
+static aclnnStatus GetMixedIndexWorkspaceStatus(const std::vector<int64_t>& selfShape,
+                                                const std::vector<int64_t>& valuesShape, const TensorDesc& firstIndex,
+                                                const TensorDesc& secondIndex)
+{
+    auto self = TensorDesc(selfShape, ACL_FLOAT, ACL_FORMAT_ND);
+    auto indices = TensorListDesc({firstIndex, secondIndex});
+    auto values = TensorDesc(valuesShape, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnIndexPutImpl, INPUT(self, indices, values, false, false), OUTPUT());
+
+    uint64_t workspaceSize = 0;
+    return ut.TestGetWorkspaceSize(&workspaceSize);
+}
+
+TEST_F(l2_index_put_impl_test, bool_mask_before_integer_index)
+{
+    const auto mask = TensorDesc({2}, ACL_BOOL, ACL_FORMAT_ND);
+    const auto integerIndex = TensorDesc({1}, ACL_INT64, ACL_FORMAT_ND);
+    for (const auto soc : {op::SocVersion::ASCEND910B, op::SocVersion::ASCEND910_93, op::SocVersion::ASCEND950}) {
+        SCOPED_TRACE(static_cast<int>(soc));
+        op::SocVersionManager versionManager(soc);
+        const auto expected = soc == op::SocVersion::ASCEND950 ? ACLNN_ERR_PARAM_INVALID : ACLNN_SUCCESS;
+        EXPECT_EQ(GetMixedIndexWorkspaceStatus({2, 3}, {1}, mask, integerIndex), expected);
+    }
+}
+
+TEST_F(l2_index_put_impl_test, two_dimensional_integer_index_before_bool_mask)
+{
+    EXPECT_EQ(GetMixedIndexWorkspaceStatus({2, 3}, {1, 2}, TensorDesc({1, 1}, ACL_INT32, ACL_FORMAT_ND),
+                                           TensorDesc({3}, ACL_BOOL, ACL_FORMAT_ND)),
+              ACLNN_SUCCESS);
+}
+
+TEST_F(l2_index_put_impl_test, integer_index_before_bool_mask)
+{
+    EXPECT_EQ(GetMixedIndexWorkspaceStatus({2, 3}, {2}, TensorDesc({1}, ACL_INT64, ACL_FORMAT_ND),
+                                           TensorDesc({3}, ACL_BOOL, ACL_FORMAT_ND)),
+              ACLNN_SUCCESS);
+}
+
+TEST_F(l2_index_put_impl_test, two_dimensional_bool_mask_before_integer_index)
+{
+    EXPECT_EQ(GetMixedIndexWorkspaceStatus({2, 3, 5}, {1}, TensorDesc({2, 3}, ACL_BOOL, ACL_FORMAT_ND),
+                                           TensorDesc({1}, ACL_INT64, ACL_FORMAT_ND)),
+              ACLNN_SUCCESS);
+}
+
+TEST_F(l2_index_put_impl_test, mixed_index_rejects_mismatched_bool_mask_shape)
+{
+    EXPECT_EQ(GetMixedIndexWorkspaceStatus({2, 3}, {1}, TensorDesc({1}, ACL_INT64, ACL_FORMAT_ND),
+                                           TensorDesc({2}, ACL_BOOL, ACL_FORMAT_ND)),
+              ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_index_put_impl_test, mixed_index_rejects_too_many_indexed_axes)
+{
+    EXPECT_EQ(GetMixedIndexWorkspaceStatus({2, 3}, {1}, TensorDesc({2, 3}, ACL_BOOL, ACL_FORMAT_ND),
+                                           TensorDesc({1}, ACL_INT64, ACL_FORMAT_ND)),
+              ACLNN_ERR_PARAM_INVALID);
+}
 
 // 空tensor
 TEST_F(l2_index_put_impl_test, l2_index_put_impl_test_001)
