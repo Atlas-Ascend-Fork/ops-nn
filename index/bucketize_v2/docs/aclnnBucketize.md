@@ -102,7 +102,7 @@ aclnnStatus aclnnBucketize(
       <td>boundaries（aclTensor*）</td>
       <td>输入</td>
       <td>边界数组，必须是一维张量且单调递增。</td>
-      <td><ul><li>不支持空Tensor。</li><li>必须为一维张量。</li><li>必须单调递增且不重复。</li></ul></td>
+      <td><ul><li>支持空Tensor；boundaries为空时输出全0。</li><li>必须为一维张量。</li><li>必须单调递增且不重复。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16、INT8、INT16、INT32、INT64、UINT8</td>
       <td>ND</td>
       <td>1</td>

@@ -104,7 +104,7 @@ aclnnStatus aclnnBucketize(
       <td>boundaries (aclTensor*)</td>
       <td>Input</td>
       <td>Boundary array, must be a one-dimensional tensor and monotonically increasing.</td>
-      <td><ul><li>Empty tensors are not supported.</li><li>Must be a one-dimensional tensor.</li><li>Must be monotonically increasing with no duplicate values.</li></ul></td>
+      <td><ul><li>Empty boundaries are supported; the output is filled with zeros.</li><li>Must be a one-dimensional tensor.</li><li>Must be monotonically increasing with no duplicate values.</li></ul></td>
       <td>FLOAT, FLOAT16, BFLOAT16, INT8, INT16, INT32, INT64, UINT8</td>
       <td>ND</td>
       <td>1</td>
