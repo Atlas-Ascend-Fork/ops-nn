@@ -52,6 +52,10 @@ public:
         uint32_t numPerCoreTail = numPerCore % innerNumPerCore == 0 ? innerNumPerCore : numPerCore % innerNumPerCore;
         uint32_t numPerCoreOneLoop = innerNumPerCore;
         event_t eventIdMte3ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
+        // 跨循环持有EventId
+        auto eventIDVToMte2 = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE2>());
+        auto eventIDVToMte2Ping = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE2>());
+        auto eventIDVToMte2Pong = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE2>());
         for (uint64_t i = 0; i < numPerCoreLoop; i++) {
             if (i > 0) {
                 WaitFlag<HardEvent::MTE3_V>(eventIdMte3ToV);
@@ -59,17 +63,24 @@ public:
             if (i == numPerCoreLoop - 1) {
                 numPerCoreOneLoop = numPerCoreTail;
             }
-            CalNormalize(i * innerNumPerCore, numPerCoreOneLoop);
+            isLastNormalizeCall = (i == numPerCoreLoop - 1);
+            isTailCallSingleChunk = (i == numPerCoreLoop - 2) && (numPerCoreTail <= onceNumPerCore);
+            CalNormalize(i * innerNumPerCore, numPerCoreOneLoop, eventIDVToMte2, eventIDVToMte2Ping,
+                         eventIDVToMte2Pong);
             ProcessMeanAndRstd<T1>(meanTensor, meanOutTensor, meanGm, rstdTensor, rstdOutTensor, rstdGm,
                                    blockIdx * tiling->numPerCore + i * innerNumPerCore, numPerCoreOneLoop);
             if (i < numPerCoreLoop - 1) {
                 SetFlag<HardEvent::MTE3_V>(eventIdMte3ToV);
             }
         }
+        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(eventIDVToMte2);
+        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(eventIDVToMte2Ping);
+        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(eventIDVToMte2Pong);
     }
 
 private:
-    __aicore__ inline void CalNormalize(uint64_t offset, uint32_t numPerCoreTmp)
+    __aicore__ inline void CalNormalize(uint64_t offset, uint32_t numPerCoreTmp, event_t eventIDVToMte2,
+                                        event_t eventIDVToMte2Ping, event_t eventIDVToMte2Pong)
     {
         int64_t numPerCoreExtent = CeilDiv(numPerCoreTmp, onceNumPerCore);
         uint32_t numPerCoreTail = numPerCoreTmp % onceNumPerCore == 0 ? onceNumPerCore : numPerCoreTmp % onceNumPerCore;
@@ -79,9 +90,6 @@ private:
         auto eventIDMte2ToVPong = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>());
         auto eventIDVToMte3Ping = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE3>());
         auto eventIDVToMte3Pong = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE3>());
-        auto eventIDVToMte2 = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE2>());
-        auto eventIDVToMte2Ping = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE2>());
-        auto eventIDVToMte2Pong = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::V_MTE2>());
         auto eventIDMte3ToVPing = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>());
         auto eventIDMte3ToVPong = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>());
         __ubuf__ float* dichotomyAddLocal = (__ubuf__ float*)dichotomyAddTensor.GetPhyAddr();
@@ -90,7 +98,7 @@ private:
                 numPerCoreProcess = numPerCoreTail;
             }
             bool isPing = (i % BUFFER_NUM) == 0;
-            if (i > 1) {
+            if (i > 1 || !isFirstNormalizeCall) {
                 WaitFlag<HardEvent::V_MTE2>(isPing ? eventIDVToMte2Ping : eventIDVToMte2Pong);
             }
             int64_t xGmOffset = xGmBaseOffset + i * onceNumPerCore * elemNum;
@@ -106,16 +114,16 @@ private:
             }
             CalMeanAndRstd<T1>(xLocal, meanLocal, rstdLocal, dichotomyAddLocal, numPerCoreProcess, dichotomyAddPower,
                                dichotomyAddK, dichotomyAddLastNum, elemNum, reduceScale, eps);
-            if (i > 0) {
+            if (i > 0 || !isFirstNormalizeCall) {
                 WaitFlag<HardEvent::V_MTE2>(eventIDVToMte2);
             }
             NormalizeAndSwish(xUbOffset, offset + i * onceNumPerCore, numPerCoreProcess, i);
-            if (i < numPerCoreExtent - 1) {
+            if (i < numPerCoreExtent - 1 || !isLastNormalizeCall) {
                 SetFlag<HardEvent::V_MTE2>(eventIDVToMte2);
             }
             SetFlag<HardEvent::V_MTE3>(isPing ? eventIDVToMte3Ping : eventIDVToMte3Pong);
             WaitFlag<HardEvent::V_MTE3>(isPing ? eventIDVToMte3Ping : eventIDVToMte3Pong);
-            if (i < numPerCoreExtent - BUFFER_NUM) {
+            if (i < numPerCoreExtent - BUFFER_NUM || (!isLastNormalizeCall && (isPing || !isTailCallSingleChunk))) {
                 SetFlag<HardEvent::V_MTE2>(isPing ? eventIDVToMte2Ping : eventIDVToMte2Pong);
             }
             CopyY2Gm<T1>(yGm[xGmOffset], yTensor[xUbOffset], numPerCoreProcess, elemNum);
@@ -123,13 +131,11 @@ private:
                 SetFlag<HardEvent::MTE3_V>(isPing ? eventIDMte3ToVPing : eventIDMte3ToVPong);
             }
         }
+        isFirstNormalizeCall = false;
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(eventIDMte2ToVPing);
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE2_V>(eventIDMte2ToVPong);
         GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE3>(eventIDVToMte3Ping);
         GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE3>(eventIDVToMte3Pong);
-        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(eventIDVToMte2);
-        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(eventIDVToMte2Ping);
-        GetTPipePtr()->ReleaseEventID<HardEvent::V_MTE2>(eventIDVToMte2Pong);
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_V>(eventIDMte3ToVPing);
         GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_V>(eventIDMte3ToVPong);
     }
@@ -271,6 +277,9 @@ private:
     int64_t dichotomyAddLastNum;
     float eps;
     float reduceScale;
+    bool isFirstNormalizeCall{true};
+    bool isLastNormalizeCall{false};
+    bool isTailCallSingleChunk{false};
 
     LocalTensor<T1> xTensor;
     LocalTensor<T2> gammaTensor;

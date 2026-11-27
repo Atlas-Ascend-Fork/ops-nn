@@ -51,6 +51,8 @@ public:
         uint32_t numPerCoreTail = numPerCore % innerNumPerCore == 0 ? innerNumPerCore : numPerCore % innerNumPerCore;
         uint32_t numPerCoreOneLoop = innerNumPerCore;
         event_t eventIdMte3ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_V));
+        // 跨循环持有EventId
+        auto eventIDMte3ToMte2 = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE3_MTE2>());
         for (uint64_t i = 0; i < numPerCoreLoop; i++) {
             if (i > 0) {
                 WaitFlag<HardEvent::MTE3_V>(eventIdMte3ToV);
@@ -58,30 +60,31 @@ public:
             if (i == numPerCoreLoop - 1) {
                 numPerCoreOneLoop = numPerCoreTail;
             }
-            CalNormalize(i * innerNumPerCore, numPerCoreOneLoop);
+            isLastNormalizeCall = (i == numPerCoreLoop - 1);
+            CalNormalize(i * innerNumPerCore, numPerCoreOneLoop, eventIDMte3ToMte2);
             ProcessMeanAndRstd<T1>(meanTensor, meanOutTensor, meanGm, rstdTensor, rstdOutTensor, rstdGm,
                                    blockIdx * tiling->numPerCore + i * innerNumPerCore, numPerCoreOneLoop);
             if (i < numPerCoreLoop - 1) {
                 SetFlag<HardEvent::MTE3_V>(eventIdMte3ToV);
             }
         }
+        GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_MTE2>(eventIDMte3ToMte2);
     }
 
 private:
-    __aicore__ inline void CalNormalize(uint64_t offset, uint32_t curNumPerCore)
+    __aicore__ inline void CalNormalize(uint64_t offset, uint32_t curNumPerCore, event_t eventIDMte3ToMte2)
     {
-        auto eventIDMte3ToMte2 = static_cast<event_t>(GetTPipePtr()->AllocEventID<HardEvent::MTE3_MTE2>());
         for (uint64_t i = 0; i < curNumPerCore; i++) {
-            if (i > 0) {
+            if (i > 0 || !isFirstNormalizeCall) {
                 WaitFlag<HardEvent::MTE3_MTE2>(eventIDMte3ToMte2);
             }
             CalMeanAndRstdByWelford(offset + i, i);
             NormalizeAndSwish(offset + i, i);
-            if (i < curNumPerCore - 1) {
+            if (i < curNumPerCore - 1 || !isLastNormalizeCall) {
                 SetFlag<HardEvent::MTE3_MTE2>(eventIDMte3ToMte2);
             }
         }
-        GetTPipePtr()->ReleaseEventID<HardEvent::MTE3_MTE2>(eventIDMte3ToMte2);
+        isFirstNormalizeCall = false;
     }
 
     __aicore__ inline void CalMeanAndRstdByWelford(uint64_t curNumPerCore, uint64_t curInnerNumPerCore)
@@ -421,6 +424,8 @@ private:
     int64_t dichotomyAddK;
     int64_t dichotomyAddLastNum;
     float eps;
+    bool isFirstNormalizeCall{true};
+    bool isLastNormalizeCall{false};
 
     int64_t count{0};
 
