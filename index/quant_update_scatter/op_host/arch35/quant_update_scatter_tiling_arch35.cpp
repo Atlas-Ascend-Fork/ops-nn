@@ -319,6 +319,16 @@ ge::graphStatus QuantUpdateScatterRegbaseTiling::GetTilingParam()
     return ge::GRAPH_SUCCESS;
 }
 
+// 校验输入描述符非空并提取数据类型及其字节宽度
+ge::graphStatus QuantUpdateScatterRegbaseTiling::ExtractInputDtype(const gert::CompileTimeTensorDesc* desc,
+                                                                   ge::DataType& dtype, int64_t& dtypeSize)
+{
+    OP_CHECK_NULL_WITH_CONTEXT(context_, desc);
+    dtype = desc->GetDataType();
+    dtypeSize = ge::GetSizeByDataType(dtype);
+    return ge::GRAPH_SUCCESS;
+}
+
 ge::graphStatus QuantUpdateScatterRegbaseTiling::PrepareTilingParams()
 {
     // get coreNum and ubSize
@@ -356,22 +366,25 @@ ge::graphStatus QuantUpdateScatterRegbaseTiling::PrepareTilingParams()
         quantZeroPointsElements_ = quantZeroPointsShape_.GetShapeSize();
     }
 
-    // get varDtypeSize and indexDtypeSize
-    auto dataDesc = context_->GetInputDesc(INDEX_DATA);
-    varDtype_ = dataDesc->GetDataType();
-    varDtypeSize_ = ge::GetSizeByDataType(varDtype_);
-
-    auto indicesDesc = context_->GetInputDesc(INDEX_INDICES);
-    indexDtype_ = indicesDesc->GetDataType();
-    indexDtypeSize_ = ge::GetSizeByDataType(indexDtype_);
-
-    auto updateDesc = context_->GetInputDesc(INDEX_UPDATES);
-    updateDtype_ = updateDesc->GetDataType();
-    updateDtypeSize_ = ge::GetSizeByDataType(updateDtype_);
-
-    auto quantScalesDesc = context_->GetInputDesc(INDEX_QUANT_SCALES);
-    quantScalesDtype_ = quantScalesDesc->GetDataType();
-    quantScalesDtypeSize_ = ge::GetSizeByDataType(quantScalesDtype_);
+    // 校验并读取四处必填输入描述符的数据类型与字节宽度
+    struct InputDtypeBinding {
+        size_t index;
+        ge::DataType* dtype;
+        int64_t* dtypeSize;
+    };
+    const InputDtypeBinding requiredInputs[] = {
+        {INDEX_DATA, &varDtype_, &varDtypeSize_},
+        {INDEX_INDICES, &indexDtype_, &indexDtypeSize_},
+        {INDEX_UPDATES, &updateDtype_, &updateDtypeSize_},
+        {INDEX_QUANT_SCALES, &quantScalesDtype_, &quantScalesDtypeSize_},
+    };
+    for (const auto& item : requiredInputs) {
+        const ge::graphStatus status = ExtractInputDtype(context_->GetInputDesc(item.index), *item.dtype,
+                                                         *item.dtypeSize);
+        if (status != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+    }
 
     auto quantZeroPointDesc = context_->GetOptionalInputDesc(INDEX_QUANT_ZERO_POINTS);
     if (quantZeroPointDesc == nullptr) {

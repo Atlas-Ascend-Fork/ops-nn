@@ -64,6 +64,7 @@ class QuantUpdateScatterRegbaseTiling {
 public:
     explicit QuantUpdateScatterRegbaseTiling(gert::TilingContext* context) : context_(context) {};
     ge::graphStatus DoTiling();
+    ge::graphStatus ExtractInputDtype(const gert::CompileTimeTensorDesc* desc, ge::DataType& dtype, int64_t& dtypeSize);
 
 private:
     static constexpr size_t VAR_DIM = 4;

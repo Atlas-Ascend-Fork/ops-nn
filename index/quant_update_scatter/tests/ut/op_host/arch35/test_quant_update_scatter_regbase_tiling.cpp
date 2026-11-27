@@ -45,9 +45,9 @@ static void ExecuteTestCase(std::vector<ge::DataType> dtypes, gert::StorageShape
 {
     string compile_info_string = R"({
          "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
-                           "Intrinsic_fix_pipe_l0c2out": false, 
-                           "Intrinsic_data_move_l12ub": true, 
-                           "Intrinsic_data_move_l0c2ub": true, 
+                           "Intrinsic_fix_pipe_l0c2out": false,
+                           "Intrinsic_data_move_l12ub": true,
+                           "Intrinsic_data_move_l0c2ub": true,
                            "Intrinsic_data_move_out2l1_nd2nz": false,
                            "UB_SIZE": 253952, "L2_SIZE": 33554432, "L1_SIZE": 524288,
                            "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
@@ -672,4 +672,58 @@ TEST_F(QuantUpdateScatterRegBaseTiling, QuantUpdateScatter_axis_not_neg2)
     ExecuteTestCase({ge::DT_HIFLOAT8, ge::DT_INT32, ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32, ge::DT_HIFLOAT8},
                     varShape, indicesShape, updatesShape, scalesShape, zeroPointsShape, outShape, reduce, axis,
                     quant_axis, reciprocal_scale, round_mode, ge::GRAPH_SUCCESS);
+}
+
+// 直接验证 ExtractInputDtype 对空描述符与有效输入描述符的处理逻辑
+TEST_F(QuantUpdateScatterRegBaseTiling, QuantUpdateScatter_extract_input_dtype_null_desc)
+{
+    gert::StorageShape varShape = {{24, 4096, 128}, {24, 4096, 128}};
+    gert::StorageShape indicesShape = {{24}, {24}};
+    gert::StorageShape updatesShape = {{24, 1, 128}, {24, 1, 128}};
+    gert::StorageShape scalesShape = {{128}, {128}};
+    gert::StorageShape zeroPointsShape = {{128}, {128}};
+    gert::StorageShape outShape = {{24, 4096, 128}, {24, 4096, 128}};
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+    optiling::QuantUpdateScatterCompileInfo compile_info{};
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holder = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holder.get());
+    ASSERT_NE(param, nullptr);
+
+    std::string op_type("QuantUpdateScatter");
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(5, 1)
+                      .IrInstanceNum({1, 1, 1, 1, 1})
+                      .InputShapes({&varShape, &indicesShape, &updatesShape, &scalesShape, &zeroPointsShape})
+                      .OutputShapes({&outShape})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_BF16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_INT8, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"reduce", Ops::NN::AnyValue::CreateFrom<string>("update")},
+                                  {"axis", Ops::NN::AnyValue::CreateFrom<int64_t>(-2)},
+                                  {"quant_axis", Ops::NN::AnyValue::CreateFrom<int64_t>(-1)},
+                                  {"reciprocal_scale", Ops::NN::AnyValue::CreateFrom<bool>(false)},
+                                  {"round_mode", Ops::NN::AnyValue::CreateFrom<string>("rint")}})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tiling_context, nullptr);
+
+    optiling::QuantUpdateScatterRegbaseTiling tiling(tiling_context);
+    ge::DataType dtype = ge::DT_UNDEFINED;
+    int64_t dtypeSize = 0;
+    EXPECT_EQ(tiling.ExtractInputDtype(nullptr, dtype, dtypeSize), ge::GRAPH_FAILED);
+    EXPECT_EQ(tiling.ExtractInputDtype(tiling_context->GetInputDesc(0), dtype, dtypeSize), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(dtype, ge::DT_INT8);
+    EXPECT_GT(dtypeSize, 0);
 }
