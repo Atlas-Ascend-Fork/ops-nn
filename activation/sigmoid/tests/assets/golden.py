@@ -36,13 +36,13 @@ def sigmoid_golden(x, **kwargs):
         Output tensor
     """
     input_dtype = x.dtype
-    if input_dtype.name in ("bfloat16",):
+    if input_dtype.name in ("bfloat16", "float16"):
         x = x.astype("float32")
     tensor_neg = x * (-1)
     tensor_exp = np.exp(tensor_neg)
     tensor_add = tensor_exp + 1
     res = 1 / tensor_add
-    return res.astype(input_dtype, copy=False)
+    return np.asarray(res, dtype=input_dtype)
 
 
 def aclnn_inplace_sigmoid_golden(selfRef, **kwargs):
