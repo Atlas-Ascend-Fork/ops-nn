@@ -223,6 +223,7 @@ aclnnStatus aclnnSwish(
 
 ## 约束说明
 
+- BF16/FP16输出保留Inf/NaN（输出转换非饱和语义），限beta不为0的计算路径（betaOptional为空指针时按1.0处理）；beta=0（SwishZero路径）的输出转换未做饱和保证，其行为受运行时全局饱和配置影响。
 - 确定性计算：
   - aclnnSwish默认确定性实现。
 

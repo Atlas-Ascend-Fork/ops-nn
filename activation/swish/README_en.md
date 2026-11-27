@@ -73,7 +73,7 @@ English | [简体中文](./README.md)
 
 ## Constraints
 
-None
+- BF16/FP16 outputs preserve Inf/NaN (output conversion is non-saturating) on the paths where scale is not 0; no saturation guarantee is provided for the output conversion on the scale=0 (SwishZero) path, whose behavior is subject to the runtime global saturation configuration.
 
 ## Invocation Description
 

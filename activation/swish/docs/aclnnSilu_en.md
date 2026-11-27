@@ -208,6 +208,7 @@ aclnnStatus aclnnSilu(
 
 ## Constraints
 
+- BF16/FP16 outputs preserve Inf/NaN (output conversion is non-saturating).
 - Deterministic computation:
   - aclnnSilu defaults to a deterministic implementation.
 

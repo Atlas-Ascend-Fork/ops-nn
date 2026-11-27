@@ -225,6 +225,7 @@ aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../
 
 ## Constraints
 
+- BF16/FP16 outputs preserve Inf/NaN (output conversion is non-saturating) on the paths where beta is not 0 (a null betaOptional is treated as 1.0); no saturation guarantee is provided for the output conversion on the beta=0 (SwishZero) path, whose behavior is subject to the runtime global saturation configuration.
 - Deterministic computation:
   - aclnnSwish defaults to a deterministic implementation.
 

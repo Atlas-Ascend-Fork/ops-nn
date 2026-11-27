@@ -206,6 +206,7 @@ aclnnStatus aclnnSilu(
 
 ## 约束说明
 
+- BF16/FP16输出保留Inf/NaN（输出转换非饱和语义）。
 - 确定性计算：
   - aclnnSilu默认确定性实现。
 

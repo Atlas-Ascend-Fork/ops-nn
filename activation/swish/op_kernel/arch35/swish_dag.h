@@ -69,6 +69,10 @@ struct SwishNegOneDagCalc : public Vec::ElemwiseBinaryOP<T, T, float> {
         } else {
             Reg::RegTensor<T, Reg::RegTraitNumOne> vregInputT;
             Reg::RegTensor<T, Reg::RegTraitNumOne> divResultT;
+#if (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+            int64_t oriCtrl60 = AscendC::GetCtrlSpr<60, 60>();
+            AscendC::SetCtrlSpr<60, 60>(0);
+#endif
             __VEC_SCOPE__
             {
                 // 不需要cast
@@ -85,6 +89,9 @@ struct SwishNegOneDagCalc : public Vec::ElemwiseBinaryOP<T, T, float> {
                                                                     divResultT, mask);
                 }
             }
+#if (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+            AscendC::SetCtrlSpr<60, 60>(oriCtrl60);
+#endif
         }
 #endif
     }
@@ -130,6 +137,11 @@ struct SwishCalc : public Vec::ElemwiseBinaryOP<T, T, float> {
         } else {
             Reg::RegTensor<T, Reg::RegTraitNumOne> vregInputT;
             Reg::RegTensor<T, Reg::RegTraitNumOne> divResultT;
+            // 切单指令饱和模式使输出Cast的NO_SAT生效，免疫全局CTRL[48]漂移
+#if (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+            int64_t oriCtrl60 = AscendC::GetCtrlSpr<60, 60>();
+            AscendC::SetCtrlSpr<60, 60>(0);
+#endif
             __VEC_SCOPE__
             {
                 // 不需要cast
@@ -148,6 +160,9 @@ struct SwishCalc : public Vec::ElemwiseBinaryOP<T, T, float> {
                                                                     divResultT, mask);
                 }
             }
+#if (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201 || __NPU_ARCH__ == 9202)
+            AscendC::SetCtrlSpr<60, 60>(oriCtrl60);
+#endif
         }
 #endif
     }
