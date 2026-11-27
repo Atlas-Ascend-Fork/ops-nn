@@ -31,7 +31,7 @@
   y = \operatorname{RmsNorm}(x)=\frac{x}{\operatorname{Rms}(\mathbf{x})}\cdot gamma + beta, \quad \text { where } \operatorname{Rms}(\mathbf{x})=\sqrt{\frac{1}{n} \sum_{i=1}^n x_i^2+epsilon}
   $$
 
-  - 若smoothScalesOptional不输入，则直接对rmsnorm输出做量化：
+  - 若smoothScalesOptional不输入，则直接对RmsNorm输出做量化：
 
   $$
    scaleOut=row\_max(abs(y))/max\_val
@@ -112,7 +112,7 @@ aclnnStatus aclnnRmsNormDynamicQuant(
     <tr>
       <td>x（const aclTensor*）</td>
       <td>输入</td>
-      <td>表示标准化过程中的源数据张量。对应公式中的x。</td>
+      <td>表示归一化过程中的源数据张量。对应公式中的x。</td>
       <td>不支持空Tensor。</td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -122,7 +122,7 @@ aclnnStatus aclnnRmsNormDynamicQuant(
     <tr>
       <td>gamma（const aclTensor*）</td>
       <td>输入</td>
-      <td>表示标准化过程中的权重张量。对应公式中的gamma。</td>
+      <td>表示归一化过程中的权重张量。对应公式中的gamma。</td>
       <td><ul><li>不支持空Tensor。</li><li>数据类型需要与x保持一致。</li><li>shape需要与x最后一维一致。</li></ul></td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -142,7 +142,7 @@ aclnnStatus aclnnRmsNormDynamicQuant(
     <tr>
       <td>betaOptional（const aclTensor*）</td>
       <td>输入</td>
-      <td>表示标准化过程中的偏置项。对应公式中的beta。</td>
+      <td>表示归一化过程中的偏置项。对应公式中的beta。</td>
       <td><ul><li>不支持空Tensor。</li><li>可选参数，支持传入空指针。</li><li>shape和数据类型需要与gamma保持一致。</li></ul></td>
       <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -247,7 +247,7 @@ aclnnStatus aclnnRmsNormDynamicQuant(
     <tr>
       <td rowspan="2">ACLNN_ERR_INNER_TILING_ERROR</td>
       <td rowspan="2">561002</td>
-      <td>输入或输出的shape不匹配或者不在支持的维度范围内，或epsilon、dstType等输入属性不在取值范围（详见参数说明）。</td>
+      <td>输入或输出的shape不匹配或者不在支持的维度范围内，或epsilon、dstType等输入属性不在取值范围内（详见参数说明）。</td>
     </tr>
     <tr>
       <td>输入或输出为空Tensor（不支持空Tensor，详见参数说明）。</td>
@@ -295,7 +295,7 @@ aclnnStatus aclnnRmsNormDynamicQuant(
 
 - **返回值**
 
-  aclnnStatus：返回状态码。（具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)）
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 

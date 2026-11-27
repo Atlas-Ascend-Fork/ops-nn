@@ -187,7 +187,7 @@ aclnnStatus aclnnLSTM(
       <tr>
       <td>batchSizes</td>
       <td>可选输入</td>
-      <td>表示每个时间步实际参与计算的有效Batch数。传入nullptr时，代表输入input为定长模式数据，否则为不定长模式。</td>
+      <td>表示每个时间步实际参与计算的有效Batch数。传入nullptr时，代表输入input为非packed输入，否则为变长输入。</td>
       <td>shape为(time_step,)。其中元素应按降序排列，元素值为正整数且最大不超过总Batch数量，且第一位元素值应与总Batch数量相等。</td>
       <td>INT64</td>
       <td>ND</td>
@@ -197,7 +197,7 @@ aclnnStatus aclnnLSTM(
       <tr>
       <td>hasBias</td>
       <td>输入</td>
-      <td>表示是否有biases。</td>
+      <td>表示是否有偏置。</td>
       <td>-</td>
       <td>BOOL</td>
       <td>-</td>
@@ -277,7 +277,7 @@ aclnnStatus aclnnLSTM(
     <tr>
       <td>cy</td>
       <td>输出</td>
-      <td>表示进行LSTM运算中每层最后一个时间步的Cell状态（公式（5）的输出）。</td>
+      <td>表示进行LSTM运算中每层最后一个时间步的cell状态（公式（5）的输出）。</td>
       <td>shape支持三维（D * num_layers, batch_size, hidden_size）</td>
       <td>FLOAT16、FLOAT32、BFLOAT16</td>
       <td>ND</td>
@@ -337,7 +337,7 @@ aclnnStatus aclnnLSTM(
       <tr>
       <td>cOut</td>
       <td>输出</td>
-      <td>表示进行LSTM运算中每层每个时间步的Cell状态（公式（5）的输出）。</td>
+      <td>表示进行LSTM运算中每层每个时间步的cell状态（公式（5）的输出）。</td>
       <td>train=True时为必选输出列表，长度为D * num_layers；每个张量shape为（time_step, batch_size, hidden_size），与input同dtype，始终为time-first。train=False时不写入。</td>
       <td>FLOAT16、FLOAT32、BFLOAT16</td>
       <td>ND</td>
@@ -464,7 +464,7 @@ aclnnStatus aclnnLSTM(
 
 - **返回值：**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 

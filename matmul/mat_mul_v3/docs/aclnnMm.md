@@ -148,23 +148,23 @@ aclnnStatus aclnnMm(
 
   <!-- npu="910,310p" id7 -->
   - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：
-    - 不支持BFLOAT16数据类型；
-    - 当输入数据类型为FLOAT32时不支持cubeMathType=0；
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理；
+    - 不支持BFLOAT16数据类型。
+    - 当输入数据类型为FLOAT32时不支持cubeMathType=0。
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理。
     - 不支持cubeMathType=3。
     - cubeMathType=4时不做处理。
   <!-- end id7 -->
   <!-- npu="A3,910b" id8 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项。
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
     - cubeMathType=4，当输入数据类型为FLOAT32且k轴大于2048时，会使用分组累加进行计算，当输入为其他数据类型或k轴小于2048时不做处理。
   <!-- end id8 -->
   <!-- npu="950" id9 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项。
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
     - cubeMathType=4，当输入数据类型为FLOAT32时，会使用vector核进行计算以提升结果精度（该方式在部分场景下可能导致算子性能下降）。
 
@@ -265,7 +265,7 @@ aclnnStatus aclnnMm(
 
 ## 约束说明
 
-- 确定性说明:
+- 确定性说明：
 
   <!-- npu="950,910,310p" id10 -->
   - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>、<term>Ascend 950PR&950DT系列产品</term>：aclnnMm默认确定性实现。
@@ -277,7 +277,7 @@ aclnnStatus aclnnMm(
   - 当self和mat2的数据类型同为FLOAT16或同为BFLOAT16，且out的数据类型为FLOAT32时，乘加结果使用FLOAT32累加，并将最终结果以FLOAT32写入out。
 
 <!-- end id11 -->
-- 计算一致性说明
+- 计算一致性说明：
 
   <!-- npu="910,310p" id12 -->
   - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：

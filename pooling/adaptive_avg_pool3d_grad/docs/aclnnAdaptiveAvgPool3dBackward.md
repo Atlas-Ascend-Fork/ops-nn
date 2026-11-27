@@ -160,7 +160,7 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
         <td>gradOutput、self和out数据类型不一致。</td>
       </tr>
       <tr>
-        <td>gradOutput、self和out的维数不等于4或5。</td>
+        <td>gradOutput、self和out的维度不等于4或5。</td>
       </tr>
       <tr>
         <td>out的shape与self不匹配。</td>
@@ -176,7 +176,7 @@ aclnnStatus aclnnAdaptiveAvgPool3dBackward(
       </tr>
     </tbody>
     </table>
-    Ascend 950PR&950DT系列产品: gradOutput，self的shape，N轴取值可以为0
+    Ascend 950PR&950DT系列产品：gradOutput、self的shape的N轴取值可以为0。
 
 ## aclnnAdaptiveAvgPool3dBackward
 

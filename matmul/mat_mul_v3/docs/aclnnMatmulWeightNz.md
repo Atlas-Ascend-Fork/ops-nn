@@ -155,13 +155,13 @@ aclnnStatus aclnnMatmulWeightNz(
 
   <!-- npu="A3,910b,310p" id7 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>、<term>Atlas推理系列产品</term>：
-    - 调用此接口之前，必须使用aclnnTransMatmulWeight接口完成mat2的原始输入Format从ND到NZ格式的转换。
+    - 调用此接口之前，必须使用aclnnTransMatmulWeight接口完成mat2的原始输入Format从ND到NZ格式的转换
     - 当mat2的数据类型为FLOAT32时，aclnnTransMatmulWeight不支持该数据类型的转换（第一段返回161002），需改用aclnnNpuFormatCast接口完成mat2从ND到NZ格式的转换。
-    - cubeMathType=4，当输入数据类型为FLOAT32且k轴大于2048时，会使用分组累加进行计算，当输入为其他数据类型或k轴小于2048时不做处理。
+    - cubeMathType=4，当输入数据类型为FLOAT32且k轴大于2048时，会使用分组累加进行计算，当输入为其他数据类型或k轴小于2048时不做处理
   <!-- end id7 -->
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-    - 调用此接口之前，必须使用aclnnNpuFormatCast接口完成mat2的原始输入Format从ND到NZ格式的转换。
+    - 调用此接口之前，必须使用aclnnNpuFormatCast接口完成mat2的原始输入Format从ND到NZ格式的转换
     - 不支持cubeMathType为1：ALLOW_FP32_DOWN_PRECISION的选项
     - 不支持cubeMathType为3：USE_HF32的选项
     - 不支持cubeMathType为4：USE_FP32_ADD的选项
@@ -270,7 +270,7 @@ aclnnStatus aclnnMatmulWeightNz(
   - 当self和mat2的数据类型同为FLOAT16或同为BFLOAT16，且out的数据类型为FLOAT32时，乘加结果使用FLOAT32累加，并将最终结果以FLOAT32写入out。
 
 <!-- end id10 -->
-- 计算一致性说明
+- 计算一致性说明。
 
   <!-- npu="910,310p" id11 -->
   - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：
@@ -281,7 +281,7 @@ aclnnStatus aclnnMatmulWeightNz(
   <!-- end id11 -->
 
 - 不支持两个输入分别为BFLOAT16和FLOAT16的数据类型推导。
-- self只支持2维, mat2只支持昇腾私有格式，调用此接口之前，必须完成mat2从ND到昇腾私有格式的转换。
+- self只支持2维, mat2只支持NZ格式（昇腾私有格式），调用此接口之前，必须完成mat2从ND到NZ格式的转换。
 - 不支持mat2最后两根轴其中一根轴为1，即k=1或者n=1。
 
 <!-- npu="310p" id12 -->

@@ -25,9 +25,9 @@
 
 - 接口功能：
 
-输入 `x` 支持按 `groupListOptional` 分组（不传 `groupListOptional` 时整个 tensor 视为单组，即 Per-Tensor），对每组求 `|x|` 的最大值 `amax`，并输出量化结果 `y`。 `amax` 为必选输出。传入 `xScaleOptional`时为静态量化；不传时为动态量化。静态量化不输出 `yScaleOutOptional`（传 `nullptr`）；动态量化时输出 `yScaleOutOptional`（shape 为 `[numGroups]`，Per-Tensor 为 `[1]`）。
+输入 `x` 支持按 `groupListOptional` 分组（不传 `groupListOptional` 时整个 tensor 视为单组，即 Per-Tensor），对每组求 `|x|` 的最大值 `amax`，并输出量化结果 `y`。`amax` 为必选输出。传入 `xScaleOptional`时为静态量化；不传时为动态量化。静态量化不输出 `yScaleOutOptional`（传 `nullptr`）；动态量化时输出 `yScaleOutOptional`（shape 为 `[numGroups]`，Per-Tensor 为 `[1]`）。
 
-相较于 `aclnnGroupedQuantMax`，V2接口支持"scale系数可选、grouplist分组可选、动态量化输出 `yScale`"三项能力，`amax` 升级为必选输出，并新增属性 `dstTypeMax`。
+相较于 `aclnnGroupedQuantMax`，V2接口支持"scale系数可选、groupList分组可选、动态量化输出 `yScale`"三项能力，`amax` 升级为必选输出，并新增属性 `dstTypeMax`。
 
 本算子支持静态量化与动态量化两种模式、Per-Group 与 Per-Tensor（不传 groupListOptional 时 Per-Group 退化为单组）两类实现，其组合关系如下：
 
@@ -73,7 +73,7 @@
 
 - 计算公式：
 
-  `groupListOptional` 沿 dim-0 将 `x` 切分为 `numGroups`（记 `G`）组，`groupList[g]` 为前 `g+1` 组在 dim-0 上的累计结束位置（cumsum 语义）。对每个 group（`g = 0, 1, …, G-1`）：
+  `groupListOptional` 沿 dim-0 将 `x` 切分为 `numGroups`（记 `G`）组，`groupList[g]` 为前 `g+1` 组在 dim-0 上的累计结束位置（cumsum 语义）。对每个 group（`g = 0, 1, ..., G-1`）：
 
   $$
   x_g = x\left[\,groupList[g-1] : groupList[g],\ \ldots\,\right] \qquad(\ g = 0\ \text{时下界为}\ 0\ )
@@ -184,8 +184,8 @@ aclnnStatus aclnnQuantMaxV2(
       <tr>
         <td>groupListOptional（aclTensor*）</td>
         <td>可选输入</td>
-        <td>表示输入x在0轴上每个group的偏移（cumsum模式），对应公式中group_list。</td>
-        <td><ul><li>表示量化分组的累计结束位置，要求每个值在 <code>[0, x.shape[0]]</code> 范围内、非递减（允许相等，即空 group），且最后一个数必须与x的0轴大小相等；与V1一致，该数值约束由调用方保证，aclnn C接口与PyTorch接口（<code>cann_ops_nn.quant_max</code>）均不做校验（避免同步D2H开销），违反约束的结果未定义。</li></ul><ul><li><code>nullptr</code>：表示Per-Tensor（整个tensor视为单组）。</li></ul><ul><li>非<code>nullptr</code>：表示Per-Group。</li></ul><ul><li>shape为[num_groups]，num_groups取值范围为1-384。</li></ul><ul><li>不支持空Tensor。</li></ul></td>
+        <td>表示输入x在0轴上每个group的偏移（cumsum模式），对应公式中groupList。</td>
+        <td><ul><li>表示量化分组的累计结束位置，要求每个值在 <code>[0, x.shape[0]]</code> 范围内、非递减（允许相等，即空 group），且最后一个数必须与x的0轴大小相等；与V1一致，该数值约束由调用方保证，aclnn C接口与PyTorch接口（<code>cann_ops_nn.quant_max</code>）均不做校验（避免同步D2H开销），违反约束的结果未定义。</li></ul><ul><li><code>nullptr</code>：表示Per-Tensor（整个tensor视为单组）。</li></ul><ul><li>非<code>nullptr</code>：表示Per-Group。</li></ul><ul><li>shape为[numGroups]，numGroups取值范围为1-384。</li></ul><ul><li>不支持空Tensor。</li></ul></td>
         <td>INT64</td>
         <td>ND</td>
         <td>1</td>
@@ -215,7 +215,7 @@ aclnnStatus aclnnQuantMaxV2(
         <td>dstTypeMax（float）</td>
         <td>输入</td>
         <td>表示目标类型的最大有限值。</td>
-        <td><ul><li>默认值 <code>15.0</code>，取值范围 <code>0 ~ 32768</code>。</li></ul><ul><li>仅 Dynamic 模式生效（Static 模式下不参与系数计算）。</li></ul></td>
+        <td><ul><li>默认值 <code>15.0</code>，取值范围 <code>0 ~ 32768</code>。</li></ul><ul><li>仅动态量化模式生效（静态量化模式下不参与系数计算）。</li></ul></td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -370,7 +370,7 @@ aclnnStatus aclnnQuantMaxV2(
       <tr>
         <td>stream</td>
         <td>输入</td>
-        <td>指定执行任务的AscendCL Stream流。</td>
+        <td>指定执行任务的Stream。</td>
       </tr>
     </tbody></table>
 

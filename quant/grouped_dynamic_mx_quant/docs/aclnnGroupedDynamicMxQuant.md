@@ -26,7 +26,7 @@
 - 接口功能：根据传入的分组索引的起始值，对传入的数据进行分组的float8的动态量化。
 
 - 计算公式：
-  - 将输入x在第0维上先按照groupIndex进行分组，每个group内按k = blocksize个数分组，一组k个数 $\{\{x_i\}_{i=1}^{k}\}$ 计算出这组数对应的量化尺度mxscale_pre, $\{mxscale\_pre, \{P_i\}_{i=1}^{k}\}$，计算公式为下面公式(1)(2)。
+  - 将输入x在第0维上先按照groupIndex进行分组，每个group内按k = blocksize个数分组，一组k个数 $\{\{x_i\}_{i=1}^{k}\}$ 计算出这组数对应的量化尺度mxscale_pre，$\{mxscale\_pre, \{P_i\}_{i=1}^{k}\}$，计算公式为下面公式(1)(2)。
   $$
   shared\_exp = floor(log_2(max_i(|V_i|))) - emax  \tag{1}
   $$
@@ -40,7 +40,7 @@
 
    量化后的$P_i$按对应的$x_i$的位置组成输出y，mxscale_pre按对应的groupIndex分组，分组内第一个维度pad为偶数，组成输出mxscale。
 
-  - emax: 对应数据类型的最大正则数的指数位。
+  - emax: 对应数据类型的最大正规数的指数位。
 
     |   DataType    | emax |
     | :-----------: | :--: |
@@ -118,7 +118,7 @@ aclnnStatus aclnnGroupedDynamicMxQuant(
       <td>√</td>
     </tr>
     <tr>
-      <td>roundMode（char*）</td>
+      <td>roundMode (char*)</td>
       <td>输入</td>
       <td>公式中的round_mode，数据转换的模式。</td>
       <td>仅支持"rint"模式。</td>

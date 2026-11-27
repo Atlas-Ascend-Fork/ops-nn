@@ -24,12 +24,12 @@
 ## 功能说明
 
 - 接口功能：
-  * 对于输入信号的输入通道，提供2维（H，W维度）最大池化（max pooling）操作，输出池化后的值out和索引indices。
-  * 输入dims的描述：N - 批次，C - 通道，D - 深度，W - 宽度，H - 高度。
+  * 对于输入信号的输入通道，提供2维（H、W维度）最大池化（max pooling）操作，输出池化后的值out和索引indices。
+  * 输入dims的描述：N - 批次、C - 通道、D - 深度、W - 宽度、H - 高度。
 
 - 计算公式：
 
-  - output tensor中每个元素的计算公式：
+  - out tensor中每个元素的计算公式：
 
     $$
     out(N_j, C_j, h, w) = \max\limits_{{m\in[0,k_{H}-1],n\in[0,k_{W}-1]}}input(N_i,C_j,stride[0]\times h + m, stride[1]\times w + n)
@@ -108,7 +108,7 @@ aclnnStatus aclnnMaxPool2dWithIndices(
     <td>待计算张量。</td>
     <td>-</td>
     <td>BFLOAT16、FLOAT16、FLOAT32</td>
-    <td>NCHW，NHWC、ND</td>
+    <td>NCHW、NHWC、ND</td>
     <td>3-4</td>
     <td>√</td>
   </tr>
@@ -168,7 +168,7 @@ aclnnStatus aclnnMaxPool2dWithIndices(
     <td>输出的tensor，池化后的结果。</td>
     <td>shape由上述公式推导出。数据格式和数据类型与self保持一致</td>
     <td>BFLOAT16、FLOAT16、FLOAT32</td>
-    <td>NCHW，NHWC、ND</td>
+    <td>NCHW、NHWC、ND</td>
     <td>3-4</td>
     <td>√</td>
   </tr>
@@ -178,7 +178,7 @@ aclnnStatus aclnnMaxPool2dWithIndices(
     <td>最大值的索引位置组成的Tensor。</td>
     <td>shape与out一致。</td>
     <td>INT32、INT64</td>
-    <td>NCHW，NHWC、ND</td>
+    <td>NCHW、NHWC、ND</td>
     <td>3-4</td>
     <td>√</td>
   </tr>
@@ -261,7 +261,7 @@ aclnnStatus aclnnMaxPool2dWithIndices(
       <td>padding的长度不等于1或2。</td>
     </tr>
     <tr>
-      <td>padding的数值中存在小于0或者大于kernelSize/2</td>
+      <td>padding的数值中存在小于0或者大于kernelSize/2的值</td>
     </tr>
     <tr>
       <td>dilation的长度不等于1或2。</td>

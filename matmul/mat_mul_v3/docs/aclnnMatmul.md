@@ -23,8 +23,8 @@
 
 ## 功能说明
 
-- 接口功能：完成张量self与张量mat2的矩阵乘计算。（支持1维到6维作为输入的矩阵乘）。
-  相似接口有aclnnMm（支持2维Tensor作为输入的矩阵乘）和aclnnBatchMatmul（仅支持3维的矩阵乘，其中第1维为batch）。
+- 接口功能：完成张量self与张量mat2的矩阵乘计算（支持1维到6维作为输入的矩阵乘）。
+  相似接口有aclnnMm（支持2维张量作为输入的矩阵乘）和aclnnBatchMatmul（仅支持3维的矩阵乘，其中第1维为batch）。
   <!-- npu="A3,910b" id14 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：支持1维到8维作为输入的矩阵乘。
   <!-- end id14 -->
@@ -153,24 +153,24 @@ aclnnStatus aclnnMatmul(
 
   <!-- npu="910,310p" id7 -->
   - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：
-    - 不支持BFLOAT16数据类型；
-    - 当输入数据类型为FLOAT32时不支持cubeMathType=0；
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理；
+    - 不支持BFLOAT16数据类型。
+    - 当输入数据类型为FLOAT32时不支持cubeMathType=0。
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理。
     - 不支持cubeMathType=3。
     - cubeMathType=4时不做处理。
   <!-- end id7 -->
   <!-- npu="A3,910b" id8 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项。
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
     - cubeMathType=4，当输入数据类型为FLOAT32且k轴大于2048时，会使用分组累加进行计算，当输入为其他数据类型或k轴小于2048时不做处理。
     - 支持1维到8维作为输入的矩阵乘。
   <!-- end id8 -->
   <!-- npu="950" id9 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+    - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项。
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
     - cubeMathType=4，当输入数据类型为FLOAT32且shape为2D时，会使用vector核进行计算以提升结果精度（该方式在部分场景下可能导致算子性能下降）。
 
@@ -269,7 +269,7 @@ aclnnStatus aclnnMatmul(
 
   <!-- end id11 -->
 
-- 计算一致性说明
+- 计算一致性说明。
 
   <!-- npu="910,310p" id12 -->
   - <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>：
@@ -291,7 +291,7 @@ aclnnStatus aclnnMatmul(
   - 当`self`为一维`(K)`时，计算时按逻辑shape`(1, K)`参与矩阵乘，输出会移除该补齐的M维。
   - 当`mat2`为一维`(K)`时，计算时按逻辑shape`(K, 1)`参与矩阵乘，输出会移除该补齐的N维。
   - 两个输入均为一维`(K)`时，输出为标量；Reduce维K必须相等。
-  - 对其余场景，先对除最后两维外的batch维按broadcast规则对齐，再按上述规则移除因一维输入补齐的维度。
+  - 对于其余场景，先对除最后两维外的batch维按broadcast规则对齐，再按上述规则移除因一维输入补齐的维度。
   - 例如：`(K) @ (K, N) -> (N)`、`(M, K) @ (K) -> (M)`、`(B, M, K) @ (K, N) -> (B, M, N)`。
 
 ## 调用示例

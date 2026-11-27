@@ -25,12 +25,12 @@
 
 * 算子功能：
   * 对于输入信号的输入通道，提供3维最大池化（Max pooling）操作，输出池化后的值out和索引indices。
-  * 输入dims的描述：N - 批次，C - 通道，D - 深度，W - 宽度，H - 高度。
-  * 当D *H* W超过int32时，建议在模型尺寸上分割D轴。
+  * 输入dims的描述：N - 批次，C - 通道，D - 深度，H - 高度，W - 宽度。
+  * 当D*H*W超过int32时，建议在模型尺寸上分割D轴。
 
 * 计算公式：
 
-  * output tensor中每个元素的计算公式：
+  * out tensor中每个元素的计算公式：
 
     $$
     out(N_i, C_j, d, h, w) = \max\limits_{{k\in[0,k_{D}-1],m\in[0,k_{H}-1],n\in[0,k_{W}-1]}}input(N_i,C_j,stride[0]\times d + k, stride[1]\times h + m, stride[2]\times w + n)
@@ -166,7 +166,7 @@ aclnnStatus aclnnMaxPool3dWithArgmax(
     <tr>
       <td>out</td>
       <td>输出</td>
-      <td>输出的tensor，池化后的结果。</td>
+      <td>输出的Tensor，池化后的结果。</td>
       <td>数据类型与self保持一致。shape由上述公式推导出。</td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>NCDHW、NDHWC、ND</td>
@@ -210,7 +210,7 @@ aclnnStatus aclnnMaxPool3dWithArgmax(
 
    <!-- end id7 -->
 
-* **返回值**
+* **返回值**：
 
   aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
@@ -260,7 +260,7 @@ aclnnStatus aclnnMaxPool3dWithArgmax(
 
 ## aclnnMaxPool3dWithArgmax
 
-- **参数说明：**
+* **参数说明**：
   <table style="undefined;table-layout: fixed; width: 1166px"><colgroup>
   <col style="width: 173px">
   <col style="width: 133px">

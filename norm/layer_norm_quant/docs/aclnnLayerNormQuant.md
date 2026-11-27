@@ -135,7 +135,7 @@ aclnnStatus aclnnLayerNormQuant(
     <tr>
       <td>beta（aclTensor*）</td>
       <td>输入</td>
-      <td>对应LayerNorm计算公式中的beta，表示层归一化中的beta参数。对应公式中的`beta`。</td>
+      <td>表示层归一化中的beta参数。对应公式中的`beta`。</td>
       <td><ul><li>支持空Tensor。</li><li>shape和`gamma`一致。</li><li>数据类型需要与`x`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -165,7 +165,7 @@ aclnnStatus aclnnLayerNormQuant(
     <tr>
       <td>quantMode（int）</td>
       <td>输入</td>
-      <td>量化模式，用于确定融合算子融合的是静态还是动态量化算子。对应公式中的`quantMode`。取值为0（静态量化）或1（动态量化）。</td>
+      <td>量化模式，用于确定融合算子的是静态还是动态量化算子。对应公式中的`quantMode`。取值为0（静态量化）或1（动态量化）。</td>
       <td>当前仅支持取值为0。</td>
       <td>-</td>
       <td>-</td>

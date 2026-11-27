@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：LSTM（Long Short-Term Memory，长短时记忆）网络是一种特殊的循环神经网络（RNN）模型。进行LSTM网络计算，接收输入序列和初始状态，返回输出序列和最终状态。相比[aclnnBidirectionLSTM](../../bidirection_lstm/docs/aclnnBidirectionLSTM.md)新增了Sequence不等长场景。
+- 接口功能：LSTM（Long Short-Term Memory，长短期记忆）网络是一种特殊的循环神经网络（RNN）模型。进行LSTM网络计算，接收输入序列和初始状态，返回输出序列和最终状态。相比[aclnnBidirectionLSTM](../../bidirection_lstm/docs/aclnnBidirectionLSTM.md)新增了Sequence不等长场景。
 - 计算公式：
 
   $$
@@ -113,7 +113,7 @@ aclnnStatus aclnnBidirectionLSTMV2(
       <td>x（aclTensor*）</td>
       <td>输入</td>
       <td>LSTM单元的输入向量，公式中的x。</td>
-      <td><ul><li>支持空Tensor。</li><li>当参数packed为false时，shape支持三维（time_step, batch_size, input_size）</li><li>当参数packed为true时，shape支持二维（total_batch_size, input_size）。其中，`time_step`表示时间维度；`batch_size`表示每个时刻需要处理的batch数量；`input_size`表示输入的特征数量；`total_batch_size`表示每个时刻的batch数量不对齐时所有时刻的总batch数量。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>当参数packed为false时，shape支持三维（time_step, batch_size, input_size）。</li><li>当参数packed为true时，shape支持二维（total_batch_size, input_size）。其中，`time_step`表示时间维度；`batch_size`表示每个时刻需要处理的batch数量；`input_size`表示输入的特征数量；`total_batch_size`表示每个时刻的batch数量不对齐时所有时刻的总batch数量。</li></ul></td>
       <td>FLOAT16</td>
       <td>ND</td>
       <td>3</td>
@@ -143,7 +143,7 @@ aclnnStatus aclnnBidirectionLSTMV2(
       <td>wIh（aclTensor*）</td>
       <td>输入</td>
       <td>input-hidden权重，公式中的W。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape支持二维（4 * hidden_size, input_size）。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape支持二维（4 * hidden_size, hidden_size）。</li></ul></td>
       <td>FLOAT16</td>
       <td>ND</td>
       <td>2</td>
@@ -162,7 +162,7 @@ aclnnStatus aclnnBidirectionLSTMV2(
       <tr>
       <td>bIhOptional（aclTensor*）</td>
       <td>输入</td>
-      <td>input-hidden偏移，公式中的b。</td>
+      <td>input-hidden偏置，公式中的b。</td>
       <td><ul><li>支持空Tensor。</li><li>shape支持一维（4 * hidden_size）。</li></ul></td>
       <td>FLOAT16</td>
       <td>ND</td>
@@ -183,7 +183,7 @@ aclnnStatus aclnnBidirectionLSTMV2(
       <td>wIhReverseOptional（aclTensor*）</td>
       <td>输入</td>
       <td>逆向input-hidden权重，公式中的W。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape支持二维（4 * hidden_size, input_size）。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape支持二维（4 * hidden_size, hidden_size）。</li></ul></td>
       <td>FLOAT16</td>
       <td>ND</td>
       <td>2</td>
@@ -202,7 +202,7 @@ aclnnStatus aclnnBidirectionLSTMV2(
        <tr>
       <td>bIhReverseOptional（aclTensor*）</td>
       <td>输入</td>
-      <td>逆向input-hidden偏移，公式中的b。</td>
+      <td>逆向input-hidden偏置，公式中的b。</td>
       <td><ul><li>支持空Tensor。</li><li>shape支持一维（4 * hidden_size）。</li></ul></td>
       <td>FLOAT16</td>
       <td>ND</td>

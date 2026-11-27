@@ -167,7 +167,7 @@ aclnnStatus aclnnAdaptiveMaxPool2d(
         <td>self和outputOut的数据类型不一致。</td>
       </tr>
       <tr>
-        <td>indicesOut的数据类型不为int64。</td>
+        <td>indicesOut的数据类型不为INT64。</td>
       </tr>
       <tr>
         <td>self的shape不是3维或者4维。</td>
@@ -179,7 +179,7 @@ aclnnStatus aclnnAdaptiveMaxPool2d(
         <td>outputOut和indicesOut的shape不一致。</td>
       </tr>
       <tr>
-        <td>outputSize的size大小不等于2。</td>
+        <td>outputSize的size不等于2。</td>
       </tr>
       <tr>
         <td>outputSize中元素值小于等于0。</td>

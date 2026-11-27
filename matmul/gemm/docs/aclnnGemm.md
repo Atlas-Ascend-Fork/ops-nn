@@ -23,9 +23,9 @@
 
 ## 功能说明
 
-- 算子功能：计算α 乘以A与B的乘积，再与β 和input C的乘积求和。
+- 算子功能：计算α 乘以A与B的乘积，再与β 和输入C的乘积求和。
 - 计算公式：
-  - 若transA非零，计算前会将A进行转置；同样的，若transB非零，则会将B进行转置。
+  - 若transA非零，计算前会将A进行转置；同样地，若transB非零，则会将B进行转置。
 
     $$
     out = α  (A @ B) + β  C
@@ -104,7 +104,7 @@ aclnnStatus aclnnGemm(
       <td>B</td>
       <td>输入</td>
       <td>公式中的输入B，Device侧的aclTensor。</td>
-      <td><ul><li>数据类型需要与C，A构成互相推导关系。</li>
+      <td><ul><li>数据类型需要与C、A构成互相推导关系。</li>
       <li>shape（或者转置后shape）需要满足与A相乘条件。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>ND</td>
@@ -115,7 +115,7 @@ aclnnStatus aclnnGemm(
       <td>C</td>
       <td>输入</td>
       <td>公式中的输入C，Device侧的aclTensor。</td>
-      <td><ul><li>数据类型需要与AB计算后的结果构成互相推导关系。</li>
+      <td><ul><li>数据类型需要与A@B计算后的结果构成互相推导关系。</li>
       <li>shape支持一维或二维，需要与A@B计算后的结果一致或满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>ND</td>
@@ -145,7 +145,7 @@ aclnnStatus aclnnGemm(
     <tr>
       <td>transA</td>
       <td>输入</td>
-      <td>公式中的输入transA，Host侧的整型，表示矩阵A是否需要转置，非零表示转置，A矩阵为[K,M]，零表示不需要转置，A矩阵为[M, K]。</td>
+      <td>公式中的输入transA，Host侧的整型，表示矩阵A是否需要转置，非零表示转置，A矩阵为[K, M]，零表示不需要转置，A矩阵为[M, K]。</td>
       <td>-</td>
       <td>int64_t</td>
       <td>-</td>
@@ -176,7 +176,7 @@ aclnnStatus aclnnGemm(
       <td>cubeMathType</td>
       <td>输入</td>
       <td>Host侧的整型，判断Cube单元应使用哪种计算逻辑进行运算。</td>
-      <td>如果输入的数据类型存在互推导关系，该参数默认对互推导后的数据类型进行处理。支持的枚举值如下：<ul>
+      <td>如果输入的数据类型存在互相推导关系，该参数默认对互推导后的数据类型进行处理。支持的枚举值如下：<ul>
         <li>0：KEEP_DTYPE，保持输入的数据类型进行计算。</li>
         <li>1：ALLOW_FP32_DOWN_PRECISION，允许转换输入数据类型降低精度计算。</li>
         <li>2：USE_FP16，允许转换输入数据类型至FLOAT16计算。</li>
@@ -216,16 +216,16 @@ aclnnStatus aclnnGemm(
     - B数据类型支持BFLOAT16、FLOAT16、FLOAT32。
     - C数据类型支持BFLOAT16、FLOAT16、FLOAT32。
     - out数据类型支持BFLOAT16、FLOAT16、FLOAT32。
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型为BFLOAT16时该选项不生效（按KEEP_DTYPE计算），仅打印告警；
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+    - cubeMathType=2，当输入数据类型为BFLOAT16时该选项不生效（按KEEP_DTYPE计算），仅打印告警。
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
   <!-- end id6 -->
   <!-- npu="950" id11 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
-    - cubeMathType=2，当输入数据类型为BFLOAT16时该选项不生效（按KEEP_DTYPE计算），仅打印告警；
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理。
+    - cubeMathType=2，当输入数据类型为BFLOAT16时该选项不生效（按KEEP_DTYPE计算），仅打印告警。
     - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不生效。
-    - cubeMathType=4，当输入数据类型为FLOAT16/BFLOAT16时，gemm过程会升精度计算，该情况下当前不支持输入C与matmul计算结果矩阵做broadcast；当输入数据类型为FLOAT32，并满足以下任一条件时，会使用vector核进行计算以提升结果精度（该方式在部分场景下可能导致算子性能下降）。条件1：m轴等于1或n轴等于1；条件2：A转置、B不转置。
+    - cubeMathType=4，当输入数据类型为FLOAT16/BFLOAT16时，gemm过程会升精度计算，该情况下当前不支持输入C与MatMul计算结果矩阵做broadcast；当输入数据类型为FLOAT32，并满足以下任一条件时，会使用vector核进行计算以提升结果精度（该方式在部分场景下可能导致算子性能下降）。条件1：m轴等于1或n轴等于1；条件2：A转置、B不转置。
 
   <!-- end id11 -->
   <!-- npu="910,310p" id7 -->
@@ -234,9 +234,9 @@ aclnnStatus aclnnGemm(
     - B数据类型支持FLOAT16、FLOAT32。
     - C数据类型支持FLOAT16、FLOAT32。
     - out数据类型支持FLOAT16、FLOAT32。
-    - 不支持BFLOAT16数据类型；
-    - 当输入数据类型为FLOAT32时不支持cubeMathType=0；
-    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理；
+    - 不支持BFLOAT16数据类型。
+    - 当输入数据类型为FLOAT32时不支持cubeMathType=0。
+    - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理。
     - 不支持cubeMathType=3。
 
   <!-- end id7 -->

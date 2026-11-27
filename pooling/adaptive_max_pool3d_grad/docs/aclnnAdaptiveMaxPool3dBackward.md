@@ -27,7 +27,7 @@
   正向自适应最大池化的反向传播，将梯度回填到每个自适应窗口最大值的坐标处，相同坐标处累加。
 - 正向计算公式：
   N（Batch）表示批量大小、C（Channels）表示特征图通道、D（Depth）表示特征图深度、H（Height）表示特征图高度、W（Width）表示特征图宽度。
-  对于输入self维度$[N,C,D,H,W]$，outputSize值为$[D_o,H_o,W_o]$的场景，其输出output维度为$[N,C,D_o,H_o,W_o]$，索引indices维度为$[N,C,D_o,H_o,W_o]$，相应tensor中每个元素$(l,m,n)$的计算公式如下：
+  对于输入self维度$[N,C,D,H,W]$，outputSize值为$[D_o,H_o,W_o]$的场景，其输出output维度为$[N,C,D_o,H_o,W_o]$，索引indices维度为$[N,C,D_o,H_o,W_o]$，相应Tensor中每个元素$(l,m,n)$的计算公式如下：
 
   $$
   D^{l}_{left} = \lfloor(l*D)/D_o\rfloor
@@ -142,7 +142,7 @@ aclnnStatus aclnnAdaptiveMaxPool3dBackward(
     <tr>
       <td>gradInput</td>
       <td>输出</td>
-      <td>反向输出Tensor</td>
+      <td>反向输出Tensor。</td>
       <td>shape与self保持一致。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -172,7 +172,7 @@ aclnnStatus aclnnAdaptiveMaxPool3dBackward(
   </tbody></table>
 
   <!-- npu="A3,910b" id7 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：参数`indices`的数据类型不支持INT64，
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：参数`indices`的数据类型不支持INT64。
   <!-- end id7 -->
 
 - **返回值：**

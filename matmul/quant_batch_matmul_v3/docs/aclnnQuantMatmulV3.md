@@ -119,7 +119,7 @@ aclnnStatus aclnnQuantMatmulV3(
         <td>x2（const aclTensor*）</td>
         <td>输入</td>
         <td>公式中的输入x2。</td>
-        <td><ul> <li>ND： <ul><li>支持最后两根轴转置情况下的非连续Tensor，其他场景的非连续的Tensor不支持</li> <li>在transposeX2为false时shape形如（batch，k，n），在transposeX2为true时shape形如（batch，n，k），batch可不存在，其中k与x1的shape中的k一致</li></ul> </li> <li>NZ： <ul><li>在transposeX2为true时shape形如（batch，k1，n1，n0，k0），batch可不存在，其中k0=32，n0=16，x1 shape中的k和x2 shape中的k1需要满足ceil（k / 32） = k1</li></ul> <ul><li>在transposeX2为false时shape形如（batch，n1，k1，k0，n0），batch可不存在，其中k0=16，n0=32，x1 shape中的k和x2 shape中的k1需要满足ceil（k / 16） = k1</li></ul> </li></ul></td>
+        <td><ul> <li>ND： <ul><li>支持最后两根轴转置情况下的非连续Tensor，其他场景的非连续的Tensor不支持</li> <li>在transposeX2为false时shape形如（batch，k，n），在transposeX2为true时shape形如（batch，n，k），batch可不存在，其中k与x1的shape中的k一致</li></ul> </li> <li>NZ： <ul><li>在transposeX2为true时shape形如（batch，k1，n1，n0，k0），batch可不存在，其中k0 = 32，n0 = 16，x1 shape中的k和x2 shape中的k1需要满足ceil（k / 32） = k1</li></ul> <ul><li>在transposeX2为false时shape形如（batch，n1，k1，k0，n0），batch可不存在，其中k0=16，n0=32，x1 shape中的k和x2 shape中的k1需要满足ceil（k / 16） = k1</li></ul> </li></ul></td>
         <td>INT8、INT32、INT4</td>
         <td>ND、FRACTAL_NZ</td>
         <td>2-6（ND）、4-8（NZ）</td>
@@ -169,7 +169,7 @@ aclnnStatus aclnnQuantMatmulV3(
         <td>transposeX2（bool）</td>
         <td>输入</td>
         <td>表示x2的输入shape是否包含transpose。</td>
-        <td><ul> <li>ND：在transposeX2为false时shape形如（batch，k，n）<br/>在transposeX2为true时shape形如（batch，n，k）<br/>batch可不存在，其中k与x1的shape中的k一致</li> <li>NZ： <ul> <li>在transposeX2为true时shape形如（batch，k1，n1，n0，k0），batch可不存在，其中k0 = 32，n0 = 16，x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil（k / 32） = k1</li> <li>在transposeX2为false时shape形如（batch，n1，k1，k0，n0），batch可不存在，其中k0 = 16，n0 = 32，x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil（k / 16） = k1</li> <li>false表示不转置，true表示转置；可用组合见<a href="#约束说明">约束说明</a>。</li></ul> </li> <li>false表示不转置，true表示转置；可用组合见<a href="#约束说明">约束说明</a>。</li></ul></td>
+        <td><ul> <li>ND：在transposeX2为false时shape形如（batch，k，n）<br/>在transposeX2为true时shape形如（batch，n，k）<br/>batch可不存在，其中k与x1的shape中的k一致</li> <li>NZ： <ul> <li>在transposeX2为true时shape形如（batch，k1，n1，n0，k0），batch可不存在，其中k0 = 32，n0 = 16，x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil（k / 32） = k1</li> <li>在transposeX2为false时shape形如（batch，n1，k1，k0，n0），batch可不存在，其中k0 = 16，n0 = 32，x1 shape中的k和x2 shape中的k1需要满足以下关系：ceil（k / 16） = k1</li> <li>false表示不转置，true表示转置；可用组合见<a href="#约束说明">约束说明</a>。</li></ul> </li></ul></td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
@@ -229,7 +229,7 @@ aclnnStatus aclnnQuantMatmulV3(
     - scale数据类型支持UINT64、INT64、FLOAT32、BFLOAT16
     - bias支持INT32、BFLOAT16、FLOAT32
     - out支持FLOAT16、INT8、BFLOAT16、INT32
-    - 全量化场景下，x2为ND格式时，当输入x1的m为0或x2的n为0时，输出为空Tensor；A8W8全量化场景下，x2为NZ格式时，当输入x1的m为0或x2的n为0时，输出为空Tensor。
+    - 全量化场景下，x2为ND格式时，当输入x1的m为0或x2的n为0时，输出为空Tensor；A8W8全量化场景下，x2为NZ格式时，当输入x1的m为0或x2的n为0时，输出为空Tensor
 
   <!-- end id10 -->
 
@@ -348,10 +348,10 @@ aclnnStatus aclnnQuantMatmulV3(
 <!-- npu="A3,910b" id14 -->
 - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
   - x1的最后一维大小不能超过65535，x1的最后一维指transposeX1为true时的m或transposeX1为false时的k。当x1数据类型为INT32、INT4时，为INT4量化场景，当前仅支持transposeX1为false情况，其中当x1数据类型为INT4时，维度表示：（batch，m，k），要求k为偶数，当x1数据类型为INT32时，每个INT32数据存放8个INT4数据，对应维度表示：（batch，m，k // 8），要求k为8的倍数。
-  - x2的最后一维大小不能超过65535，x2的最后一维指transposeX2为true时的k或transposeX2为false时的n。当输入x2为NZ时，不支持transposeX2为false的场景
+  - x2的最后一维大小不能超过65535，x2的最后一维指transposeX2为true时的k或transposeX2为false时的n。当输入x2为NZ时，不支持transposeX2为false的场景。
     - 数据类型为INT4时，在transposeX2为true时shape形如（n，k），要求k为偶数；在transposeX2为false时shape形如（k，n），要求n为偶数。
     - 数据类型为INT32时，每个INT32数据存放8个INT4数据，在transposeX2为true时shape形如（n，k // 8），要求k为8的倍数；在transposeX2为false时shape形如（k，n // 8），要求n为8的倍数。
-    - 可使用aclnnConvertWeightToINT4Pack接口完成x2从INT32（1个int32在0~3bit位存储1个int4）到INT32（1个int32存储8个int4）或INT4（1个int4表示1个int4）的数据格式转换，具体参见aclnnConvertWeightToINT4Pack接口。
+    - 可使用aclnnConvertWeightToINT4Pack接口完成x2从INT32（1个int32在0~3位存储1个int4）到INT32（1个int32存储8个int4）或INT4（1个int4表示1个int4）的数据格式转换，具体参见aclnnConvertWeightToINT4Pack接口。
   - 支持调用本接口前，通过[aclnnTransMatmulWeight](https://gitcode.com/cann/ops-math/blob/master/conversion/trans_data/docs/aclnnTransMatmulWeight.md)对format为ND的x2处理得到NZ格式。
 
 <!-- end id14 -->

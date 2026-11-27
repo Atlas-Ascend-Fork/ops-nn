@@ -172,7 +172,7 @@ aclnnStatus aclnnMaxPool2dWithMask(
       <td>输出</td>
       <td>最大值的索引位置组成的Tensor（采用mask语义）。</td>
       <td>shape由上述公式推导出，为自定义mask值。</td>
-      <td>INT8。</td>
+      <td>INT8</td>
       <td>NCHW、ND</td>
       <td>3-4</td>
       <td>-</td>
@@ -269,7 +269,7 @@ aclnnStatus aclnnMaxPool2dWithMask(
       <td>stride的数值中存在小于等于0的值。</td>
     </tr>
     <tr>
-      <td>padding的长度不等于1或2</td>
+      <td>padding的长度不等于1或2。</td>
     </tr>
     <tr>
       <td> padding的数值中存在小于0或者大于kernelSize/2的值。</td>

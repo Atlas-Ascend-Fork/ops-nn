@@ -102,7 +102,7 @@ aclnnStatus aclnnMaxPool2dWithIndicesBackward(
     <td>反向传播过程中上一步输出的梯度。</td>
     <td>和正向的输出shape一致，数据格式和self一致。</td>
     <td>FLOAT、FLOAT16、BFLOAT16</td>
-    <td>ND、NCHW、NHWC。</td>
+    <td>ND、NCHW、NHWC</td>
     <td>3-4</td>
     <td>√</td>
   </tr>
@@ -182,7 +182,7 @@ aclnnStatus aclnnMaxPool2dWithIndicesBackward(
     <td>反向传播输出的梯度。</td>
     <td>shape、数据格式与self保持一致。</td>
     <td>BFLOAT16、FLOAT16、FLOAT32</td>
-    <td>ND、NCHW、NHWC。</td>
+    <td>ND、NCHW、NHWC</td>
     <td>3-4</td>
     <td>√</td>
   </tr>
@@ -225,7 +225,7 @@ aclnnStatus aclnnMaxPool2dWithIndicesBackward(
 
 - **返回值：**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
   第一段接口完成入参校验，出现以下场景时报错：
   <table style="undefined;table-layout: fixed; width: 1166px"><colgroup>

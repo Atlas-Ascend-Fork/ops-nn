@@ -308,7 +308,7 @@ aclnnStatus aclnnAddLayerNormGrad(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>如果传入参数是必选输入，输出或者必选属性，且是空指针，则返回161001。</td>
+      <td>如果传入参数是必选输入、输出或者必选属性，且是空指针，则返回161001。</td>
     </tr>
     <tr>
       <td>ACLNN_ERR_PARAM_INVALID</td>
@@ -318,7 +318,7 @@ aclnnStatus aclnnAddLayerNormGrad(
     <tr>
       <td>ACLNN_ERR_INNER_TILING_ERROR</td>
       <td>561002</td>
-      <td>tiling计算失败，包括输入或输出的shape不满足上述约束。</td>
+      <td>Tiling计算失败，包括输入或输出的shape不满足上述约束。</td>
     </tr>
   </tbody></table>
 
@@ -368,7 +368,7 @@ aclnnStatus aclnnAddLayerNormGrad(
 ## 约束说明
 
 - **功能维度**
-  - 数据类型支持
+  - 数据类型支持。
 
     <!-- npu="310p" id8 -->
     - <term>Atlas推理系列产品</term>：dy、x1、x2、gamma、dsumOptional、dxOut支持FLOAT32、FLOAT16。
@@ -376,7 +376,7 @@ aclnnStatus aclnnAddLayerNormGrad(
     <!-- npu="A3,910b" id9 -->
     - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：dy、x1、x2、gamma、dsumOptional、dxOut支持FLOAT32、FLOAT16、BFLOAT16。
     <!-- end id9 -->
-    - rstd、mean、dgammaOut、dbetaOut支持：FLOAT32。
+    - rstd、mean、dgammaOut、dbetaOut支持FLOAT32。
   - 数据格式支持：ND。
 - **未支持类型说明**
 

@@ -248,7 +248,7 @@
       <td>self和out的shape不一致。</td>
     </tr>
     <tr>
-      <td>self和out的dtype不一致。</td>
+      <td>self和out的数据类型不一致。</td>
     </tr>
     <tr>
       <td>p的取值不满足要求。</td>

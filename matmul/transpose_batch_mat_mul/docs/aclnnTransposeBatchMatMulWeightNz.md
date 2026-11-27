@@ -25,7 +25,7 @@
 
 - 接口功能：完成张量x1与张量x2的矩阵乘计算，仅支持x1为ND格式，x2为NZ格式，只支持x1为3维，x2为5维。Tensor支持转置，转置序列根据传入的序列进行变更。permX1、permX2 分别给出逻辑 [B,M,K]、[B,K,N] 各轴在输入视图中的位置，其取值是轴索引，不是维度大小。
 
-- 示例：（x2的NZ转换为ND对应的viewshape视角）
+- 示例：（x2的NZ转换为ND对应的ViewShape视角）
   - x1的shape是(B, M, K)，x2的shape是(B, K, N)，scale为None，batchSplitFactor等于1时，计算输出out的shape是(M, B, N)。
   - x1的shape是(B, M, K)，x2的shape是(B, K, N)，scale不为None，batchSplitFactor等于1时，计算输出out的shape是(M, 1, B * N)。
   - x1的shape是(B, M, K)，x2的shape是(B, K, N)，scale为None，batchSplitFactor大于1时，计算输出out的shape是(batchSplitFactor, M, B * N / batchSplitFactor)。
@@ -299,7 +299,7 @@ aclnnStatus aclnnTransposeBatchMatMulWeightNz(
       <td>permX1、permX2或permY的长度不等于3，或其取值不在支持的范围内。</td>
     </tr>
     <tr>
-      <td>x1的第二维和x2的第一维度不相等，或x1和x2的batch维度不相等。</td>
+      <td>x1的第二维和x2的第一维不相等，或x1和x2的batch维度不相等。</td>
     </tr>
     <tr>
       <td>x1或x2为空tensor。</td>
@@ -408,8 +408,8 @@ aclnnStatus aclnnTransposeBatchMatMulWeightNz(
   - 支持传入bias，shape为(N,)或(1,N)，数据类型与x1相同或为FLOAT32；bias在各batch和行间共享，仅支持scale为空且batchSplitFactor为1的场景。
   - permX1=[0, 2, 1]要求permY=[0, 1, 2]、scale为空且batchSplitFactor=1；WeightNz不支持KBN B。
 <!-- end id8 -->
-- x1只支持3维，x2只支持昇腾私有格式，调用此接口之前，必须完成x2从ND到昇腾私有格式的转换。
-- 不支持x2最后两根轴其中一根轴为1，即k=1或者n=1。
+- x1只支持3维，x2只支持NZ格式，调用此接口之前，必须完成x2从ND到NZ格式的转换。
+- 不支持x2最后两根轴其中一根轴为1，即k = 1或者n = 1。
 
 ## 调用示例
 

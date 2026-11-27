@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：根据给定的maxNorm和normType返回输入tensor在指定indices下的修正结果。
+- 接口功能：根据给定的maxNorm和normType返回输入Tensor在指定indices下的修正结果。
 
 - 计算公式：向量的范数计算公式如下，其中p为normType指定的范数值：
 
@@ -122,7 +122,7 @@ aclnnStatus aclnnEmbeddingRenorm(
       <tr>
         <td>normType（double）</td>
         <td>输入</td>
-        <td>指定L_P范数的类型，公式中的p。</td>
+        <td>指定Lp范数的类型，公式中的p。</td>
         <td>-</td>
         <td>-</td>
         <td>-</td>

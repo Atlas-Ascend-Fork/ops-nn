@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：融合算子，实现SwiGLU激活函数反向梯度计算与双轴动态块量化的组合计算。先对输入x和梯度yGrad计算SwiGLU反向梯度，然后对梯度结果分别在-1轴和-2轴进行基于块的动态量化，输出低精度的FP8张量和对应的缩放因子。
+- 接口功能：融合算子，实现SwiGLU反向梯度计算与双轴动态块量化的组合计算。先对输入x和梯度yGrad计算SwiGLU反向梯度，然后对梯度结果分别在-1轴和-2轴进行基于块的动态量化，输出低精度的FP8张量和对应的量化尺度。
 
 - 计算公式：
 
@@ -57,7 +57,7 @@
 
   **阶段2：双轴动态块量化**
 
-- **-1轴量化（列方向）**：将SwiGLU结果在-1轴上按照32个数进行分组，一组32个数$\{V_i\}_{i=1}^{32}$量化为$\{mxscale1, \{P_i\}_{i=1}^{32}\}$
+- **-1轴量化（列方向）**：将SwiGLU反向梯度结果在-1轴上按照32个数进行分组，一组32个数$\{V_i\}_{i=1}^{32}$量化为$\{mxscale1, \{P_i\}_{i=1}^{32}\}$
 
   $$
   shared\_exp = floor(log_2(max_i(|V_i|))) - emax
@@ -185,7 +185,7 @@ aclnnStatus aclnnSwigluBackwardMxQuantWithDualAxis(
     <tr>
       <td>activateLeft (bool)</td>
       <td>输入</td>
-      <td>SwiGLU激活侧选择。</td>
+      <td>SwiGLU侧选择。</td>
       <td><ul><li>True表示左半部分为hidden，右半部分为gate。</li><li>False表示右半部分为hidden，左半部分为gate。</li></ul></td>
       <td>BOOL</td>
       <td>-</td>

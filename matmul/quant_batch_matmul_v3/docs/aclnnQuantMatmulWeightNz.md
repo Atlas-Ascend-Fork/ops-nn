@@ -171,7 +171,7 @@ aclnnStatus aclnnQuantMatmulWeightNz(
         <th>数据类型</th>
         <th>数据格式</th>
         <th>维度(shape)</th>
-        <th>非连续Tensor</th>
+        <th>非连续的Tensor</th>
       </tr>
     </thead>
     <tbody>
@@ -179,7 +179,7 @@ aclnnStatus aclnnQuantMatmulWeightNz(
         <td>x1（const aclTensor*）</td>
         <td>输入</td>
         <td>公式中的输入x1。</td>
-        <td><ul> <li>支持<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续Tensor</a>。</li> <li>在transposeX1为false情况下各个维度表示：(batch, m, k)，batch可不存在。</li> <li>在transposeX1为true情况下各个维度表示：(batch, k, m)，batch可不存在。</li> </ul></td>
+        <td><ul> <li>支持<a href="../../../docs/zh/context/non_contiguous_tensor.md">非连续的Tensor</a>。</li> <li>在transposeX1为false情况下各个维度表示：(batch, m, k)，batch可不存在。</li> <li>在transposeX1为true情况下各个维度表示：(batch, k, m)，batch可不存在。</li> </ul></td>
         <td>INT4<sup>1、3</sup>、INT8、HIFLOAT8<sup>1、2</sup>、FLOAT8_E4M3FN<sup>1、2</sup>、FLOAT4_E2M1<sup>1、2</sup></td>
         <td>ND</td>
         <td>2-6</td>
@@ -471,7 +471,7 @@ aclnnStatus aclnnQuantMatmulWeightNz(
 
 - x1的最后一维大小不能超过65535，但当x1和x2的dtype为INT8，x2Scale的dtype为FLOAT32或BFLOAT16且x2Scale和x1Scale维度都为1时，支持大于65535。x1的最后一维指transposeX1为true时的m或transposeX1为false时的k。
 - x2的最后一维大小不能超过65535，但当x1和x2的dtype为INT8，x2Scale的dtype为FLOAT32或BFLOAT16且x2Scale和x1Scale维度都为1时，支持大于65535。x2的最后一维指transposeX2为true时的k或transposeX2为false时的n。
-- 支持调用本接口前，通过[aclnnTransMatmulWeight](https://gitcode.com/cann/ops-math/blob/master/conversion/trans_data/docs/aclnnTransMatmulWeight.md)对format为ND的x2处理得到AI处理器亲和数据排布格式。
+- 支持调用本接口前，通过[aclnnTransMatmulWeight](https://gitcode.com/cann/ops-math/blob/master/conversion/trans_data/docs/aclnnTransMatmulWeight.md)对format为ND的x2处理得到NZ格式。
 
 - 当原始ND的后两维中存在某一维度为1时，无法使用weightNz特性，本接口不支持此种场景。
 
@@ -502,7 +502,7 @@ aclnnStatus aclnnQuantMatmulWeightNz(
 
 - x1的最后一维大小不能超过65535，x1的最后一维指transposeX1为true时的m或transposeX1为false时的k。
 - x2的最后一维大小不能超过65535，x2的最后一维指transposeX2为true时的k或transposeX2为false时的n。
-- 支持调用本接口前，通过[aclnnTransMatmulWeight](https://gitcode.com/cann/ops-math/blob/master/conversion/trans_data/docs/aclnnTransMatmulWeight.md)对format为ND的x2处理得到AI处理器亲和数据排布格式。
+- 支持调用本接口前，通过[aclnnTransMatmulWeight](https://gitcode.com/cann/ops-math/blob/master/conversion/trans_data/docs/aclnnTransMatmulWeight.md)对format为ND的x2处理得到NZ格式。
 
 - 当原始ND的后两维中存在某一维度为1时，无法使用weightNz特性，本接口不支持此种场景。
 

@@ -112,7 +112,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
           <td>dy (aclTensor*)</td>
           <td>输入</td>
           <td>反向计算的梯度，公式中的<code>dy</code>。</td>
-          <td><ul><li>不支持空tensor。</li><li>维度支持2D到8D，1维为N，第2维为C。</li></ul></td>
+          <td><ul><li>不支持空tensor。</li><li>维度支持2D到8D，第1维为N，第2维为C。</li></ul></td>
           <td>FLOAT16、FLOAT、BFLOAT16</td>
           <td>ND</td>
           <td>2-8</td>
@@ -121,7 +121,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
       <tr>
           <td>mean (aclTensor*)</td>
           <td>输入</td>
-          <td>正向计算的第二个输出，表示input分组后每个组的均值，公式中的<code>mean</code>。</td>
+          <td>正向计算的第二个输出，表示输入x分组后每个组的均值，公式中的<code>mean</code>。</td>
           <td><ul><li>不支持空tensor。</li><li>数据类型与gamma相同，其中N与dy的第0维度保持一致。</li></ul></td>
           <td>FLOAT16、FLOAT、BFLOAT16</td>
           <td>ND</td>
@@ -131,7 +131,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
       <tr>
           <td>rstd (aclTensor*)</td>
           <td>输入</td>
-          <td>正向计算的第三个输出，表示input分组后每个组的标准差倒数，公式中的<code>rstd</code>。</td>
+          <td>正向计算的第三个输出，表示输入x分组后每个组的标准差倒数，公式中的<code>rstd</code>。</td>
           <td><ul><li>不支持空tensor。</li><li>数据类型与gamma相同，其中N与dy的第0维度保持一致。</li></ul></td>
           <td>FLOAT16、FLOAT、BFLOAT16</td>
           <td>ND</td>
@@ -172,7 +172,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
           <td>numGroups (int64_t)</td>
           <td>输入</td>
           <td>输入x的C维度分为group组。</td>
-          <td>group需大于0，C必须可以被group整除并且比值不能超过4000。</td>
+          <td>numGroups需大于0，C必须可以被numGroups整除并且比值不能超过4000。</td>
           <td>-</td>
           <td>-</td>
           <td>-</td>
@@ -202,7 +202,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
           <td>dgammaIsRequire (bool)</td>
           <td>输入</td>
           <td>是否需要输出dgamma。</td>
-          <td>建议值TRUE。</td>
+          <td>建议值true。</td>
           <td>-</td>
           <td>-</td>
           <td>-</td>
@@ -212,7 +212,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
           <td>dbetaIsRequire (bool)</td>
           <td>输入</td>
           <td>是否需要输出dbeta。</td>
-          <td>建议值TRUE。</td>
+          <td>建议值true。</td>
           <td>-</td>
           <td>-</td>
           <td>-</td>
@@ -272,7 +272,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
 
 - **返回值**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
   第一段接口完成入参校验，出现以下场景时报错：
 
@@ -347,7 +347,7 @@ aclnnStatus aclnnGroupNormSwishGrad(
 
 ## 约束说明
 
-- 确定性计算
+- 确定性计算：
   <!-- npu="A3,910b" id7 -->
   - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：aclnnGroupNormSwishGrad默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
   <!-- end id7 -->

@@ -220,21 +220,21 @@ aclnnStatus aclnnInplaceAddmm(
     - 不支持BFLOAT16数据类型；
     - 当输入数据类型为FLOAT32时不支持cubeMathType=0；
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理；
-    - 不支持cubeMathType=3，4。
+    - 不支持cubeMathType=3、4；
   <!-- end id7 -->
   <!-- npu="A3,910b" id8 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
-    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
-    - cubeMathType=4，当self、mat1和mat2均为FLOAT16或均为BFLOAT16时，矩阵乘与bias相加过程使用FLOAT32中间结果计算，支持self相对矩阵乘结果进行broadcast，输出数据类型由out指定；当输入数据类型为FLOAT32且k轴大于2048时，会使用分组累加进行计算。
+    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项；
+    - cubeMathType=4，当self、mat1和mat2均为FLOAT16或均为BFLOAT16时，矩阵乘与bias相加过程使用FLOAT32中间结果计算，支持self相对矩阵乘结果进行broadcast，输出数据类型由out指定；当输入数据类型为FLOAT32且k轴大于2048时，会使用分组累加进行计算；
   <!-- end id8 -->
   <!-- npu="950" id9 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
-    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
-    - cubeMathType=4，当输入数据类型为FLOAT16/BFLOAT16时，addmm过程会升精度计算，该情况下当前不支持输入self与matmul计算结果矩阵做broadcast；当输入数据类型为FLOAT32，并满足以下任一条件时，会使用vector核进行计算以提升结果精度（该方式在部分场景下可能导致算子性能下降）。条件1：m轴等于1或n轴等于1；条件2：alpha不等于1或beta不等于1；条件3：self的形状为\(m,n\)。
+    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项；
+    - cubeMathType=4，当输入数据类型为FLOAT16/BFLOAT16时，addmm过程会升精度计算，该情况下当前不支持输入self与matmul计算结果矩阵做broadcast；当输入数据类型为FLOAT32，并满足以下任一条件时，会使用vector核进行计算以提升结果精度（该方式在部分场景下可能导致算子性能下降）。条件1：m轴等于1或n轴等于1；条件2：alpha不等于1或beta不等于1；条件3：self的形状为\(m,n\)；
 
   <!-- end id9 -->
 
@@ -436,21 +436,21 @@ aclnnStatus aclnnInplaceAddmm(
     - 不支持BFLOAT16数据类型；
     - 当输入数据类型为FLOAT32时不支持cubeMathType=0；
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为FLOAT16计算，当输入为其他数据类型时不做处理；
-    - 不支持cubeMathType=3，4。
+    - 不支持cubeMathType=3、4；
   <!-- end id10 -->
   <!-- npu="A3,910b" id11 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
-    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
-    - cubeMathType=4，当selfRef、mat1和mat2均为FLOAT16或均为BFLOAT16时，矩阵乘与bias相加过程使用FLOAT32中间结果计算；当输入数据类型为FLOAT32且k轴大于2048时，会使用分组累加进行计算。
+    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项；
+    - cubeMathType=4，当selfRef、mat1和mat2均为FLOAT16或均为BFLOAT16时，矩阵乘与bias相加过程使用FLOAT32中间结果计算；当输入数据类型为FLOAT32且k轴大于2048时，会使用分组累加进行计算；
   <!-- end id11 -->
   <!-- npu="950" id12 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
     - cubeMathType=1，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不做处理；
     - cubeMathType=2，当输入数据类型为BFLOAT16时不支持该选项；
-    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项。
-    - cubeMathType=4，当输入数据类型为FLOAT32，且k轴大于512，并满足以下任一条件时，会使用vector核进行计算以提升结果精度（该方式在部分场景下可能导致算子性能下降）。条件1：m轴等于1、n轴等于1；条件2：m轴和n轴均不等于1且mat1转置、mat2不转置。
+    - cubeMathType=3，当输入数据类型为FLOAT32时，会转换为HFLOAT32计算，当输入为其他数据类型时不支持该选项；
+    - cubeMathType=4，当输入数据类型为FLOAT32，且k轴大于512，并满足以下任一条件时，会使用vector核进行计算以提升结果精度（该方式在部分场景下可能导致算子性能下降）。条件1：m轴等于1、n轴等于1；条件2：m轴和n轴均不等于1且mat1转置、mat2不转置；
 
   <!-- end id12 -->
 
@@ -524,7 +524,7 @@ aclnnStatus aclnnInplaceAddmm(
     <tr>
       <td>stream</td>
       <td>输入</td>
-      <td>指定执行任务的Stream。</td>
+      <td>指定执行任务的stream。</td>
     </tr>
   </tbody>
   </table>

@@ -109,7 +109,7 @@ aclnnStatus aclnnAdaptiveMaxPool2dBackward(
       <td>输入</td>
       <td>正向输入中最大元素的索引位置。</td>
       <td>shape与gradOutput一致。</td>
-      <td>INT32，INT64</td>
+      <td>INT32、INT64</td>
       <td>ND</td>
       <td>3-4</td>
       <td>√</td>
@@ -117,7 +117,7 @@ aclnnStatus aclnnAdaptiveMaxPool2dBackward(
     <tr>
       <td>gradInput</td>
       <td>输出</td>
-      <td>反向输出Tensor</td>
+      <td>反向输出Tensor。</td>
       <td>shape与self保持一致。</td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -240,7 +240,7 @@ aclnnStatus aclnnAdaptiveMaxPool2dBackward(
   <!-- end id12 -->
 
 - 非整除场景下（self的后两个维度的维度值对gradOutput后两个维度的维度值取余不为0），shape不超过2的24次方。整除场景下，没有这个限制。
-- 举例整除场景：self=[a,b,c,d]，gradOutput=[a,b,e,f]。 c%e为0并且d%f为0就是整除场景。
+- 举例整除场景：self=[a,b,c,d]，gradOutput=[a,b,e,f]。c%e为0并且d%f为0就是整除场景。
 
 ## 调用示例
 

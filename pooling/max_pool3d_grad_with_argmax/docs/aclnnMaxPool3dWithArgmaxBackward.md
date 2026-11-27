@@ -111,7 +111,7 @@ aclnnStatus aclnnMaxPool3dWithArgmaxBackward(
     <td>kernelSize</td>
     <td>输入</td>
     <td>池化操作中使用的滑动窗口大小。</td>
-    <td>长度为1 (kD = kH = kW)或3 (kD, kH, kW)。</td>
+    <td>长度为1（kD = kH = kW）或3（kD, kH, kW）。</td>
     <td>INT64</td>
     <td>-</td>
     <td>-</td>
@@ -294,7 +294,7 @@ aclnnStatus aclnnMaxPool3dWithArgmaxBackward(
 
 - **返回值：**
 
-    aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+    aclnnStatus:返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 

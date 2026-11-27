@@ -45,7 +45,7 @@
 
     - 量化后的$P_{i}$按对应的$V_{i}$的位置组成输出`y`，`mxscale_pre`按对应的`groupIndex`分组，分组内第一个维度pad为偶数，组成输出`mxscale`。
 
-    - `emax`：对应数据类型的最大正则数的指数位。
+    - `emax`：对应数据类型的最大正规数的指数位。
 
         |   DataType    | emax |
         | :-----------: | :--: |
@@ -82,7 +82,7 @@
 
   - 场景3，当`scaleAlg`为2时，只涉及FP4类型：
     - 当`dstTypeMax = 0.0/6.0/7.0(FP4_E2M1)`或`dstTypeMax = 1.875(FP4_E1M2)`时：
-      - 将输入`x`在第0维上按k = blocksize个数分组，一组k个数  $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale, \{P_i\}_{i=1}^{k}\}$, k = blocksize：
+      - 将输入`x`在第0维上按k = blocksize个数分组，一组k个数  $\{\{V_i\}_{i=1}^{k}\}$ 动态量化为 $\{mxscale, \{P_i\}_{i=1}^{k}\}$，k = blocksize：
       $$
       shared\_exp = \begin{cases} ceil(log_2(max_i(|V_i|))) - emax, & \text{如果} 尾数位的高比特前一/两/三位 \text{为1，且尾数不全为0} \\ floor(log_2(max_i(|V_i|))) - emax, & \text{其它} \end{cases} \\
       $$
@@ -92,7 +92,7 @@
       - 量化后的$P_{i}$按对应的$V_{i}$的位置组成输出`y`，按对应维度上的分组组成输出`mxscale`。
     - 当`dstTypeMax != 0.0/6.0/7.0(FP4_E2M1)`或`dstTypeMax != 1.875(FP4_E1M2)`时：
       - 将长向量按块分，每块长度为k，对每块单独计算一个块缩放因子$S_{fp32}^b$，再把块内所有元素用同一个$S_{fp32}^b$映射到目标低精度类型。如果最后一块不足k个元素，把缺失值视为0，按照完整块处理。
-      - 找到该块中数值的最大绝对值:
+      - 找到该块中数值的最大绝对值：
       $$
       Amax(D_{fp32}^b)=max(\{|d_{i}|\}_{i=1}^{k})
       $$
@@ -184,7 +184,7 @@ aclnnStatus aclnnGroupedDynamicMxQuantV2(
       <td>√</td>
     </tr>
     <tr>
-      <td>roundMode（char*）</td>
+      <td>roundMode (char*)</td>
       <td>输入</td>
       <td>公式中的round_mode，数据转换的模式。</td>
       <td><ul><li>支持"rint"/"round"/"floor"模式。</li><li>对于FLOAT8，仅支持"rint"；对于FLOAT4，支持"rint"/"round"/"floor"三种。</li></ul></td>
@@ -226,8 +226,8 @@ aclnnStatus aclnnGroupedDynamicMxQuantV2(
     <tr>
       <td>dstTypeMax (double)</td>
       <td>输入</td>
-      <td>表示maxType的取值，对应公式中的Amax(Dtype)。</td>
-      <td><ul><li>当前取值支持0.0和[1.75, 3.5)(FLOAT4_E1M2)、0.0和[6.0, 12.0](FLOAT4_E2M1)。仅支持在FP4时设置该值。</li><li>取值为0.0代表Amax(Dtype)为量化结果数据类型的最大值；取值为[1.75, 3.5)或[6.0, 12.0]代表Amax(Dtype)为传入值。</li></ul></td>
+      <td>表示dstTypeMax的取值，对应公式中的Amax(DType)。</td>
+      <td><ul><li>当前取值支持0.0和[1.75, 3.5)(FLOAT4_E1M2)、0.0和[6.0, 12.0](FLOAT4_E2M1)。仅支持在FP4时设置该值。</li><li>取值为0.0代表Amax(DType)为量化结果数据类型的最大值；取值为[1.75, 3.5)或[6.0, 12.0]代表Amax(DType)为传入值。</li></ul></td>
       <td>DOUBLE</td>
       <td>-</td>
       <td>-</td>

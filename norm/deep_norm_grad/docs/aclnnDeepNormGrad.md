@@ -123,7 +123,7 @@ aclnnStatus aclnnDeepNormGrad(
     <tr>
       <td>dy（aclTensor*）</td>
       <td>输入</td>
-      <td>表示主要的grad输入，对应公式中的`dy`。</td>
+      <td>表示主要的梯度输入，对应公式中的`dy`。</td>
       <td><ul><li>不支持空Tensor。</li><li>数据类型、shape与`x`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -153,7 +153,7 @@ aclnnStatus aclnnDeepNormGrad(
     <tr>
       <td>gamma（aclTensor*）</td>
       <td>输入</td>
-      <td>表示前向传播的缩放参数，对应公式中的`gamma`。</td>
+      <td>表示正向传播的缩放参数，对应公式中的`gamma`。</td>
       <td><ul><li>不支持空Tensor。</li><li>数据类型与`x`的数据类型保持一致。</li><li>shape维度和输入`x`后几维的维度相同，后几维表示需要norm的维度。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -193,7 +193,7 @@ aclnnStatus aclnnDeepNormGrad(
     <tr>
       <td>dxOut（aclTensor*）</td>
       <td>输出</td>
-      <td>表示计算输出的梯度，用于更新输入数据x的梯度。对应公式中的`dx`。</td>
+      <td>表示计算输出的梯度，用于更新输入数据x的梯度，对应公式中的`dx`。</td>
       <td><ul><li>不支持空Tensor。</li><li>数据类型、shape与`x`保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>

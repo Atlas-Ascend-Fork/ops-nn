@@ -93,7 +93,7 @@ aclnnStatus aclnnTransposeBatchMatMul(
           <ul>
             <li>数据类型需要与x2满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。</li>
             <li>数据类型支持BFLOAT16、FLOAT16、FLOAT32。</li>
-            <li>不支持输入x1,x2分别为BFLOAT16和FLOAT16的数据类型推导。</li>
+            <li>不支持输入x1、x2分别为BFLOAT16和FLOAT16的数据类型推导。</li>
             <li>不支持输入x1,x2分别为BFLOAT16和FLOAT32的数据类型推导。</li>
           </ul>
         </td>
@@ -111,7 +111,7 @@ aclnnStatus aclnnTransposeBatchMatMul(
             <li>数据类型需要与x1满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md">互推导关系</a>和<a href="#约束说明">约束说明</a>）。</li>
             <li>x2的Reduce维度需要与x1的Reduce维度大小相等。</li>
             <li>数据类型支持BFLOAT16、FLOAT16、FLOAT32。</li>
-            <li>不支持输入x1,x2分别为BFLOAT16和FLOAT16的数据类型推导。</li>
+            <li>不支持输入x1、x2分别为BFLOAT16和FLOAT16的数据类型推导。</li>
             <li>不支持输入x1,x2分别为BFLOAT16和FLOAT32的数据类型推导。</li>
         </ul>
         </td>
@@ -140,7 +140,7 @@ aclnnStatus aclnnTransposeBatchMatMul(
         <td>表示输出矩阵的量化系数，可在输入为FLOAT16且输出为INT8时开启，需要配合aclnnTransQuantParamV2接口完成FLOAT32到UINT64/INT64的转换。</td>
         <td>
         <ul>
-            <li>shape仅支持一维且需要等于[b*n]。</li>
+            <li>shape仅支持一维且需要等于[B*N]。</li>
         </ul>
         </td>
         <td>INT64、UINT64</td>
@@ -151,7 +151,7 @@ aclnnStatus aclnnTransposeBatchMatMul(
       <tr>
         <td>permX1</td>
         <td>输入</td>
-        <td>表示矩阵乘的第一个矩阵的转置序列，host侧的aclIntArray。</td>
+        <td>表示矩阵乘的第一个矩阵的转置序列，Host侧的aclIntArray。</td>
         <td>
         <ul>
           <li>支持[0, 1, 2]、[1, 0, 2]、[0, 2, 1]，具体支持情况参见<a href="#约束说明">约束说明</a>。</li>
@@ -165,7 +165,7 @@ aclnnStatus aclnnTransposeBatchMatMul(
       <tr>
         <td>permX2</td>
         <td>输入</td>
-        <td>表示矩阵乘的第二个矩阵的转置序列，host侧的aclIntArray。</td>
+        <td>表示矩阵乘的第二个矩阵的转置序列，Host侧的aclIntArray。</td>
         <td>
         <ul>
           <li>支持[0, 1, 2]、[0, 2, 1]、[1, 0, 2]、[1, 2, 0]，具体支持情况参见<a href="#约束说明">约束说明</a>。</li>
@@ -179,7 +179,7 @@ aclnnStatus aclnnTransposeBatchMatMul(
       <tr>
         <td>permY</td>
         <td>输入</td>
-        <td>表示矩阵乘输出矩阵的转置序列，host侧的aclIntArray。</td>
+        <td>表示矩阵乘输出矩阵的转置序列，Host侧的aclIntArray。</td>
         <td>
         <ul>
             <li>支持[1, 0, 2]、[0, 1, 2]，具体支持情况参见<a href="#约束说明">约束说明</a>。</li>

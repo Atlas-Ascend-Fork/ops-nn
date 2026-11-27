@@ -244,7 +244,7 @@ aclnnStatus aclnnQuantMatmulV4(
         <td>batch可不存在，支持x1与x2的batch维度broadcast，输出batch与broadcast之后的batch一致，m与x1的m一致，n与x2的n一致。<br/>shape为(batch, M, N)。</td>
         <td>FLOAT16、INT8、BFLOAT16、INT32</td>
         <td>ND</td>
-        <td>2～6</td>
+        <td>2-6</td>
         <td>√</td>
       </tr>
       <tr>
@@ -275,10 +275,10 @@ aclnnStatus aclnnQuantMatmulV4(
     - x1的最后一维大小不能超过65535，x1的最后一维指transposeX1为true时的m或transposeX1为false时的k。
     - x2的最后一维大小不能超过65535，x2的最后一维指transposeX2为true时的k或transposeX2为false时的n。
     - x1数据类型支持INT8。
-    - x2数据类型支持INT8，为NZ格式时，不支持transposeX2为false的场景。当pertokenScaleOptional不为空tensor时，必须调用aclnnTransMatmulWeight对format为ND的x2处理得到AI处理器亲和数据排布格式。
-    - bias数据类型支持INT32。当pertokenScaleOptional不为空tensor时，bias数据类型还支持FLOAT32。
-    - 当pertokenScaleOptional不为空tensor时，scale的数据类型支持FLOAT32；当pertokenScaleOptional为空tensor时，scale数据类型支持UINT64、INT64。
-    - out数据类型支持FLOAT16、INT8，当pertokenScaleOptional不为空tensor时，out数据类型只支持FLOAT16。
+    - x2数据类型支持INT8，为NZ格式时，不支持transposeX2为false的场景。当pertokenScaleOptional不为空Tensor时，必须调用aclnnTransMatmulWeight对format为ND的x2处理得到AI处理器亲和数据排布格式。
+    - bias数据类型支持INT32。当pertokenScaleOptional不为空Tensor时，bias数据类型还支持FLOAT32。
+    - 当pertokenScaleOptional不为空Tensor时，scale的数据类型支持FLOAT32；当pertokenScaleOptional为空tensor时，scale数据类型支持UINT64、INT64。
+    - out数据类型支持FLOAT16、INT8，当pertokenScaleOptional不为空Tensor时，out数据类型只支持FLOAT16。
 
   <!-- end id9 -->
   <!-- npu="A3,910b" id10 -->
@@ -687,7 +687,7 @@ aclnnStatus aclnnQuantMatmulV4(
 - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
 <!-- end id20 -->
 
-x2为NZ格式场景(transposeX2=false)。
+x2为NZ格式场景（transposeX2=false）。
 
   ```cpp
   #include <cstdint>

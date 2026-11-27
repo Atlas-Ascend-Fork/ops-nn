@@ -45,20 +45,20 @@
 
   4 矩阵乘+反量化
 
-  - 4.1若输入的$scale_{weight}$数据类型为FLOAT32,则：
+  - 4.1若输入的$scale_{weight}$数据类型为FLOAT32，则：
 
     $$
       out = (x_{quantized}@weight_{quantized} + bias) * scale_{weight} * scale_{x}
     $$
 
-  - 4.2若输入的$scale_{weight}$数据类型为INT64,则：
+  - 4.2若输入的$scale_{weight}$数据类型为INT64，则：
 
     $$
       scale_{weight} = torch.tensor(np.frombuffer(scale_{weight}.numpy().astype(np.int32).tobytes(), dtype=np.float32)) \\
       out = (x_{quantized}@weight_{quantized} + bias) * scale_{weight}
     $$
 
-    特别说明：如果是上述4.2场景，说明$scale_{weight}$输入前已经和$scale_{x}$做过了矩阵乘运算，因此算子内部计算时省略了该步骤，这要求必须是pertensor静态量化的场景。即输入前要对$scale_{weight}$做如下处理得到INT64类型的数据：
+    特别说明：如果是上述4.2场景，说明$scale_{weight}$输入前已经和$scale_{x}$做过了矩阵乘运算，因此算子内部计算时省略了该步骤，这要求必须是pertensor静态量化的场景，即输入前要对$scale_{weight}$做如下处理得到INT64类型的数据：
 
     $$
     scale_{weight} = scale_{weight} * scale_{x} \\
@@ -213,7 +213,7 @@ aclnnStatus aclnnQuantMatmulDequant(
       <td>out（aclTensor*）</td>
       <td>输出</td>
       <td>计算结果，公式中的out。</td>
-      <td>shape支持2维，各个维度表示：（m，n）。其中m与x的m一致，n与weight的n一致。</td>
+      <td>shape支持2维，各个维度表示：（m，n），其中m与x的m一致，n与weight的n一致。</td>
       <td>FLOAT16</td>
       <td>ND</td>
       <td>2</td>
@@ -327,7 +327,7 @@ aclnnStatus aclnnQuantMatmulDequant(
 
 - **返回值**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 
@@ -338,7 +338,7 @@ aclnnStatus aclnnQuantMatmulDequant(
 
   <!-- end id6 -->
 
-- n，k都需要是16的整数倍。
+- n、k都需要是16的整数倍。
 - 当weightScale数据类型为INT64时，必须要求xScaleOptional数据类型为FLOAT16，且xQuantMode值为pertensor；当xScaleOptional数据类型为FLOAT16时，必须要求weightScale数据类型为INT64，且xQuantMode值为pertensor。
 
 ## 调用示例

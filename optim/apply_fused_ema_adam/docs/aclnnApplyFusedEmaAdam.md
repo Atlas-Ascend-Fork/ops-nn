@@ -196,7 +196,7 @@ aclnnStatus aclnnApplyFusedEmaAdam(
     <tr>
       <td class="tg-0pky">lr（double）</td>
       <td class="tg-0pky">输入</td>
-      <td class="tg-0pky">学习率，公式中的η，推荐1e-3，1e-5，1e-8，范围0~1。</td>
+      <td class="tg-0pky">学习率，对应公式中的lr，推荐1e-3、1e-5、1e-8，取值范围0~1。</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">DOUBLE</td>
       <td class="tg-0pky">-</td>
@@ -246,7 +246,7 @@ aclnnStatus aclnnApplyFusedEmaAdam(
     <tr>
       <td class="tg-0pky">mode（int64_t）</td>
       <td class="tg-0pky">输入</td>
-      <td class="tg-0pky">控制应用L2正则化还是权重衰减，对应公式中的mode，1为adamw，0为L2。</td>
+      <td class="tg-0pky">控制应用L2正则化还是权重衰减，对应公式中的mode，1为AdamW，0为L2。</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">INT64</td>
       <td class="tg-0pky">-</td>
