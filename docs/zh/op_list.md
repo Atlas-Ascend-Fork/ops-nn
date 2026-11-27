@@ -1129,6 +1129,16 @@
     <td>实现2D深度卷积功能，每个输入通道独立卷积，等价于groups为通道数的Conv2D，经融合pass替换为Conv2D执行。</td>
   </tr>
   <tr>
+    <td>conv</td>
+    <td><a href="../../conv/extend_conv_transpose/README.md">extend_conv_transpose</a></td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>AI Core</td>
+    <td>计算三维转置卷积（反卷积），用于量化推理场景。</td>
+  </tr>
+  <tr>
     <td>foreach</td>
     <td><a href="../../foreach/foreach_abs/README.md">foreach_abs</a></td>
     <td>✓</td>
