@@ -21,6 +21,8 @@
 #include "foreach/foreach_sub_scalar/op_kernel/arch35/foreach_sub_scalar_tiling_data.h"
 #include "foreach/foreach_sub_scalar/op_kernel/arch35/foreach_sub_scalar_tiling_key.h"
 
+#include "../../../foreach_utils/op_host/foreach_perf_flat_tiling.h"
+
 namespace optiling {
 
 using namespace Ops::NN::OpTiling;
@@ -84,10 +86,19 @@ static ge::graphStatus ValidateForeachSubScalar(gert::TilingContext* context, ui
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto inputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, i);
         // 校验 x 的 desc 非空
-        OP_CHECK_IF(inputDesc == nullptr, OP_LOGE(context, "x[%lu] descriptor is null", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            inputDesc == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                context->GetNodeName(), "x",
+                ("the descriptor of tensor x[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+            return ge::GRAPH_FAILED);
         auto inputShape = context->GetDynamicInputShape(INPUT_IDX_0, i);
         // 校验 x 的 shape 非空
-        OP_CHECK_IF(inputShape == nullptr, OP_LOGE(context, "x[%lu] shape is null", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(inputShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "x",
+                        ("the shape of tensor x[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+                    return ge::GRAPH_FAILED);
         ge::DataType inputDtype = inputDesc->GetDataType();
         // 校验 x 的 dtype 在支持范围内
         OP_CHECK_IF(!IsSupportedInputDtype(inputDtype),
@@ -133,10 +144,19 @@ static ge::graphStatus ValidateForeachSubScalar(gert::TilingContext* context, ui
 
         auto outputDesc = context->GetOutputDesc(i);
         // 校验 y 的 desc 非空
-        OP_CHECK_IF(outputDesc == nullptr, OP_LOGE(context, "y[%lu] descriptor is null", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            outputDesc == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                context->GetNodeName(), "y",
+                ("the descriptor of tensor y[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+            return ge::GRAPH_FAILED);
         auto outputShape = context->GetOutputShape(i);
         // 校验 y 的 shape 非空
-        OP_CHECK_IF(outputShape == nullptr, OP_LOGE(context, "y[%lu] shape is null", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(outputShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "y",
+                        ("the shape of tensor y[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+                    return ge::GRAPH_FAILED);
         // 校验 y 的 dtype 与 x 一致
         OP_CHECK_IF(
             outputDesc->GetDataType() != listDtype,
@@ -176,8 +196,8 @@ static ge::graphStatus ForeachSubScalarTilingFunc(gert::TilingContext* context)
 
     // 数量上限校验，空列表放行按 no-op 成功
     OP_CHECK_IF(tensorNum > static_cast<uint64_t>(MAX_TENSOR_NUM),
-                OP_LOGE_FOR_INVALID_TENSORNUM(context->GetNodeName(), "x", static_cast<int64_t>(tensorNum),
-                                              ("within the range [0, " + std::to_string(MAX_TENSOR_NUM) + "]").c_str()),
+                OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "x", std::to_string(tensorNum).c_str(),
+                                             ("within the range [0, " + std::to_string(MAX_TENSOR_NUM) + "]").c_str()),
                 return ge::GRAPH_FAILED);
 
     // 3. Validate x/y tensor list dtypes, shapes and pairing
@@ -203,9 +223,15 @@ static ge::graphStatus ForeachSubScalarTilingFunc(gert::TilingContext* context)
     // 按 IR 序号取 1 会在 x 列表含多个张量时读到 x[1]，既漏校验 scalar 又会误拒合法用例
     const size_t scalarInputIndex = idxInstanceInfoPtr->GetInstanceStart() + idxInstanceInfoPtr->GetInstanceNum();
     auto scalarDesc = context->GetInputDesc(scalarInputIndex);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scalarDesc);
+    OP_CHECK_IF(scalarDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "scalar",
+                                                         "the scalar descriptor is missing in the tiling context"),
+                return ge::GRAPH_FAILED);
     auto scalarShapePtr = context->GetInputShape(scalarInputIndex);
-    OP_CHECK_NULL_WITH_CONTEXT(context, scalarShapePtr);
+    OP_CHECK_IF(scalarShapePtr == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "scalar",
+                                                         "the scalar shape is missing in the tiling context"),
+                return ge::GRAPH_FAILED);
     auto scalarShape = scalarShapePtr->GetStorageShape();
     // 校验 scalar 元素个数为 1
     OP_CHECK_IF(scalarShape.GetShapeSize() != 1,
@@ -231,6 +257,19 @@ static ge::graphStatus ForeachSubScalarTilingFunc(gert::TilingContext* context)
     }
 
     // 5. Fill tiling data
+    if (ForeachPerfFlat::IsTarget(context)) {
+        uint64_t key = 0;
+        if (dataType == ge::DT_FLOAT)
+            key = 0;
+        if (dataType == ge::DT_FLOAT16)
+            key = 1;
+        if (dataType == ge::DT_INT32)
+            key = 2;
+        if (dataType == ge::DT_BF16)
+            key = 3;
+        return ForeachPerfFlat::Build<1>(context, key);
+    }
+
     ForeachSubScalarTilingData* tiling = context->GetTilingData<ForeachSubScalarTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     OP_CHECK_IF(memset_s(tiling, sizeof(ForeachSubScalarTilingData), 0, sizeof(ForeachSubScalarTilingData)) != EOK,

@@ -8,8 +8,13 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include <iostream>
+#include <vector>
 #include <gtest/gtest.h>
+#include "../../../../../foreach_utils/op_kernel/arch35/foreach_flat_tiling_data.h"
+#include "tiling_context_faker.h"
+#include "tiling_case_executor.h"
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
 #include "register/op_impl_registry.h"
@@ -121,6 +126,82 @@ TEST_F(ForeachMulListTilingTest, foreach_mul_list_x1_x2_shape_mismatch)
 
 TEST_F(ForeachMulListTilingTest, foreach_mul_list_dtype_mismatch)
 {
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
     // x2 的 dtype 与 x1 不一致，应在 ValidateForeachMulList 的 x2-dtype 校验处被拒绝。
     RunCase({4, 4}, {4, 4}, {4, 4}, ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_FLOAT, ge::GRAPH_FAILED, 0);
+    const auto reportedErrors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(reportedErrors.empty());
+    EXPECT_EQ(reportedErrors.front().error_id, "EZ0020");
 }
+
+namespace {
+// Check that the launch ranges own every element exactly once, including ragged lists.
+void ExpectFlatList(const std::vector<int64_t>& lengths, ge::DataType dtype, uint64_t key, uint64_t ubSize = 262144,
+                    bool expectSuccess = true)
+{
+    std::vector<gert::TilingContextPara::TensorDescription> tensors;
+    std::vector<int64_t> prefix{0};
+    for (int64_t length : lengths) {
+        tensors.emplace_back(gert::StorageShape{{length}, {length}}, dtype, ge::FORMAT_ND);
+        prefix.push_back(prefix.back() + length);
+    }
+    auto inputs = tensors;
+    std::vector<uint32_t> instances{static_cast<uint32_t>(lengths.size())};
+    inputs.insert(inputs.end(), tensors.begin(), tensors.end());
+    instances.push_back(static_cast<uint32_t>(lengths.size()));
+    int compileInfo = 0;
+    gert::TilingContextPara context("ForeachMulList", inputs, tensors, {}, instances,
+                                    {static_cast<uint32_t>(lengths.size())}, &compileInfo, 64, ubSize, 4096);
+    TilingInfo info;
+    if (!expectSuccess) {
+        EXPECT_FALSE(ExecuteTiling(context, info));
+        return;
+    }
+    ASSERT_TRUE(ExecuteTiling(context, info));
+    EXPECT_EQ(info.tilingKey, key);
+    EXPECT_EQ(info.workspaceSizes, std::vector<int64_t>({32}));
+    ASSERT_EQ(info.tilingDataSize, sizeof(ForeachFlatTilingData));
+    const auto& data = *reinterpret_cast<const ForeachFlatTilingData*>(info.tilingData.get());
+    EXPECT_GT(data.tileElems, 0U);
+    for (size_t i = 0; i < lengths.size(); ++i) {
+        EXPECT_EQ(data.tensorDataCountList[i], lengths[i]);
+    }
+    ASSERT_GE(info.blockNum, 1U);
+    ASSERT_LE(info.blockNum, FOREACH_FLAT_MAX_CORE_COUNT);
+    if (prefix.back() == 0) {
+        EXPECT_EQ(info.blockNum, 1U);
+        EXPECT_EQ(data.tensorEndOffsetList[0], -1);
+        return;
+    }
+    int64_t next = 0;
+    for (uint32_t core = 0; core < info.blockNum; ++core) {
+        const auto first = data.tensorStartList[core];
+        const auto last = data.tensorEndList[core];
+        ASSERT_LT(first, lengths.size());
+        ASSERT_LT(last, lengths.size());
+        EXPECT_EQ(prefix[first] + data.tensorStartOffsetList[core], next);
+        next = prefix[last] + data.tensorEndOffsetList[core] + 1;
+        EXPECT_LE(next, prefix.back());
+    }
+    EXPECT_EQ(next, prefix.back());
+}
+} // namespace
+
+TEST_F(ForeachMulListTilingTest, flat_supported_dtypes_and_tensor_partition)
+{
+    const std::vector<ge::DataType> dtypes{ge::DT_FLOAT, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_INT32,
+                                           ge::DT_INT16, ge::DT_INT8,    ge::DT_UINT8};
+    for (size_t key = 0; key < dtypes.size(); ++key) {
+        SCOPED_TRACE(key);
+        ExpectFlatList({16, 31, 64}, dtypes[key], key);
+    }
+}
+
+TEST_F(ForeachMulListTilingTest, flat_empty_list_noop) { ExpectFlatList({}, ge::DT_FLOAT, 0); }
+
+TEST_F(ForeachMulListTilingTest, flat_ragged_large_list_complete_coverage)
+{
+    ExpectFlatList({65536, 0, 32769}, ge::DT_FLOAT, 0);
+}
+
+TEST_F(ForeachMulListTilingTest, flat_insufficient_ub_rejected) { ExpectFlatList({16}, ge::DT_FLOAT, 0, 1, false); }

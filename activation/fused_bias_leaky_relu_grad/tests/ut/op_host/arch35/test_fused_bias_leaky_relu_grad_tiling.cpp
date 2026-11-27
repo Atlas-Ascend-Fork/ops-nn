@@ -13,7 +13,9 @@
 #include <string>
 #include <vector>
 
+#include <algorithm>
 #include <gtest/gtest.h>
+#include "../../../../op_kernel/arch35/fused_bias_leaky_relu_grad_tiling_struct.h"
 
 #include <map>
 #include <string>
@@ -68,7 +70,7 @@ static void FusedBiasLeakyReluGradTilingTestCase(std::initializer_list<int64_t> 
                                                  std::initializer_list<int64_t> featuresShape,
                                                  std::initializer_list<int64_t> xGradShape, ge::DataType yGradDtype,
                                                  ge::DataType featuresDtype, float negativeSlope, float scale,
-                                                 ge::graphStatus expectedStatus)
+                                                 ge::graphStatus expectedStatus, int expectedFlatMode = -1)
 {
     gert::StorageShape yGradShapeTensor = {yGradShape, yGradShape};
     gert::StorageShape featuresShapeTensor = {featuresShape, featuresShape};
@@ -147,7 +149,39 @@ static void FusedBiasLeakyReluGradTilingTestCase(std::initializer_list<int64_t> 
     tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
     tiling_context->GetPlatformInfo()->SetPlatformRes("version", soc_version_infos);
 
-    EXPECT_EQ(tiling_func(tiling_context), expectedStatus);
+    ASSERT_EQ(tiling_func(tiling_context), expectedStatus);
+    if (expectedFlatMode >= 0 && expectedStatus == ge::GRAPH_SUCCESS) {
+        const auto rank = std::max({yGradShape.size(), featuresShape.size(), xGradShape.size()});
+        uint32_t mode = 0;
+        uint32_t count = 0;
+        if (rank <= 4) {
+            const auto& data = *tiling_context->GetTilingData<FusedBiasLeakyReluGradTilingData<4>>();
+            mode = data.use_flat_simt;
+            count = data.flat_count;
+            if (expectedFlatMode == 2) {
+                EXPECT_EQ(data.input_strides[0][0], 5);
+                EXPECT_EQ(data.input_strides[0][1], 4);
+                EXPECT_EQ(data.input_strides[0][2], 60);
+                EXPECT_EQ(data.input_strides[0][3], 2);
+                EXPECT_EQ(data.input_strides[1][0], 1);
+                EXPECT_EQ(data.input_strides[1][1], 5);
+                EXPECT_EQ(data.input_strides[1][2], 20);
+                EXPECT_EQ(data.input_strides[1][3], 3);
+            }
+        } else {
+            const auto& data = *tiling_context->GetTilingData<FusedBiasLeakyReluGradTilingData<8>>();
+            mode = data.use_flat_simt;
+            count = data.flat_count;
+        }
+        EXPECT_EQ(mode, static_cast<uint32_t>(expectedFlatMode));
+        if (expectedFlatMode != 0) {
+            int64_t expectedCount = 1;
+            for (int64_t dim : xGradShape) {
+                expectedCount *= dim;
+            }
+            EXPECT_EQ(count, expectedCount);
+        }
+    }
 }
 
 // 常规 1D float32，rank<=4 走 RANK_4 分支
@@ -263,4 +297,23 @@ TEST_F(FusedBiasLeakyReluGradTilingTest, errmsg_dtype_unsupported_ez0020)
     FusedBiasLeakyReluGradTilingTestCase({1024}, {1024}, {1024}, ge::DT_INT32, ge::DT_FLOAT, 0.2f, 1.414213562373f,
                                          ge::GRAPH_FAILED);
     errmsg_test::ExpectFirstError("EZ0020", {{"op_name", "FusedBiasLeakyReluGrad"}});
+}
+
+TEST_F(FusedBiasLeakyReluGradTilingTest, broadcast_two_slab_indexing_plan)
+{
+    FusedBiasLeakyReluGradTilingTestCase({2, 1, 4, 1}, {1, 3, 1, 5}, {2, 3, 4, 5}, ge::DT_FLOAT, ge::DT_FLOAT, 0.2f,
+                                         1.0f, ge::GRAPH_SUCCESS, 2);
+}
+
+TEST_F(FusedBiasLeakyReluGradTilingTest, broadcast_three_slabs_use_general_flat_indexing)
+{
+    FusedBiasLeakyReluGradTilingTestCase({2, 1, 4, 1, 6, 1}, {1, 3, 1, 5, 1, 7}, {2, 3, 4, 5, 6, 7}, ge::DT_FLOAT,
+                                         ge::DT_FLOAT, 0.2f, 1.0f, ge::GRAPH_SUCCESS, 1);
+}
+
+TEST_F(FusedBiasLeakyReluGradTilingTest, broadcast_exceeding_int32_keeps_tiled_indexing)
+{
+    // Shape-only test: no tensor allocation is needed for the indexing boundary.
+    FusedBiasLeakyReluGradTilingTestCase({50000, 50000}, {1, 50000}, {50000, 50000}, ge::DT_FLOAT, ge::DT_FLOAT, 0.2f,
+                                         1.0f, ge::GRAPH_SUCCESS, 0);
 }

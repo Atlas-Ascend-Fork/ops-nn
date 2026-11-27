@@ -105,7 +105,8 @@ ge::graphStatus Build(gert::TilingContext* context)
     ge::DataType dataType = context->GetDynamicInputDesc(LIST_INPUT_INDEX, 0)->GetDataType();
     uint32_t storageBytes = GetStorageBytes(dataType);
     if (storageBytes == 0U) {
-        OP_LOGE(context, "validator admitted a dtype unsupported by the flat transport");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(dataType),
+                                              "the dtype is unsupported by the flat transport");
         return ge::GRAPH_FAILED;
     }
 
@@ -118,12 +119,15 @@ ge::graphStatus Build(gert::TilingContext* context)
     if constexpr (USE_OUTPUT_DTYPE) {
         auto outputDesc = context->GetOutputDesc(0);
         if (outputDesc == nullptr) {
-            OP_LOGE(context, "output descriptor is null");
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y",
+                                                     "the output descriptor is missing in the tiling context");
             return ge::GRAPH_FAILED;
         }
         outputStorageBytes = GetStorageBytes(outputDesc->GetDataType());
         if (outputStorageBytes == 0U) {
-            OP_LOGE(context, "validator admitted an output dtype unsupported by the flat transport");
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "y",
+                                                  Ops::Base::ToString(outputDesc->GetDataType()),
+                                                  "the output dtype is unsupported by the flat transport");
             return ge::GRAPH_FAILED;
         }
     }
@@ -134,7 +138,9 @@ ge::graphStatus Build(gert::TilingContext* context)
         int64_t
             dataCount = context->GetDynamicInputShape(LIST_INPUT_INDEX, tensorIndex)->GetStorageShape().GetShapeSize();
         if (dataCount < 0 || totalDataCount > std::numeric_limits<int64_t>::max() - dataCount) {
-            OP_LOGE(context, "invalid or overflowing tensor-list element count");
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                context->GetNodeName(), "x", std::to_string(dataCount).c_str(),
+                "tensor element counts must be nonnegative and their total must fit in int64");
             return ge::GRAPH_FAILED;
         }
         tilingData->tensorDataCountList[tensorIndex] = dataCount;

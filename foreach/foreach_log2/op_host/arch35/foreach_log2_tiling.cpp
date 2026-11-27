@@ -23,6 +23,7 @@
 #include "graph/utils/type_utils.h"
 #include "../../op_kernel/arch35/foreach_log2_tiling_data.h"
 #include "../../op_kernel/arch35/foreach_log2_tiling_key.h"
+#include "../../../foreach_utils/op_host/foreach_flat_regbase_validator.h"
 
 #include <limits>
 
@@ -144,8 +145,234 @@ static ge::graphStatus ValidateForeachLog2(gert::TilingContext* context, uint64_
     return ge::GRAPH_SUCCESS;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Ascend950 flat RegBase tiling (scheme flat_regbase_unary_v1).
+//
+// The flat transport moves every tensor through one double-buffered GM->UB->GM pipeline per
+// core, so the per-tensor cost is one tile-sized DMA pair instead of one SIMT VF barrier. Lists
+// whose average and largest tensor both stay within FLAT_TENSOR_BALANCED_AVG split cores by whole
+// consecutive tensors (a core then drives at most a couple of tiny tensors, and the 1-element
+// tensors of the tuning set still spread across every AIV); larger tensors keep the shared
+// element-balanced split so a single wide tensor cannot pin one core. Both branches fill the
+// shared ForeachFlatTilingData schema (< 4KB kernel launch budget) and leave the original
+// ForeachLog2TilingData path below untouched for Ascend350.
+// ---------------------------------------------------------------------------------------------
+constexpr int64_t FLAT_TENSOR_BALANCED_AVG = 32768;
+constexpr uint32_t FLAT_BUFFER_DEPTH = 2U;
+constexpr uint32_t FLAT_DMA_ALIGN_BYTES = 32U;
+constexpr int64_t FLAT_MIN_CORE_WORK_BYTES = 4096;
+constexpr uint64_t FLAT_WORKSPACE_BYTES = 32U;
+
+static bool IsAscend950FlatTarget(gert::TilingContext* context)
+{
+    fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
+    if (platformInfoPtr == nullptr) {
+        return false;
+    }
+    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
+    return ascendcPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950;
+}
+
+static int64_t FlatCeilDiv(int64_t value, int64_t divisor)
+{
+    return value / divisor + static_cast<int64_t>(value % divisor != 0);
+}
+
+static void LocateFlatTensorOffset(int64_t flatOffset, int32_t tensorCount, const int64_t* tensorDataCountList,
+                                   uint16_t& tensorIndex, int64_t& tensorOffset)
+{
+    for (int32_t index = 0; index < tensorCount; ++index) {
+        if (flatOffset < tensorDataCountList[index]) {
+            tensorIndex = static_cast<uint16_t>(index);
+            tensorOffset = flatOffset;
+            return;
+        }
+        flatOffset -= tensorDataCountList[index];
+    }
+    tensorIndex = static_cast<uint16_t>(tensorCount - 1);
+    tensorOffset = tensorDataCountList[tensorIndex] - 1;
+}
+
+// An empty tensor list is legal (consistent with the aclnn entry): tiling succeeds and the kernel
+// runs as a single-core no-op. The shared flat runner skips the range whose end offset is -1
+// before resolving any tensor pointer, so no GM access happens.
+static ge::graphStatus ForeachLog2FlatEmptyListNoOp(gert::TilingContext* context)
+{
+    uint64_t ubSize = 0;
+    int64_t coreNum = 0;
+    if (GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    ForeachFlatTilingData* tilingData = context->GetTilingData<ForeachFlatTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tilingData);
+    *tilingData = ForeachFlatTilingData{};
+    tilingData->tileElems = 1U; // keep the mover's InitBuffer positive on the no-op core
+    tilingData->tensorEndOffsetList[0] = -1;
+    size_t* workspaceSizes = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, workspaceSizes);
+    workspaceSizes[0] = FLAT_WORKSPACE_BYTES;
+    if (context->SetLocalMemorySize(static_cast<uint32_t>(ubSize)) != ge::GRAPH_SUCCESS) {
+        OP_LOGE(context, "failed to set local memory size");
+        return ge::GRAPH_FAILED;
+    }
+    context->SetBlockDim(1);
+    context->SetTilingKey(GET_TPL_TILING_KEY(FOREACH_LOG2_TPL_SCH_MODE_FLOAT));
+    return ge::GRAPH_SUCCESS;
+}
+
+static ge::graphStatus ForeachLog2FlatTilingFunc(gert::TilingContext* context)
+{
+    auto computeNodeInfo = context->GetComputeNodeInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfo);
+    auto inputInstanceInfo = computeNodeInfo->GetInputInstanceInfo(INPUT_IDX_0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, inputInstanceInfo);
+    const int32_t tensorCount = static_cast<int32_t>(inputInstanceInfo->GetInstanceNum());
+    // The empty-list short-circuit must precede ValidateHomogeneous, which rejects a list of size
+    // 0 and would turn the legal aclnn no-op entry into a tiling failure.
+    if (tensorCount == 0) {
+        return ForeachLog2FlatEmptyListNoOp(context);
+    }
+    if (ForeachFlatRegbaseValidation::ValidateHomogeneous<1>(context, IsSupportedInputDtype) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
+    uint64_t ubSize = 0;
+    int64_t coreNum = 0;
+    if (GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    ForeachFlatTilingData* tilingData = context->GetTilingData<ForeachFlatTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tilingData);
+    *tilingData = ForeachFlatTilingData{};
+
+    int64_t totalDataCount = 0;
+    int64_t maxDataCount = 0;
+    for (int32_t tensorIndex = 0; tensorIndex < tensorCount; ++tensorIndex) {
+        auto inputShape = context->GetDynamicInputShape(INPUT_IDX_0, tensorIndex);
+        OP_CHECK_IF(inputShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x",
+                                                             "the input shape is missing in the tiling context"),
+                    return ge::GRAPH_FAILED);
+        const auto& inputStorageShape = inputShape->GetStorageShape();
+        const int64_t dataCount = inputStorageShape.GetShapeSize();
+        const auto& outputStorageShape = context->GetOutputShape(tensorIndex)->GetStorageShape();
+        // Scalar storage can be normalized from () to (1,) by the framework.
+        const bool scalarStorageEquivalent = dataCount == 1 && outputStorageShape.GetShapeSize() == 1;
+        OP_CHECK_IF(outputStorageShape != inputStorageShape && !scalarStorageEquivalent,
+                    OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                        context->GetNodeName(), "y", Ops::Base::ToString(outputStorageShape).c_str(),
+                        ("the storage shape of tensor y[" + std::to_string(tensorIndex) +
+                         "] must match the corresponding input shape " + Ops::Base::ToString(inputStorageShape))
+                            .c_str()),
+                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            dataCount < 0 || totalDataCount > std::numeric_limits<int64_t>::max() - dataCount,
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "x", std::to_string(dataCount).c_str(),
+                                                      ("the element count of tensor x[" + std::to_string(tensorIndex) +
+                                                       "] must be nonnegative and the total must fit in int64")
+                                                          .c_str()),
+            return ge::GRAPH_FAILED);
+        tilingData->tensorDataCountList[tensorIndex] = dataCount;
+        totalDataCount += dataCount;
+        maxDataCount = std::max(maxDataCount, dataCount);
+    }
+
+    auto firstInputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, 0);
+    OP_CHECK_IF(firstInputDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "x", "the descriptor of the first input is missing in the tiling context"),
+                return ge::GRAPH_FAILED);
+    const ge::DataType dataType = firstInputDesc->GetDataType();
+    const uint32_t storageBytes = (dataType == ge::DT_FLOAT) ? sizeof(float) : sizeof(uint16_t);
+    // One double-buffered input queue plus one double-buffered output queue; tiles stay 32B aligned.
+    const uint64_t bytesPerElement = static_cast<uint64_t>(FLAT_BUFFER_DEPTH) * storageBytes * 2U;
+    const uint64_t alignElements = FLAT_DMA_ALIGN_BYTES / storageBytes;
+    const uint64_t rawTileElements = ubSize / bytesPerElement;
+    const uint64_t tileElements = rawTileElements / alignElements * alignElements;
+    OP_CHECK_IF(tileElements == 0U || tileElements > 0xFFFFFFFFU,
+                OP_LOGE(context, "UB is insufficient for the flat unary transport tile"), return ge::GRAPH_FAILED);
+    tilingData->tileElems = static_cast<uint32_t>(tileElements);
+
+    const int64_t limitedCoreNum = std::min<int64_t>(coreNum, FOREACH_FLAT_MAX_CORE_COUNT);
+    if (totalDataCount / tensorCount <= FLAT_TENSOR_BALANCED_AVG && maxDataCount <= FLAT_TENSOR_BALANCED_AVG) {
+        // Tensor-balanced split: whole consecutive tensors per core.
+        const int64_t coreCount = std::min<int64_t>(limitedCoreNum, tensorCount);
+        const int64_t baseTensors = tensorCount / coreCount;
+        const int64_t remainderTensors = tensorCount % coreCount;
+        int32_t tensorCursor = 0;
+        for (int64_t coreIndex = 0; coreIndex < coreCount; ++coreIndex) {
+            const int64_t share = baseTensors + static_cast<int64_t>(coreIndex < remainderTensors);
+            const int32_t startTensor = tensorCursor;
+            const int32_t endTensor = tensorCursor + static_cast<int32_t>(share) - 1;
+            tilingData->tensorStartList[coreIndex] = static_cast<uint16_t>(startTensor);
+            tilingData->tensorEndList[coreIndex] = static_cast<uint16_t>(endTensor);
+            tilingData->tensorStartOffsetList[coreIndex] = 0;
+            tilingData->tensorEndOffsetList[coreIndex] = tilingData->tensorDataCountList[endTensor] - 1;
+            tensorCursor = endTensor + 1;
+        }
+        context->SetBlockDim(static_cast<uint32_t>(coreCount));
+    } else {
+        // Element-balanced split, same as the shared flat tiler.
+        const int64_t elementsPerBlock = FLAT_MIN_CORE_WORK_BYTES / static_cast<int64_t>(storageBytes);
+        const int64_t totalBlocks = FlatCeilDiv(totalDataCount, elementsPerBlock);
+        const int64_t coreCount = std::max<int64_t>(1, std::min<int64_t>(limitedCoreNum, totalBlocks));
+        const int64_t baseBlocks = totalBlocks / coreCount;
+        const int64_t remainderBlocks = totalBlocks % coreCount;
+        int64_t flatCursor = 0;
+        for (int64_t coreIndex = 0; coreIndex < coreCount; ++coreIndex) {
+            const int64_t blockCount = baseBlocks + static_cast<int64_t>(coreIndex < remainderBlocks);
+            // Overflow-safe target: when the aligned share exceeds the remaining count (possible for
+            // totals close to INT64_MAX), the remaining count is the minimum.
+            int64_t currentCount = totalDataCount - flatCursor;
+            if (blockCount <= currentCount / elementsPerBlock) {
+                currentCount = blockCount * elementsPerBlock;
+            }
+            uint16_t startTensor = 0;
+            int64_t startOffset = 0;
+            uint16_t endTensor = 0;
+            int64_t endOffset = -1;
+            LocateFlatTensorOffset(flatCursor, tensorCount, tilingData->tensorDataCountList, startTensor, startOffset);
+            LocateFlatTensorOffset(flatCursor + currentCount - 1, tensorCount, tilingData->tensorDataCountList,
+                                   endTensor, endOffset);
+            tilingData->tensorStartList[coreIndex] = startTensor;
+            tilingData->tensorEndList[coreIndex] = endTensor;
+            tilingData->tensorStartOffsetList[coreIndex] = startOffset;
+            tilingData->tensorEndOffsetList[coreIndex] = endOffset;
+            flatCursor += currentCount;
+        }
+        context->SetBlockDim(static_cast<uint32_t>(coreCount));
+    }
+
+    if (context->SetLocalMemorySize(static_cast<uint32_t>(ubSize)) != ge::GRAPH_SUCCESS) {
+        OP_LOGE(context, "failed to set local memory size");
+        return ge::GRAPH_FAILED;
+    }
+    size_t* workspaceSizes = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, workspaceSizes);
+    workspaceSizes[0] = FLAT_WORKSPACE_BYTES;
+
+    uint64_t tilingKey = 0;
+    if (dataType == ge::DT_FLOAT) {
+        tilingKey = GET_TPL_TILING_KEY(FOREACH_LOG2_TPL_SCH_MODE_FLOAT);
+    } else if (dataType == ge::DT_FLOAT16) {
+        tilingKey = GET_TPL_TILING_KEY(FOREACH_LOG2_TPL_SCH_MODE_FLOAT16);
+    } else if (dataType == ge::DT_BF16) {
+        tilingKey = GET_TPL_TILING_KEY(FOREACH_LOG2_TPL_SCH_MODE_BF16);
+    } else {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(dataType),
+                                              "only DT_FLOAT, DT_FLOAT16 and DT_BF16 are supported");
+        return ge::GRAPH_FAILED;
+    }
+    context->SetTilingKey(tilingKey);
+    return ge::GRAPH_SUCCESS;
+}
+
 static ge::graphStatus ForeachLog2TilingFunc(gert::TilingContext* context)
 {
+    // Ascend950 runs the flat RegBase transport; every other SoC keeps the SIMT path below unchanged.
+    if (IsAscend950FlatTarget(context)) {
+        return ForeachLog2FlatTilingFunc(context);
+    }
     // 1. Get platform info
     uint64_t ubSize;
     int64_t coreNum;

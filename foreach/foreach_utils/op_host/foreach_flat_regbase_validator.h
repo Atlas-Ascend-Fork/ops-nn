@@ -93,7 +93,11 @@ ge::graphStatus ValidateHomogeneous(gert::TilingContext* context, DtypePredicate
         auto firstDesc = context->GetDynamicInputDesc(listInputIndex, tensorIndex);
         auto firstShape = context->GetDynamicInputShape(listInputIndex, tensorIndex);
         if (firstDesc == nullptr || firstShape == nullptr) {
-            OP_LOGE(context, "x[%u] descriptor or shape is null", tensorIndex);
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                context->GetNodeName(), "x",
+                ("the descriptor or shape of tensor x[" + std::to_string(tensorIndex) +
+                 "] is missing in the tiling context")
+                    .c_str());
             return ge::GRAPH_FAILED;
         }
 
@@ -122,7 +126,9 @@ ge::graphStatus ValidateHomogeneous(gert::TilingContext* context, DtypePredicate
         }
         int64_t dataCount = storageShape.GetShapeSize();
         if (dataCount < 0 || totalElements > std::numeric_limits<int64_t>::max() - dataCount) {
-            OP_LOGE(context, "invalid or overflowing tensor-list element count");
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                context->GetNodeName(), "x", std::to_string(dataCount).c_str(),
+                "tensor element counts must be nonnegative and their total must fit in int64");
             return ge::GRAPH_FAILED;
         }
         totalElements += dataCount;
@@ -130,17 +136,37 @@ ge::graphStatus ValidateHomogeneous(gert::TilingContext* context, DtypePredicate
         for (uint32_t flow = 1; flow < INPUT_FLOW_COUNT; ++flow) {
             auto inputDesc = context->GetDynamicInputDesc(listInputIndex + flow, tensorIndex);
             auto inputShape = context->GetDynamicInputShape(listInputIndex + flow, tensorIndex);
-            if (inputDesc == nullptr || inputShape == nullptr || inputDesc->GetDataType() != listDtype ||
-                inputShape->GetStorageShape() != storageShape) {
-                OP_LOGE(context, "same-position input tensors must have identical dtype and storage shape");
+            if (inputDesc == nullptr || inputShape == nullptr) {
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "inputs",
+                    "the descriptor or shape of a same-position input tensor is missing");
+                return ge::GRAPH_FAILED;
+            }
+            if (inputDesc->GetDataType() != listDtype) {
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "inputs",
+                                                      Ops::Base::ToString(inputDesc->GetDataType()),
+                                                      "same-position input tensors must have identical dtype");
+                return ge::GRAPH_FAILED;
+            }
+            if (inputShape->GetStorageShape() != storageShape) {
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "inputs",
+                                                      Ops::Base::ToString(inputShape->GetStorageShape()).c_str(),
+                                                      "same-position input tensors must have identical storage shape");
                 return ge::GRAPH_FAILED;
             }
         }
 
         auto outputDesc = context->GetOutputDesc(tensorIndex);
         auto outputShape = context->GetOutputShape(tensorIndex);
-        if (outputDesc == nullptr || outputShape == nullptr || outputDesc->GetDataType() != listDtype) {
-            OP_LOGE(context, "same-position output must match the first input dtype");
+        if (outputDesc == nullptr || outputShape == nullptr) {
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y",
+                                                     "the output descriptor or shape is missing in the tiling context");
+            return ge::GRAPH_FAILED;
+        }
+        if (outputDesc->GetDataType() != listDtype) {
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "y",
+                                                  Ops::Base::ToString(outputDesc->GetDataType()),
+                                                  "same-position output must match the first input dtype");
             return ge::GRAPH_FAILED;
         }
         const gert::Shape& outputStorageShape = outputShape->GetStorageShape();
@@ -150,7 +176,10 @@ ge::graphStatus ValidateHomogeneous(gert::TilingContext* context, DtypePredicate
         // Match the Membase contract: the output storage may be represented differently
         // (notably scalar () versus (1,)), but it must have enough flat capacity for x.
         if (outputStorageShape.GetShapeSize() < dataCount) {
-            OP_LOGE(context, "y[%u] storage must contain at least as many elements as x[%u]", tensorIndex, tensorIndex);
+            OP_LOGE_FOR_INVALID_SHAPESIZES_WITH_REASON(
+                context->GetNodeName(), "x and y",
+                (std::to_string(dataCount) + ", " + std::to_string(outputStorageShape.GetShapeSize())).c_str(),
+                "same-position output storage must contain at least as many elements as the input");
             return ge::GRAPH_FAILED;
         }
     }

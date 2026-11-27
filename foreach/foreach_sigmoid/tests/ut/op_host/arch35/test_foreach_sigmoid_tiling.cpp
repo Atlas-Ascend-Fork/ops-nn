@@ -15,8 +15,14 @@
  * \brief arch35 (Ascend950) tiling UT for foreach_sigmoid
  */
 
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include <iostream>
+#include <vector>
 #include <gtest/gtest.h>
+#include "../../../../op_kernel/arch35/foreach_sigmoid_tiling_key.h"
+#include "../../../../../foreach_utils/op_kernel/arch35/foreach_flat_tiling_data.h"
+#include "tiling_context_faker.h"
+#include "tiling_case_executor.h"
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
@@ -139,10 +145,36 @@ TEST_F(ForeachSigmoidTilingTest, foreach_sigmoid_out_dtype_mismatch)
 
 TEST_F(ForeachSigmoidTilingTest, foreach_sigmoid_unsupported_dtype)
 {
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
     DoCase({4, 4}, ge::DT_INT8, {4, 4}, ge::DT_INT8, ge::GRAPH_FAILED);
+    const auto reportedErrors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(reportedErrors.empty());
+    EXPECT_EQ(reportedErrors.front().error_id, "EZ0019");
 }
 
 TEST_F(ForeachSigmoidTilingTest, foreach_sigmoid_dim_exceed)
 {
+    (void)ErrorManager::GetInstance().GetRawErrorMessages();
     DoCase({2, 2, 2, 2, 2, 2, 2, 2, 2}, ge::DT_FLOAT, {2, 2, 2, 2, 2, 2, 2, 2, 2}, ge::DT_FLOAT, ge::GRAPH_FAILED);
+    const auto reportedErrors = ErrorManager::GetInstance().GetRawErrorMessages();
+    ASSERT_FALSE(reportedErrors.empty());
+    EXPECT_EQ(reportedErrors.front().error_id, "EZ0012");
+}
+
+TEST_F(ForeachSigmoidTilingTest, flat_scalar_list_launch_contract)
+{
+    const std::vector<gert::TilingContextPara::TensorDescription> tensors(3, {{{1}, {1}}, ge::DT_FLOAT, ge::FORMAT_ND});
+    int compileInfo = 0;
+    gert::TilingContextPara context("ForeachSigmoid", tensors, tensors, {}, {3}, {3}, &compileInfo);
+    TilingInfo info;
+    ASSERT_TRUE(ExecuteTiling(context, info));
+    EXPECT_EQ(info.tilingKey, GET_TPL_TILING_KEY(FOREACH_SIGMOID_SCH_MODE_SCALARS));
+    EXPECT_EQ(info.blockNum, 1U);
+    EXPECT_EQ(info.workspaceSizes, std::vector<int64_t>({32}));
+    ASSERT_EQ(info.tilingDataSize, sizeof(ForeachFlatTilingData));
+    const auto& data = *reinterpret_cast<const ForeachFlatTilingData*>(info.tilingData.get());
+    EXPECT_EQ(data.tileElems, 3U);
+    for (size_t i = 0; i < 3; ++i) {
+        EXPECT_EQ(data.tensorDataCountList[i], 1);
+    }
 }

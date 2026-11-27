@@ -16,6 +16,13 @@ add_kernel_sources(
 
 add_kernel_sources(
     KERNEL_SRC arch35/foreach_log2.cpp
-    COMPUTE_UNITS  ascend950 ascend350
+    COMPUTE_UNITS  ascend350
+    AUTO_SYNC false
+)
+
+# Ascend950 runs the flat RegBase transport; Ascend350 keeps the original SIMT entry above.
+add_kernel_sources(
+    KERNEL_SRC arch35/foreach_log2_flat.cpp
+    COMPUTE_UNITS  ascend950
     AUTO_SYNC false
 )

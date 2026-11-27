@@ -26,6 +26,8 @@
 #include "foreach/foreach_sigmoid/op_kernel/arch35/foreach_sigmoid_tiling_data.h"
 #include "foreach/foreach_sigmoid/op_kernel/arch35/foreach_sigmoid_tiling_key.h"
 
+#include "../../../foreach_utils/op_host/foreach_perf_flat_tiling.h"
+
 namespace optiling {
 
 constexpr uint32_t DCACHE_SIZE = 128 * 1024;
@@ -68,10 +70,19 @@ static ge::graphStatus ValidateForeachSigmoid(gert::TilingContext* context, uint
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto inputDesc = context->GetDynamicInputDesc(0, i);
         // 校验 x 的 desc 非空
-        OP_CHECK_IF(inputDesc == nullptr, OP_LOGE(context, "x[%lu] descriptor is null", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            inputDesc == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                context->GetNodeName(), "x",
+                ("the descriptor of tensor x[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+            return ge::GRAPH_FAILED);
         auto inputShape = context->GetDynamicInputShape(0, i);
         // 校验 x 的 shape 非空
-        OP_CHECK_IF(inputShape == nullptr, OP_LOGE(context, "x[%lu] shape is null", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(inputShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "x",
+                        ("the shape of tensor x[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+                    return ge::GRAPH_FAILED);
         ge::DataType inputDtype = inputDesc->GetDataType();
         // 校验 x 的 dtype 在支持范围内
         OP_CHECK_IF(!IsSupportedInputDtype(inputDtype),
@@ -114,10 +125,19 @@ static ge::graphStatus ValidateForeachSigmoid(gert::TilingContext* context, uint
 
         auto outputDesc = context->GetOutputDesc(i);
         // 校验 y 的 desc 非空
-        OP_CHECK_IF(outputDesc == nullptr, OP_LOGE(context, "y[%lu] descriptor is null", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            outputDesc == nullptr,
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                context->GetNodeName(), "y",
+                ("the descriptor of tensor y[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+            return ge::GRAPH_FAILED);
         auto outputShape = context->GetOutputShape(i);
         // 校验 y 的 shape 非空
-        OP_CHECK_IF(outputShape == nullptr, OP_LOGE(context, "y[%lu] shape is null", i), return ge::GRAPH_FAILED);
+        OP_CHECK_IF(outputShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "y",
+                        ("the shape of tensor y[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+                    return ge::GRAPH_FAILED);
         // 校验 y 的 dtype 与 x 一致
         OP_CHECK_IF(
             outputDesc->GetDataType() != listDtype,
@@ -158,8 +178,8 @@ static ge::graphStatus ForeachSigmoidTilingFunc(gert::TilingContext* context)
     // 数量上限在窄化为 int32 前校验，避免大实例数截断绕过检查
     OP_CHECK_IF(
         instanceNum > static_cast<uint64_t>(MAX_TENSOR_COUNT),
-        OP_LOGE_FOR_INVALID_TENSORNUM(context->GetNodeName(), "x", static_cast<int64_t>(instanceNum),
-                                      ("within the range [0, " + std::to_string(MAX_TENSOR_COUNT) + "]").c_str()),
+        OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "x", std::to_string(instanceNum).c_str(),
+                                     ("within the range [0, " + std::to_string(MAX_TENSOR_COUNT) + "]").c_str()),
         return ge::GRAPH_FAILED);
     int32_t tensorNum = static_cast<int32_t>(instanceNum);
 
@@ -181,6 +201,7 @@ static ge::graphStatus ForeachSigmoidTilingFunc(gert::TilingContext* context)
     }
 
     int64_t maxTensorElements = 0;
+    bool allScalarTensors = tensorNum > 0;
     for (int32_t i = 0; i < tensorNum; i++) {
         auto shapePtr = context->GetDynamicInputShape(0, i);
         OP_CHECK_IF(shapePtr == nullptr,
@@ -190,6 +211,7 @@ static ge::graphStatus ForeachSigmoidTilingFunc(gert::TilingContext* context)
                             " is missing in the tiling context; check that the graph node provides all inputs"),
                     return ge::GRAPH_FAILED);
         maxTensorElements = std::max(maxTensorElements, shapePtr->GetStorageShape().GetShapeSize());
+        allScalarTensors = allScalarTensors && shapePtr->GetStorageShape().GetShapeSize() == 1;
     }
 
     int64_t perCoreElements = std::max(MIN_PER_CORE_ELEMENTS, Ops::Base::CeilDiv(maxTensorElements, maxCoreNum));
@@ -197,6 +219,30 @@ static ge::graphStatus ForeachSigmoidTilingFunc(gert::TilingContext* context)
     int32_t needCoreNum = static_cast<int32_t>(
         std::min(maxCoreNum, Ops::Base::CeilDiv(maxTensorElements, perCoreElements)));
     needCoreNum = std::max(1, needCoreNum);
+
+    if (ForeachPerfFlat::IsTarget(context)) {
+        uint64_t key = 0;
+        if (xDtype == ge::DT_FLOAT16)
+            key = 0;
+        if (xDtype == ge::DT_FLOAT)
+            key = 1;
+        if (xDtype == ge::DT_BF16)
+            key = 2;
+        auto result = ForeachPerfFlat::Build<1>(context, key);
+        if (result == ge::GRAPH_SUCCESS && allScalarTensors) {
+            auto td = context->GetTilingData<ForeachFlatTilingData>();
+            td->tensorStartList[0] = 0;
+            td->tensorEndList[0] = static_cast<uint16_t>(tensorNum - 1);
+            // Scalar mode needs only a count; the other modes retain tileElems.
+            td->tileElems = static_cast<uint32_t>(tensorNum);
+            context->SetBlockDim(1);
+            // The scalar SIMT route owns no dynamic UB; reserve its static shared memory.
+            if (context->SetLocalMemorySize(0) != ge::GRAPH_SUCCESS)
+                return ge::GRAPH_FAILED;
+            context->SetTilingKey(GET_TPL_TILING_KEY(FOREACH_SIGMOID_SCH_MODE_SCALARS));
+        }
+        return result;
+    }
 
     ForeachSigmoidTilingData* tiling = context->GetTilingData<ForeachSigmoidTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);

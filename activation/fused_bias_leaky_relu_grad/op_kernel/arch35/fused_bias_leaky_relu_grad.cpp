@@ -15,20 +15,18 @@
  */
 
 #include "kernel_operator.h"
+#include "fused_bias_leaky_relu_grad_flat_simt.h"
 #include "fused_bias_leaky_relu_grad_kernel.h"
 #include "fused_bias_leaky_relu_grad_tiling_struct.h"
 
 using TilingData4 = FusedBiasLeakyReluGradTilingData<4>;
 using TilingData8 = FusedBiasLeakyReluGradTilingData<8>;
 
-template<int RANK>
-__global__ __aicore__ void fused_bias_leaky_relu_grad(
-    GM_ADDR y_grad,
-    GM_ADDR features,
-    GM_ADDR x_grad,
-    GM_ADDR workspace, GM_ADDR tiling)
+template <int RANK>
+__global__ __aicore__ void fused_bias_leaky_relu_grad(GM_ADDR y_grad, GM_ADDR features, GM_ADDR x_grad,
+                                                      GM_ADDR workspace, GM_ADDR tiling)
 {
-    GM_ADDR ins[2]  = {y_grad, features};
+    GM_ADDR ins[2] = {y_grad, features};
     GM_ADDR outs[1] = {x_grad};
 
     REGISTER_NONE_TILING;
@@ -36,11 +34,19 @@ __global__ __aicore__ void fused_bias_leaky_relu_grad(
 
     if constexpr (RANK == 4) {
         GET_TILING_DATA_WITH_STRUCT(TilingData4, td, tiling);
+        if (td.use_flat_simt) {
+            FusedBiasLeakyReluGradFlat::Launch<DTYPE_Y_GRAD, 4>(y_grad, features, x_grad, tiling, td);
+            return;
+        }
         FusedBiasLeakyReluGradKernel<DTYPE_Y_GRAD, 4> kernel;
         kernel.Init(ins, outs, &td);
         kernel.Process();
     } else {
         GET_TILING_DATA_WITH_STRUCT(TilingData8, td, tiling);
+        if (td.use_flat_simt) {
+            FusedBiasLeakyReluGradFlat::Launch<DTYPE_Y_GRAD, 8>(y_grad, features, x_grad, tiling, td);
+            return;
+        }
         FusedBiasLeakyReluGradKernel<DTYPE_Y_GRAD, 8> kernel;
         kernel.Init(ins, outs, &td);
         kernel.Process();

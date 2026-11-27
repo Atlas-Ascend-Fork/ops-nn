@@ -27,6 +27,8 @@
 
 #include <limits>
 
+#include "../../../foreach_utils/op_host/foreach_perf_flat_tiling.h"
+
 namespace optiling {
 
 using namespace Ops::NN::Optiling;
@@ -88,10 +90,19 @@ static ge::graphStatus ValidateX1Tensor(gert::TilingContext* context, uint64_t i
 {
     auto x1Desc = context->GetDynamicInputDesc(INPUT_IDX_0, i);
     // 校验 x1 的 desc 非空
-    OP_CHECK_IF(x1Desc == nullptr, OP_LOGE(context, "x1[%lu] descriptor is null", i), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        x1Desc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "x1",
+            ("the descriptor of tensor x1[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+        return ge::GRAPH_FAILED);
     auto x1Shape = context->GetDynamicInputShape(INPUT_IDX_0, i);
     // 校验 x1 的 shape 非空
-    OP_CHECK_IF(x1Shape == nullptr, OP_LOGE(context, "x1[%lu] shape is null", i), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(x1Shape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "x1",
+                    ("the shape of tensor x1[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+                return ge::GRAPH_FAILED);
     ge::DataType x1Dtype = x1Desc->GetDataType();
     // 校验 x1 的 dtype 在支持范围内
     OP_CHECK_IF(
@@ -143,10 +154,19 @@ static ge::graphStatus ValidateX2Tensor(gert::TilingContext* context, uint64_t i
 {
     auto x2Desc = context->GetDynamicInputDesc(INPUT_IDX_1, i);
     // 校验 x2 的 desc 非空
-    OP_CHECK_IF(x2Desc == nullptr, OP_LOGE(context, "x2[%lu] descriptor is null", i), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        x2Desc == nullptr,
+        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+            context->GetNodeName(), "x2",
+            ("the descriptor of tensor x2[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+        return ge::GRAPH_FAILED);
     auto x2Shape = context->GetDynamicInputShape(INPUT_IDX_1, i);
     // 校验 x2 的 shape 非空
-    OP_CHECK_IF(x2Shape == nullptr, OP_LOGE(context, "x2[%lu] shape is null", i), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(x2Shape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "x2",
+                    ("the shape of tensor x2[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+                return ge::GRAPH_FAILED);
     // 校验 x2 的 dtype 与 x1 一致
     OP_CHECK_IF(x2Desc->GetDataType() != listDtype,
                 OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
@@ -172,10 +192,18 @@ static ge::graphStatus ValidateYTensor(gert::TilingContext* context, uint64_t i,
 {
     auto yDesc = context->GetOutputDesc(i);
     // 校验 y 的 desc 非空
-    OP_CHECK_IF(yDesc == nullptr, OP_LOGE(context, "y[%lu] descriptor is null", i), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(yDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "y",
+                    ("the descriptor of tensor y[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+                return ge::GRAPH_FAILED);
     auto yShape = context->GetOutputShape(i);
     // 校验 y 的 shape 非空
-    OP_CHECK_IF(yShape == nullptr, OP_LOGE(context, "y[%lu] shape is null", i), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(yShape == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "y",
+                    ("the shape of tensor y[" + std::to_string(i) + "] is missing in the tiling context").c_str()),
+                return ge::GRAPH_FAILED);
     // 校验 y 的 dtype 与 x1 一致
     OP_CHECK_IF(yDesc->GetDataType() != listDtype,
                 OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
@@ -233,7 +261,8 @@ static ge::graphStatus ForeachMulListTilingFunc(gert::TilingContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, idxInstanceInfoPtr);
     uint64_t tensorNum = idxInstanceInfoPtr->GetInstanceNum();
     OP_CHECK_IF(tensorNum > MAX_TENSOR_NUM,
-                OP_LOGE(context, "tensorNum[%lu] should be less than or equal to %u", tensorNum, MAX_TENSOR_NUM),
+                OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "x1", std::to_string(tensorNum).c_str(),
+                                             ("within the range [0, " + std::to_string(MAX_TENSOR_NUM) + "]").c_str()),
                 return ge::GRAPH_FAILED);
 
     // 3. Validate x1/x2/y across the tensor list
@@ -246,12 +275,34 @@ static ge::graphStatus ForeachMulListTilingFunc(gert::TilingContext* context)
     ge::DataType dataType = ge::DT_FLOAT;
     if (tensorNum > 0) {
         auto inputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, 0);
-        OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
+        OP_CHECK_IF(inputDesc == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "x1",
+                                                             "the input descriptor is missing in the tiling context"),
+                    return ge::GRAPH_FAILED);
         dataType = inputDesc->GetDataType();
     }
 
     // 5. Calculate total elements and per-tensor sizes
     int64_t totalElements = 0;
+    if (ForeachPerfFlat::IsTarget(context)) {
+        uint64_t key = 0;
+        if (dataType == ge::DT_FLOAT)
+            key = 0;
+        if (dataType == ge::DT_FLOAT16)
+            key = 1;
+        if (dataType == ge::DT_BF16)
+            key = 2;
+        if (dataType == ge::DT_INT32)
+            key = 3;
+        if (dataType == ge::DT_INT16)
+            key = 4;
+        if (dataType == ge::DT_INT8)
+            key = 5;
+        if (dataType == ge::DT_UINT8)
+            key = 6;
+        return ForeachPerfFlat::Build<2>(context, key);
+    }
+
     ForeachMulListTilingData* tiling = context->GetTilingData<ForeachMulListTilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
     OP_CHECK_IF(memset_s(tiling, sizeof(ForeachMulListTilingData), 0, sizeof(ForeachMulListTilingData)) != EOK,

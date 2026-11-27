@@ -23,13 +23,16 @@
 #define FOREACH_SIGMOID_SCH_MODE_FLOAT16 0
 #define FOREACH_SIGMOID_SCH_MODE_FLOAT 1
 #define FOREACH_SIGMOID_SCH_MODE_BF16 2
+#define FOREACH_SIGMOID_SCH_MODE_SCALARS 3
 
 ASCENDC_TPL_ARGS_DECL(ForeachSigmoid,
                       ASCENDC_TPL_UINT_DECL(schMode, 2, ASCENDC_TPL_UI_LIST, FOREACH_SIGMOID_SCH_MODE_FLOAT16,
-                                            FOREACH_SIGMOID_SCH_MODE_FLOAT, FOREACH_SIGMOID_SCH_MODE_BF16));
+                                            FOREACH_SIGMOID_SCH_MODE_FLOAT, FOREACH_SIGMOID_SCH_MODE_BF16,
+                                            FOREACH_SIGMOID_SCH_MODE_SCALARS));
 
-ASCENDC_TPL_SEL(
-    ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_UINT_SEL(schMode, ASCENDC_TPL_UI_LIST, FOREACH_SIGMOID_SCH_MODE_FLOAT16,
-                                              FOREACH_SIGMOID_SCH_MODE_FLOAT, FOREACH_SIGMOID_SCH_MODE_BF16)));
+ASCENDC_TPL_SEL(ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_UINT_SEL(schMode, ASCENDC_TPL_UI_LIST,
+                                                          FOREACH_SIGMOID_SCH_MODE_FLOAT16,
+                                                          FOREACH_SIGMOID_SCH_MODE_FLOAT, FOREACH_SIGMOID_SCH_MODE_BF16,
+                                                          FOREACH_SIGMOID_SCH_MODE_SCALARS)));
 
 #endif

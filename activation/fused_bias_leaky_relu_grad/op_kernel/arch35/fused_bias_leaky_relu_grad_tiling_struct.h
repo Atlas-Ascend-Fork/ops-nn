@@ -19,39 +19,43 @@
 
 #include <cstdint>
 
-constexpr int64_t kMaxInputSlots  = 2;   // y_grad, features
-constexpr int64_t kMaxOutputSlots = 1;   // x_grad
-constexpr int64_t kPhysNodes      = 3;   // P=3 (from P trace analysis)
+constexpr int64_t kMaxInputSlots = 2;  // y_grad, features
+constexpr int64_t kMaxOutputSlots = 1; // x_grad
+constexpr int64_t kPhysNodes = 3;      // P=3 (from P trace analysis)
 
 struct SplitResult {
-    int64_t axis;       // UB split axis
-    int64_t a_i;        // inner tile size (element count)
-    int64_t a_o;        // outer tile count
-    int64_t a_i_tail;   // tail block size (element count)
+    int64_t axis;     // UB split axis
+    int64_t a_i;      // inner tile size (element count)
+    int64_t a_o;      // outer tile count
+    int64_t a_i_tail; // tail block size (element count)
 };
 
 struct MultiCoreResult {
-    int64_t num_cores;    // number of participating cores
-    int64_t total_tiles;  // total tile count
-    int64_t tiles_main;   // tiles per core (main)
-    int64_t cores_tail;   // cores that process one extra tile
+    int64_t num_cores;   // number of participating cores
+    int64_t total_tiles; // total tile count
+    int64_t tiles_main;  // tiles per core (main)
+    int64_t cores_tail;  // cores that process one extra tile
 };
 
-template<int64_t kRank>
+template <int64_t kRank>
 struct FusedBiasLeakyReluGradTilingData {
-    SplitResult     split;
+    SplitResult split;
     MultiCoreResult multicore;
-    int64_t         rank;
-    int64_t         per_buf_bytes;
-    int64_t         max_bro_shape[kRank];
-    int64_t         num_inputs;
-    int64_t         num_outputs;
-    int64_t         input_shapes [kMaxInputSlots][kRank];
-    int64_t         input_strides[kMaxInputSlots][kRank];
-    int64_t         output_shapes[kMaxOutputSlots][kRank];
-    int64_t         output_strides[kMaxOutputSlots][kRank];
-    float           negative_slope;  // LeakyReLU negative slope
-    float           scale;           // scale factor
+    int64_t rank;
+    int64_t per_buf_bytes;
+    int64_t max_bro_shape[kRank];
+    int64_t num_inputs;
+    int64_t num_outputs;
+    int64_t input_shapes[kMaxInputSlots][kRank];
+    int64_t input_strides[kMaxInputSlots][kRank];
+    int64_t output_shapes[kMaxOutputSlots][kRank];
+    int64_t output_strides[kMaxOutputSlots][kRank];
+    float negative_slope; // LeakyReLU negative slope
+    float scale;          // scale factor
+    uint32_t use_flat_simt;
+    uint32_t flat_count;
+    uint32_t grad_contiguous;
+    uint32_t feature_contiguous;
 };
 
 #endif // FUSED_BIAS_LEAKY_RELU_GRAD_TILING_STRUCT_H_

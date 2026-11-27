@@ -232,6 +232,50 @@ static void FillIOStrides(FusedBiasLeakyReluGradTilingData<kRank>* td, const std
 // ===========================================================================
 // Tiling main function
 // ===========================================================================
+struct FlatTwoSlabPlan {
+    uint64_t inner[2] = {1, 1};
+    uint64_t elements[2] = {1, 1};
+    uint32_t count = 0;
+    uint32_t flags = 0;
+    bool supported = true;
+};
+
+static FlatTwoSlabPlan MakeFlatTwoSlabPlan(const std::vector<int64_t>& outputShape,
+                                           const std::vector<int64_t>& inputShape, int64_t rank, uint64_t total)
+{
+    FlatTwoSlabPlan plan;
+    uint64_t suffix = 1;
+    bool active = false;
+    for (int64_t d = rank - 1; d >= 0; --d) {
+        const uint64_t dim = static_cast<uint64_t>(outputShape[d]);
+        if (dim == 1) {
+            continue;
+        }
+        if (inputShape[d] == outputShape[d]) {
+            if (!active) {
+                if (plan.count == 2) {
+                    plan.supported = false;
+                    return plan;
+                }
+                plan.inner[plan.count] = suffix;
+                ++plan.count;
+                active = true;
+            }
+            plan.elements[plan.count - 1] *= dim;
+        } else {
+            active = false;
+        }
+        suffix *= dim;
+    }
+    plan.flags = plan.count;
+    for (uint32_t i = 0; i < plan.count; ++i) {
+        if (total / plan.inner[i] == plan.elements[i]) {
+            plan.flags |= 1U << (8 + i);
+        }
+    }
+    return plan;
+}
+
 template <int64_t kRank>
 static ge::graphStatus DoTiling(gert::TilingContext* context, const std::vector<int64_t>& maximum_bro_shape,
                                 const std::vector<std::vector<int64_t>>& normal_input_shapes,
@@ -277,6 +321,62 @@ static ge::graphStatus DoTiling(gert::TilingContext* context, const std::vector<
     }
 
     FillIOStrides<kRank>(td, maximum_bro_shape, normal_input_shapes, normal_output_shapes, rank);
+
+    // A distinct route for broadcasts whose complete output fits a 32-bit index.
+    // Every output element has one owner; arithmetic order stays y_grad * coef * scale.
+    uint64_t flatCount = 1;
+    bool fits32 = true;
+    bool gradContiguous = true;
+    bool featureContiguous = true;
+    bool outputMatchesBroadcast = true;
+    bool inputsMatchBroadcast = true;
+    for (int64_t d = 0; d < rank; ++d) {
+        const uint64_t dim = static_cast<uint64_t>(maximum_bro_shape[d]);
+        if (dim == 0 || flatCount > static_cast<uint64_t>(INT32_MAX) / dim) {
+            fits32 = false;
+            break;
+        }
+        flatCount *= dim;
+        gradContiguous = gradContiguous && normal_input_shapes[0][d] == maximum_bro_shape[d];
+        featureContiguous = featureContiguous && normal_input_shapes[1][d] == maximum_bro_shape[d];
+        outputMatchesBroadcast = outputMatchesBroadcast && normal_output_shapes[0][d] == maximum_bro_shape[d];
+        inputsMatchBroadcast = inputsMatchBroadcast &&
+                               (normal_input_shapes[0][d] == 1 || normal_input_shapes[0][d] == maximum_bro_shape[d]) &&
+                               (normal_input_shapes[1][d] == 1 || normal_input_shapes[1][d] == maximum_bro_shape[d]);
+    }
+    auto flatPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
+    // Tiled dual broadcasts are useful only with a long contiguous inner
+    // gradient block. Fragmented inner blocks retain the flat indexing route.
+    uint64_t gradInnerElements = 1;
+    for (int64_t d = rank - 1; d >= 0 && normal_input_shapes[0][d] == maximum_bro_shape[d]; --d) {
+        gradInnerElements *= static_cast<uint64_t>(maximum_bro_shape[d]);
+    }
+    const bool dualBroadcastLarge = !gradContiguous && !featureContiguous && flatCount > (1U << 20) &&
+                                    gradInnerElements >= (1U << 16);
+    if (fits32 && outputMatchesBroadcast && inputsMatchBroadcast && !dualBroadcastLarge &&
+        (!gradContiguous || !featureContiguous) &&
+        flatPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) {
+        td->use_flat_simt = 1;
+        td->flat_count = static_cast<uint32_t>(flatCount);
+        td->grad_contiguous = static_cast<uint32_t>(gradContiguous);
+        td->feature_contiguous = static_cast<uint32_t>(featureContiguous);
+        const auto gradPlan = MakeFlatTwoSlabPlan(maximum_bro_shape, normal_input_shapes[0], rank, flatCount);
+        const auto featurePlan = MakeFlatTwoSlabPlan(maximum_bro_shape, normal_input_shapes[1], rank, flatCount);
+        if (gradPlan.supported && featurePlan.supported && (gradPlan.count == 2 || featurePlan.count == 2)) {
+            td->use_flat_simt = 2;
+            // Mode 2 owns these private payload fields; public tiling layout is unchanged.
+            td->grad_contiguous = gradPlan.flags | (gradContiguous ? (1U << 10) : 0);
+            td->feature_contiguous = featurePlan.flags | (featureContiguous ? (1U << 10) : 0);
+            const FlatTwoSlabPlan plans[2] = {gradPlan, featurePlan};
+            for (int i = 0; i < 2; ++i) {
+                td->input_strides[i][0] = plans[i].inner[0];
+                td->input_strides[i][1] = plans[i].elements[0];
+                td->input_strides[i][2] = plans[i].inner[1];
+                td->input_strides[i][3] = plans[i].elements[1];
+            }
+        }
+        multicore.num_cores = std::min<int64_t>(coreNum, (flatCount + 511) / 512);
+    }
 
     context->SetBlockDim(static_cast<uint32_t>(multicore.num_cores));
     size_t* ws = context->GetWorkspaceSizes(1);
