@@ -73,6 +73,7 @@ TILING_DATA_FIELD_DEF(float, avg_factor);
 TILING_DATA_FIELD_DEF(uint64_t, last_block_factor);
 END_TILING_DATA_DEF;
 REGISTER_TILING_DATA_CLASS(RmsNorm_5000, RMSNormArch35TilingData)
+REGISTER_TILING_DATA_CLASS(RmsNorm_5001, RMSNormArch35TilingData)
 REGISTER_TILING_DATA_CLASS(GemmaRmsNorm_5000, RMSNormArch35TilingData)
 
 BEGIN_TILING_DATA_DEF(RMSNormRegbaseSplitARTilingData)
@@ -124,6 +125,11 @@ constexpr uint32_t RETAINED_SIZE = 256U * 5U * 4U;
 constexpr int32_t RETAINED_SIZE_MULTI_N = 256 * 3 * 4;
 constexpr int32_t RETAINED_SIZE_1K = 2 * 1024;
 constexpr uint32_t RMSNORM_REGBASE_NORMAL = 5000;
+constexpr uint32_t RMSNORM_REGBASE_XFP32_CACHE = 5001;
+// Cached ComputeY keeps row-major traversal until the tile holds more than
+// this many rows per column vector (see COL_OUTER_ROW_PER_VECTOR_THRESHOLD in
+// op_kernel/arch35/rms_norm_regbase_perf.h; the two must stay in sync).
+constexpr uint64_t COL_OUTER_ROW_PER_VECTOR_THRESHOLD = 4;
 constexpr uint32_t RMSNORM_REGBASE_SPLIT = 2001;
 constexpr uint32_t RMSNORM_REGBASE_SPLIT_AR = 3000;
 constexpr uint32_t RMSNORM_REGBASE_TRANSPOSE = 4000;

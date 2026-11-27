@@ -1517,6 +1517,11 @@ struct TilingResult {
 };
 
 // Wire layouts are checked independently of the host TilingDef setter cache.
+struct FullLoadPacket {
+    uint64_t numRow, numCol, numColAlign, blockFactor, foldPoint, ubFactor;
+    float epsilon, avgFactor;
+    uint64_t lastBlockFactor;
+};
 struct SplitARPacket {
     uint64_t numRow, numCol, rBlockFactor, rBlockNum, tailR, ubFactor, numRowAlign;
     float epsilon, avgFactor;
@@ -1627,6 +1632,330 @@ TEST(RmsNormTemplatesTiling, LegacyMixedDtypeUbFailureReportsOnce)
     EXPECT_NE(errors[0].args_map.at("reason").find("fixed buffer requirement=2560"), std::string::npos);
 }
 
+const std::array<std::pair<ge::DataType, ge::DataType>, 4> CACHE_DTYPES = {{{ge::DT_FLOAT16, ge::DT_FLOAT16},
+                                                                            {ge::DT_BF16, ge::DT_BF16},
+                                                                            {ge::DT_FLOAT16, ge::DT_FLOAT},
+                                                                            {ge::DT_BF16, ge::DT_FLOAT}}};
+
+const std::array<std::pair<const char*, const char*>, 2> A6_PLATFORMS = {
+    {{"Ascend960DT", "9201"}, {"Ascend960PR", "9202"}}};
+
+uint64_t FullLoadAllocatedBytes(const FullLoadPacket& data, uint64_t gammaBytes, bool saveXFp32)
+{
+    // Sum the actual kernel InitBuffer allocations, including each aligned rstd buffer.
+    const uint64_t rstdBytes = (data.ubFactor + 7) / 8 * 32;
+    const uint64_t partialSumsPerRow = ((data.foldPoint + 63) / 64 + 7) / 8 * 8;
+    // The kernel rounds the FP32 X cache up to the last whole-vector read, so the
+    // tail-read headroom is part of the allocation.
+    const uint64_t colLoops = (data.numColAlign + 63) / 64;
+    const uint64_t xFp32Bytes = saveXFp32 ? ((data.ubFactor - 1) * data.numColAlign + colLoops * 64) * sizeof(float) :
+                                            0;
+    return data.numColAlign * gammaBytes + 4 * data.ubFactor * data.numColAlign * sizeof(uint16_t) + 3 * rstdBytes +
+           data.ubFactor * partialSumsPerRow * sizeof(float) + xFp32Bytes;
+}
+
+TEST(RmsNormTemplatesTiling, XFp32CacheAdmissionAndBufferBudget)
+{
+    constexpr uint64_t ubSize = 384 * 1024;
+    const std::array<int64_t, 16> reductionLengths = {1,   63,  64,   65,   127,  128,  129,   511,
+                                                      512, 513, 4096, 8191, 8192, 8193, 16383, 16384};
+    for (const auto& [soc, arch] : A6_PLATFORMS) {
+        for (const auto& [dx, dg] : CACHE_DTYPES) {
+            for (int64_t a : {1L, 65L, 39936L}) {
+                for (int64_t r : reductionLengths) {
+                    SCOPED_TRACE(::testing::Message()
+                                 << soc << " A=" << a << " R=" << r << " dx=" << dx << " gamma=" << dg);
+                    auto result = RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0, "RmsNorm",
+                                                 64, ubSize, soc, arch);
+                    ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+                    const auto data = Decode<FullLoadPacket>(result);
+                    EXPECT_EQ(data.numRow, a);
+                    EXPECT_EQ(data.numCol, r);
+                    EXPECT_EQ(data.numColAlign, (r + 15) / 16 * 16);
+                    EXPECT_EQ(data.blockFactor, (a + 63) / 64);
+                    EXPECT_EQ((result.blockDim - 1) * data.blockFactor + data.lastBlockFactor, a);
+                    EXPECT_GT(data.ubFactor, 0);
+                    EXPECT_LE(data.ubFactor, data.blockFactor);
+                    EXPECT_EQ(data.foldPoint & (data.foldPoint - 1), 0);
+                    EXPECT_LT(data.foldPoint, data.numColAlign);
+                    EXPECT_GE(2 * data.foldPoint, data.numColAlign);
+                    EXPECT_FLOAT_EQ(data.avgFactor, 1.0f / static_cast<float>(r));
+                    EXPECT_EQ(result.workspaceCount, 1);
+                    EXPECT_EQ(result.workspace, 0);
+                    const uint64_t gammaBytes = dg == ge::DT_FLOAT ? 4 : 2;
+                    const uint64_t colLoops = (data.numColAlign + 63) / 64;
+                    const uint64_t colOuterThreshold = colLoops * optiling::COL_OUTER_ROW_PER_VECTOR_THRESHOLD;
+                    if (result.key == optiling::RMSNORM_REGBASE_XFP32_CACHE) {
+                        // The cache is admitted only when column-outer traversal is predicted.
+                        EXPECT_GT(data.ubFactor, colOuterThreshold);
+                        EXPECT_LE(FullLoadAllocatedBytes(data, gammaBytes, true), ubSize - 1024);
+                    } else {
+                        ASSERT_EQ(result.key, optiling::RMSNORM_REGBASE_NORMAL);
+                        EXPECT_LE(FullLoadAllocatedBytes(data, gammaBytes, false), ubSize - 1024);
+                    }
+                    // Tiles that can never reach the column-outer threshold must not enable the cache.
+                    if (data.blockFactor <= colOuterThreshold) {
+                        EXPECT_EQ(result.key, optiling::RMSNORM_REGBASE_NORMAL);
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST(RmsNormTemplatesTiling, XFp32CacheProductAndDtypeGate)
+{
+    constexpr int64_t a = 39936;
+    constexpr int64_t r = 512;
+    for (const auto& [soc, arch] : A6_PLATFORMS) {
+        for (const auto& [dx, dg] : DTYPES) {
+            auto result = RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0, "RmsNorm", 64,
+                                         393216, soc, arch);
+            ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+            EXPECT_EQ(result.key, (dx == ge::DT_FLOAT16 || dx == ge::DT_BF16) ? optiling::RMSNORM_REGBASE_XFP32_CACHE :
+                                                                                optiling::RMSNORM_REGBASE_NORMAL);
+            auto gemma = RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0, "GemmaRmsNorm", 64,
+                                        393216, soc, arch);
+            ASSERT_EQ(gemma.status, ge::GRAPH_SUCCESS);
+            EXPECT_EQ(gemma.key, optiling::RMSNORM_REGBASE_NORMAL);
+            EXPECT_EQ(gemma.workspaceCount, 0);
+        }
+    }
+    for (const char* soc : {"Ascend950", "Ascend350"}) {
+        for (const auto& [dx, dg] : DTYPES) {
+            auto result = RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0, "RmsNorm", 64,
+                                         393216, soc, "3510");
+            ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+            EXPECT_EQ(result.key, optiling::RMSNORM_REGBASE_NORMAL);
+        }
+    }
+}
+
+TEST(RmsNormTemplatesTiling, XFp32CacheDroppedWhenColumnOuterNotReached)
+{
+    // R=16384 tiles to a couple of rows on any UB, far below the column-outer
+    // threshold, so the cache must be dropped instead of shrinking the tiles.
+    constexpr int64_t a = 128;
+    constexpr int64_t r = 16384;
+    for (const auto& [soc, arch] : A6_PLATFORMS) {
+        for (const auto& [dx, dg] : CACHE_DTYPES) {
+            SCOPED_TRACE(::testing::Message() << soc << " dx=" << dx << " gamma=" << dg);
+            // Comfortably above the full-load budget: normal path whose tiling must
+            // match an Ascend950 host exactly (no cache penalty on wide rows).
+            auto result = RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0, "RmsNorm", 64,
+                                         393216, soc, arch);
+            ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+            ASSERT_EQ(result.key, optiling::RMSNORM_REGBASE_NORMAL);
+            auto original = RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0, "RmsNorm", 64,
+                                           393216, "Ascend950", "3510");
+            ASSERT_EQ(original.status, ge::GRAPH_SUCCESS);
+            ASSERT_EQ(original.key, optiling::RMSNORM_REGBASE_NORMAL);
+            EXPECT_EQ(result.blockDim, original.blockDim);
+            EXPECT_EQ(std::memcmp(result.data.data(), original.data.data(), sizeof(FullLoadPacket)), 0);
+            // Far below the full-load budget: the normal path itself falls back to split-D.
+            auto split = RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0, "RmsNorm", 64,
+                                        100000, soc, arch);
+            ASSERT_EQ(split.status, ge::GRAPH_SUCCESS);
+            EXPECT_EQ(split.key, optiling::RMSNORM_REGBASE_SPLIT);
+            EXPECT_EQ(split.blockDim, 64);
+            EXPECT_EQ(split.workspaceCount, 1);
+            EXPECT_EQ(split.workspace, 0);
+            // Beyond the full-load reduction limit: split-D regardless of UB.
+            auto splitWide = RunShapeTiling({{a, r + 1}, {a, r + 1}}, {{r + 1}, {r + 1}}, {{a, 1}, {a, 1}}, dx, dg, 0,
+                                            "RmsNorm", 64, 393216, soc, arch);
+            ASSERT_EQ(splitWide.status, ge::GRAPH_SUCCESS);
+            EXPECT_EQ(splitWide.key, optiling::RMSNORM_REGBASE_SPLIT);
+        }
+    }
+}
+
+TEST(RmsNormTemplatesTiling, XFp32CacheKeepsDeterministicTiling)
+{
+    for (const auto& [soc, arch] : A6_PLATFORMS) {
+        for (const auto& [dx, dg] : CACHE_DTYPES) {
+            // Exercise all four reduction ranges and both cache decisions,
+            // retaining the original R=513 regression.
+            for (int64_t r : {63L, 65L, 129L, 513L, 8193L}) {
+                SCOPED_TRACE(::testing::Message() << soc << " R=" << r << " dx=" << dx << " gamma=" << dg);
+                auto reference = RunShapeTiling({{39936, r}, {39936, r}}, {{r}, {r}}, {{39936, 1}, {39936, 1}}, dx, dg,
+                                                0, "RmsNorm", 64, 393216, soc, arch);
+                ASSERT_EQ(reference.status, ge::GRAPH_SUCCESS);
+                ASSERT_TRUE(reference.key == optiling::RMSNORM_REGBASE_XFP32_CACHE ||
+                            reference.key == optiling::RMSNORM_REGBASE_NORMAL);
+                for (int32_t level : {1, 2, 3}) {
+                    auto result = RunShapeTiling({{39936, r}, {39936, r}}, {{r}, {r}}, {{39936, 1}, {39936, 1}}, dx, dg,
+                                                 level, "RmsNorm", 64, 393216, soc, arch);
+                    ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+                    EXPECT_EQ(result.key, reference.key);
+                    EXPECT_EQ(result.blockDim, reference.blockDim);
+                    EXPECT_EQ(std::memcmp(result.data.data(), reference.data.data(), sizeof(FullLoadPacket)), 0);
+                }
+            }
+        }
+    }
+}
+
+TEST(RmsNormTemplatesTiling, XFp32CacheNetworkShapesAndA5Regression)
+{
+    // batch, sequence, reduction length, established A5 rows per UB tile for 16-bit X.
+    const std::array<std::array<int64_t, 4>, 2> cases = {{{624, 64, 512, 60}, {2, 4096, 4096, 7}}};
+    for (const auto& shape : cases) {
+        const int64_t batch = shape[0];
+        const int64_t sequence = shape[1];
+        const int64_t r = shape[2];
+        const int64_t a = batch * sequence;
+        // 512-col tiles hold dozens of cached rows (> 4*colLoops) and keep the cache;
+        // 4096-col tiles only reach a handful of rows (< 4*colLoops), so the cache is
+        // dropped and the A6 tiling must match the non-A6 result exactly.
+        const bool cacheExpected = (r == 512);
+        for (const auto& [dx, dg] : CACHE_DTYPES) {
+            const uint64_t gammaBytes = dg == ge::DT_FLOAT ? sizeof(float) : sizeof(uint16_t);
+            for (const auto& [soc, arch] : A6_PLATFORMS) {
+                SCOPED_TRACE(::testing::Message() << soc << " shape=" << batch << "," << sequence << "," << r
+                                                  << " dx=" << dx << " gamma=" << dg);
+                auto result = RunShapeTiling({{batch, sequence, r}, {batch, sequence, r}}, {{r}, {r}},
+                                             {{batch, sequence, 1}, {batch, sequence, 1}}, dx, dg, 0, "RmsNorm", 64,
+                                             393216, soc, arch);
+                ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+                ASSERT_EQ(result.key,
+                          cacheExpected ? optiling::RMSNORM_REGBASE_XFP32_CACHE : optiling::RMSNORM_REGBASE_NORMAL);
+                const auto data = Decode<FullLoadPacket>(result);
+                EXPECT_EQ(data.numRow, a);
+                EXPECT_EQ(data.numCol, r);
+                EXPECT_EQ((result.blockDim - 1) * data.blockFactor + data.lastBlockFactor, a);
+                EXPECT_LE(FullLoadAllocatedBytes(data, gammaBytes, cacheExpected), 393216 - 1024);
+                if (!cacheExpected) {
+                    auto original = RunShapeTiling({{batch, sequence, r}, {batch, sequence, r}}, {{r}, {r}},
+                                                   {{batch, sequence, 1}, {batch, sequence, 1}}, dx, dg, 0, "RmsNorm",
+                                                   64, 393216, "Ascend950", "3510");
+                    ASSERT_EQ(original.status, ge::GRAPH_SUCCESS);
+                    ASSERT_EQ(original.key, optiling::RMSNORM_REGBASE_NORMAL);
+                    EXPECT_EQ(result.blockDim, original.blockDim);
+                    EXPECT_EQ(std::memcmp(result.data.data(), original.data.data(), sizeof(FullLoadPacket)), 0);
+                }
+                auto flattened = RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0, "RmsNorm",
+                                                64, 393216, soc, arch);
+                ASSERT_EQ(flattened.status, ge::GRAPH_SUCCESS);
+                EXPECT_EQ(result.key, flattened.key);
+                EXPECT_EQ(result.blockDim, flattened.blockDim);
+                EXPECT_EQ(std::memcmp(result.data.data(), flattened.data.data(), sizeof(FullLoadPacket)), 0);
+            }
+            auto original = RunShapeTiling({{batch, sequence, r}, {batch, sequence, r}}, {{r}, {r}},
+                                           {{batch, sequence, 1}, {batch, sequence, 1}}, dx, dg, 0, "RmsNorm", 56,
+                                           253952, "Ascend950", "3510");
+            ASSERT_EQ(original.status, ge::GRAPH_SUCCESS);
+            ASSERT_EQ(original.key, optiling::RMSNORM_REGBASE_NORMAL);
+            const auto data = Decode<FullLoadPacket>(original);
+            EXPECT_EQ(data.numRow, a);
+            EXPECT_EQ(data.numCol, r);
+            EXPECT_EQ(data.ubFactor, shape[3]);
+            EXPECT_LE(FullLoadAllocatedBytes(data, gammaBytes, false), 253952 - 1024);
+        }
+    }
+}
+
+TEST(RmsNormTemplatesTiling, XFp32CacheCoreCountsAndUbBoundaries)
+{
+    constexpr uint64_t ubSize = 384 * 1024;
+    for (const auto& [soc, arch] : A6_PLATFORMS) {
+        for (uint32_t cores : {32U, 56U, 64U}) {
+            for (const auto& [dx, dg] : CACHE_DTYPES) {
+                for (int64_t a : {int64_t(cores) - 1, int64_t(cores), int64_t(cores) + 1, int64_t(39936)}) {
+                    for (int64_t r : {1L, 64L, 65L, 128L, 129L, 512L, 513L, 4096L, 8192L, 8193L, 16384L}) {
+                        SCOPED_TRACE(::testing::Message() << soc << " cores=" << cores << " A=" << a << " R=" << r
+                                                          << " dx=" << dx << " gamma=" << dg);
+                        auto result = RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0,
+                                                     "RmsNorm", cores, ubSize, soc, arch);
+                        ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+                        const auto data = Decode<FullLoadPacket>(result);
+                        EXPECT_GT(result.blockDim, 0);
+                        EXPECT_LE(result.blockDim, cores);
+                        EXPECT_EQ(data.blockFactor, (a + cores - 1) / cores);
+                        EXPECT_EQ((result.blockDim - 1) * data.blockFactor + data.lastBlockFactor, a);
+                        EXPECT_GT(data.lastBlockFactor, 0);
+                        EXPECT_LE(data.lastBlockFactor, data.blockFactor);
+                        EXPECT_GT(data.ubFactor, 0);
+                        EXPECT_LE(data.ubFactor, data.blockFactor);
+                        const uint64_t gammaBytes = dg == ge::DT_FLOAT ? 4 : 2;
+                        const uint64_t colLoops = (data.numColAlign + 63) / 64;
+                        const uint64_t colOuterThreshold = colLoops * optiling::COL_OUTER_ROW_PER_VECTOR_THRESHOLD;
+                        if (result.key == optiling::RMSNORM_REGBASE_XFP32_CACHE) {
+                            EXPECT_GT(data.ubFactor, colOuterThreshold);
+                            EXPECT_LE(FullLoadAllocatedBytes(data, gammaBytes, true), ubSize - 1024);
+                        } else {
+                            ASSERT_EQ(result.key, optiling::RMSNORM_REGBASE_NORMAL);
+                            EXPECT_LE(FullLoadAllocatedBytes(data, gammaBytes, false), ubSize - 1024);
+                        }
+                        if (data.blockFactor <= colOuterThreshold) {
+                            EXPECT_EQ(result.key, optiling::RMSNORM_REGBASE_NORMAL);
+                        }
+                    }
+                }
+                // Wide rows never reach the column-outer threshold: the cache is dropped,
+                // and a tight UB falls back to split-D on the normal path.
+                const int64_t a = 2 * cores;
+                constexpr int64_t r = 16384;
+                for (uint64_t limit : {100000ULL, 393216ULL}) {
+                    SCOPED_TRACE(::testing::Message()
+                                 << soc << " cores=" << cores << " dx=" << dx << " gamma=" << dg << " UB=" << limit);
+                    auto result = RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0, "RmsNorm",
+                                                 cores, limit, soc, arch);
+                    ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+                    EXPECT_EQ(result.key,
+                              limit == 100000ULL ? optiling::RMSNORM_REGBASE_SPLIT : optiling::RMSNORM_REGBASE_NORMAL);
+                    EXPECT_EQ(result.blockDim, cores);
+                    EXPECT_EQ(result.workspaceCount, 1);
+                    EXPECT_EQ(result.workspace, 0);
+                }
+            }
+        }
+    }
+}
+
+TEST(RmsNormTemplatesTiling, A6ProductFallbackAndInvalidInputs)
+{
+    for (const auto& [soc, arch] : A6_PLATFORMS) {
+        for (uint32_t cores : {32U, 56U, 64U}) {
+            for (const auto& [dx, dg] : DTYPES) {
+                SCOPED_TRACE(::testing::Message() << soc << " cores=" << cores << " dx=" << dx << " dg=" << dg);
+                for (const auto& [a, r] : {std::pair<int64_t, int64_t>{32769, 8}, {3, 1048579}}) {
+                    for (const char* opType : {"RmsNorm", "GemmaRmsNorm"}) {
+                        auto result = RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0, opType,
+                                                     cores, 393216, soc, arch);
+                        ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
+                        const bool isRmsNorm = std::string(opType) == "RmsNorm";
+                        const uint64_t fullLoadKey = isRmsNorm && (dx == ge::DT_FLOAT16 || dx == ge::DT_BF16) ?
+                                                         optiling::RMSNORM_REGBASE_XFP32_CACHE :
+                                                         optiling::RMSNORM_REGBASE_NORMAL;
+                        EXPECT_EQ(result.key, r == 8 ? fullLoadKey : optiling::RMSNORM_REGBASE_SPLIT);
+                        EXPECT_EQ(result.workspaceCount, isRmsNorm ? 1 : 0);
+                        EXPECT_EQ(result.workspace, 0);
+                    }
+                }
+                // Empty-input support is currently restricted to Ascend950 by the shared shape validator.
+                for (const auto& [a, r] : {std::pair<int64_t, int64_t>{7, 0}, {0, 64}}) {
+                    EXPECT_EQ(RunShapeTiling({{a, r}, {a, r}}, {{r}, {r}}, {{a, 1}, {a, 1}}, dx, dg, 0, "RmsNorm",
+                                             cores, 393216, soc, arch)
+                                  .status,
+                              ge::GRAPH_FAILED);
+                }
+                EXPECT_EQ(RunShapeTiling({{64, 512}, {64, 512}}, {{512}, {512}}, {{64, 1}, {64, 1}}, dx, dg, 0,
+                                         "RmsNorm", 0, 393216, soc, arch)
+                              .status,
+                          ge::GRAPH_FAILED);
+                EXPECT_EQ(RunShapeTiling({{64, 512}, {64, 512}}, {{512}, {512}}, {{64, 1}, {64, 1}}, dx, dg, 0,
+                                         "RmsNorm", cores, 2048, soc, arch)
+                              .status,
+                          ge::GRAPH_FAILED);
+                EXPECT_EQ(RunShapeTiling({{64, 512}, {64, 512}}, {{513}, {513}}, {{64, 1}, {64, 1}}, dx, dg, 0,
+                                         "RmsNorm", cores, 393216, soc, arch)
+                              .status,
+                          ge::GRAPH_FAILED);
+            }
+        }
+    }
+}
+
 TEST(RmsNormTemplatesTiling, TransposeAdmissionAndBufferBudget)
 {
     for (const auto& [dx, dg] : DTYPES) {
@@ -1662,7 +1991,7 @@ TEST(RmsNormTemplatesTiling, TransposeFullVectorReadHeadroom)
         const uint64_t xBytes = dx == ge::DT_FLOAT ? 4 : 2;
         const uint64_t gBytes = dg == ge::DT_FLOAT ? 4 : 2;
         for (int64_t a : {32769L, 65537L, 242688L, 288768L, 1000001L}) {
-            for (uint32_t cores : {56U, 64U}) {
+            for (uint32_t cores : {32U, 56U, 64U}) {
                 auto result = RunTiling(a, 32 / xBytes, dx, dg, 0, "RmsNorm", cores);
                 ASSERT_EQ(result.status, ge::GRAPH_SUCCESS);
                 ASSERT_EQ(result.key, optiling::RMSNORM_REGBASE_TRANSPOSE);
@@ -1736,7 +2065,7 @@ TEST(RmsNormTemplatesTiling, SplitReduceAdmissionWorkspaceAndTails)
         EXPECT_EQ(RunTiling(1, threshold, dx, dg).key, optiling::RMSNORM_REGBASE_SPLIT_AR);
         // The fixed A cap and inherited R threshold are independent boundaries.
         // Include low-core platforms so the two-way R parallelism cap is retained.
-        for (uint32_t cores : {2U, 8U, 16U, 56U, 64U}) {
+        for (uint32_t cores : {2U, 8U, 16U, 32U, 56U, 64U}) {
             const int64_t maxA = std::min<int64_t>(8, cores / 2);
             for (int64_t a : {1L, maxA}) {
                 auto reference = RunTiling(a, 1048579, dx, dg, 0, "RmsNorm", cores);
@@ -1854,7 +2183,7 @@ TEST(RmsNormTemplatesTiling, EmptyReductionMultiLoopBoundaries)
     // Raw UB is 253952 B; host reserves 1024 B before the empty-reduction tiler.
     constexpr uint64_t rowsPerLoop = 63232;
     constexpr uint64_t rowsPerBlock = 8;
-    for (uint32_t cores : {56U, 64U}) {
+    for (uint32_t cores : {32U, 56U, 64U}) {
         const uint64_t boundary = cores * rowsPerLoop;
         const uint64_t firstMultiLoopTail = rowsPerLoop - rowsPerBlock * (cores - 1) + 1;
         const std::array<EmptyReductionCase, 6> cases = {{

@@ -12,6 +12,7 @@
  * \file rms_norm_tiling_arch35.cpp
  * \brief RmsNorm Op Tiling
  */
+#include <algorithm>
 #include <iostream>
 #include <limits>
 #include "rms_norm_tiling.h"
@@ -284,6 +285,10 @@ ge::graphStatus TilingArch354RmsNorm(gert::TilingContext* context, uint64_t numR
     const bool isAscend950 = platformInfo != nullptr &&
                              platform_ascendc::PlatformAscendC(platformInfo).GetSocVersion() ==
                                  platform_ascendc::SocVersion::ASCEND950;
+    const auto npuArch = platformInfo == nullptr ? NpuArch::DAV_RESV :
+                                                   platform_ascendc::PlatformAscendC(platformInfo).GetCurNpuArch();
+    const bool enableXFp32Cache = isRmsNorm && (xDataType == ge::DT_FLOAT16 || xDataType == ge::DT_BF16) &&
+                                  (npuArch == NpuArch::DAV_9201 || npuArch == NpuArch::DAV_9202);
     const bool enableNewTemplates = isRmsNorm && isAscend950 &&
                                     context->GetDeterministicLevel() != BATCH_INVARIANT_LEVEL;
     const uint64_t blockFactor = RegbaseCeilDiv(numRow, static_cast<uint64_t>(numCore));
@@ -314,6 +319,7 @@ ge::graphStatus TilingArch354RmsNorm(gert::TilingContext* context, uint64_t numR
     const uint64_t fullLoadRMax = vectorLength * vectorLength * MULTI_FACTOR_2 * MULTI_FACTOR_2;
     uint64_t powerFactor = 0;
     int64_t ubFactor = 0;
+    bool saveXFp32 = false;
     uint32_t tilingKey;
     // Only size a full row when it is within the full-load reduction limit.
     if (numColAlignFullLoad > 0 && numColAlignFullLoad <= fullLoadRMax) {
@@ -322,9 +328,27 @@ ge::graphStatus TilingArch354RmsNorm(gert::TilingContext* context, uint64_t numR
                                           blockSize;
         const uint64_t gammaRowBytes = numColAlignFullLoad * curElementByteGamma;
         if (ubSize > RETAINED_SIZE_1K + gammaRowBytes) {
-            ubFactor = (ubSize - RETAINED_SIZE_1K - gammaRowBytes) /
-                       (numColAlignFullLoad * curElementByteX * MULTI_FACTOR_2 * DOUBLE_BUFFER_NUM +
-                        FLOAT_BYTE_SIZE * (DOUBLE_BUFFER_NUM + X_REDUCE_TMP_NUM) + firstVcaddLength);
+            const uint64_t availableBytes = ubSize - RETAINED_SIZE_1K - gammaRowBytes;
+            const uint64_t rowBytes = numColAlignFullLoad * curElementByteX * MULTI_FACTOR_2 * DOUBLE_BUFFER_NUM +
+                                      FLOAT_BYTE_SIZE * (DOUBLE_BUFFER_NUM + X_REDUCE_TMP_NUM) + firstVcaddLength;
+            ubFactor = static_cast<int64_t>(availableBytes / rowBytes);
+            if (enableXFp32Cache) {
+                // Reserve the entire FP32 X tile for reuse by ComputeY.
+                // The cache shrinks every tile, so it only pays off when ComputeY
+                // actually switches to column-outer traversal (gamma register reuse);
+                // on row-outer shapes the extra tiling cost outweighs the saved cast.
+                // Predict the kernel-side dispatch with the cached budget and drop the
+                // cache (restoring the larger tiles) when column-outer is not reached.
+                const uint64_t cacheRowBytes = numColAlignFullLoad * FLOAT_BYTE_SIZE;
+                const int64_t cachedUbFactor = static_cast<int64_t>(availableBytes / (rowBytes + cacheRowBytes));
+                const uint64_t colLoops = RegbaseCeilDiv(numColAlignFullLoad, vectorLength);
+                const int64_t rowsPerTile = std::min(cachedUbFactor, static_cast<int64_t>(blockFactor));
+                saveXFp32 = cachedUbFactor > 0 &&
+                            rowsPerTile > static_cast<int64_t>(colLoops * COL_OUTER_ROW_PER_VECTOR_THRESHOLD);
+                if (saveXFp32) {
+                    ubFactor = cachedUbFactor;
+                }
+            }
         }
     }
     if (ubFactor >= 1 && numColAlignFullLoad <= fullLoadRMax) {
@@ -332,7 +356,7 @@ ge::graphStatus TilingArch354RmsNorm(gert::TilingContext* context, uint64_t numR
         uint64_t colFlodFactor = powerFactor; // 二分累加折叠点
         uint64_t lastBlockFactor = numRow - (useCoreNum - 1) * blockFactor;
         ubFactor = std::min(ubFactor, static_cast<int64_t>(blockFactor));
-        tilingKey = RMSNORM_REGBASE_NORMAL;
+        tilingKey = saveXFp32 ? RMSNORM_REGBASE_XFP32_CACHE : RMSNORM_REGBASE_NORMAL;
         rmsNormArch35TilingData.set_num_row(numRow);
         rmsNormArch35TilingData.set_num_col(numCol);
         rmsNormArch35TilingData.set_num_col_align(numColAlignFullLoad);
