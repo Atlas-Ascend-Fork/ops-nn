@@ -695,3 +695,144 @@ TEST_F(l2BatchNormElemtBackwardTest, l2_batch_norm_elemt_backward_err_broadcast)
     aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
 }
+
+TEST_F(l2BatchNormElemtBackwardTest, l2_batch_norm_elemt_backward_counter_scalar)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND950);
+    auto gradOutDesc = TensorDesc({2, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+    auto selfDesc = TensorDesc({2, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+
+    auto meanDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{8, 5, 9});
+    auto invstdDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 1, 2});
+    auto weightDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 4});
+    auto sumDyDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 2, 6});
+    auto sumDyXmnDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 11});
+    auto counterDesc = TensorDesc({}, ACL_INT32, ACL_FORMAT_ND).Value(vector<int>{5});
+    auto gradInputDesc = TensorDesc(selfDesc);
+
+    auto ut = OP_API_UT(
+        aclnnBatchNormElemtBackward,
+        INPUT(gradOutDesc, selfDesc, meanDesc, invstdDesc, weightDesc, sumDyDesc, sumDyXmnDesc, counterDesc),
+        OUTPUT(gradInputDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
+TEST_F(l2BatchNormElemtBackwardTest, l2_batch_norm_elemt_backward_counter_1dim)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND950);
+    auto gradOutDesc = TensorDesc({2, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+    auto selfDesc = TensorDesc({2, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+
+    auto meanDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{8, 5, 9});
+    auto invstdDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 1, 2});
+    auto weightDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 4});
+    auto sumDyDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 2, 6});
+    auto sumDyXmnDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 11});
+    auto counterDesc = TensorDesc({1}, ACL_INT32, ACL_FORMAT_ND).Value(vector<int>{5});
+    auto gradInputDesc = TensorDesc(selfDesc);
+
+    auto ut = OP_API_UT(
+        aclnnBatchNormElemtBackward,
+        INPUT(gradOutDesc, selfDesc, meanDesc, invstdDesc, weightDesc, sumDyDesc, sumDyXmnDesc, counterDesc),
+        OUTPUT(gradInputDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
+TEST_F(l2BatchNormElemtBackwardTest, l2_batch_norm_elemt_backward_err_shape_counter)
+{
+    auto gradOutDesc = TensorDesc({2, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+    auto selfDesc = TensorDesc({2, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+
+    auto meanDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{8, 5, 9});
+    auto invstdDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 1, 2});
+    auto weightDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 4});
+    auto sumDyDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 2, 6});
+    auto sumDyXmnDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 11});
+    auto counterDesc = TensorDesc({4}, ACL_INT32, ACL_FORMAT_ND).Value(vector<int>{5, 5, 5, 5});
+    auto gradInputDesc = TensorDesc(selfDesc);
+
+    auto ut = OP_API_UT(
+        aclnnBatchNormElemtBackward,
+        INPUT(gradOutDesc, selfDesc, meanDesc, invstdDesc, weightDesc, sumDyDesc, sumDyXmnDesc, counterDesc),
+        OUTPUT(gradInputDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2BatchNormElemtBackwardTest, l2_batch_norm_elemt_backward_err_shape_counter2dim)
+{
+    auto gradOutDesc = TensorDesc({2, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+    auto selfDesc = TensorDesc({2, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+
+    auto meanDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{8, 5, 9});
+    auto invstdDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 1, 2});
+    auto weightDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 4});
+    auto sumDyDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 2, 6});
+    auto sumDyXmnDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 11});
+    auto counterDesc = TensorDesc({1, 1}, ACL_INT32, ACL_FORMAT_ND).Value(vector<int>{5, 5});
+    auto gradInputDesc = TensorDesc(selfDesc);
+
+    auto ut = OP_API_UT(
+        aclnnBatchNormElemtBackward,
+        INPUT(gradOutDesc, selfDesc, meanDesc, invstdDesc, weightDesc, sumDyDesc, sumDyXmnDesc, counterDesc),
+        OUTPUT(gradInputDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2BatchNormElemtBackwardTest, l2_batch_norm_elemt_backward_err_empty_counter)
+{
+    auto gradOutDesc = TensorDesc({2, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+    auto selfDesc = TensorDesc({2, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+
+    auto meanDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{8, 5, 9});
+    auto invstdDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 1, 2});
+    auto weightDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 4});
+    auto sumDyDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 2, 6});
+    auto sumDyXmnDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 11});
+    auto counterDesc = TensorDesc({0}, ACL_INT32, ACL_FORMAT_ND);
+    auto gradInputDesc = TensorDesc(selfDesc);
+
+    auto ut = OP_API_UT(
+        aclnnBatchNormElemtBackward,
+        INPUT(gradOutDesc, selfDesc, meanDesc, invstdDesc, weightDesc, sumDyDesc, sumDyXmnDesc, counterDesc),
+        OUTPUT(gradInputDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2BatchNormElemtBackwardTest, l2_batch_norm_elemt_backward_input_empty_counter_valid)
+{
+    op::SocVersionManager versionManager(op::SocVersion::ASCEND950);
+    auto gradOutDesc = TensorDesc({0, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+    auto selfDesc = TensorDesc({0, 3, 1, 4}, ACL_FLOAT, ACL_FORMAT_NCHW).ValueRange(1, 1);
+
+    auto meanDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{8, 5, 9});
+    auto invstdDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 1, 2});
+    auto weightDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{1, 1, 4});
+    auto sumDyDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 2, 6});
+    auto sumDyXmnDesc = TensorDesc({3}, ACL_FLOAT, ACL_FORMAT_ND).Value(vector<float>{2, 3, 11});
+    auto counterDesc = TensorDesc({3}, ACL_INT32, ACL_FORMAT_ND).Value(vector<int>{5, 5, 5});
+    auto gradInputDesc = TensorDesc(selfDesc);
+
+    auto ut = OP_API_UT(
+        aclnnBatchNormElemtBackward,
+        INPUT(gradOutDesc, selfDesc, meanDesc, invstdDesc, weightDesc, sumDyDesc, sumDyXmnDesc, counterDesc),
+        OUTPUT(gradInputDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}

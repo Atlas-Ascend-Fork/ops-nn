@@ -157,10 +157,10 @@ aclnnStatus aclnnBatchNormElemtBackward(
       <td>counter（aclTensor*）</td>
       <td>输入</td>
       <td>表示输入数据的数量，对应公式中的`counter`。</td>
-      <td><ul><li>支持空Tensor。</li></ul></td>
+      <td><ul><li>shape仅支持0维、[1]或与`input`中channel轴长度一致的[C]。</li><li>空counter仅在`input`为空Tensor时允许，`input`非空时传入空counter会返回ACLNN_ERR_PARAM_INVALID。</li></ul></td>
       <td>INT32、FLOAT16、FLOAT32</td>
       <td>ND</td>
-      <td>1-8</td>
+      <td>0-1</td>
       <td>√</td>
     </tr>
     <tr>

@@ -13,7 +13,6 @@
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "level0/realdiv.h"
-#include "level0/reduce_sum_op.h"
 #include "level0/unsqueeze.h"
 #include "aclnn/aclnn_base.h"
 #include "op_api/op_api_def_nn.h"
@@ -143,6 +142,17 @@ static bool CheckShape(const aclTensor* gradOut, const aclTensor* input, const a
     }
     OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(sumDy, expectShape, return false);
     OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(sumDyXmu, expectShape, return false);
+    // counter 仅支持 0-dim 标量、[1] 或 [C]，以满足 RealDiv 逐元素除法的 shape 约束
+    if (!counter->IsEmpty()) {
+        auto counterDimNum = counter->GetViewShape().GetDimNum();
+        bool counterShapeValid = (counterDimNum == 0) ||
+                                 (counterDimNum == 1 && (counter->GetViewShape()[0] == 1 ||
+                                                         counter->GetViewShape()[0] == input->GetViewShape()[1]));
+        if (!counterShapeValid) {
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Counter shape should be scalar, [1] or [C].");
+            return false;
+        }
+    }
     return true;
 }
 
@@ -246,19 +256,11 @@ static op::DataType GetDivPromoteType(const aclTensor* self, const aclTensor* ot
 static aclnnStatus MeanByCounter(const aclTensor* sumDy, const aclTensor* sumDyXmu, const aclTensor* counter,
                                  const aclTensor** meanDy, const aclTensor** meanDyXmu, aclOpExecutor* executor)
 {
-    // 调用l0算子ReduceSumOp进行求和
-    op::Shape shape = counter->GetViewShape();
-    size_t dimNum = shape.GetDimNum();
-    int64_t appendDim[dimNum];
-    for (uint64_t i = 0; i < dimNum; i++) {
-        appendDim[i] = i;
-    }
-    auto dim = executor->AllocIntArray(appendDim, dimNum);
+    // 将counter转为FLOAT，用于后续逐元素除法
     auto counterCasted = l0op::Cast(counter, op::DataType::DT_FLOAT, executor);
-    auto reduceSumOut = l0op::ReduceSumOp(counterCasted, dim, false, executor);
-    CHECK_RET(reduceSumOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    CHECK_RET(counterCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    auto promoteType = GetDivPromoteType(sumDy, reduceSumOut);
+    auto promoteType = GetDivPromoteType(sumDy, counterCasted);
 
     auto sumDyCasted = l0op::Cast(sumDy, promoteType, executor);
     CHECK_RET(sumDyCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -266,16 +268,16 @@ static aclnnStatus MeanByCounter(const aclTensor* sumDy, const aclTensor* sumDyX
     auto sumDyXmuCasted = l0op::Cast(sumDyXmu, promoteType, executor);
     CHECK_RET(sumDyXmuCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    auto reduceSumOutCasted = l0op::Cast(reduceSumOut, promoteType, executor);
-    CHECK_RET(reduceSumOutCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    auto counterDivCasted = l0op::Cast(counterCasted, promoteType, executor);
+    CHECK_RET(counterDivCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    // 调用l0算子RealDiv进行求均值
-    auto meanDyResult = l0op::RealDiv(sumDyCasted, reduceSumOutCasted, executor);
+    // 逐元素除法求均值: meanDy = sumDy / counter
+    auto meanDyResult = l0op::RealDiv(sumDyCasted, counterDivCasted, executor);
     CHECK_RET(meanDyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
     *meanDy = meanDyResult;
 
-    // 调用l0算子RealDiv进行求均值
-    auto meanDyXmuResult = l0op::RealDiv(sumDyXmuCasted, reduceSumOutCasted, executor);
+    // 逐元素除法求均值: meanDyXmu = sumDyXmu / counter
+    auto meanDyXmuResult = l0op::RealDiv(sumDyXmuCasted, counterDivCasted, executor);
     CHECK_RET(meanDyXmuResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
     *meanDyXmu = meanDyXmuResult;
 
@@ -302,6 +304,12 @@ aclnnStatus aclnnBatchNormElemtBackwardGetWorkspaceSize(const aclTensor* gradOut
     auto ret = CheckParams(gradOut, input, mean, invstd, weight, sumDy, sumDyXmu, counter, gradInput);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
+    // input 非空时 counter 为空属于非法输入：均值计算依赖有效 counter，直接报参数错误，
+    // 避免早退后 gradInput 保持调用方缓冲区的脏数据（静默错值）
+    if (counter->IsEmpty() && !input->IsEmpty()) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Counter should not be empty when input is not empty.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     if (input->IsEmpty() || gradOut->IsEmpty()) {
         *workspaceSize = 0;
         uniqueExecutor.ReleaseTo(executor);
