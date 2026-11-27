@@ -40,6 +40,16 @@ The operator categories and operator lists provided by this project are as follo
     <td>Asserts that the single-element condition tensor is non-zero; prints the message and fails the operator when it is 0, semantically aligned with PyTorch's torch._assert_async.</td>
   </tr>
   <tr>
+    <td>norm</td>
+    <td><a href="../../norm/lp_norm_reduce_v2/README_en.md">lp_norm_reduce_v2</a></td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>AI Core</td>
+    <td>Computes the reduction stage of the Lp norm (V2). The attribute p supports ±inf and any finite floating-point order; reduces |x| along axes by count, sum, power sum, max, or min, without taking the final 1/p-th root.</td>
+  </tr>
+  <tr>
     <td>matmul</td>
     <td><a href="../../matmul/quant_matmul_activation_quant/README_en.md">quant_matmul_activation_quant</a></td>
     <td>✓</td>

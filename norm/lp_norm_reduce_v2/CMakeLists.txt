@@ -1,0 +1,56 @@
+# ----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------------------------------------
+
+set(SUPPORT_COMPUTE_UNIT "ascend950" "ascend350" "ascend960dt" "ascend960pr")
+# 每种芯片对应的 tiling 目录（与 950 同属 DAV_3510 家族，复用 arch35）
+set(SUPPORT_TILING_DIR "arch35" "arch35" "arch35" "arch35")
+
+add_modules_sources(
+    HOSTNAME ${OPHOST_NAME}
+    MODE PRIVATE
+    DIR ${CMAKE_CURRENT_SOURCE_DIR}
+    OPTYPE lp_norm_reduce_v2
+    ACLNNTYPE aclnn_exclude
+    COMPUTE_UNIT ${SUPPORT_COMPUTE_UNIT}
+    TILING_DIR ${SUPPORT_TILING_DIR}
+    DISABLE_IN_OPP TRUE
+)
+
+# The verifier uses the repository-wide merged prototype; the per-op proto.h
+# and the extend.h duplicate share the OPS_PROTO_DEF_LPNORMREDUCEV2 guard.
+target_include_directories(${GRAPH_PLUGIN_NAME}_obj PRIVATE ${ASCEND_GRAPH_CONF_DST})
+
+if(UT_TEST_ALL OR OP_HOST_UT)
+    add_modules_ut_sources(
+        HOSTNAME ${OP_INFERSHAPE_MODULE_NAME}
+        MODE PRIVATE
+        DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/ut/op_host
+    )
+    # arch35 tiling 用例（含跨核路由 crosscore 用例）经共享 Host UT runner 编入
+    # （LPNORM_CROSS_CORE_ROUTING_ENABLED 默认 1，与生产构建同为准核启用态）
+    add_modules_ut_sources(
+        HOSTNAME ${OP_TILING_MODULE_NAME}
+        MODE PRIVATE
+        DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/ut/op_host
+    )
+endif()
+
+if(UT_TEST_ALL OR OP_GRAPH_UT)
+    add_modules_ut_sources(
+        HOSTNAME ${OP_GRAPH_MODULE_NAME}
+        MODE PRIVATE
+        DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/ut/op_graph
+    )
+endif()
+
+add_kernel_sources(
+    KERNEL_SRC lp_norm_reduce_v2.cpp
+    COMPUTE_UNITS ascend950 ascend350 ascend960dt ascend960pr
+)

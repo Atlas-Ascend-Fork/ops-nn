@@ -1,0 +1,158 @@
+{
+  "op_type": "LpNormReduceV2",
+  "op_list": [
+    {
+      "bin_filename": "LpNormReduceV2_c1285b5f4c0ba162fafa9ae7f78083b1",
+      "inputs": [
+        {
+          "name": "x",
+          "index": 0,
+          "dtype": "bfloat16",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ],
+          "format_match_mode": "FormatAgnostic"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "y",
+          "index": 0,
+          "dtype": "bfloat16",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ],
+          "format_match_mode": "FormatAgnostic"
+        }
+      ],
+      "attrs": [
+        {
+          "name": "p",
+          "dtype": "float",
+          "value": null
+        },
+        {
+          "name": "axes",
+          "dtype": "list_int",
+          "value": null
+        },
+        {
+          "name": "keepdim",
+          "dtype": "bool",
+          "value": null
+        },
+        {
+          "name": "epsilon",
+          "dtype": "float",
+          "value": null
+        }
+      ]
+    },
+    {
+      "bin_filename": "LpNormReduceV2_9ae74d1ec05ee411c7806310ada66b01",
+      "inputs": [
+        {
+          "name": "x",
+          "index": 0,
+          "dtype": "float16",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ],
+          "format_match_mode": "FormatAgnostic"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "y",
+          "index": 0,
+          "dtype": "float16",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ],
+          "format_match_mode": "FormatAgnostic"
+        }
+      ],
+      "attrs": [
+        {
+          "name": "p",
+          "dtype": "float",
+          "value": null
+        },
+        {
+          "name": "axes",
+          "dtype": "list_int",
+          "value": null
+        },
+        {
+          "name": "keepdim",
+          "dtype": "bool",
+          "value": null
+        },
+        {
+          "name": "epsilon",
+          "dtype": "float",
+          "value": null
+        }
+      ]
+    },
+    {
+      "bin_filename": "LpNormReduceV2_e120b58b12ad77545a4f49a4d76ea9c7",
+      "inputs": [
+        {
+          "name": "x",
+          "index": 0,
+          "dtype": "float32",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ],
+          "format_match_mode": "FormatAgnostic"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "y",
+          "index": 0,
+          "dtype": "float32",
+          "format": "ND",
+          "paramType": "required",
+          "shape": [
+            -2
+          ],
+          "format_match_mode": "FormatAgnostic"
+        }
+      ],
+      "attrs": [
+        {
+          "name": "p",
+          "dtype": "float",
+          "value": null
+        },
+        {
+          "name": "axes",
+          "dtype": "list_int",
+          "value": null
+        },
+        {
+          "name": "keepdim",
+          "dtype": "bool",
+          "value": null
+        },
+        {
+          "name": "epsilon",
+          "dtype": "float",
+          "value": null
+        }
+      ]
+    }
+  ]
+}

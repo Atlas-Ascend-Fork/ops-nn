@@ -4059,6 +4059,16 @@
    </tr>
   <tr>
     <td>norm</td>
+    <td><a href="../../norm/lp_norm_reduce_v2/README.md">lp_norm_reduce_v2</a></td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>AI Core</td>
+    <td>计算Lp范数的归约阶段（V2），p支持±inf与任意有限浮点阶数，按axes对|x|执行计数、求和、幂和、最大值或最小值归约，不执行1/p次开方。</td>
+  </tr>
+  <tr>
+    <td>norm</td>
     <td><a href="../../norm/lp_norm_reduce/README.md">lp_norm_reduce</a></td>
     <td>✓</td>
     <td>✓</td>

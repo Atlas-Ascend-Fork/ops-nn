@@ -1855,7 +1855,7 @@ currently supported.
     .OP_END_FACTORY_REG(LpNormReduce)
 
     /**
-    * @brief Computes LpNormReduce.
+    * @brief Computes LpNormReduceV2.
 
     * @par Inputs:
     * x: A ND tensor of dtype float16, bfloat16, float32.
@@ -1873,13 +1873,11 @@ currently supported.
 
     * @attention Constraints:
     * @li When the attribute "p" is negative, there may be precision difference in the calculation results.
-    * @li When the attribute "axes" is specified as the axis with a shape dimension value of 1 in the input tensor,
-    * there may be precision difference in the calculation results.
-    * @li When the tensor "x" is empty and "p" < 0 or "p" is infinity, we cannot reduce the whole tensor or reduce
-    * over an empty dimension.
+    * @li When the tensor "x" is empty and "p" < 0 or "p" is infinity, we cannot reduce the whole tensor or
+    * reduce over an empty dimension.
 
     * @par Third-party framework compatibility
-    * Compatible with the Pytorch operator LpNormReduce.
+    * Compatible with the Pytorch operator LpNormReduceV2.
     */
     REG_OP(LpNormReduceV2)
     .INPUT(x, TensorType({DT_FLOAT16, DT_FLOAT, DT_BF16}))
