@@ -10,7 +10,7 @@
 
 /*!
  * \file rotate_quant_def.cpp
- * \brief RotateQuant算子定义文件，定义算子的输入输出、数据类型、格式等
+ * \brief Operator definition file of RotateQuant, defining inputs, outputs, data types and formats.
  */
 #include "../../../common/inc/op_host/op_const_def_nn.h"
 #include "register/op_def_registry.h"

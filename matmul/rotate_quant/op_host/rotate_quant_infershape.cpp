@@ -10,7 +10,7 @@
 
 /*!
  * \file rotate_quant_infershape.cpp
- * \brief RotateQuant算子形状推导实现
+ * \brief Shape inference implementation of the RotateQuant operator.
  */
 
 #include "../../../common/inc/op_host/op_const_def_nn.h"
@@ -29,6 +29,7 @@ namespace ops {
 constexpr int64_t X_INDEX = 0;
 constexpr int64_t ROT_INDEX = 1;
 constexpr int64_t ALPHA_INDEX = 2;
+constexpr int64_t GROUP_LIST_INDEX = 3;
 constexpr int64_t Y_INDEX = 0;
 constexpr int64_t SCALE_INDEX = 1;
 
@@ -37,8 +38,11 @@ constexpr int32_t MIN_X_DIM_NUM = 1;
 constexpr int32_t MAX_X_DIM_NUM = 7;
 constexpr int32_t MIN_ROT_DIM_NUM = 2;
 constexpr int32_t MAX_ROT_DIM_NUM = 3;
+constexpr int32_t MIN_GROUPED_ROT_DIM_NUM = 3;
+constexpr int32_t MAX_GROUPED_ROT_DIM_NUM = 4;
 
 constexpr size_t ATTR_INDEX_DST_TYPE = 0;
+constexpr size_t ATTR_INDEX_GROUP_LIST_TYPE = 6;
 constexpr uint32_t OUTPUT_NUM_ROTATE_QUANT = 2;
 constexpr uint32_t INPUT_NUM_MIN_ROTATE_QUANT = 2;
 constexpr uint32_t INPUT_NUM_MAX_ROTATE_QUANT = 4;
@@ -48,12 +52,15 @@ constexpr int64_t MX_SCALE_LAST_DIM = 2;
 constexpr int64_t HIF4_SCALE_LAST_DIM = 1;
 constexpr int64_t ALPHA_DIM_NUM = 1;
 constexpr int64_t ALPHA_DIM_SIZE = 1;
+constexpr int64_t MAX_GROUP_NUM = 1024;
+
+constexpr size_t ARCH_INFO_BUFFER_SIZE = 64U;
 
 const std::initializer_list<ge::DataType> INT_OUT_TYPE_LIST = {ge::DT_INT8, ge::DT_INT4};
 
 static bool IsRotateQuantDav3510Support()
 {
-    char buf[64] = {0};
+    char buf[ARCH_INFO_BUFFER_SIZE] = {0};
     aclError ret = aclplatformGetDeviceInfo(ACL_PLATFORM_NPU_ARCH, buf, sizeof(buf));
     if (ret != ACL_SUCCESS) {
         OP_LOGE("IsRotateQuantDav3510Support", "get npu arch failed.");
@@ -196,9 +203,9 @@ static ge::graphStatus CheckInputShape4Mx(gert::InferShapeContext* context)
     }
 
     size_t rotDimNum = rotShape->GetDimNum();
-    const gert::Shape* groupShape = context->GetOptionalInputShape(3);
-    const size_t minRotRank = groupShape != nullptr ? 3 : MIN_ROT_DIM_NUM;
-    const size_t maxRotRank = groupShape != nullptr ? 4 : MAX_ROT_DIM_NUM;
+    const gert::Shape* groupShape = context->GetOptionalInputShape(GROUP_LIST_INDEX);
+    const size_t minRotRank = groupShape != nullptr ? MIN_GROUPED_ROT_DIM_NUM : MIN_ROT_DIM_NUM;
+    const size_t maxRotRank = groupShape != nullptr ? MAX_GROUPED_ROT_DIM_NUM : MAX_ROT_DIM_NUM;
     if (rotDimNum < minRotRank || rotDimNum > maxRotRank) {
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
             context->GetNodeName(), "rotation", Ops::NN::FormatString("%zu", rotDimNum).c_str(),
@@ -236,17 +243,27 @@ static ge::graphStatus CheckInputShape4Mx(gert::InferShapeContext* context)
 
     if (groupShape != nullptr) {
         if (xDimNum != DIMENSION_2 || groupShape->GetDimNum() != 1 || groupShape->GetDim(0) < 1 ||
-            groupShape->GetDim(0) > 1024 || rotShape->GetDim(0) != groupShape->GetDim(0) ||
-            (rotDimNum == 4 && rotShape->GetDim(1) != xN / rotLastDim)) {
-            OP_LOGE(context,
-                    "Grouped mode requires x[M,N], rotation[E,K,K] or [E,N/K,K,K], group_list[E], 1 <= E <= 1024.");
+            groupShape->GetDim(0) > MAX_GROUP_NUM || rotShape->GetDim(0) != groupShape->GetDim(0) ||
+            (rotDimNum == MAX_GROUPED_ROT_DIM_NUM && rotShape->GetDim(1) != xN / rotLastDim)) {
+            OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                context->GetNodeName(), "x, rotation, group_list",
+                Ops::NN::FormatString("%s, %s, %s", Ops::Base::ToString(*xShape).c_str(),
+                                      Ops::Base::ToString(*rotShape).c_str(), Ops::Base::ToString(*groupShape).c_str())
+                    .c_str(),
+                Ops::NN::FormatString(
+                    "Grouped mode requires x[M,N], rotation[E,K,K] or [E,N/K,K,K], group_list[E], 1 <= E <= %ld.",
+                    MAX_GROUP_NUM)
+                    .c_str());
             return ge::GRAPH_FAILED;
         }
         auto attrs = context->GetAttrs();
-        if (attrs != nullptr && attrs->GetAttrNum() > 6) {
-            auto type = attrs->GetAttrPointer<int64_t>(6);
+        if (attrs != nullptr && attrs->GetAttrNum() > ATTR_INDEX_GROUP_LIST_TYPE) {
+            auto type = attrs->GetAttrPointer<int64_t>(ATTR_INDEX_GROUP_LIST_TYPE);
             if (type == nullptr || (*type != 0 && *type != 1)) {
-                OP_LOGE(context, "group_list_type must be 0 or 1.");
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "group_list_type",
+                    type != nullptr ? Ops::NN::FormatString("%ld", *type).c_str() : "nullptr",
+                    "group_list_type must be 0 or 1.");
                 return ge::GRAPH_FAILED;
             }
         }
@@ -328,8 +345,10 @@ static ge::graphStatus RotateQuantInferShape(gert::InferShapeContext* context)
     if (InferShapeCheck(context) == ge::GRAPH_FAILED) {
         return ge::GRAPH_FAILED;
     }
-    if (context->GetOptionalInputShape(3) != nullptr && !IsGroupedRotateQuantSupport()) {
-        OP_LOGE(context, "Grouped RotateQuant is only supported on Ascend950, DAV_9201 and DAV_9202.");
+    if (context->GetOptionalInputShape(GROUP_LIST_INDEX) != nullptr && !IsGroupedRotateQuantSupport()) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "group_list", "not nullptr",
+                                              "Grouped RotateQuant is only supported on Ascend950, DAV_9201 and "
+                                              "DAV_9202.");
         return ge::GRAPH_FAILED;
     }
 

@@ -10,7 +10,7 @@
 
 /*!
  * \file rotate_quant_tiling.cpp
- * \brief RotateQuant算子arch35 tiling实现
+ * \brief Arch35 tiling implementation of the RotateQuant operator.
  */
 #include "../../../../common/inc/op_host/op_const_def_nn.h"
 #include "rotate_quant_tiling.h"
@@ -208,8 +208,9 @@ ge::graphStatus RotateQuantAptTiling::GetShapeAttrsInfo()
     OP_TILING_CHECK(AnalyzeAttrs() != ge::GRAPH_SUCCESS,
                     OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(inputParams_.opName, "attrs", "the attrs are invalid"),
                     return ge::GRAPH_FAILED);
-    // 失败诊断取值防御: desc/shape指针先判空(为空输出"null"), 不依赖CheckContext前置判空的隐式耦合,
-    // 避免错误路径上再次解引用可能为空的context数据导致崩溃而非返回失败
+    // Defensive value access for failure diagnostics: null-check the desc/shape pointers first (print "null" when
+    // absent) instead of relying on the implicit coupling with CheckContext's preceding null check, so the error
+    // path never dereferences possibly-null context data and crashes instead of returning a failure.
     auto dtypeOf = [this](bool isInput, uint32_t idx) -> std::string {
         const auto* desc = isInput ? context_->GetInputDesc(idx) : context_->GetOutputDesc(idx);
         return desc == nullptr ? std::string("null") : ge::TypeUtils::DataTypeToSerialString(desc->GetDataType());
@@ -357,7 +358,8 @@ ge::graphStatus RotateQuantAptTiling::CheckAlphaInput()
     if (alphaDesc == nullptr) {
         return ge::GRAPH_SUCCESS;
     }
-    // 非法方为y的输出dtype(hif4不支持alpha输入), 日志归因到y而非alpha本身
+    // The invalid party is y's output dtype (hif4 does not support alpha input), so the log attributes the error
+    // to y rather than alpha.
     OP_TILING_CHECK(inputParams_.yDtype == Ops::NN::DT_HIFLOAT4,
                     OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
                         inputParams_.opName, "y", ge::TypeUtils::DataTypeToSerialString(inputParams_.yDtype).c_str(),
@@ -578,7 +580,8 @@ ge::graphStatus RotateQuantAptTiling::ValidateRotShape(const gert::Shape& rotSha
 
 ge::graphStatus RotateQuantAptTiling::ValidateScaleShape(const gert::Shape& mxscaleShape, const gert::Shape& scaleShape)
 {
-    // kernel按扁平偏移写scale输出，仅要求总元素数一致，允许调用方传入扁平等总量的view（如一维[M*CeilDiv(N,64)*2]）
+    // The kernel writes the scale output by flat offset and only requires matching total element counts, so callers
+    // may pass a flat view with an equal total (e.g. 1D [M*CeilDiv(N,64)*2]).
     OP_CHECK_IF(mxscaleShape.GetShapeSize() != scaleShape.GetShapeSize(),
                 OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
                     inputParams_.opName, "scale", std::to_string(scaleShape.GetShapeSize()).c_str(),
@@ -687,8 +690,9 @@ ge::graphStatus RotateQuantAptTiling::AnalyzeShapes()
                                               "the shape of rotation is invalid"),
         return ge::GRAPH_FAILED);
 
-    // 校验输出scale总元素数与推导结果一致（允许扁平等总量view）：M*CeilDiv(N,64)*lastDim
-    // DAV_9201/DAV_9202 hif4输出: scale为(*, CeilDiv(N,64), 1); mxfp输出: (*, CeilDiv(N,64), 2)
+    // Verify the total element count of the output scale matches the inferred result (flat equal-total views are
+    // allowed): M*CeilDiv(N,64)*lastDim. DAV_9201/DAV_9202 hif4 output: scale is (*, CeilDiv(N,64), 1); MXFP output:
+    // (*, CeilDiv(N,64), 2).
     const auto& scaleShape = context_->GetOutputShape(SCALE_INDEX)->GetStorageShape();
     gert::Shape mxScaleShape = xShape;
     mxScaleShape.SetDim(mxScaleShape.GetDimNum() - 1, Ops::Base::CeilDiv(inputParams_.N, MX_SCALE_CEIL_NUM));
@@ -888,10 +892,10 @@ bool RotateQuantAptTiling::SetMatmulTiling()
         tilingData_.mL1 = tilingData_.baseM;
         uint32_t mL1LoopNum = Ops::Base::CeilDiv(tilingData_.M, tilingData_.mL1);
         if (mL1LoopNum * tilingData_.B < totalCoreNum) {
-            // mL1 = baseM情况下如果核数未用满，调整mL1大小
+            // When mL1 equals baseM and not all cores are used, adjust the mL1 size.
             mL1LoopNum = totalCoreNum / tilingData_.B;
             tilingData_.mL1 = Ops::Base::CeilDiv(tilingData_.M, mL1LoopNum);
-            tilingData_.mL1 = Ops::Base::CeilAlign(tilingData_.mL1, MIN_M); // 16对齐
+            tilingData_.mL1 = Ops::Base::CeilAlign(tilingData_.mL1, MIN_M); // aligned to 16
             mL1LoopNum = Ops::Base::CeilDiv(tilingData_.M, tilingData_.mL1);
         }
         uint32_t remainderM = tilingData_.M % tilingData_.mL1;
@@ -973,7 +977,7 @@ ge::graphStatus RotateQuantAptTiling::PostTiling()
     return ge::GRAPH_SUCCESS;
 }
 
-// 注册tiling类（950与DAV_9201/DAV_9202复用同一个arch35 tiling类，分别按arch注册）
+// Register the tiling class (950 and DAV_9201/DAV_9202 reuse the same arch35 tiling class, registered per arch).
 REGISTER_TILING_TEMPLATE_WITH_ARCH(RotateQuant, RotateQuantAptTiling, static_cast<int32_t>(Ops::Base::DAV_3510),
                                    TEMPLATE_PRIORITY);
 static Ops::NN::Optiling::RegisterArch g_rotateQuantAptTiling9201Register = Ops::NN::Optiling::RegisterArch(

@@ -42,7 +42,7 @@ extern "C" {
 #endif
 
 namespace {
-static const char* const kOpName = "aclnnRotateQuantGetWorkspaceSize";
+static const char* const kOpName = "aclnnRotateQuant";
 static constexpr int64_t INT4_NUMS_IN_INT32_SPACE = 8;
 static constexpr int64_t DIM_MIN = 2;
 static constexpr int64_t N_DIM_ALIGNMENT = 8;
@@ -58,6 +58,10 @@ constexpr uint32_t MIN_ROT_DIM_NUM = 2;
 constexpr uint32_t MAX_ROT_DIM_NUM = 3;
 constexpr int64_t MIN_GROUP_NUM = 1;
 constexpr int64_t MAX_GROUP_NUM = 1024;
+constexpr int64_t MIN_GROUPED_ROT_DIM_NUM = 3;
+constexpr int64_t MAX_GROUPED_ROT_DIM_NUM = 4;
+constexpr int64_t MN_OVERFLOW_GUARD = 4; // guard factor: M*N*4 (max element bytes) must not overflow INT64_MAX
+constexpr int64_t MAX_SCALE_ALG = 2;     // same name and value as the tiling layer's MAX_SCALE_ALG
 constexpr int64_t MX_SCALE_CEIL_NUM = 64;
 constexpr int64_t MX_SCALE_LAST_SIZE = 2;
 constexpr int64_t ROT_K_SIZE_32 = 32;
@@ -150,7 +154,7 @@ static bool CheckOutDtypeValid(const aclTensor* yOut)
         }
     }
     fullListStr += "]";
-    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON("aclnnRotateQuantGetWorkspaceSize", "yOut", op::ToString(yDtype).GetString(),
+    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(kOpName, "yOut", op::ToString(yDtype).GetString(),
                                           FormatString("the dtype of yOut must be in %s", fullListStr.c_str()).c_str());
     return false;
 }
@@ -168,7 +172,7 @@ static bool CheckScaleDtypeValid(const aclTensor* scaleOut, const aclTensor* yOu
     }
     OP_CHECK(std::find(scaleList->begin(), scaleList->end(), scaleDtype) != scaleList->end(),
              OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
-                 "aclnnRotateQuantGetWorkspaceSize", "scaleOut", op::ToString(scaleDtype).GetString(),
+                 kOpName, "scaleOut", op::ToString(scaleDtype).GetString(),
                  FormatString("the dtype of scaleOut must be in %s", op::ToString(*scaleList).GetString()).c_str()),
              return false);
     return true;
@@ -239,7 +243,8 @@ static bool CheckMxRotationShape(const aclTensor* x, const aclTensor* rotation)
     OP_CHECK(xDimNum >= 1 && xDimNum <= MAX_X_DIM_NUM,
              OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
                  kOpName, "x", FormatString("%zu", xDimNum).c_str(),
-                 FormatString("The shape dim of %s must be in range [%d, %d]", "x", 1, MAX_X_DIM_NUM).c_str()),
+                 FormatString("The shape dim of %s must be in range [%d, %d]", "x", 1, static_cast<int>(MAX_X_DIM_NUM))
+                     .c_str()),
              return false);
     for (size_t i = 0; i < xDimNum; i++) {
         OP_CHECK(
@@ -251,10 +256,11 @@ static bool CheckMxRotationShape(const aclTensor* x, const aclTensor* rotation)
     }
     auto rotDimNum = rotShape.GetDimNum();
     OP_CHECK(rotDimNum >= MIN_ROT_DIM_NUM && rotDimNum <= MAX_ROT_DIM_NUM,
-             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(kOpName, "rotation", FormatString("%zu", rotDimNum).c_str(),
-                                                      FormatString("The shape dim of %s must be in range [%d, %d]",
-                                                                   "rotation", MIN_ROT_DIM_NUM, MAX_ROT_DIM_NUM)
-                                                          .c_str()),
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                 kOpName, "rotation", FormatString("%zu", rotDimNum).c_str(),
+                 FormatString("The shape dim of %s must be in range [%d, %d]", "rotation",
+                              static_cast<int>(MIN_ROT_DIM_NUM), static_cast<int>(MAX_ROT_DIM_NUM))
+                     .c_str()),
              return false);
 
     int64_t N = xShape.GetDim(xShape.GetDimNum() - 1);
@@ -289,7 +295,8 @@ static bool CheckMxRotationShape(const aclTensor* x, const aclTensor* rotation)
     return true;
 }
 
-// MX/HIF4输出共用: yOut与x同shape(仅dtype位宽不同); scaleOut为(*, CeilDiv(N,64), scaleLastDim)
+// Shared by MX/HIF4 outputs: yOut has the same shape as x (only the dtype bit width differs); scaleOut is
+// (*, CeilDiv(N,64), scaleLastDim).
 static bool CheckOutputShape(const aclTensor* x, const aclTensor* yOut, const aclTensor* scaleOut, int64_t scaleLastDim)
 {
     auto xShape = x->GetViewShape();
@@ -319,44 +326,44 @@ static bool CheckMxShape(const aclTensor* x, const aclTensor* rotation, const ac
     return CheckMxRotationShape(x, rotation) && CheckOutputShape(x, yOut, scaleOut, MX_SCALE_LAST_SIZE);
 }
 
-static bool CheckHif4RotKSize(int64_t k)
+static bool CheckHif4RotKSize(int64_t K)
 {
-    OP_CHECK(k == ROT_K_SIZE_64 || k == ROT_K_SIZE_128,
-             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                 "aclnnRotateQuantGetWorkspaceSize", "rotation.dim-1", std::to_string(k).c_str(),
-                 "the last dimension of rotation must be 64 or 128 for HIFLOAT4 output"),
-             return false);
+    OP_CHECK(
+        K == ROT_K_SIZE_64 || K == ROT_K_SIZE_128,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(kOpName, "rotation.dim-1", std::to_string(K).c_str(),
+                                              "the last dimension of rotation must be 64 or 128 for HIFLOAT4 output"),
+        return false);
     return true;
 }
 
-static bool CheckHif4RotMatrixShape(const op::Shape& rotShape, int64_t k)
+static bool CheckHif4RotMatrixShape(const op::Shape& rotShape, int64_t K)
 {
     OP_CHECK(rotShape.GetDimNum() == MIN_ROT_DIM_NUM,
-             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON("aclnnRotateQuantGetWorkspaceSize", "rotation",
+             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(kOpName, "rotation",
                                                       (std::to_string(rotShape.GetDimNum()) + "D").c_str(),
                                                       "the shape of rotation must be 2D for HIFLOAT4 output"),
              return false);
-    OP_CHECK(rotShape.GetDim(0) == k,
+    OP_CHECK(rotShape.GetDim(0) == K,
              OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-                 "aclnnRotateQuantGetWorkspaceSize", "rotation.dim0, rotation.dim1",
-                 FormatString("%s, %s", std::to_string(rotShape.GetDim(0)).c_str(), std::to_string(k).c_str()).c_str(),
+                 kOpName, "rotation.dim0, rotation.dim1",
+                 FormatString("%s, %s", std::to_string(rotShape.GetDim(0)).c_str(), std::to_string(K).c_str()).c_str(),
                  "the last two dimensions of rotation must be equal"),
              return false);
     return true;
 }
 
 static bool CheckHif4Shape(const aclTensor* x, const aclTensor* rotation, const aclTensor* yOut,
-                           const aclTensor* scaleOut, int64_t n, int64_t k)
+                           const aclTensor* scaleOut, int64_t N, int64_t K)
 {
-    if (!CheckHif4RotKSize(k)) {
+    if (!CheckHif4RotKSize(K)) {
         return false;
     }
-    OP_CHECK(n % k == 0,
+    OP_CHECK(N % K == 0,
              OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                 kOpName, "N", FormatString("%ld", n).c_str(),
+                 kOpName, "N", FormatString("%ld", N).c_str(),
                  FormatString("The value of %s must be divisible by %s", "N", "K").c_str()),
              return false);
-    return CheckHif4RotMatrixShape(rotation->GetViewShape(), k) &&
+    return CheckHif4RotMatrixShape(rotation->GetViewShape(), K) &&
            CheckOutputShape(x, yOut, scaleOut, HIF4_SCALE_LAST_SIZE);
 }
 
@@ -367,12 +374,12 @@ static bool CheckIntRotationShape(const aclTensor* x, const aclTensor* rotation)
     OP_CHECK(
         xShape.GetDimNum() == DIM_MIN,
         OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(kOpName, "x", FormatString("%zu", xShape.GetDimNum()).c_str(),
-                                                 FormatString("The shape dim of %s must be %d", "x", DIM_MIN).c_str()),
+                                                 FormatString("The shape dim of %s must be %ld", "x", DIM_MIN).c_str()),
         return false);
     OP_CHECK(rotShape.GetDimNum() == DIM_MIN,
              OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
                  kOpName, "rotation", FormatString("%zu", rotShape.GetDimNum()).c_str(),
-                 FormatString("The shape dim of %s must be %d", "rotation", DIM_MIN).c_str()),
+                 FormatString("The shape dim of %s must be %ld", "rotation", DIM_MIN).c_str()),
              return false);
     int64_t M = xShape.GetDim(0);
     int64_t N = xShape.GetDim(1);
@@ -427,7 +434,7 @@ static bool CheckIntOutputShape(const aclTensor* x, const aclTensor* yOut, const
     OP_CHECK(yShape.GetDimNum() == DIM_MIN,
              OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
                  kOpName, "yOut", FormatString("%zu", yShape.GetDimNum()).c_str(),
-                 FormatString("The shape dim of %s must be %d", "yOut", DIM_MIN).c_str()),
+                 FormatString("The shape dim of %s must be %ld", "yOut", DIM_MIN).c_str()),
              return false);
     OP_CHECK(
         yShape.GetDim(0) == M,
@@ -470,9 +477,22 @@ static bool CheckShape(const aclTensor* x, const aclTensor* rotation, const aclT
         return CheckMxShape(x, rotation, yOut, scaleOut);
     }
     if (scaleOut->GetDataType() == static_cast<op::DataType>(Ops::NN::DT_HIFLOAT4_SCALE)) {
-        int64_t n = x->GetViewShape().GetDim(x->GetViewShape().GetDimNum() - 1);
-        int64_t k = rotation->GetViewShape().GetDim(rotation->GetViewShape().GetDimNum() - 1);
-        return CheckHif4Shape(x, rotation, yOut, scaleOut, n, k);
+        auto xDimNum = x->GetViewShape().GetDimNum();
+        OP_CHECK(xDimNum >= 1 && xDimNum <= MAX_X_DIM_NUM,
+                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(kOpName, "x", FormatString("%zu", xDimNum).c_str(),
+                                                          FormatString("The shape dim of %s must be in range [%d, %d]",
+                                                                       "x", 1, static_cast<int>(MAX_X_DIM_NUM))
+                                                              .c_str()),
+                 return false);
+        auto rotDimNum = rotation->GetViewShape().GetDimNum();
+        OP_CHECK(rotDimNum >= 1,
+                 OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                     kOpName, "rotation", FormatString("%zu", rotDimNum).c_str(),
+                     FormatString("The shape dim of %s must be at least %d", "rotation", 1).c_str()),
+                 return false);
+        int64_t N = x->GetViewShape().GetDim(xDimNum - 1);
+        int64_t K = rotation->GetViewShape().GetDim(rotDimNum - 1);
+        return CheckHif4Shape(x, rotation, yOut, scaleOut, N, K);
     }
     return CheckIntRotationShape(x, rotation) && CheckIntOutputShape(x, yOut, scaleOut);
 }
@@ -566,22 +586,24 @@ static bool CheckScaleAlgValid(int64_t scaleAlg, const aclTensor* yOut)
     auto yDtype = yOut->GetDataType();
     if (yDtype == op::DataType::DT_INT32 || yDtype == op::DataType::DT_INT8) {
         OP_CHECK(scaleAlg == 0,
-                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                     kOpName, "scaleAlg", FormatString("%ld", scaleAlg).c_str(),
-                     FormatString("The value of %s must be %ld for %s output", "scaleAlg", 0, "int8/int4").c_str()),
+                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(kOpName, "scaleAlg", FormatString("%ld", scaleAlg).c_str(),
+                                                       FormatString("The value of %s must be %ld for %s output",
+                                                                    "scaleAlg", static_cast<int64_t>(0), "int8/int4")
+                                                           .c_str()),
                  return false);
     } else if (yDtype == op::DataType::DT_FLOAT4_E2M1) {
         OP_CHECK(
-            scaleAlg == 0 || scaleAlg == 2,
+            scaleAlg == 0 || scaleAlg == MAX_SCALE_ALG,
             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
                 kOpName, "scaleAlg", FormatString("%ld", scaleAlg).c_str(),
                 FormatString("The value of %s must be in %s for %s output", "scaleAlg", "{0, 2}", "MXFP4").c_str()),
             return false);
     } else if (yDtype == static_cast<op::DataType>(Ops::NN::DT_HIFLOAT4)) {
         OP_CHECK(scaleAlg == 0,
-                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                     kOpName, "scaleAlg", FormatString("%ld", scaleAlg).c_str(),
-                     FormatString("The value of %s must be %ld for %s output", "scaleAlg", 0, "HIFLOAT4").c_str()),
+                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(kOpName, "scaleAlg", FormatString("%ld", scaleAlg).c_str(),
+                                                       FormatString("The value of %s must be %ld for %s output",
+                                                                    "scaleAlg", static_cast<int64_t>(0), "HIFLOAT4")
+                                                           .c_str()),
                  return false);
     } else {
         OP_CHECK(
@@ -597,7 +619,7 @@ static bool CheckScaleAlgValid(int64_t scaleAlg, const aclTensor* yOut)
 static bool CheckDstTypeMaxValid(double dstTypeMax, int64_t scaleAlg, const aclTensor* yOut)
 {
     auto yDtype = yOut->GetDataType();
-    if (yDtype == op::DataType::DT_FLOAT4_E2M1 && scaleAlg == 2) {
+    if (yDtype == op::DataType::DT_FLOAT4_E2M1 && scaleAlg == MAX_SCALE_ALG) {
         OP_CHECK(dstTypeMax >= SIX && dstTypeMax <= TWELVE,
                  OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
                      kOpName, "dstTypeMax", FormatString("%.17g", dstTypeMax).c_str(),
@@ -632,47 +654,50 @@ static bool CheckGroupShape(const aclTensor* x, const aclTensor* rotation, const
     const auto npuArch = GetCurrentPlatformInfo().GetCurNpuArch();
     OP_CHECK(GetCurrentPlatformInfo().GetSocVersion() == SocVersion::ASCEND950 || npuArch == NpuArch::DAV_9201 ||
                  npuArch == NpuArch::DAV_9202,
-             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("aclnnRotateQuantV2GetWorkspaceSize", "groupList", "not nullptr",
+             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(kOpName, "groupList", "not nullptr",
                                                    "grouped quantization requires Ascend950, DAV_9201 or DAV_9202"),
              return false);
     OP_CHECK(std::find(OUT_DTYPE_SUPPORT_LIST_MX.begin(), OUT_DTYPE_SUPPORT_LIST_MX.end(), yOut->GetDataType()) !=
                  OUT_DTYPE_SUPPORT_LIST_MX.end(),
              OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                 "aclnnRotateQuantV2GetWorkspaceSize", "yOut.dtype", op::ToString(yOut->GetDataType()).GetString(),
+                 kOpName, "yOut.dtype", op::ToString(yOut->GetDataType()).GetString(),
                  "grouped quantization supports only FLOAT4_E2M1, FLOAT8_E4M3FN and FLOAT8_E5M2"),
              return false);
-    const auto& xs = x->GetViewShape();
-    const auto& rs = rotation->GetViewShape();
-    const auto& gs = groupList->GetViewShape();
-    const auto rotRank = rs.GetDimNum();
-    OP_CHECK(xs.GetDimNum() == 2 && (rotRank == 3 || rotRank == 4) && gs.GetDimNum() == 1,
+    const auto& xShape = x->GetViewShape();
+    const auto& rotShape = rotation->GetViewShape();
+    const auto& groupShape = groupList->GetViewShape();
+    const auto rotRank = rotShape.GetDimNum();
+    OP_CHECK(xShape.GetDimNum() == DIM_MIN &&
+                 (rotRank == MIN_GROUPED_ROT_DIM_NUM || rotRank == MAX_GROUPED_ROT_DIM_NUM) &&
+                 groupShape.GetDimNum() == 1,
              OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
-                 "aclnnRotateQuantV2GetWorkspaceSize", "x, rotation, groupList",
-                 FormatString("%zuD, %zuD, %zuD", xs.GetDimNum(), rotRank, gs.GetDimNum()).c_str(),
+                 kOpName, "x, rotation, groupList",
+                 FormatString("%zuD, %zuD, %zuD", xShape.GetDimNum(), rotRank, groupShape.GetDimNum()).c_str(),
                  "x must be 2D, rotation must be 3D or 4D, and groupList must be 1D"),
              return false);
     OP_CHECK(
         groupList->GetDataType() == DataType::DT_INT64 && groupList->GetStorageFormat() == Format::FORMAT_ND &&
             (groupListType == 0 || groupListType == 1),
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            "aclnnRotateQuantV2GetWorkspaceSize", "groupList.dtype, groupList.format, groupListType",
+            kOpName, "groupList.dtype, groupList.format, groupListType",
             FormatString("%s, %s, %s", op::ToString(groupList->GetDataType()).GetString(),
                          op::ToString(groupList->GetStorageFormat()).GetString(), std::to_string(groupListType).c_str())
                 .c_str(),
             "the dtype of groupList must be INT64, its format must be ND, and groupListType must be 0 or 1"),
         return false);
-    int64_t e = gs.GetDim(0);
-    int64_t k = rs.GetDim(rotRank - 1);
-    int64_t m = xs.GetDim(0);
-    int64_t n = xs.GetDim(1);
-    const bool isSupportedK = std::find(SUPPORTED_ROT_K_SIZES.begin(), SUPPORTED_ROT_K_SIZES.end(), k) !=
+    int64_t groupNum = groupShape.GetDim(0);
+    int64_t K = rotShape.GetDim(rotRank - 1);
+    int64_t M = xShape.GetDim(0);
+    int64_t N = xShape.GetDim(1);
+    const bool isSupportedK = std::find(SUPPORTED_ROT_K_SIZES.begin(), SUPPORTED_ROT_K_SIZES.end(), K) !=
                               SUPPORTED_ROT_K_SIZES.end();
     OP_CHECK(
-        e >= MIN_GROUP_NUM && e <= MAX_GROUP_NUM && rs.GetDim(0) == e && rs.GetDim(rotRank - 2) == k && isSupportedK,
+        groupNum >= MIN_GROUP_NUM && groupNum <= MAX_GROUP_NUM && rotShape.GetDim(0) == groupNum &&
+            rotShape.GetDim(rotRank - 2) == K && isSupportedK,
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            "aclnnRotateQuantV2GetWorkspaceSize", "groupList.length, rotation.dim0, rotation.dim-2, rotation.dim-1",
-            FormatString("%s, %s, %s, %s", std::to_string(e).c_str(), std::to_string(rs.GetDim(0)).c_str(),
-                         std::to_string(rs.GetDim(rotRank - 2)).c_str(), std::to_string(k).c_str())
+            kOpName, "groupList.length, rotation.dim0, rotation.dim-2, rotation.dim-1",
+            FormatString("%s, %s, %s, %s", std::to_string(groupNum).c_str(), std::to_string(rotShape.GetDim(0)).c_str(),
+                         std::to_string(rotShape.GetDim(rotRank - 2)).c_str(), std::to_string(K).c_str())
                 .c_str(),
             FormatString("the group count must be in [%s, %s] and equal rotation dim0; rotation must end in "
                          "[K, K] with K in {32, 64, 128, 256}",
@@ -680,20 +705,21 @@ static bool CheckGroupShape(const aclTensor* x, const aclTensor* rotation, const
                 .c_str()),
         return false);
     OP_CHECK(
-        m >= 0 && n > 0 && n % k == 0 && m <= std::numeric_limits<uint32_t>::max() &&
-            n <= std::numeric_limits<uint32_t>::max() && m <= std::numeric_limits<int64_t>::max() / n / 4,
+        M >= 0 && N > 0 && N % K == 0 && M <= std::numeric_limits<uint32_t>::max() &&
+            N <= std::numeric_limits<uint32_t>::max() &&
+            M <= std::numeric_limits<int64_t>::max() / N / MN_OVERFLOW_GUARD,
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
-            "aclnnRotateQuantV2GetWorkspaceSize", "x.M, x.N, rotation.K",
-            FormatString("%s, %s, %s", std::to_string(m).c_str(), std::to_string(n).c_str(), std::to_string(k).c_str())
+            kOpName, "x.M, x.N, rotation.K",
+            FormatString("%s, %s, %s", std::to_string(M).c_str(), std::to_string(N).c_str(), std::to_string(K).c_str())
                 .c_str(),
             "the dimensions must satisfy M >= 0, N > 0, N % K = 0, M <= UINT32_MAX, N <= UINT32_MAX, "
             "and M*N <= INT64_MAX/4"),
         return false);
     OP_CHECK(
-        rotRank != 4 || rs.GetDim(1) == n / k,
-        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON("aclnnRotateQuantV2GetWorkspaceSize", "rotation.dim1, x.N, rotation.K",
-                                               FormatString("%s, %s, %s", std::to_string(rs.GetDim(1)).c_str(),
-                                                            std::to_string(n).c_str(), std::to_string(k).c_str())
+        rotRank != MAX_GROUPED_ROT_DIM_NUM || rotShape.GetDim(1) == N / K,
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(kOpName, "rotation.dim1, x.N, rotation.K",
+                                               FormatString("%s, %s, %s", std::to_string(rotShape.GetDim(1)).c_str(),
+                                                            std::to_string(N).c_str(), std::to_string(K).c_str())
                                                    .c_str(),
                                                "rotation dim1 must equal N/K for 4D grouped rotation"),
         return false);
@@ -716,7 +742,7 @@ static aclnnStatus CheckParams(const aclTensor* x, const aclTensor* rotation, co
     return ACLNN_SUCCESS;
 }
 
-static aclnnStatus Int42Int32PackedTensor(const aclTensor* y, const aclTensor*& outTensor, aclOpExecutor* executor)
+static aclnnStatus PackInt4OutputToInt32View(const aclTensor* y, const aclTensor*& outTensor, aclOpExecutor* executor)
 {
     auto viewShape = y->GetViewShape();
     auto viewShapeDim = viewShape.GetDimNum();
@@ -725,7 +751,7 @@ static aclnnStatus Int42Int32PackedTensor(const aclTensor* y, const aclTensor*& 
     CHECK_RET(outTemp != nullptr, ACLNN_ERR_INNER_NULLPTR);
     outTemp->SetDataType(DataType::DT_INT32);
     outTensor = outTemp;
-    OP_LOGD("RotateQuant output real dtype is int4, pack to int32 to out.");
+    OP_LOGD("%s output real dtype is int4, create int32 view for output.", kOpName);
     return ACLNN_SUCCESS;
 }
 
@@ -741,12 +767,11 @@ aclnnStatus aclnnRotateQuantGetWorkspaceSize(const aclTensor* x, const aclTensor
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
-    CHECK_RET(x != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(CheckAxisValid(axis, x), ACLNN_ERR_PARAM_INVALID);
-
+    CHECK_RET(workspaceSize != nullptr && executor != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     auto ret = CheckParams(x, rotation, alpha, yOut, scaleOut, nullptr, 0);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
+    CHECK_RET(CheckAxisValid(axis, x), ACLNN_ERR_PARAM_INVALID);
     const char* roundModeValue = (roundMode != nullptr) ? roundMode : "rint";
     CHECK_RET(CheckRoundModeValid(roundModeValue, yOut), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckScaleAlgValid(scaleAlg, yOut), ACLNN_ERR_PARAM_INVALID);
@@ -787,7 +812,7 @@ aclnnStatus aclnnRotateQuantGetWorkspaceSize(const aclTensor* x, const aclTensor
 
     const aclTensor* yTensor = y;
     if (yDtype == op::DataType::DT_INT4) {
-        ret = Int42Int32PackedTensor(y, yTensor, uniqueExecutor.get());
+        ret = PackInt4OutputToInt32View(y, yTensor, uniqueExecutor.get());
         CHECK_RET(ret == ACLNN_SUCCESS, ret);
     }
 
@@ -810,17 +835,20 @@ aclnnStatus aclnnRotateQuantV2GetWorkspaceSize(const aclTensor* x, const aclTens
     L2_DFX_PHASE_1(aclnnRotateQuantV2,
                    DFX_IN(x, rotation, alpha, groupList, groupListType, axis, roundMode, scaleAlg, dstTypeMax, trans),
                    DFX_OUT(yOut, scaleOut));
-    CHECK_RET(groupListType == 0 || groupListType == 1, ACLNN_ERR_PARAM_INVALID);
+    if (groupListType != 0 && groupListType != 1) {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(kOpName, "groupListType",
+                                              Ops::NN::FormatString("%ld", groupListType).c_str(),
+                                              "groupListType must be 0 or 1.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     auto uniqueExecutor = CREATE_EXECUTOR();
     CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
-
-    CHECK_RET(x != nullptr, ACLNN_ERR_PARAM_NULLPTR);
-    CHECK_RET(CheckAxisValid(axis, x), ACLNN_ERR_PARAM_INVALID);
 
     CHECK_RET(workspaceSize != nullptr && executor != nullptr, ACLNN_ERR_PARAM_NULLPTR);
     auto ret = CheckParams(x, rotation, alpha, yOut, scaleOut, groupList, groupListType);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
+    CHECK_RET(CheckAxisValid(axis, x), ACLNN_ERR_PARAM_INVALID);
     const char* roundModeValue = (roundMode != nullptr) ? roundMode : "rint";
     CHECK_RET(CheckRoundModeValid(roundModeValue, yOut), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckScaleAlgValid(scaleAlg, yOut), ACLNN_ERR_PARAM_INVALID);
@@ -867,7 +895,7 @@ aclnnStatus aclnnRotateQuantV2GetWorkspaceSize(const aclTensor* x, const aclTens
 
     const aclTensor* yTensor = y;
     if (yDtype == op::DataType::DT_INT4) {
-        ret = Int42Int32PackedTensor(y, yTensor, uniqueExecutor.get());
+        ret = PackInt4OutputToInt32View(y, yTensor, uniqueExecutor.get());
         CHECK_RET(ret == ACLNN_SUCCESS, ret);
     }
 

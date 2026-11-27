@@ -10,7 +10,7 @@
 
 /*!
  * \file rotate_quant_tiling.h
- * \brief RotateQuant算子arch35 tiling类定义
+ * \brief Arch35 tiling class definition of the RotateQuant operator.
  */
 #ifndef __OP_HOST_ROTATE_QUANT_TILING_H__
 #define __OP_HOST_ROTATE_QUANT_TILING_H__

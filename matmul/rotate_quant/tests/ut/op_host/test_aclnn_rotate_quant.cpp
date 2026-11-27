@@ -1156,6 +1156,51 @@ TEST_F(l2_rotate_quant_test, dav9201_hif4_rot_not_square_fail)
     EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
 }
 
+// hif4 fail: x rank=0(标量)被HIF4维数防护拦截, 返回参数错误而非GetDim(-1)下溢
+TEST_F(l2_rotate_quant_test, dav9201_hif4_x_rank0_fail)
+{
+    op::NpuArchManager archManager(Ops::Base::DAV_9201);
+    TensorDesc x_desc = TensorDesc({}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc rot_desc = TensorDesc({64, 64}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc y_desc = TensorDesc({}, ACL_HIFLOAT4, ACL_FORMAT_ND);
+    TensorDesc scale_desc = TensorDesc({1, 1}, ACL_HIFLOAT4_SCALE, ACL_FORMAT_ND);
+    char* roundMode = const_cast<char*>("rint");
+    auto ut = OP_API_UT(aclnnRotateQuant, INPUT(x_desc, rot_desc, (aclTensor*)nullptr, -1, roundMode, 0, 0.0, false),
+                        OUTPUT(y_desc, scale_desc));
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+// hif4 fail: x rank=8超过MAX_X_DIM_NUM(7)被HIF4维数防护拦截
+TEST_F(l2_rotate_quant_test, dav9201_hif4_x_rank8_exceed_max_fail)
+{
+    op::NpuArchManager archManager(Ops::Base::DAV_9201);
+    TensorDesc x_desc = TensorDesc({1, 1, 1, 1, 1, 1, 1, 64}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc rot_desc = TensorDesc({64, 64}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc y_desc = TensorDesc({1, 1, 1, 1, 1, 1, 1, 64}, ACL_HIFLOAT4, ACL_FORMAT_ND);
+    TensorDesc scale_desc = TensorDesc({1, 1, 1, 1, 1, 1, 1, 1, 1}, ACL_HIFLOAT4_SCALE, ACL_FORMAT_ND);
+    char* roundMode = const_cast<char*>("rint");
+    auto ut = OP_API_UT(aclnnRotateQuant, INPUT(x_desc, rot_desc, (aclTensor*)nullptr, -1, roundMode, 0, 0.0, false),
+                        OUTPUT(y_desc, scale_desc));
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
+// hif4 fail: rotation rank=0(标量)被HIF4维数防护拦截, 返回参数错误而非GetDim(-1)下溢
+TEST_F(l2_rotate_quant_test, dav9201_hif4_rot_rank0_fail)
+{
+    op::NpuArchManager archManager(Ops::Base::DAV_9201);
+    TensorDesc x_desc = TensorDesc({4, 64}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc rot_desc = TensorDesc({}, ACL_BF16, ACL_FORMAT_ND);
+    TensorDesc y_desc = TensorDesc({4, 64}, ACL_HIFLOAT4, ACL_FORMAT_ND);
+    TensorDesc scale_desc = TensorDesc({4, 1, 1}, ACL_HIFLOAT4_SCALE, ACL_FORMAT_ND);
+    char* roundMode = const_cast<char*>("rint");
+    auto ut = OP_API_UT(aclnnRotateQuant, INPUT(x_desc, rot_desc, (aclTensor*)nullptr, -1, roundMode, 0, 0.0, false),
+                        OUTPUT(y_desc, scale_desc));
+    uint64_t workspace_size = 0;
+    EXPECT_EQ(ut.TestGetWorkspaceSize(&workspace_size), ACLNN_ERR_PARAM_INVALID);
+}
+
 // ==================== dav9201 (v121) hif4 yOut shape cases ====================
 
 // hif4输出: yOut的shape与x相同(仅dtype位宽不同), 正常路径成功
