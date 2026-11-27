@@ -23,6 +23,28 @@ namespace AdaLayerNormGrad {
 using namespace AscendC;
 using namespace AscendC::Reg;
 
+// Preserve low-order contributions across all rows and UB tiles owned by this core.
+__simd_callee__ inline void AddWithCorrection(__ubuf__ float* sumAddr, __ubuf__ float* corrAddr,
+                                              RegTensor<float>& value, MaskReg& mask)
+{
+    RegTensor<float> sum, correction, adjusted, total, zero;
+    MaskReg finite;
+    LoadTensor(sum, sumAddr, mask);
+    LoadTensor(correction, corrAddr, mask);
+    Sub(adjusted, value, correction, mask);
+    Add(total, sum, adjusted, mask);
+    Sub(correction, total, sum, mask);
+    Sub(correction, correction, adjusted, mask);
+    // Clear the correction on overflow so subsequent finite terms preserve an infinite sum.
+    RegTensor<float> magnitude;
+    Abs(magnitude, total, mask);
+    CompareScalar<float, CMPMODE::LT>(finite, magnitude, __builtin_inff(), mask);
+    Duplicate(zero, 0.0f, mask);
+    Select(correction, correction, zero, finite);
+    CopyToTensor(sumAddr, total, mask);
+    CopyToTensor(corrAddr, correction, mask);
+}
+
 template <typename T, typename U, int TILING_KEY>
 class KernelCutN {
 public:
@@ -46,7 +68,9 @@ public:
         isDeterministicKey = tiling.isDeterministicKey != 0;
         colAlignV = tiling.colAlignV;
         colAlignM = tiling.colAlignM;
-        workspaceNum = (IS_BATCH_SPLIT && !B16_OUTPUT) ? 2 : (2 + 2 * tiling.batch);
+        wholeBatchTile = IS_BATCH_SPLIT && B16_OUTPUT && tiling.nAvailInUb >= tiling.seq &&
+                         tiling.nAvailInUb % tiling.seq == 0;
+        workspaceNum = (IS_BATCH_SPLIT && (!B16_OUTPUT || wholeBatchTile)) ? 2 : (2 + 2 * tiling.batch);
         scaleRowsMax = (tiling.nAvailInUb + tiling.seq - 1) / tiling.seq + 1;
 
         myRows = (GetBlockIdx() != tiling.blockNum - 1) ? tiling.blockFormer : tiling.blockTail;
@@ -116,9 +140,9 @@ public:
             pipe.Reset();
             AdaLayerNormGradDeterminsticCompute<T, U> op;
             op.initBuffer(pipe, pdGammaGm, pdBetaGm, pdScaleGm, pdShiftGm, workspaceGMOri, workspaceNum,
-                          WS_SCALE_SHIFT);
+                          WS_SCALE_SHIFT && !wholeBatchTile);
             op.FinalProcessDeterministic(colAlignV, selfTiling.blockNum, selfTiling.col);
-            if (WS_SCALE_SHIFT) {
+            if (WS_SCALE_SHIFT && !wholeBatchTile) {
                 op.BatchFinalProcessDeterministic(selfTiling.batch, colAlignV, selfTiling.blockNum, selfTiling.col);
             }
             op.FinalProcessFree();
@@ -130,8 +154,8 @@ private:
     {
         pipe.InitBuffer(gammaQue, BUFFER_NUM, colAlignM * sizeof(U));
         pipe.InitBuffer(betaQue, BUFFER_NUM, colAlignM * sizeof(U));
-        pipe.InitBuffer(pdGammaBuf, colAlignV * sizeof(float));
-        pipe.InitBuffer(pdBetaBuf, colAlignV * sizeof(float));
+        pipe.InitBuffer(pdGammaBuf, 2 * colAlignV * sizeof(float));
+        pipe.InitBuffer(pdBetaBuf, 2 * colAlignV * sizeof(float));
         pipe.InitBuffer(dyGStageBuf, colAlignV * sizeof(float));
         pipe.InitBuffer(yStageBuf, colAlignV * sizeof(float));
         pipe.InitBuffer(tmpBuf, V_LENGTH * sizeof(float) * 2);
@@ -160,8 +184,8 @@ private:
     {
         LocalTensor<float> dGammaLocal = pdGammaBuf.Get<float>();
         LocalTensor<float> dBetaLocal = pdBetaBuf.Get<float>();
-        Duplicate(dGammaLocal, 0.0f, colAlignV);
-        Duplicate(dBetaLocal, 0.0f, colAlignV);
+        Duplicate(dGammaLocal, 0.0f, 2 * colAlignV);
+        Duplicate(dBetaLocal, 0.0f, 2 * colAlignV);
         PipeBarrier<PIPE_V>();
     }
 
@@ -170,13 +194,13 @@ private:
         if (isDeterministicKey || B16_OUTPUT) {
             LocalTensor<float> tempLocal = pdGammaBuf.Get<float>();
             InitGmData(workspaceGmGamma, workspaceGmBeta, colAlignV, tempLocal, colAlignV);
-            if (WS_SCALE_SHIFT) {
+            if (WS_SCALE_SHIFT && !wholeBatchTile) {
                 int64_t coreBase = GetBlockIdx() * workspaceNum * colAlignV;
                 for (int64_t i = 0; i < selfTiling.batch; ++i) {
                     InitGmData(workspaceGMOri[coreBase + (2 + 2 * i) * colAlignV],
                                workspaceGMOri[coreBase + (3 + 2 * i) * colAlignV], colAlignV, tempLocal, colAlignV);
                 }
-            } else if (GetBlockIdx() == 0) {
+            } else if (!wholeBatchTile && GetBlockIdx() == 0) {
                 // batch-split: pd_scale/pd_shift accumulate on GM via in-core atomic adds -> zero once first
                 LocalTensor<T> tempLocalT = pdXQue.AllocTensor<T>();
                 InitSingleData<T>(pdScaleGm, tempLocalT, selfTiling.batch * selfTiling.col);
@@ -308,11 +332,9 @@ private:
                 RegTensor<float> scale;
                 RegTensor<float> scaleP1;
                 RegTensor<float> dyScaleP1;
-                RegTensor<float> pdBetaAcc;
                 RegTensor<float> xCentered;
                 RegTensor<float> y;
                 RegTensor<float> dyGY;
-                RegTensor<float> pdGammaAcc;
                 RegTensor<float> yGamma;
                 RegTensor<float> yGammaBeta;
                 RegTensor<float> dyYGB;
@@ -338,17 +360,14 @@ private:
                     Adds(scaleP1, scale, 1.0f, pregLoop);
                     Mul(dyScaleP1, dy, scaleP1, pregLoop);
 
-                    LoadTensor(pdBetaAcc, dBetaAddr + j * V_LENGTH, pregLoop);
-                    Add(pdBetaAcc, pdBetaAcc, dyScaleP1, pregLoop);
-                    CopyToTensor(dBetaAddr + j * V_LENGTH, pdBetaAcc, pregLoop);
+                    AddWithCorrection(dBetaAddr + j * V_LENGTH, dBetaAddr + colAlignV + j * V_LENGTH, dyScaleP1,
+                                      pregLoop);
 
                     Sub(xCentered, x, meanReg, pregLoop);
                     Mul(y, xCentered, rstdReg, pregLoop);
 
                     Mul(dyGY, dyScaleP1, y, pregLoop);
-                    LoadTensor(pdGammaAcc, dGammaAddr + j * V_LENGTH, pregLoop);
-                    Add(pdGammaAcc, pdGammaAcc, dyGY, pregLoop);
-                    CopyToTensor(dGammaAddr + j * V_LENGTH, pdGammaAcc, pregLoop);
+                    AddWithCorrection(dGammaAddr + j * V_LENGTH, dGammaAddr + colAlignV + j * V_LENGTH, dyGY, pregLoop);
 
                     Mul(yGamma, y, gamma, pregLoop);
                     Add(yGammaBeta, yGamma, beta, pregLoop);
@@ -453,7 +472,7 @@ private:
         SetFlag<HardEvent::V_MTE3>(event);
         WaitFlag<HardEvent::V_MTE3>(event);
 
-        if (WS_SCALE_SHIFT && (isDeterministicKey || B16_OUTPUT)) {
+        if (!wholeBatchTile && WS_SCALE_SHIFT && (isDeterministicKey || B16_OUTPUT)) {
             int64_t coreBase = GetBlockIdx() * workspaceNum * colAlignV;
             for (int64_t i = 0; i < scaleRows; ++i) {
                 SetAtomicAdd<float>();
@@ -477,16 +496,23 @@ private:
                     LocalTensor<T> shiftOut = shiftOutTmp.Get<T>();
                     Cast(scaleOut, dScaleLocal[i * colAlignV], RoundMode::CAST_RINT, colAlignV);
                     PipeBarrier<PIPE_V>();
-                    SetAtomicAdd<T>();
+                    PipeBarrier<PIPE_ALL>();
+                    if (!wholeBatchTile) {
+                        SetAtomicAdd<T>();
+                    }
                     DataCopyPad(pdScaleGm[(startBatch + i) * selfTiling.col], scaleOut,
                                 DataCopyParams{1, (uint16_t)(selfTiling.col * sizeof(T)), 0, 0});
                     SetAtomicNone();
                     Cast(shiftOut, dShiftLocal[i * colAlignV], RoundMode::CAST_RINT, colAlignV);
                     PipeBarrier<PIPE_V>();
-                    SetAtomicAdd<T>();
+                    PipeBarrier<PIPE_ALL>();
+                    if (!wholeBatchTile) {
+                        SetAtomicAdd<T>();
+                    }
                     DataCopyPad(pdShiftGm[(startBatch + i) * selfTiling.col], shiftOut,
                                 DataCopyParams{1, (uint16_t)(selfTiling.col * sizeof(T)), 0, 0});
                     SetAtomicNone();
+                    PipeBarrier<PIPE_ALL>();
                 }
             }
         }
@@ -568,6 +594,7 @@ private:
 
     int64_t colAlignV = 0;
     int64_t colAlignM = 0;
+    bool wholeBatchTile = false;
     int64_t workspaceNum = 0;
     int64_t scaleRowsMax = 0;
     uint32_t roundUp1Dtype = BLOCK_ALIGN_B / sizeof(float);

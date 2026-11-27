@@ -120,8 +120,12 @@ def _compute(dy, x, rstd, mean, scale, gamma, beta):
     if x.ndim >= 2:
         pd_scale = (dy * (gamma * y + beta)).sum(-2)
         pd_shift = dy.sum(-2)
-        pd_gamma = (dy * (1 + scale_b) * y).sum(tuple(range(x.ndim - 1)))
-        pd_beta = (dy * (1 + scale_b)).sum(tuple(range(x.ndim - 1)))
+        # Keep the affine reductions in FP32 (FP64 for the promoted reference).
+        # A long FP16 sum can overflow before the caller casts the gradient to FP32.
+        accum_dtype = _compute_dtype(dy, x, rstd, mean, scale, gamma, beta)
+        axes = tuple(range(x.ndim - 1))
+        pd_gamma = (dy * (1 + scale_b) * y).sum(axes, dtype=accum_dtype)
+        pd_beta = (dy * (1 + scale_b)).sum(axes, dtype=accum_dtype)
     else:
         pd_scale = dy * (gamma * y + beta)
         pd_shift = dy
@@ -210,21 +214,21 @@ class _AclnnCompose(_Compose):
         scale,
         weightOptional=None,
         biasOptional=None,
-        xpu_output_dtypes=None,
+        output_dtypes=None,
     ):
-        if xpu_output_dtypes is None:
+        if output_dtypes is None:
             if (
                 weightOptional is None
                 and biasOptional is None
                 and input.dtype != torch.float32
             ):
                 raise ValueError(
-                    "ACLNN optional affine dtype requires TTK xpu_output_dtypes metadata"
+                    "ACLNN optional affine dtype requires TTK output_dtypes metadata"
                 )
             output_types = [None] * 5
         else:
             output_types = [
-                _TORCH_DTYPE[d] if d is not None else None for d in xpu_output_dtypes
+                _TORCH_DTYPE[d] if d is not None else None for d in output_dtypes
             ]
         _, _, _, grad_weight_dtype, grad_bias_dtype = output_types
         weight, bias = _fill_affine(

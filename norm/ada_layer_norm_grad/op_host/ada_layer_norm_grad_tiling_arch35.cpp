@@ -35,7 +35,7 @@ static constexpr uint32_t BFLOAT16_FLOAT_DTYPE_KEY = 5;
 static constexpr int64_t CUT_N_PER_ROW_FP32_BUFFER_NUM = 3;
 static constexpr int64_t CUT_N_PER_ROW_RSTD_MEAN_BYTES = 2 * BLOCK_NUMBER * FP32_SIZE;
 static constexpr int64_t CUT_N_SCALE_BUFFER_NUM = 3;
-static constexpr int64_t CUT_N_FIXED_BUFFER_NUM = 9;
+static constexpr int64_t CUT_N_FIXED_BUFFER_NUM = 11;
 // cutD fixed part: rstd/mean scalar queues (2*BLOCK_NUMBER*FP32_SIZE) + tmpBuf (V_LENGTH*2+2 floats = 520 B).
 // Both are independent of dInnerLength and covered by CUT_D_FIXED_BYTES.
 static constexpr int64_t CUT_D_FIXED_BYTES = 2 * BLOCK_NUMBER * FP32_SIZE + 520;
@@ -256,10 +256,13 @@ ge::graphStatus AdaLayerNormGradArch35Tiling::DoOpTiling()
     const int64_t dtypeKey = static_cast<int64_t>(commonParams.dtypeKey);
     tilingKey_ = static_cast<uint64_t>(tier * 100 + dtypeKey * 10);
 
-    // b16 outputs keep per-batch scale/shift in the fp32 workspace even in batch-split mode so the
-    // reduction is accumulated in fp32 and cast exactly once (see the kernel B16_OUTPUT handling).
+    // A batch owned by one core and wholly reduced in UB needs no scale/shift partials in GM.
     const bool b16Output = commonParams.dyDtype != ge::DataType::DT_FLOAT;
-    const int64_t workspaceNum = (isBatchSplit && !b16Output) ? 2 : (2 + 2 * batch);
+    const bool wholeBatchTile = isBatchSplit && !cutDPath && b16Output && nAvailInUb >= seq;
+    if (wholeBatchTile) {
+        nAvailInUb = (nAvailInUb / seq) * seq;
+    }
+    const int64_t workspaceNum = (isBatchSplit && (!b16Output || wholeBatchTile)) ? 2 : (2 + 2 * batch);
     const uint64_t usrWorkspaceSize = static_cast<uint64_t>(blockNum) * colAlignV * workspaceNum * FP32_SIZE;
 
     td_.set_batch(batch);
