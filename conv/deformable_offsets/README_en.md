@@ -82,70 +82,70 @@ English | [简体中文](./README.md)
     <tr>
       <td>x</td>
       <td>Input</td>
-      <td>Denotes the original input data. It corresponds to `input` in the formula.</td>
+      <td>Denotes the original input data. It corresponds to input in the formula.</td>
       <td>DT_FLOAT16, DT_FLOAT, DT_BF16</td>
       <td>NHWC</td>
     </tr>
     <tr>
       <td>offsets</td>
       <td>Input</td>
-      <td>Denotes the offset values. It corresponds to `offsets` in the formula.</td>
+      <td>Denotes the offset values. It corresponds to offsets in the formula.</td>
       <td>DT_FLOAT16, DT_FLOAT, DT_BF16</td>
       <td>NHWC</td>
     </tr>
     <tr>
       <td>y</td>
       <td>Output</td>
-      <td>Denotes the output of the deformable convolution. It corresponds to `deformOut` in the formula.</td>
+      <td>Denotes the output of the deformable convolution. It corresponds to deformOut in the formula.</td>
       <td>DT_FLOAT16, DT_FLOAT, DT_BF16</td>
       <td>NHWC</td>
     </tr>
     <tr>
       <td>strides</td>
-      <td>Attribute</td>
-      <td>Denotes the strides of the convolution kernel in the height and width directions, that is, (1, stridesH, stridesW, 1). It corresponds to `strides` in the formula.</td>
+      <td>Required attribute</td>
+      <td>Denotes the strides of the convolution kernel in the height and width directions, that is, (1, stridesH, stridesW, 1). It corresponds to strides in the formula.</td>
       <td>INT64</td>
       <td>-</td>
     </tr>
     <tr>
       <td>pads</td>
-      <td>Attribute</td>
-      <td>Specifies the padding added in the height and width directions of the input. It corresponds to `pads` in the formula.</td>
+      <td>Required attribute</td>
+      <td>Specifies the padding added in the height and width directions of the input. It corresponds to pads in the formula.</td>
       <td>INT64</td>
       <td>-</td>
     </tr>
     <tr>
       <td>ksize</td>
-      <td>Attribute</td>
-      <td>Specifies the size of the convolution kernel. It corresponds to `K_H` and `K_W` in the formula. size is 2 (K_H, K_W), and each element is greater than zero.</td>
+      <td>Required attribute</td>
+      <td>Specifies the size of the convolution kernel. It corresponds to K_H and K_W in the formula. size is 2 (K_H, K_W), and each element is greater than zero.</td>
       <td>INT64</td>
       <td>-</td>
     </tr>
     <tr>
       <td>dilations</td>
-      <td>Attribute</td>
-      <td>Specifies the dilation factor of each dimension, that is, (1, dilationsH, dilationsW, 1). It corresponds to `dilations` in the formula.</td>
+      <td>Optional attribute</td>
+      <td>Specifies the dilation factor of each dimension, that is, (1, dilationsH, dilationsW, 1). The default value is (1, 1, 1, 1). It corresponds to dilations in the formula.</td>
       <td>INT64</td>
       <td>-</td>
     </tr>
     <tr>
       <td>data_format</td>
-      <td>Attribute</td>
-      <td>Specifies the data format of input x.</td>
+      <td>Optional attribute</td>
+      <td>Specifies the data format of input x. The default value is "NHWC", and currently only "NHWC" is supported.</td>
       <td>STRING</td>
       <td>-</td>
     </tr>
     <tr>
       <td>deformable_groups</td>
-      <td>Attribute</td>
-      <td>Specifies the number of groups of input x along the C axis.</td>
+      <td>Optional attribute</td>
+      <td>Specifies the number of groups of input x along the C axis. The default value is 1.</td>
       <td>INT32</td>
       <td>-</td>
     </tr>
     <tr>
       <td>modulated</td>
-      <td>Attribute</td>
-      <td>Specifies the version of the deformable convolution, indicating whether the offset contains a mask. If it is true, `offset` contains a mask; if it is false, `offset` does not contain a mask. Currently, only true is supported.</td>
+      <td>Optional attribute</td>
+      <td>Specifies the version of the deformable convolution, indicating whether offsets contains a mask. If it is true, offsets contains a mask; if it is false, offsets does not contain a mask. The default value is true, and currently only true is supported.</td>
       <td>BOOL</td>
       <td>-</td>
     </tr>
@@ -153,7 +153,17 @@ English | [简体中文](./README.md)
 
 ## Constraints
 
-None
+- The data types of `x`, `offsets`, and `y` must be the same.
+- The shapes of `x` and `offsets` must both be 4-D (N, H, W, C).
+- Each element of `ksize` must be greater than 0. The H/W components of `strides` (the 1st and 2nd elements under NHWC) must be greater than 0, and the N/C components (the 0th and 3rd elements) must be 1. The N/C components of `dilations` (the 0th and 3rd elements) must be 1.
+- `modulated` only supports true (the default value is true), that is, each sampling point in `offsets` contains three components: the height offset, the width offset, and the mask.
+- The shape of `offsets` must satisfy the following (NHWC):
+  - The N dimension is the same as the N dimension of `x`.
+  - The H/W dimensions are equal to the convolution output height/width derived from `x` and `pads`, `strides`, `ksize`, and `dilations` according to the formula in the function description.
+  - The C dimension is equal to `deformable_groups * ksize[0] * ksize[1] * 3` (3 is the number of components of each sampling point when modulated is true).
+  - The value of the `deformable_groups` attribute must be consistent with the number of groups derived from the C dimension of `offsets`, and the C dimension of `x` must be divisible by `deformable_groups`.
+- The shape of the output `y` is (N, outH * ksize[0], outW * ksize[1], C), where the N and C dimensions are the same as those of `x`.
+- Empty tensors are not supported: the C dimension of `x` must be greater than 0, and the derived convolution output height/width must both be greater than 0.
 
 ## Invocation Description
 

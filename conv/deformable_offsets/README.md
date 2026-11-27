@@ -80,70 +80,70 @@
     <tr>
       <td>x</td>
       <td>输入</td>
-      <td>表示输入的原始数据。对应公式中的`input`。</td>
+      <td>表示输入的原始数据。对应公式中的input。</td>
       <td>DT_FLOAT16, DT_FLOAT, DT_BF16</td>
       <td>NHWC</td>
     </tr>
     <tr>
       <td>offsets</td>
       <td>输入</td>
-      <td>表示偏移值。对应公式中的`offsets`。</td>
+      <td>表示偏移值。对应公式中的offsets。</td>
       <td>DT_FLOAT16, DT_FLOAT, DT_BF16</td>
       <td>NHWC</td>
     </tr>
     <tr>
       <td>y</td>
       <td>输出</td>
-      <td>表示变形卷积的输出。对应公式中的`deformOut`。</td>
+      <td>表示变形卷积的输出。对应公式中的deformOut。</td>
       <td>DT_FLOAT16, DT_FLOAT, DT_BF16</td>
       <td>NHWC</td>
     </tr>
     <tr>
       <td>strides</td>
-      <td>属性</td>
-      <td>表示指定卷积核在高度和宽度方向上的步幅，即(1, stridesH, stridesW, 1)。对应公式中的`strides`。</td>
+      <td>必选属性</td>
+      <td>表示指定卷积核在高度和宽度方向上的步幅，即(1, stridesH, stridesW, 1)。对应公式中的strides。</td>
       <td>INT64</td>
       <td>-</td>
     </tr>
     <tr>
       <td>pads</td>
-      <td>属性</td>
-      <td>指定在输入的高度和宽度方向上添加的填充。对应公式中的`pads`。</td>
+      <td>必选属性</td>
+      <td>指定在输入的高度和宽度方向上添加的填充。对应公式中的pads。</td>
       <td>INT64</td>
       <td>-</td>
     </tr>
     <tr>
       <td>ksize</td>
-      <td>属性</td>
-      <td>指定卷积核的大小。对应公式中的`K_H`、`K_W`。size为2(K_H, K_W)，各元素均大于零。</td>
+      <td>必选属性</td>
+      <td>指定卷积核的大小。对应公式中的K_H、K_W。size为2(K_H, K_W)，各元素均大于零。</td>
       <td>INT64</td>
       <td>-</td>
     </tr>
     <tr>
       <td>dilations</td>
-      <td>属性</td>
-      <td>指定每个维度上的膨胀因子，即(1, dilationsH, dilationsW, 1)。对应公式中的`dilations`。</td>
+      <td>可选属性</td>
+      <td>指定每个维度上的膨胀因子，即(1, dilationsH, dilationsW, 1)。默认为(1, 1, 1, 1)。对应公式中的dilations。</td>
       <td>INT64</td>
       <td>-</td>
     </tr>
     <tr>
       <td>data_format</td>
-      <td>属性</td>
-      <td>指定输入x的数据格式。</td>
+      <td>可选属性</td>
+      <td>指定输入x的数据格式。默认为"NHWC"，当前仅支持"NHWC"。</td>
       <td>STRING</td>
       <td>-</td>
     </tr>
     <tr>
       <td>deformable_groups</td>
-      <td>属性</td>
-      <td>指定输入x在C轴上的分组数。</td>
+      <td>可选属性</td>
+      <td>指定输入x在C轴上的分组数。默认为1。</td>
       <td>INT32</td>
       <td>-</td>
     </tr>
     <tr>
       <td>modulated</td>
-      <td>属性</td>
-      <td>指定变形卷积的版本，表示offset中是否包含掩码。若为true，`offset`中包含掩码；若为false，则不包含。当前仅支持true。</td>
+      <td>可选属性</td>
+      <td>指定变形卷积的版本，表示offsets中是否包含掩码。若为true，offsets中包含掩码；若为false，则不包含。默认为true，当前仅支持true。</td>
       <td>BOOL</td>
       <td>-</td>
     </tr>
@@ -151,7 +151,17 @@
 
 ## 约束说明
 
-无
+- `x`、`offsets`、`y`三者数据类型必须一致。
+- `x`、`offsets`的shape均须为4维（N、H、W、C）。
+- `ksize`各元素须大于0；`strides`的H/W分量（NHWC下第1、2个元素）必须大于0，N/C分量（第0、3个元素）必须为1；`dilations`的N/C分量（第0、3个元素）必须为1。
+- `modulated`仅支持true（默认值true），即`offsets`中每个采样点包含高度偏移、宽度偏移、掩码（mask）共3个分量。
+- `offsets`的shape须满足（NHWC）：
+  - N维与`x`的N维一致；
+  - H/W维等于按功能说明中的公式，由`x`与`pads`、`strides`、`ksize`、`dilations`推导出的卷积输出高/宽；
+  - C维等于`deformable_groups * ksize[0] * ksize[1] * 3`（3为modulated=true时每个采样点的分量数）；
+  - `deformable_groups`属性值须与由`offsets`的C维推导出的分组数一致，且`x`的C维须能被`deformable_groups`整除。
+- 输出`y`的shape为(N, outH * ksize[0], outW * ksize[1], C)，其中N、C维与`x`一致。
+- 不支持空tensor：`x`的C维必须大于0，且推导出的卷积输出高/宽均大于0。
 
 ## 调用说明
 

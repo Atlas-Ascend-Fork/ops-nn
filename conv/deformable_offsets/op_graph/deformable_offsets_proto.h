@@ -35,8 +35,8 @@ namespace ge {
 * @li ksize: A tuple/list of 2 integers. Kernel size. Required and no default value.
 * @li dilations: A tuple/list of 4 integers. The dilation factor for each dimension
 * of input. Defaults to [1, 1, 1, 1]
-* @li data_format: An optional string from: "NCHW", "NHWC". The default value "NCHW" is not supported.
-* Specify the data format of the input x. The format of the attribute
+* @li data_format: An optional string from: "NCHW", "NHWC". Defaults to "NHWC". Only "NHWC" is supported.
+* Specify the data format of the input x.
 * @li deformable_groups: An optional int specify the c-axis grouping number of input x. Defaults to "1".
 * @li modulated: An optional bool specify version of DeformableConv2D, true means v2, false means v1. Defaults to
 "true".
