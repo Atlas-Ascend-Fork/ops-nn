@@ -4200,6 +4200,16 @@
   </tr>
   <tr>
     <td>norm</td>
+    <td><a href="../../norm/normalize_batch/README.md">normalize_batch</a></td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>AI Core</td>
+    <td>变长序列批归一化。按每个batch的归一化数据个数对输入的(n, c, d)张量做标准化，输出shape和数据类型与输入一致。</td>
+  </tr>
+  <tr>
+    <td>norm</td>
     <td><a href="../../norm/rms_norm_grad_quant/README.md">rms_norm_grad_quant</a></td>
     <td>✓</td>
     <td>✓</td>

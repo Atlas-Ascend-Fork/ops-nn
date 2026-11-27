@@ -49,5 +49,15 @@ The operator categories and operator lists provided by this project are as follo
     <td>AI Core</td>
     <td>Fuses quantized matrix multiplication, activation, and dynamic MX quantization. Supports GELU, SwiGLU, SiLU, and sigmoid followed by elementwise multiplication with x3.</td>
   </tr>
+  <tr>
+    <td>norm</td>
+    <td><a href="../../norm/normalize_batch/README_en.md">normalize_batch</a></td>
+    <td>✓</td>
+    <td>✓</td>
+    <td>✗</td>
+    <td>✓</td>
+    <td>AI Core</td>
+    <td>Performs variable-length sequence batch normalization: normalizes the (n, c, d) input tensor by the per-batch normalization length, producing output with the same shape and dtype as the input.</td>
+  </tr>
 </tbody>
 </table>
