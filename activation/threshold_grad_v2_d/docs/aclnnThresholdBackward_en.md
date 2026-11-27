@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Performs the backward of [aclnnThreshold](../../threshold_v2/docs/aclnnThreshold&aclnnInplaceThreshold.md).
+- Description: Performs the backward of [aclnnThreshold](../../threshold_v2/docs/aclnnThreshold&aclnnInplaceThreshold_en.md).
 - Formula:
 
   $$

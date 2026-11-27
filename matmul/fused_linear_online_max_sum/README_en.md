@@ -15,7 +15,7 @@ English | [简体中文](./README.md)
 
 ## Function
 
-- Operator function: the implementation is functionally equivalent to the matmul and fused\_vocab\_parallel\_cross\_entropy of Megatron. It supports splitting the device along the vocabulary\_size dimension and fusing matmul with celoss. During the process, it is split according to communication into [FusedLinearOnlineMaxSum](./) and [FusedCrossEntropyLossWithMaxSum](../../loss/fused_cross_entropy_loss_with_max_sum).
+- Operator function: the implementation is functionally equivalent to the matmul and fused\_vocab\_parallel\_cross\_entropy of Megatron. It supports splitting the device along the vocabulary\_size dimension and fusing matmul with celoss. During the process, it is split according to communication into [FusedLinearOnlineMaxSum](./) and [FusedCrossEntropyLossWithMaxSum](../../loss/fused_cross_entropy_loss_with_max_sum/README_en.md).
 - Formula:
   1. Perform matrix multiplication between $input$ and $weight^T$ to obtain:
 
