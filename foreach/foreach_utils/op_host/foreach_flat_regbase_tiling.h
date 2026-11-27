@@ -29,6 +29,7 @@ namespace ForeachFlatRegbaseTiling {
 constexpr uint32_t DMA_ALIGN_BYTES = 32U;
 constexpr uint32_t BUFFER_DEPTH = 2U;
 constexpr int64_t MIN_CORE_WORK_BYTES = 4096;
+constexpr int64_t MICRO_TENSOR_MIN_COUNT = 4;
 constexpr uint64_t WORKSPACE_BYTES = 32U;
 
 inline uint32_t Gcd(uint32_t lhs, uint32_t rhs)
@@ -79,7 +80,7 @@ inline void LocateFlatOffset(int64_t flatOffset, uint16_t tensorCount, const int
 }
 
 template <uint32_t INPUT_FLOW_COUNT, uint32_t EXTRA_FLOAT_BUFFER_COUNT = 0U, bool USE_OUTPUT_DTYPE = false,
-          uint32_t LIST_INPUT_INDEX = 0U>
+          uint32_t LIST_INPUT_INDEX = 0U, bool MICRO_TENSOR_PARALLEL = false>
 ge::graphStatus Build(gert::TilingContext* context)
 {
     static_assert(INPUT_FLOW_COUNT > 0U, "a flat foreach tiler needs at least one input flow");
@@ -102,7 +103,16 @@ ge::graphStatus Build(gert::TilingContext* context)
 
     uint16_t tensorCount = static_cast<uint16_t>(
         computeNodeInfo->GetInputInstanceInfo(LIST_INPUT_INDEX)->GetInstanceNum());
-    ge::DataType dataType = context->GetDynamicInputDesc(LIST_INPUT_INDEX, 0)->GetDataType();
+    ge::DataType dataType = ge::DT_FLOAT;
+    if (tensorCount > 0U) {
+        auto inputDesc = context->GetDynamicInputDesc(LIST_INPUT_INDEX, 0);
+        if (inputDesc == nullptr) {
+            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "inputDesc",
+                                                     "input descriptor is unavailable for the non-empty tensor list");
+            return ge::GRAPH_FAILED;
+        }
+        dataType = inputDesc->GetDataType();
+    }
     uint32_t storageBytes = GetStorageBytes(dataType);
     if (storageBytes == 0U) {
         OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(dataType),
@@ -117,18 +127,20 @@ ge::graphStatus Build(gert::TilingContext* context)
     }
     uint32_t outputStorageBytes = storageBytes;
     if constexpr (USE_OUTPUT_DTYPE) {
-        auto outputDesc = context->GetOutputDesc(0);
-        if (outputDesc == nullptr) {
-            OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y",
-                                                     "the output descriptor is missing in the tiling context");
-            return ge::GRAPH_FAILED;
-        }
-        outputStorageBytes = GetStorageBytes(outputDesc->GetDataType());
-        if (outputStorageBytes == 0U) {
-            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "y",
-                                                  Ops::Base::ToString(outputDesc->GetDataType()),
-                                                  "the output dtype is unsupported by the flat transport");
-            return ge::GRAPH_FAILED;
+        if (tensorCount > 0U) {
+            auto outputDesc = context->GetOutputDesc(0);
+            if (outputDesc == nullptr) {
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "y",
+                                                         "the output descriptor is missing in the tiling context");
+                return ge::GRAPH_FAILED;
+            }
+            outputStorageBytes = GetStorageBytes(outputDesc->GetDataType());
+            if (outputStorageBytes == 0U) {
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "y",
+                                                      Ops::Base::ToString(outputDesc->GetDataType()),
+                                                      "the output dtype is unsupported by the flat transport");
+                return ge::GRAPH_FAILED;
+            }
         }
     }
     *tilingData = ForeachFlatTilingData{};
@@ -163,11 +175,19 @@ ge::graphStatus Build(gert::TilingContext* context)
     tilingData->tileElems = static_cast<uint32_t>(tileElements);
 
     int64_t elementsPerBlock = MIN_CORE_WORK_BYTES / std::max(storageBytes, outputStorageBytes);
+    const int64_t maxCoreCount = static_cast<int64_t>(std::min<uint64_t>(platformCoreNum, FOREACH_FLAT_MAX_CORE_COUNT));
     int64_t coreCount = 1;
     if (totalDataCount > 0) {
-        coreCount = std::min<int64_t>(
-            static_cast<int64_t>(std::min<uint64_t>(platformCoreNum, FOREACH_FLAT_MAX_CORE_COUNT)),
-            CeilDiv(totalDataCount, elementsPerBlock));
+        coreCount = std::min<int64_t>(maxCoreCount, CeilDiv(totalDataCount, elementsPerBlock));
+        if constexpr (MICRO_TENSOR_PARALLEL) {
+            const int64_t tensorCount64 = static_cast<int64_t>(tensorCount);
+            if (coreCount < maxCoreCount && tensorCount64 > coreCount && tensorCount64 >= MICRO_TENSOR_MIN_COUNT) {
+                int64_t microCoreCount = std::min<int64_t>(maxCoreCount, tensorCount64);
+                int64_t microElementsPerBlock = std::max<int64_t>(1, CeilDiv(totalDataCount, microCoreCount));
+                elementsPerBlock = microElementsPerBlock;
+                coreCount = std::min<int64_t>(microCoreCount, CeilDiv(totalDataCount, microElementsPerBlock));
+            }
+        }
     }
 
     if (totalDataCount == 0) {

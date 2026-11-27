@@ -13,6 +13,7 @@
  * \brief tiling implementation for foreach_exp (arch35 / Ascend950)
  */
 
+#include <algorithm>
 #include <limits>
 #include "log/log.h"
 #include "util/math_util.h"
@@ -32,6 +33,8 @@ constexpr uint32_t DCACHE_SIZE = 128 * 1024;
 constexpr int64_t MIN_PER_CORE = 1024;
 constexpr int32_t MAX_TENSOR_NUM = 256;
 constexpr size_t MAX_DIM_NUM = 8U;
+constexpr int64_t SIMT_THREAD_NUM = 1024;
+constexpr int32_t TILE_MAX_ELEMS = 64 * 1024;
 
 struct ForeachExpCompileInfo {};
 
@@ -190,7 +193,11 @@ static ge::graphStatus ForeachExpTilingFunc(gert::TilingContext* context)
     ge::DataType dataType = ge::DT_UNDEFINED;
     if (tensorNum > 0) {
         auto inputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, 0);
-        OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
+        OP_CHECK_IF(inputDesc == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                        context->GetNodeName(), "inputDesc",
+                        "The input descriptor at tensor index 0 is unavailable; check Tiling context metadata"),
+                    return ge::GRAPH_FAILED);
         dataType = inputDesc->GetDataType();
     }
 
@@ -204,22 +211,34 @@ static ge::graphStatus ForeachExpTilingFunc(gert::TilingContext* context)
 
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto shapePtr = context->GetDynamicInputShape(INPUT_IDX_0, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
+        OP_CHECK_IF(shapePtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "inputShape",
+                                                             std::string("The input shape at tensor index ") +
+                                                                 std::to_string(i) +
+                                                                 " is unavailable; check Tiling context metadata"),
+                    return ge::GRAPH_FAILED);
         auto storageShape = shapePtr->GetStorageShape();
         int64_t numel = storageShape.GetShapeSize();
-        tiling->tensorElements[i] = numel;
         totalElements += numel;
+        tiling->prefix[i + 1] = totalElements;
     }
     tiling->totalElements = totalElements;
 
-    if (totalElements == 0) {
-        tiling->needCoreNum = 1;
-        context->SetBlockDim(1);
-    } else {
-        int64_t needCoreNum = std::min(coreNum, Ops::Base::CeilDiv(totalElements, MIN_PER_CORE));
-        tiling->needCoreNum = static_cast<int32_t>(needCoreNum);
-        context->SetBlockDim(static_cast<uint32_t>(needCoreNum));
+    int64_t needCoreNum = 1;
+    if (totalElements > 0) {
+        needCoreNum = std::min(coreNum, Ops::Base::CeilDiv(totalElements, MIN_PER_CORE));
     }
+    tiling->needCoreNum = static_cast<int32_t>(needCoreNum);
+    context->SetBlockDim(static_cast<uint32_t>(needCoreNum));
+
+    const int64_t idealTile = Ops::Base::CeilDiv(totalElements, needCoreNum);
+    const int64_t alignedTile = (idealTile / SIMT_THREAD_NUM) * SIMT_THREAD_NUM;
+    int64_t tileElems = std::max<int64_t>(SIMT_THREAD_NUM, alignedTile);
+    tileElems = std::min<int64_t>(static_cast<int64_t>(TILE_MAX_ELEMS), tileElems);
+    tiling->tileElements = static_cast<int32_t>(tileElems);
+
+    OP_LOGI(context, "ForeachExp tiling: tensorNum=%lu, totalElements=%ld, tileElements=%d, blockDim=%d", tensorNum,
+            totalElements, tiling->tileElements, tiling->needCoreNum);
 
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
@@ -243,7 +262,10 @@ static ge::graphStatus ForeachExpTilingFunc(gert::TilingContext* context)
     } else if (dataType == ge::DT_UINT8) {
         tilingKey = GET_TPL_TILING_KEY(FOREACH_EXP_TPL_SCH_MODE_UINT8);
     } else {
-        OP_LOGE(context, "unsupported dtype for foreach_exp");
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "x", ge::TypeUtils::DataTypeToSerialString(dataType).c_str(),
+            "supported dtypes are FP32, FP16, BF16, INT16, INT8 and UINT8, which have been validated by "
+            "ValidateForeachExp");
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(tilingKey);

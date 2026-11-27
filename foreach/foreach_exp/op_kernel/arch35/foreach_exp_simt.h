@@ -73,39 +73,111 @@ __simt_callee__ inline float PromoteToFloat<float>(float val)
     return val;
 }
 
+template <typename X_T, typename Y_T>
+__simt_callee__ inline void ComputeExp(__gm__ X_T* xData, __gm__ Y_T* yData, int64_t idx)
+{
+    X_T xVal = xData[idx];
+    float xFloat = PromoteToFloat<X_T>(xVal);
+    float yFloat = expf(xFloat);
+    yData[idx] = static_cast<Y_T>(yFloat);
+}
+
 /**
- * \brief SIMT VF kernel: compute exp for all elements across all tensors
+ * \brief 最大 i 满足 prefix[i] <= flat（跳过空 tensor）
+ */
+__simt_callee__ inline int32_t FindTensorId(__gm__ int64_t* prefix, int32_t tensorCount, int64_t flat)
+{
+    int32_t lo = 0;
+    int32_t hi = tensorCount - 1;
+    while (lo < hi) {
+        int32_t mid = (lo + hi + 1) >> 1;
+        if (prefix[mid] <= flat) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return lo;
+}
+
+/**
+ * \brief block-cyclic tile：block b 处理 tile b, b+blockDim, ...，一轮下来所有 block
+ *        合起来覆盖一段连续窗口；tile 落在一张 tensor 内时走无 mapping 快速路径。
  */
 template <typename X_T, typename Y_T>
-__simt_vf__ __aicore__ LAUNCH_BOUND(THREAD_NUM) inline void OpForeachExpSimt(int32_t tensorId, int64_t count,
-                                                                             GM_ADDR xList, GM_ADDR yList)
+__simt_vf__ __aicore__ LAUNCH_BOUND(THREAD_NUM) inline void OpForeachExpTiled(int64_t totalElements,
+                                                                              int32_t tensorCount, int32_t tileElements,
+                                                                              GM_ADDR xList, GM_ADDR yList,
+                                                                              GM_ADDR prefixAddr)
 {
-    __gm__ X_T* xData = SimtGetTensorAddr<X_T>(xList, tensorId);
-    __gm__ Y_T* yData = SimtGetTensorAddr<Y_T>(yList, tensorId);
-    uint64_t tid = static_cast<uint64_t>(AscendC::Simt::GetBlockIdx() * AscendC::Simt::GetThreadNum() +
-                                         AscendC::Simt::GetThreadIdx());
-    uint64_t stride = static_cast<uint64_t>(AscendC::Simt::GetThreadNum() * AscendC::Simt::GetBlockNum());
-    for (uint64_t idx = tid; idx < static_cast<uint64_t>(count); idx += stride) {
-        X_T xVal = xData[idx];
-        float xFloat = PromoteToFloat<X_T>(xVal);
-        float yFloat = expf(xFloat);
-        yData[idx] = static_cast<Y_T>(yFloat);
+    if (tensorCount <= 0 || tileElements <= 0) {
+        return;
+    }
+    __gm__ int64_t* prefix = reinterpret_cast<__gm__ int64_t*>(prefixAddr);
+    const int64_t blockNum = static_cast<int64_t>(AscendC::Simt::GetBlockNum());
+    const int64_t blockIdx = static_cast<int64_t>(AscendC::Simt::GetBlockIdx());
+    const int64_t threadIdx = static_cast<int64_t>(AscendC::Simt::GetThreadIdx());
+    const int64_t threadStride = static_cast<int64_t>(THREAD_NUM);
+    const int64_t tileElems = static_cast<int64_t>(tileElements);
+    const int64_t numTiles = (totalElements + tileElems - 1) / tileElems;
+    for (int64_t tile = blockIdx; tile < numTiles; tile += blockNum) {
+        int64_t tileBegin = tile * tileElems;
+        int64_t tileEnd = tileBegin + tileElems;
+        if (tileEnd > totalElements) {
+            tileEnd = totalElements;
+        }
+        if (tileBegin >= tileEnd) {
+            continue;
+        }
+
+        const int32_t tileTensor = FindTensorId(prefix, tensorCount, tileBegin);
+        const int64_t tileTensorEnd = prefix[tileTensor + 1];
+        if (tileEnd <= tileTensorEnd) {
+            __gm__ X_T* xData = SimtGetTensorAddr<X_T>(xList, tileTensor);
+            __gm__ Y_T* yData = SimtGetTensorAddr<Y_T>(yList, tileTensor);
+            const int64_t localBegin = tileBegin - prefix[tileTensor];
+            const int64_t tileLen = tileEnd - tileBegin;
+            for (int64_t i = threadIdx; i < tileLen; i += threadStride) {
+                ComputeExp<X_T, Y_T>(xData, yData, localBegin + i);
+            }
+            continue;
+        }
+
+        int64_t off = tileBegin + threadIdx;
+        if (off >= tileEnd) {
+            continue;
+        }
+        int32_t tensorId = FindTensorId(prefix, tensorCount, off);
+        int64_t tensorBegin = prefix[tensorId];
+        int64_t tensorEnd = prefix[tensorId + 1];
+        __gm__ X_T* xData = SimtGetTensorAddr<X_T>(xList, tensorId);
+        __gm__ Y_T* yData = SimtGetTensorAddr<Y_T>(yList, tensorId);
+        while (off < tileEnd) {
+            while (off >= tensorEnd) {
+                ++tensorId;
+                tensorBegin = tensorEnd;
+                tensorEnd = prefix[tensorId + 1];
+                xData = SimtGetTensorAddr<X_T>(xList, tensorId);
+                yData = SimtGetTensorAddr<Y_T>(yList, tensorId);
+            }
+            ComputeExp<X_T, Y_T>(xData, yData, off - tensorBegin);
+            off += threadStride;
+        }
     }
 }
 
 /**
- * \brief Process entry: launch SIMT VF for foreach_exp
+ * \brief Process entry: 所有列表统一走自适应 block-cyclic tile
  */
 template <typename X_T, typename Y_T>
-__aicore__ inline void Process(GM_ADDR x, GM_ADDR y, const ForeachExpTilingData* tilingGm)
+__aicore__ inline void Process(GM_ADDR x, GM_ADDR y, const ForeachExpTilingData* tilingGm, GM_ADDR tilingRaw)
 {
-    for (int32_t tensorId = 0; tensorId < tilingGm->tensorCount; tensorId++) {
-        int64_t count = tilingGm->tensorElements[tensorId];
-        if (count <= 0) {
-            continue;
-        }
-        AscendC::Simt::VF_CALL<OpForeachExpSimt<X_T, Y_T>>(AscendC::Simt::Dim3(THREAD_NUM), tensorId, count, x, y);
+    const int64_t totalElements = tilingGm->totalElements;
+    if (totalElements <= 0) {
+        return;
     }
+    AscendC::Simt::VF_CALL<OpForeachExpTiled<X_T, Y_T>>(AscendC::Simt::Dim3(THREAD_NUM), totalElements,
+                                                        tilingGm->tensorCount, tilingGm->tileElements, x, y, tilingRaw);
 }
 
 } // namespace NsForeachExp

@@ -66,7 +66,9 @@ static inline bool CheckDtypeValid(const aclTensorList* self, const aclTensorLis
 {
     const auto& dtypeSupportList = GetDtypeSupportList();
     if (dtypeSupportList.size() == 0) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "support for %s is not implemented",
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "dtype is not supported on current soc %s, supported soc: ascend910b, "
+                "ascend910_93, kirinx90, kirin9030, ascend950, ascend350.",
                 op::ToString(GetCurrentPlatformInfo().GetSocVersion()).GetString());
         return false;
     }
@@ -91,7 +93,10 @@ static inline bool CheckDtypeValid(const aclTensorList* self, const aclTensorLis
 static inline bool CheckShape(const aclTensorList* self, const aclTensorList* out)
 {
     if (self->Size() != out->Size()) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Tensor lists must have the same number of tensors");
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                "Tensor lists must have the same number of tensors, but got self size %lu "
+                "and out size %lu.",
+                self->Size(), out->Size());
         return false;
     }
 

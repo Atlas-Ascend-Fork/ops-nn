@@ -31,7 +31,8 @@ protected:
     static void TearDownTestCase() { std::cout << "ForeachAbsArch35TilingTest TearDown" << std::endl; }
 };
 
-static void DoCase(std::initializer_list<int64_t> xShape, ge::DataType dt, uint64_t expectKey)
+static void DoCase(std::initializer_list<int64_t> xShape, ge::DataType dt, uint64_t expectKey,
+                   bool expectSuccess = true)
 {
     fe::PlatFormInfos pf;
     std::map<std::string, std::string> soc, ai, intr;
@@ -87,8 +88,12 @@ static void DoCase(std::initializer_list<int64_t> xShape, ge::DataType dt, uint6
         {std::string("Short_SoC_version"), std::string("Ascend950")}};
     ctx->GetPlatformInfo()->SetPlatformRes("SoCVersion", soc_version_infos);
 
-    EXPECT_EQ(tilingFn(ctx), ge::GRAPH_SUCCESS);
-    EXPECT_EQ(ctx->GetTilingKey(), expectKey);
+    if (expectSuccess) {
+        EXPECT_EQ(tilingFn(ctx), ge::GRAPH_SUCCESS);
+        EXPECT_EQ(ctx->GetTilingKey(), expectKey);
+    } else {
+        EXPECT_EQ(tilingFn(ctx), ge::GRAPH_FAILED);
+    }
 }
 
 TEST_F(ForeachAbsArch35TilingTest, foreach_abs_float16)
@@ -105,3 +110,5 @@ TEST_F(ForeachAbsArch35TilingTest, foreach_abs_bfloat16)
 {
     DoCase({4, 4}, ge::DT_BF16, GET_TPL_TILING_KEY(FOREACH_ABS_TPL_SCH_MODE_BFLOAT16));
 }
+
+TEST_F(ForeachAbsArch35TilingTest, foreach_abs_unsupported_dtype) { DoCase({4, 4}, ge::DT_INT32, 0, false); }

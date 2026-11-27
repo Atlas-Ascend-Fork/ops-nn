@@ -156,7 +156,9 @@ static ge::graphStatus GetTilingKeyByDtype(gert::TilingContext* context, ge::Dat
             tilingKey = 2;
             return ge::GRAPH_SUCCESS;
         default:
-            OP_LOGE(context, "unsupported dtype: %d", static_cast<int32_t>(dtype));
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                context->GetNodeName(), "x", ge::TypeUtils::DataTypeToSerialString(dtype).c_str(),
+                "supported dtypes are FP32, FP16 and BF16, which have been validated by ValidateForeachAbs");
             return ge::GRAPH_FAILED;
     }
 }
@@ -187,8 +189,11 @@ static ge::graphStatus ForeachAbsTilingFunc(gert::TilingContext* context)
 {
     int64_t coreNum = 0;
     int64_t ubSize = 0;
-    OP_CHECK_IF(GetPlatformInfoFallback(context, coreNum, ubSize) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "Failed to get platform info"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        GetPlatformInfoFallback(context, coreNum, ubSize) != ge::GRAPH_SUCCESS,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "platform", "invalid",
+                                              "failed to get platform info from compile info or platform metadata"),
+        return ge::GRAPH_FAILED);
     OP_CHECK_IF((ubSize <= DCACHE_SIZE), OP_LOGE(context, "ubSize %ld <= DCACHE_SIZE %ld", ubSize, DCACHE_SIZE),
                 return ge::GRAPH_FAILED);
     ubSize = ubSize - DCACHE_SIZE;
@@ -208,7 +213,12 @@ static ge::graphStatus ForeachAbsTilingFunc(gert::TilingContext* context)
 
     for (uint64_t i = 0; i < tensorNum; i++) {
         auto idxTensorShapePtr = context->GetDynamicInputShape(INPUT_IDX, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, idxTensorShapePtr);
+        OP_CHECK_IF(idxTensorShapePtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "inputShape",
+                                                             std::string("The input shape at tensor index ") +
+                                                                 std::to_string(i) +
+                                                                 " is unavailable; check Tiling context metadata"),
+                    return ge::GRAPH_FAILED);
         auto idxTensorShape = idxTensorShapePtr->GetStorageShape();
         int64_t numel = idxTensorShape.GetShapeSize();
         totalElements += numel;
@@ -216,7 +226,12 @@ static ge::graphStatus ForeachAbsTilingFunc(gert::TilingContext* context)
 
         if (i == 0) {
             auto idxTensorDtypePtr = context->GetDynamicInputDesc(INPUT_IDX, i);
-            OP_CHECK_NULL_WITH_CONTEXT(context, idxTensorDtypePtr);
+            OP_CHECK_IF(idxTensorDtypePtr == nullptr,
+                        OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "inputDesc",
+                                                                 std::string("The input descriptor at tensor index ") +
+                                                                     std::to_string(i) +
+                                                                     " is unavailable; check Tiling context metadata"),
+                        return ge::GRAPH_FAILED);
             dataType = idxTensorDtypePtr->GetDataType();
         }
     }
@@ -276,11 +291,19 @@ static ge::graphStatus TilingParseForForeachAbs(gert::TilingParseContext* contex
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNum <= 0), OP_LOGE(context, "Failed to get core num."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((compileInfo->coreNum <= 0),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "platform.coreNum",
+                                                      std::to_string(compileInfo->coreNum),
+                                                      "GetCoreNumAiv must return a positive core count"),
+                return ge::GRAPH_FAILED);
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSize = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF((compileInfo->ubSize <= 0), OP_LOGE(context, "Failed to get ub size."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfo->ubSize <= 0),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "platform.ubSize",
+                                              std::to_string(compileInfo->ubSize), "platform UB size must be positive"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 

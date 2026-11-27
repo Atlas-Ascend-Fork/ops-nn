@@ -13,6 +13,7 @@
 #include "opdev/op_dfx.h"
 #include "opdev/shape_utils.h"
 #include "opdev/make_op_executor.h"
+#include "aclnn_kernels/common/op_error_check.h"
 
 using namespace op;
 
@@ -23,10 +24,8 @@ const aclTensorList* ForeachNeg(const aclTensorList* x, const aclTensorList* out
 {
     L0_DFX(ForeachNeg, x);
     auto ret = ADD_TO_LAUNCHER_LIST_AICORE(ForeachNeg, OP_INPUT(x), OP_OUTPUT(out));
-    if (ret != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "ADD_TO_LAUNCHER_LIST_AICORE failed.");
-        return nullptr;
-    }
+    OP_CHECK_ADD_TO_LAUNCHER_LIST_AICORE(ret != ACLNN_SUCCESS, return nullptr,
+                                         "ForeachNeg ADD_TO_LAUNCHER_LIST_AICORE failed.");
     return out;
 }
 } // namespace l0op

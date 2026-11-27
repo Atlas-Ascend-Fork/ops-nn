@@ -13,8 +13,12 @@
  * \brief arch35 SIMT tiling UT for foreach_exp (Ascend950)
  */
 
+#include <cstdint>
+#include <vector>
 #include <gtest/gtest.h>
 #include "kernel_run_context_facker.h"
+#include "tiling_context_faker.h"
+#include "tiling_case_executor.h"
 #include "test_cube_util.h"
 #include "platform/platform_infos_def.h"
 #include "register/op_impl_registry.h"
@@ -77,8 +81,93 @@ protected:
     static void TearDownTestCase() { std::cout << "ForeachExpTiling35 TearDown" << std::endl; }
 };
 
+using ShapeInit = std::initializer_list<int64_t>;
+
+static void DoTilingCase(const std::vector<gert::StorageShape>& xShapes, ge::DataType dt, ge::DataType yDtype,
+                         uint64_t expectKey, uint32_t expectBlockDim, int32_t expectTileElements)
+{
+    struct ForeachExpCompileInfo {
+    } ci;
+    std::vector<gert::TilingContextPara::TensorDescription> ins;
+    std::vector<gert::TilingContextPara::TensorDescription> outs;
+    int64_t totalElements = 0;
+    for (const auto& shape : xShapes) {
+        ins.emplace_back(shape, dt, ge::FORMAT_ND);
+        outs.emplace_back(shape, yDtype, ge::FORMAT_ND);
+        totalElements += shape.GetStorageShape().GetShapeSize();
+    }
+    const uint32_t instanceNum = static_cast<uint32_t>(xShapes.size());
+    gert::TilingContextPara tilingContextPara("ForeachExp", ins, outs, {instanceNum}, {instanceNum}, &ci, 64, 262144,
+                                              4096);
+    TilingInfo info;
+    ASSERT_TRUE(ExecuteTiling(tilingContextPara, info));
+    EXPECT_EQ(info.tilingKey, expectKey);
+    EXPECT_EQ(info.blockNum, expectBlockDim);
+    ASSERT_EQ(info.workspaceSizes.size(), 1U);
+    EXPECT_EQ(info.workspaceSizes[0], 0U);
+    ASSERT_GE(info.tilingDataSize, sizeof(ForeachExpTilingData));
+    const auto* tilingData = reinterpret_cast<const ForeachExpTilingData*>(info.tilingData.get());
+    EXPECT_EQ(tilingData->tensorCount, static_cast<int32_t>(xShapes.size()));
+    EXPECT_EQ(tilingData->totalElements, totalElements);
+    EXPECT_EQ(tilingData->tileElements, expectTileElements);
+    EXPECT_EQ(tilingData->needCoreNum, static_cast<int32_t>(expectBlockDim));
+    EXPECT_EQ(tilingData->prefix[0], 0);
+    for (size_t i = 0; i < xShapes.size(); ++i) {
+        EXPECT_EQ(tilingData->prefix[i + 1] - tilingData->prefix[i], xShapes[i].GetStorageShape().GetShapeSize());
+        EXPECT_GE(tilingData->prefix[i + 1], tilingData->prefix[i]);
+    }
+    EXPECT_EQ(tilingData->prefix[xShapes.size()], totalElements);
+}
+
+static void DoPrefixCase(std::initializer_list<ShapeInit> xShapes, ge::DataType dt, uint64_t expectKey,
+                         uint32_t expectBlockDim, int32_t expectTileElements)
+{
+    std::vector<gert::StorageShape> storageShapes;
+    for (const auto& dims : xShapes) {
+        storageShapes.emplace_back(gert::StorageShape{dims, dims});
+    }
+    DoTilingCase(storageShapes, dt, dt, expectKey, expectBlockDim, expectTileElements);
+}
+
 TEST_F(ForeachExpTiling35, foreach_exp_float32) { DoCase({4, 4}, ge::DT_FLOAT, 0); }
 
 TEST_F(ForeachExpTiling35, foreach_exp_float16) { DoCase({4, 4}, ge::DT_FLOAT16, 1); }
 
 TEST_F(ForeachExpTiling35, foreach_exp_bfloat16) { DoCase({4, 4}, ge::DT_BF16, 2); }
+
+TEST_F(ForeachExpTiling35, foreach_exp_multi_tensor_prefix)
+{
+    DoPrefixCase({{10}, {20}, {30}}, ge::DT_FLOAT, 0, 1, 1024);
+}
+
+TEST_F(ForeachExpTiling35, foreach_exp_single_tensor_200k) { DoPrefixCase({{200000}}, ge::DT_FLOAT, 0, 64, 3072); }
+
+TEST_F(ForeachExpTiling35, foreach_exp_tile_cap_64k) { DoPrefixCase({{5000000}}, ge::DT_FLOAT, 0, 64, 65536); }
+
+TEST_F(ForeachExpTiling35, foreach_exp_bf16_multi_tensor) { DoPrefixCase({{7}, {9}}, ge::DT_BF16, 2, 1, 1024); }
+
+TEST_F(ForeachExpTiling35, foreach_exp_empty_list)
+{
+    struct ForeachExpCompileInfo {
+    } ci;
+    std::vector<gert::TilingContextPara::TensorDescription> empty;
+    gert::TilingContextPara tilingContextPara("ForeachExp", empty, empty, {0}, {0}, &ci, 64, 262144, 4096);
+    TilingInfo info;
+    ASSERT_TRUE(ExecuteTiling(tilingContextPara, info));
+    EXPECT_EQ(info.tilingKey, 0U);
+    EXPECT_EQ(info.blockNum, 1U);
+    ASSERT_EQ(info.workspaceSizes.size(), 1U);
+    EXPECT_EQ(info.workspaceSizes[0], 0U);
+    ASSERT_GE(info.tilingDataSize, sizeof(ForeachExpTilingData));
+    const auto* tilingData = reinterpret_cast<const ForeachExpTilingData*>(info.tilingData.get());
+    EXPECT_EQ(tilingData->tensorCount, 0);
+    EXPECT_EQ(tilingData->totalElements, 0);
+    EXPECT_EQ(tilingData->tileElements, 1024);
+    EXPECT_EQ(tilingData->needCoreNum, 1);
+}
+
+TEST_F(ForeachExpTiling35, foreach_exp_all_empty_tensors)
+{
+    std::vector<gert::StorageShape> shapes = {gert::StorageShape{{0}, {0}}, gert::StorageShape{{0}, {0}}};
+    DoTilingCase(shapes, ge::DT_FLOAT, ge::DT_FLOAT, 0, 1, 1024);
+}

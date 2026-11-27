@@ -16,11 +16,14 @@
 #ifndef FOREACH_EXP_TILING_DATA_H
 #define FOREACH_EXP_TILING_DATA_H
 
+constexpr int32_t FOREACH_EXP_MAX_TENSOR_NUM = 256;
+
 struct ForeachExpTilingData {
+    int64_t prefix[FOREACH_EXP_MAX_TENSOR_NUM + 1] = {0};
     int32_t needCoreNum = 0;
     int32_t tensorCount = 0;
     int64_t totalElements = 0;
-    int64_t tensorElements[256] = {0};
+    int32_t tileElements = 0;
 };
 
 #endif // FOREACH_EXP_TILING_DATA_H

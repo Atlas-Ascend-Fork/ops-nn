@@ -181,9 +181,17 @@ static ge::graphStatus ForeachAsinTilingFunc(gert::TilingContext* context)
     // 1. 获取平台信息
     int64_t maxCoreNum = 0;
     int64_t ubSize = 0;
-    OP_CHECK_IF(GetPlatformInfoFallback(context, maxCoreNum, ubSize) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "Failed to get platform info"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF((ubSize <= DCACHE_SIZE), OP_LOGE(context, "ub size less than DCache Size"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        GetPlatformInfoFallback(context, maxCoreNum, ubSize) != ge::GRAPH_SUCCESS,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "platform", "invalid",
+                                              "failed to get platform info from compile info or platform metadata"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (ubSize <= DCACHE_SIZE),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "platform.ubSize", std::to_string(ubSize),
+            std::string("available UB bytes must exceed the reserved DCACHE size ") + std::to_string(DCACHE_SIZE)),
+        return ge::GRAPH_FAILED);
     int64_t ubSizeActual = ubSize - DCACHE_SIZE;
 
     OP_CHECK_IF(ValidateForeachAsin(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "ValidateForeachAsin failed"),
@@ -203,8 +211,9 @@ static ge::graphStatus ForeachAsinTilingFunc(gert::TilingContext* context)
         emptyTilingData->tensorCumulativeOffset[0] = 0;
         emptyTilingData->totalElements = 0;
         emptyTilingData->perCoreElements = MIN_PER_CORE_ELEMENTS;
+        emptyTilingData->lastCoreElements = 0;
         emptyTilingData->needCoreNum = 1;
-        context->SetTilingKey(GET_TPL_TILING_KEY(FOREACH_ASIN_TPL_DTYPE_FP32));
+        context->SetTilingKey(GET_TPL_TILING_KEY(FOREACH_ASIN_TPL_SCH_MODE_FLOAT));
         context->SetBlockDim(emptyTilingData->needCoreNum);
         auto emptyWorkspaces = context->GetWorkspaceSizes(1);
         OP_CHECK_NULL_WITH_CONTEXT(context, emptyWorkspaces);
@@ -223,40 +232,63 @@ static ge::graphStatus ForeachAsinTilingFunc(gert::TilingContext* context)
     // 4. 计算每个 tensor 的元素数和累计偏移量
     for (int32_t i = 0; i < tilingData->tensorNum; i++) {
         auto tensorShapePtr = context->GetDynamicInputShape(0, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, tensorShapePtr);
+        OP_CHECK_IF(tensorShapePtr == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "inputShape",
+                                                             std::string("The input shape at tensor index ") +
+                                                                 std::to_string(i) +
+                                                                 " is unavailable; check Tiling context metadata"),
+                    return ge::GRAPH_FAILED);
         auto tensorShape = tensorShapePtr->GetStorageShape();
         int64_t numel = tensorShape.GetShapeSize();
         tilingData->totalElements += numel;
         tilingData->tensorCumulativeOffset[i + 1] = tilingData->totalElements;
     }
 
-    // 5. 计算核切分参数
     if (tilingData->totalElements == 0) {
         tilingData->perCoreElements = MIN_PER_CORE_ELEMENTS;
+        tilingData->lastCoreElements = 0;
         tilingData->needCoreNum = 1;
     } else {
-        tilingData->perCoreElements = std::max(MIN_PER_CORE_ELEMENTS,
-                                               (tilingData->totalElements + maxCoreNum - 1) / maxCoreNum);
-        // 对齐到 32
-        tilingData->perCoreElements = ((tilingData->perCoreElements + ALIGN_SIZE - 1) / ALIGN_SIZE) * ALIGN_SIZE;
-        tilingData->needCoreNum = static_cast<int32_t>((tilingData->totalElements + tilingData->perCoreElements - 1) /
-                                                       tilingData->perCoreElements);
+        tilingData->perCoreElements = (tilingData->totalElements + maxCoreNum - 1) / maxCoreNum;
+        if (tilingData->perCoreElements >= ALIGN_SIZE) {
+            tilingData->perCoreElements = ((tilingData->perCoreElements + ALIGN_SIZE - 1) / ALIGN_SIZE) * ALIGN_SIZE;
+        }
+        OP_CHECK_IF(tilingData->perCoreElements <= 0,
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "perCoreElements",
+                                                          std::to_string(tilingData->perCoreElements),
+                                                          "perCoreElements must be positive"),
+                    return ge::GRAPH_FAILED);
+        int64_t coreCount = (tilingData->totalElements + tilingData->perCoreElements - 1) / tilingData->perCoreElements;
+        OP_CHECK_IF(
+            coreCount > static_cast<int64_t>(std::numeric_limits<int32_t>::max()),
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "needCoreNum", std::to_string(coreCount),
+                                                  "needCoreNum must fit in int32 range"),
+            return ge::GRAPH_FAILED);
+        tilingData->needCoreNum = static_cast<int32_t>(coreCount);
+        tilingData->lastCoreElements = tilingData->totalElements -
+                                       tilingData->perCoreElements * (tilingData->needCoreNum - 1);
     }
 
     // 6. 根据数据类型确定 tiling key
     auto inputDesc = context->GetDynamicInputDesc(0, 0);
-    OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
+    OP_CHECK_IF(inputDesc == nullptr,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
+                    context->GetNodeName(), "inputDesc",
+                    "The input descriptor at tensor index 0 is unavailable; check Tiling context metadata"),
+                return ge::GRAPH_FAILED);
     auto dtype = inputDesc->GetDataType();
 
     uint64_t tilingKey = 0;
     if (dtype == ge::DT_FLOAT) {
-        tilingKey = GET_TPL_TILING_KEY(FOREACH_ASIN_TPL_DTYPE_FP32);
+        tilingKey = GET_TPL_TILING_KEY(FOREACH_ASIN_TPL_SCH_MODE_FLOAT);
     } else if (dtype == ge::DT_FLOAT16) {
-        tilingKey = GET_TPL_TILING_KEY(FOREACH_ASIN_TPL_DTYPE_FP16);
+        tilingKey = GET_TPL_TILING_KEY(FOREACH_ASIN_TPL_SCH_MODE_FLOAT16);
     } else if (dtype == ge::DT_BF16) {
-        tilingKey = GET_TPL_TILING_KEY(FOREACH_ASIN_TPL_DTYPE_BF16);
+        tilingKey = GET_TPL_TILING_KEY(FOREACH_ASIN_TPL_SCH_MODE_BF16);
     } else {
-        OP_LOGE(context, "Unsupported dtype: %d", static_cast<int>(dtype));
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+            context->GetNodeName(), "x", ge::TypeUtils::DataTypeToSerialString(dtype).c_str(),
+            "supported dtypes are FP32, FP16 and BF16, which have been validated by ValidateForeachAsin");
         return ge::GRAPH_FAILED;
     }
     context->SetTilingKey(tilingKey);
@@ -274,10 +306,10 @@ static ge::graphStatus ForeachAsinTilingFunc(gert::TilingContext* context)
 
     // 9. 打印 tiling 信息
     OP_LOGI(context,
-            "ForeachAsin tiling: tensorNum=%d, totalElements=%ld, "
-            "perCoreElements=%ld, needCoreNum=%d, tilingKey=%lu",
-            tilingData->tensorNum, tilingData->totalElements, tilingData->perCoreElements, tilingData->needCoreNum,
-            tilingKey);
+            "ForeachAsin tiling: tensorNum=%d, totalElements=%ld, perCoreElements=%ld, lastCoreElements=%ld, "
+            "needCoreNum=%d, tilingKey=%lu",
+            tilingData->tensorNum, tilingData->totalElements, tilingData->perCoreElements, tilingData->lastCoreElements,
+            tilingData->needCoreNum, tilingKey);
 
     return ge::GRAPH_SUCCESS;
 }
@@ -294,11 +326,19 @@ static ge::graphStatus TilingParseForForeachAsin(gert::TilingParseContext* conte
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->coreNum <= 0), OP_LOGE(context, "Failed to get core num."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((compileInfo->coreNum <= 0),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "platform.coreNum",
+                                                      std::to_string(compileInfo->coreNum),
+                                                      "GetCoreNumAiv must return a positive core count"),
+                return ge::GRAPH_FAILED);
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSize = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF((compileInfo->ubSize <= 0), OP_LOGE(context, "Failed to get ub size."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfo->ubSize <= 0),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "platform.ubSize",
+                                              std::to_string(compileInfo->ubSize), "platform UB size must be positive"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 

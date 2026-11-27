@@ -16,16 +16,19 @@
  */
 
 #include <iostream>
+#include <vector>
 #include <gtest/gtest.h>
 #include "log/log.h"
 #include "kernel_run_context_facker.h"
+#include "tiling_context_faker.h"
+#include "tiling_case_executor.h"
 #include "test_cube_util.h"
 #include "register/op_impl_registry.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "platform/platform_infos_def.h"
 #include "ut_op_util.h"
-#include "../../../../op_kernel/arch35/foreach_neg_tiling_data.h"
+#include "../../../../../foreach_utils/op_kernel/arch35/foreach_flat_tiling_data.h"
 
 using namespace ut_util;
 
@@ -34,6 +37,14 @@ protected:
     static void SetUpTestCase() { std::cout << "ForeachNegTilingTest SetUp" << std::endl; }
     static void TearDownTestCase() { std::cout << "ForeachNegTilingTest TearDown" << std::endl; }
 };
+
+static uint32_t ExpectedTileElems(ge::DataType dt)
+{
+    const uint64_t storageBytes = (dt == ge::DT_FLOAT || dt == ge::DT_INT32) ? 4ULL : 2ULL;
+    const uint64_t bytesPerElement = 2ULL * (storageBytes + storageBytes);
+    const uint64_t alignElements = 32ULL / storageBytes;
+    return static_cast<uint32_t>(262144ULL / bytesPerElement / alignElements * alignElements);
+}
 
 static void DoCase(std::initializer_list<int64_t> xShape, ge::DataType dt, uint64_t expectKey)
 {
@@ -107,12 +118,148 @@ static void DoCase(std::initializer_list<int64_t> xShape, ge::DataType dt, uint6
     ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
     EXPECT_EQ(tilingFn(ctx), ge::GRAPH_SUCCESS);
     EXPECT_EQ(ctx->GetTilingKey(), expectKey);
+    EXPECT_EQ(ctx->GetBlockDim(), 1U);
+    EXPECT_EQ(ctx->GetLocalMemorySize(), 262144U);
+    size_t* workspaceSizes = ctx->GetWorkspaceSizes(1);
+    ASSERT_NE(workspaceSizes, nullptr);
+    EXPECT_EQ(workspaceSizes[0], 32U);
+    const auto* tilingData = ctx->GetTilingData<ForeachFlatTilingData>();
+    ASSERT_NE(tilingData, nullptr);
+    EXPECT_EQ(tilingData->tileElems, ExpectedTileElems(dt));
+}
+
+static void DoEmptyListCase()
+{
+    std::map<std::string, std::string> soc_version_infos = {{"Short_SoC_version", "Ascend950"}};
+    string compile_info_string = R"({
+                                    "hardware_info": {
+                                        "BT_SIZE": 0,
+                                        "load3d_constraints": "1",
+                                        "Intrinsic_fix_pipe_l0c2out": false,
+                                        "Intrinsic_data_move_l12ub": true,
+                                        "Intrinsic_data_move_l0c2ub": true,
+                                        "Intrinsic_data_move_out2l1_nd2nz": false,
+                                        "UB_SIZE": 262144,
+                                        "L2_SIZE": 33554432,
+                                        "L1_SIZE": 524288,
+                                        "L0A_SIZE": 65536,
+                                        "L0B_SIZE": 65536,
+                                        "L0C_SIZE": 131072,
+                                        "CORE_NUM": 64
+                                    }
+                                })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+
+    fe::PlatFormInfos pf;
+    pf.Init();
+
+    struct ForeachNegCompileInfo {
+    } ci;
+    auto opType = std::string("ForeachNeg");
+    auto tilingFn = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling;
+    auto tilingParseFn = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str())->tiling_parse;
+    ASSERT_NE(tilingFn, nullptr);
+    ASSERT_NE(tilingParseFn, nullptr);
+
+    auto kh = gert::KernelRunContextFaker()
+                  .KernelIONum(2, 1)
+                  .Inputs({const_cast<char*>(compile_info_string.c_str()), reinterpret_cast<void*>(&pf)})
+                  .Outputs({&ci})
+                  .Build();
+    kh.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init();
+    kh.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kh.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kh.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kh.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    kh.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", soc_version_infos);
+    ASSERT_EQ(tilingParseFn(kh.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto wsh = gert::ContinuousVector::Create<size_t>(4096);
+    // 注意：0 实例时不能调 NodeInputTd/NodeOutputTd，faker 的 CalcInputTensorIndex 会因
+    // highTensorIdx = 0-1 下溢导致无限 emplace_back（OOM）；空列表路径也不读取任何 desc。
+    auto th = gert::TilingContextFaker()
+                  .NodeIoNum(1, 1)
+                  .IrInstanceNum({0}, {0})
+                  .CompileInfo(&ci)
+                  .PlatformInfo(reinterpret_cast<char*>(&pf))
+                  .TilingData(param.get())
+                  .Workspace(reinterpret_cast<gert::ContinuousVector*>(wsh.get()))
+                  .Build();
+    auto* ctx = th.GetContext<gert::TilingContext>();
+    ctx->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    ctx->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    ctx->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    EXPECT_EQ(tilingFn(ctx), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(ctx->GetBlockDim(), 1U);
+    EXPECT_EQ(ctx->GetTilingKey(), 0U);
+    EXPECT_EQ(ctx->GetLocalMemorySize(), 262144U);
+    size_t* workspaceSizes = ctx->GetWorkspaceSizes(1);
+    ASSERT_NE(workspaceSizes, nullptr);
+    EXPECT_EQ(workspaceSizes[0], 32U);
+    const auto* tilingData = ctx->GetTilingData<ForeachFlatTilingData>();
+    ASSERT_NE(tilingData, nullptr);
+    EXPECT_EQ(tilingData->tensorDataCountList[0], 0);
+    EXPECT_EQ(tilingData->tensorEndOffsetList[0], -1);
+}
+
+static void DoListCase(const std::vector<gert::StorageShape>& xShapes, ge::DataType dt, uint32_t expectBlockDim,
+                       int64_t expectFirstCoreEndOffset)
+{
+    struct ForeachNegCompileInfo {
+    } ci;
+    std::vector<gert::TilingContextPara::TensorDescription> tensors;
+    for (const auto& shape : xShapes) {
+        tensors.emplace_back(shape, dt, ge::FORMAT_ND);
+    }
+    const uint32_t instanceNum = static_cast<uint32_t>(tensors.size());
+    gert::TilingContextPara tilingContextPara("ForeachNeg", tensors, tensors, {instanceNum}, {instanceNum}, &ci, 64,
+                                              262144, 4096);
+    TilingInfo info;
+    ASSERT_TRUE(ExecuteTiling(tilingContextPara, info));
+    EXPECT_EQ(info.tilingKey, 0U);
+    EXPECT_EQ(info.blockNum, expectBlockDim);
+    ASSERT_EQ(info.workspaceSizes.size(), 1U);
+    EXPECT_EQ(info.workspaceSizes[0], 32U);
+    ASSERT_GE(info.tilingDataSize, sizeof(ForeachFlatTilingData));
+    const auto* tilingData = reinterpret_cast<const ForeachFlatTilingData*>(info.tilingData.get());
+    for (size_t i = 0; i < xShapes.size(); ++i) {
+        EXPECT_EQ(tilingData->tensorDataCountList[i], xShapes[i].GetStorageShape().GetShapeSize());
+    }
+    EXPECT_EQ(tilingData->tensorEndOffsetList[0], expectFirstCoreEndOffset);
+}
+
+static void DoMicroListCase(uint32_t tensorNum, int64_t elementsPerTensor, uint32_t expectBlockDim)
+{
+    std::vector<gert::StorageShape> shapes;
+    for (uint32_t i = 0; i < tensorNum; ++i) {
+        shapes.emplace_back(gert::StorageShape{{elementsPerTensor}, {elementsPerTensor}});
+    }
+    DoListCase(shapes, ge::DT_FLOAT, expectBlockDim, elementsPerTensor - 1);
 }
 
 TEST_F(ForeachNegTilingTest, foreach_neg_float32) { DoCase({4, 4}, ge::DT_FLOAT, 0); }
 
-TEST_F(ForeachNegTilingTest, foreach_neg_float16) { DoCase({4, 4}, ge::DT_FLOAT16, 1); }
+TEST_F(ForeachNegTilingTest, foreach_neg_float16) { DoCase({4, 4}, ge::DT_FLOAT16, 0); }
 
-TEST_F(ForeachNegTilingTest, foreach_neg_int32) { DoCase({4, 4}, ge::DT_INT32, 2); }
+TEST_F(ForeachNegTilingTest, foreach_neg_int32) { DoCase({4, 4}, ge::DT_INT32, 0); }
 
-TEST_F(ForeachNegTilingTest, foreach_neg_bfloat16) { DoCase({4, 4}, ge::DT_BF16, 3); }
+TEST_F(ForeachNegTilingTest, foreach_neg_bfloat16) { DoCase({4, 4}, ge::DT_BF16, 0); }
+
+TEST_F(ForeachNegTilingTest, foreach_neg_empty_list) { DoEmptyListCase(); }
+
+TEST_F(ForeachNegTilingTest, foreach_neg_micro_list_8x1) { DoMicroListCase(8, 1, 8); }
+
+TEST_F(ForeachNegTilingTest, foreach_neg_micro_list_5x100) { DoMicroListCase(5, 100, 5); }
+
+TEST_F(ForeachNegTilingTest, foreach_neg_micro_list_4x300) { DoMicroListCase(4, 300, 4); }
+
+TEST_F(ForeachNegTilingTest, foreach_neg_all_empty_tensors)
+{
+    std::vector<gert::StorageShape> shapes = {gert::StorageShape{{0}, {0}}, gert::StorageShape{{0}, {0}}};
+    DoListCase(shapes, ge::DT_FLOAT, 1, -1);
+}

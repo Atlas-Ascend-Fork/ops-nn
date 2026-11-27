@@ -21,33 +21,17 @@
 #include "op_host/tiling_util.h"
 #include "op_host/tiling_templates_registry.h"
 #include "graph/utils/type_utils.h"
-#include "foreach/foreach_neg/op_kernel/arch35/foreach_neg_tiling_data.h"
-#include "foreach/foreach_neg/op_kernel/arch35/foreach_neg_tiling_key.h"
+#include "../../../foreach_utils/op_host/foreach_flat_regbase_tiling.h"
 
 #include <limits>
 
 namespace optiling {
 
-constexpr uint32_t WS_SYS_SIZE = 0U;
 constexpr int32_t INPUT_IDX_0 = 0;
-constexpr uint32_t DCACHE_SIZE = 128 * 1024;
-constexpr int64_t MIN_PER_CORE = 1024;
 constexpr int32_t MAX_TENSOR_NUM_FOREACH_NEG = 256;
 constexpr size_t MAX_DIM_NUM = 8U;
 
 struct ForeachNegCompileInfo {};
-
-static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t& ubSize, int64_t& coreNum)
-{
-    fe::PlatFormInfos* platformInfoPtr = context->GetPlatformInfo();
-    OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
-    auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
-    coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF(coreNum == 0, OP_LOGE(context, "coreNum is 0"), return ge::GRAPH_FAILED);
-    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
-    OP_CHECK_IF(ubSize == 0, OP_LOGE(context, "ubSize is 0"), return ge::GRAPH_FAILED);
-    return ge::GRAPH_SUCCESS;
-}
 
 static bool IsSupportedInputDtype(ge::DataType dtype)
 {
@@ -146,11 +130,6 @@ static ge::graphStatus ValidateForeachNeg(gert::TilingContext* context, uint64_t
 
 static ge::graphStatus ForeachNegTilingFunc(gert::TilingContext* context)
 {
-    uint64_t ubSize;
-    int64_t coreNum;
-    OP_CHECK_IF(GetPlatformInfo(context, ubSize, coreNum) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
-
     auto computeNodeInfoPtr = context->GetComputeNodeInfo();
     OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfoPtr);
     auto idxInstanceInfoPtr = computeNodeInfoPtr->GetInputInstanceInfo(INPUT_IDX_0);
@@ -166,63 +145,7 @@ static ge::graphStatus ForeachNegTilingFunc(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
 
-    // 空列表（tensorNum==0）与 arch22/aclnn 同口径：跳过逐实例读取，走 totalElements==0 早退分支按 no-op 成功
-    ge::DataType dataType = ge::DT_FLOAT;
-
-    ForeachNegTilingData* tiling = context->GetTilingData<ForeachNegTilingData>();
-    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
-    OP_CHECK_IF(memset_s(tiling, sizeof(ForeachNegTilingData), 0, sizeof(ForeachNegTilingData)) != EOK,
-                OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
-
-    tiling->tensorCount = static_cast<int32_t>(tensorNum);
-    int64_t totalElements = 0;
-
-    for (uint64_t i = 0; i < tensorNum; i++) {
-        auto shapePtr = context->GetDynamicInputShape(INPUT_IDX_0, i);
-        OP_CHECK_NULL_WITH_CONTEXT(context, shapePtr);
-        auto storageShape = shapePtr->GetStorageShape();
-        int64_t numel = storageShape.GetShapeSize();
-        tiling->tensorElements[i] = numel;
-        totalElements += numel;
-        if (i == 0) {
-            auto inputDesc = context->GetDynamicInputDesc(INPUT_IDX_0, i);
-            OP_CHECK_NULL_WITH_CONTEXT(context, inputDesc);
-            dataType = inputDesc->GetDataType();
-        }
-    }
-    tiling->totalElements = totalElements;
-
-    if (totalElements == 0) {
-        tiling->needCoreNum = 1;
-        context->SetBlockDim(1);
-    } else {
-        int64_t needCoreNum = std::min(coreNum, Ops::Base::CeilDiv(totalElements, MIN_PER_CORE));
-        tiling->needCoreNum = static_cast<int32_t>(needCoreNum);
-        context->SetBlockDim(static_cast<uint32_t>(needCoreNum));
-    }
-
-    size_t* currentWorkspace = context->GetWorkspaceSizes(1);
-    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
-    currentWorkspace[0] = WS_SYS_SIZE;
-
-    context->SetLocalMemorySize(static_cast<uint32_t>(ubSize - DCACHE_SIZE));
-
-    uint64_t tilingKey = 0;
-    if (dataType == ge::DT_FLOAT) {
-        tilingKey = GET_TPL_TILING_KEY(FOREACH_NEG_TPL_SCH_MODE_FLOAT);
-    } else if (dataType == ge::DT_FLOAT16) {
-        tilingKey = GET_TPL_TILING_KEY(FOREACH_NEG_TPL_SCH_MODE_FLOAT16);
-    } else if (dataType == ge::DT_INT32) {
-        tilingKey = GET_TPL_TILING_KEY(FOREACH_NEG_TPL_SCH_MODE_INT32);
-    } else if (dataType == ge::DT_BF16) {
-        tilingKey = GET_TPL_TILING_KEY(FOREACH_NEG_TPL_SCH_MODE_BF16);
-    } else {
-        OP_LOGE(context, "unsupported dtype for foreach_neg");
-        return ge::GRAPH_FAILED;
-    }
-    context->SetTilingKey(tilingKey);
-
-    return ge::GRAPH_SUCCESS;
+    return ForeachFlatRegbaseTiling::Build<1, 0U, false, 0U, true>(context);
 }
 
 static ge::graphStatus TilingParseForForeachNeg([[maybe_unused]] gert::TilingParseContext* context)

@@ -17,7 +17,6 @@
 #define FOREACH_ASIN_SIMT_H
 
 #include "kernel_operator.h"
-#include "kernel_operator_list_tensor_intf.h"
 #include "kernel_tiling/kernel_tiling.h"
 #include "foreach_asin_tiling_data.h"
 #include "foreach_asin_tiling_key.h"
@@ -28,7 +27,24 @@
 namespace NsForeachAsin {
 using namespace AscendC;
 
+constexpr int TENSOR_PTR_SHIFT = 3;
+
 constexpr uint32_t THREAD_NUM = 512;
+constexpr int64_t UNROLL_COUNT = 4;
+
+constexpr int64_t FLAT_SEG_MAX_ELEMENTS = 8;
+
+/**
+ * \brief 获取 TensorList 中第 idx 个 tensor 的 GM 地址
+ */
+template <typename T>
+__simt_callee__ inline __gm__ T* SimtGetTensorAddr(GM_ADDR tensorListPtr, int64_t idx)
+{
+    __gm__ uint64_t* dataAddr = reinterpret_cast<__gm__ uint64_t*>(tensorListPtr);
+    uint64_t tensorPtrOffset = *dataAddr;
+    __gm__ uint64_t* tensorPtr = dataAddr + (tensorPtrOffset >> TENSOR_PTR_SHIFT);
+    return reinterpret_cast<__gm__ T*>(*(tensorPtr + idx));
+}
 
 /**
  * @brief 对单个元素计算 asin，支持类型提升
@@ -52,73 +68,124 @@ __simt_callee__ inline T ComputeAsin(T val)
 }
 
 /**
- * @brief SIMT VF kernel：对一个 tensor 的一段连续元素计算 asin
- * @tparam T 数据类型
- * @param localStart 该段在 tensor 内的起始索引
- * @param localEnd   该段在 tensor 内的结束索引（不包含）
- * @param xAddr      输入 tensor 的 GM 地址
- * @param yAddr      输出 tensor 的 GM 地址
+ * @brief 单个 tensor 的一段连续元素：每线程先发 UNROLL_COUNT 个独立 load，再统一计算/写回
  */
 template <typename T>
-__simt_vf__ __aicore__ LAUNCH_BOUND(THREAD_NUM) inline void ForeachAsinSimtKernel(int64_t localStart, int64_t localEnd,
-                                                                                  __gm__ T* xAddr, __gm__ T* yAddr)
+__simt_vf__ __aicore__ LAUNCH_BOUND(THREAD_NUM) inline void ForeachAsinTensorSegSimt(int32_t tensorId,
+                                                                                     int64_t localStart, int64_t count,
+                                                                                     GM_ADDR xList, GM_ADDR yList)
 {
-    for (int64_t i = localStart + static_cast<int64_t>(Simt::GetThreadIdx()); i < localEnd;
-         i += static_cast<int64_t>(Simt::GetThreadNum())) {
-        T val = xAddr[i];
-        yAddr[i] = ComputeAsin<T>(val);
+    __gm__ T* xData = SimtGetTensorAddr<T>(xList, tensorId);
+    __gm__ T* yData = SimtGetTensorAddr<T>(yList, tensorId);
+
+    const int64_t stride = static_cast<int64_t>(Simt::GetThreadNum());
+    const int64_t end = localStart + count;
+    const int64_t unrollEnd = end - static_cast<int64_t>(UNROLL_COUNT - 1) * stride;
+    int64_t idx = localStart + static_cast<int64_t>(Simt::GetThreadIdx());
+    for (; idx < unrollEnd; idx += UNROLL_COUNT * stride) {
+        T val[UNROLL_COUNT];
+#pragma unroll
+        for (int64_t k = 0; k < UNROLL_COUNT; k++) {
+            val[k] = xData[idx + k * stride];
+        }
+#pragma unroll
+        for (int64_t k = 0; k < UNROLL_COUNT; k++) {
+            yData[idx + k * stride] = ComputeAsin<T>(val[k]);
+        }
+    }
+    for (; idx < end; idx += stride) {
+        yData[idx] = ComputeAsin<T>(xData[idx]);
     }
 }
 
 /**
- * @brief Process 函数：按核切分处理所有 tensor
- * @tparam T 数据类型
- * @param x         输入 tensor list 的 GM 地址
- * @param y         输出 tensor list 的 GM 地址
- * @param tilingData tiling 数据指针
+ * @brief 小段 flat VF：一个 VF 覆盖本核区间内所有 tensor，线程用前缀表二分定位自己的 tensor
  */
 template <typename T>
-__aicore__ inline void Process(GM_ADDR x, GM_ADDR y, const ForeachAsinTilingData* tilingData)
+__simt_vf__ __aicore__ LAUNCH_BOUND(THREAD_NUM) inline void ForeachAsinFlatSegSimt(int64_t coreStart, int64_t coreEnd,
+                                                                                   GM_ADDR xList, GM_ADDR yList,
+                                                                                   GM_ADDR tiling)
 {
-    int64_t blockIdx = static_cast<int64_t>(GetBlockIdx());
-    int64_t coreStart = blockIdx * tilingData->perCoreElements;
-    int64_t coreEnd = coreStart + tilingData->perCoreElements;
-
-    if (coreEnd > tilingData->totalElements) {
-        coreEnd = tilingData->totalElements;
+    __gm__ const ForeachAsinTilingData* tilingGm = reinterpret_cast<__gm__ const ForeachAsinTilingData*>(tiling);
+    const int32_t tensorNum = tilingGm->tensorNum;
+    const int64_t stride = static_cast<int64_t>(Simt::GetThreadNum());
+    for (int64_t flat = coreStart + static_cast<int64_t>(Simt::GetThreadIdx()); flat < coreEnd; flat += stride) {
+        int32_t lo = 0;
+        int32_t hi = tensorNum - 1;
+        while (lo < hi) {
+            const int32_t mid = (lo + hi + 1) >> 1;
+            if (tilingGm->tensorCumulativeOffset[mid] <= flat) {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        const int64_t localIdx = flat - tilingGm->tensorCumulativeOffset[lo];
+        __gm__ T* xData = SimtGetTensorAddr<T>(xList, lo);
+        __gm__ T* yData = SimtGetTensorAddr<T>(yList, lo);
+        yData[localIdx] = ComputeAsin<T>(xData[localIdx]);
     }
-    // 空核直接返回
-    if (coreStart >= tilingData->totalElements) {
+}
+
+/**
+ * @brief Process 函数：按 totalElements 统一分核，小段一次 flat VF，大段逐 tensor 发 U 展开 VF
+ */
+template <typename T>
+__aicore__ inline void Process(GM_ADDR x, GM_ADDR y, GM_ADDR tiling, const ForeachAsinTilingData* tilingData)
+{
+    const int64_t totalElements = tilingData->totalElements;
+    if (totalElements <= 0) {
         return;
     }
 
-    // 使用 ListTensorDesc 解析各 tensor 的地址
-    ListTensorDesc xList(reinterpret_cast<__gm__ void*>(x));
-    ListTensorDesc yList(reinterpret_cast<__gm__ void*>(y));
+    const int32_t blockIdx = static_cast<int32_t>(GetBlockIdx());
+    if (blockIdx >= tilingData->needCoreNum) {
+        return;
+    }
+    const int64_t coreStart = static_cast<int64_t>(blockIdx) * tilingData->perCoreElements;
+    if (coreStart >= totalElements) {
+        return;
+    }
+    int64_t coreEnd;
+    if (blockIdx == tilingData->needCoreNum - 1) {
+        coreEnd = coreStart + tilingData->lastCoreElements;
+    } else {
+        coreEnd = coreStart + tilingData->perCoreElements;
+    }
+    if (coreEnd > totalElements) {
+        coreEnd = totalElements;
+    }
+    if (coreStart >= coreEnd) {
+        return;
+    }
 
-    // 遍历所有 tensor，找出与当前核范围有交集的 tensor 并处理
-    for (int32_t t = 0; t < tilingData->tensorNum; t++) {
-        int64_t tensorStart = tilingData->tensorCumulativeOffset[t];
-        int64_t tensorEnd = tilingData->tensorCumulativeOffset[t + 1];
+    if (coreEnd - coreStart <= FLAT_SEG_MAX_ELEMENTS) {
+        Simt::VF_CALL<ForeachAsinFlatSegSimt<T>>(Simt::Dim3(THREAD_NUM), coreStart, coreEnd, x, y, tiling);
+        return;
+    }
 
-        // 计算 [coreStart, coreEnd) 与 [tensorStart, tensorEnd) 的交集
-        int64_t segStart = (coreStart > tensorStart) ? coreStart : tensorStart;
-        int64_t segEnd = (coreEnd < tensorEnd) ? coreEnd : tensorEnd;
-
-        if (segStart >= segEnd) {
-            continue;
+    int32_t lo = 0;
+    int32_t hi = tilingData->tensorNum - 1;
+    while (lo < hi) {
+        const int32_t mid = (lo + hi + 1) >> 1;
+        if (tilingData->tensorCumulativeOffset[mid] <= coreStart) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
         }
-
-        // 转换为 tensor 内的局部索引
-        int64_t localStart = segStart - tensorStart;
-        int64_t localEnd = segEnd - tensorStart;
-
-        // 获取该 tensor 的 GM 地址
-        __gm__ T* xAddr = xList.GetDataPtr<T>(t);
-        __gm__ T* yAddr = yList.GetDataPtr<T>(t);
-
-        // 启动 SIMT VF 计算该段
-        Simt::VF_CALL<ForeachAsinSimtKernel<T>>(Simt::Dim3(THREAD_NUM), localStart, localEnd, xAddr, yAddr);
+    }
+    for (int32_t t = lo; t < tilingData->tensorNum; t++) {
+        const int64_t tensorStart = tilingData->tensorCumulativeOffset[t];
+        if (tensorStart >= coreEnd) {
+            break;
+        }
+        const int64_t tensorEnd = tilingData->tensorCumulativeOffset[t + 1];
+        const int64_t segStart = (coreStart > tensorStart) ? coreStart : tensorStart;
+        const int64_t segEnd = (coreEnd < tensorEnd) ? coreEnd : tensorEnd;
+        if (segStart < segEnd) {
+            Simt::VF_CALL<ForeachAsinTensorSegSimt<T>>(Simt::Dim3(THREAD_NUM), t, segStart - tensorStart,
+                                                       segEnd - segStart, x, y);
+        }
     }
 }
 
