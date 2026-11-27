@@ -472,15 +472,19 @@ ge::graphStatus PrepareTilingParams(const gert::TilingContext* context,
 
     // get varDtypeSize and indexDtypeSize
     auto dataDesc = context->GetInputDesc(INDEX_VAR);
+    OP_CHECK_NULL_WITH_CONTEXT(context, dataDesc);
     computeParams.varDtypeSize = ge::GetSizeByDataType(dataDesc->GetDataType());
 
     auto varScalesDesc = context->GetInputDesc(INDEX_VAR_SCALE);
+    OP_CHECK_NULL_WITH_CONTEXT(context, varScalesDesc);
     computeParams.varScalesDtypeSize = ge::GetSizeByDataType(varScalesDesc->GetDataType());
 
     auto indicesDesc = context->GetInputDesc(INDEX_INDICES);
+    OP_CHECK_NULL_WITH_CONTEXT(context, indicesDesc);
     computeParams.indexDtypeSize = ge::GetSizeByDataType(indicesDesc->GetDataType());
 
     auto updateDesc = context->GetInputDesc(INDEX_UPDATES);
+    OP_CHECK_NULL_WITH_CONTEXT(context, updateDesc);
     computeParams.updateDtypeSize = ge::GetSizeByDataType(updateDesc->GetDataType());
 
     OP_CHECK_IF((computeParams.varDtypeSize == 0) || (computeParams.indexDtypeSize == 0) ||
