@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：对输入张量列表的每个张量进行双曲正弦函数运算。
+- 接口功能：对输入Tensor列表的每个Tensor进行双曲正弦函数运算。
 - 计算公式：
 
   $$
@@ -85,7 +85,7 @@ aclnnStatus aclnnForeachSinh(
       <td>x（aclTensorList*）</td>
       <td>输入</td>
       <td>表示进行双曲正弦函数运算的输入张量列表，对应公式中的`x`。</td>
-      <td><ul><li>支持空tensor。</li><li>Tensor列表的Tensor数量取值范围为0~256，数量为0（空列表）时接口直接返回成功、不执行计算。</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>Tensor列表的Tensor数量取值范围为0~256，数量为0（空列表）时接口直接返回成功、不执行计算。</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>
@@ -95,7 +95,7 @@ aclnnStatus aclnnForeachSinh(
       <td>out（aclTensorList*）</td>
       <td>输出</td>
       <td>表示进行双曲正弦函数运算的输出张量列表，对应公式中的`y`。</td>
-      <td><ul><li>支持空tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape size大于等于入参`x`的shape size。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型和数据格式与入参`x`的数据类型和数据格式一致，shape size大于等于入参`x`的shape size。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>

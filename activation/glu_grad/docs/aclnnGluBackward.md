@@ -32,7 +32,7 @@
 
 - 数学计算表达式：
 
-  假设输出的GLUGrad有两部分组成：out=[a_grad, b_grad]，则：
+  假设输出的GLUGrad由两部分组成：out=[a_grad, b_grad]，则：
   sig_b = sigmoid(b)
   **a_grad**=grad_out*sig_b
   **b_grad**=a_grad*(a-a*sig_b)
@@ -89,7 +89,7 @@ aclnnStatus aclnnGluBackward(
     <tr>
       <td>gradOut（aclTensor*）</td>
       <td>输入</td>
-      <td>表示梯度更新系数，公式中的grad_out。</td>
+      <td>表示梯度，公式中的grad_out。</td>
       <td><ul><li>支持空Tensor。</li><li>数据类型必须与self的数据类型一致，shape为$(*_1,M,*_2)$其中$*$表示self中对应维度，$M = N /2$。</li></ul></td>
       <td>DOUBLE、FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -100,7 +100,7 @@ aclnnStatus aclnnGluBackward(
       <td>self（aclTensor*）</td>
       <td>输入</td>
       <td>待进行GluBackward计算的入参。</td>
-      <td>tensor的维度必须大于0，且shape必须在入参dim对应的维度上可以整除2，shape表示为$(*_1,N,*_2)$其中$*$表示任何数量的附加维，$N$表示dim指定的维度大小。</td>
+      <td>Tensor的维度必须大于0，且shape必须在入参dim对应的维度上可以整除2，shape表示为$(*_1,N,*_2)$其中$*$表示任何数量的附加维，$N$表示dim指定的维度大小。</td>
       <td>DOUBLE、FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>-</td>
@@ -246,7 +246,7 @@ aclnnStatus aclnnGluBackward(
 
 - **返回值：**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 

@@ -87,7 +87,7 @@ aclnnStatus aclnnUnique(
     <tr>
       <td>sorted</td>
       <td>输入</td>
-      <td>表示是否对 valueOut 按升序进行排序。true 时排序，false 时乱序。</td>
+      <td>表示是否对 valueOut 按升序进行排序。True 时排序，False 时乱序。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -107,22 +107,22 @@ aclnnStatus aclnnUnique(
     <tr>
       <td>valueOut</td>
       <td>输出</td>
-      <td>第一个输出张量，输入张量中的唯一元素。</td>
+      <td>第一个输出张量，保存输入张量中的唯一元素。</td>
       <td>数据类型与 self 一致。</td>
       <td>BOOL、FLOAT、FLOAT16、DOUBLE、UINT8、INT8、UINT16、INT16、INT32、UINT32、UINT64、INT64、BFLOAT16</td>
-      <td></td>
-      <td></td>
-      <td></td>
+      <td>ND</td>
+      <td>与 self 一致</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>inverseOut</td>
       <td>输出</td>
       <td>第二个输出张量，当 returnInverse 为 True 时有意义，返回 self 中各元素在 valueOut 中出现的位置下标，shape 与 self 保持一致。</td>
-      <td></td>
+      <td>-</td>
       <td>INT64</td>
       <td>ND</td>
-      <td></td>
-      <td></td>
+      <td>与 self 一致</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>workspaceSize</td>

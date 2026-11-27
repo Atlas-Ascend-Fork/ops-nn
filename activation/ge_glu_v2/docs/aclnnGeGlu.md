@@ -197,7 +197,7 @@ aclnnStatus aclnnGeGlu(
       <td>当self.dim()=0时，dim的取值不在[-1, 0]范围内；当self.dim()>0时，dim取值不在[-self.dim, self.dim()-1]范围内。</td>
     </tr>
     <tr>
-      <td>out、outGelu在dim维的size不等于self在dim维size的1/2。</td>
+      <td>out、outGelu在dim维的size不等于self在dim维的size的1/2。</td>
     </tr>
     <tr>
       <td>参数approximate的取值范围不是0和1。</td>

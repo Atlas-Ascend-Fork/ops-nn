@@ -205,7 +205,7 @@ aclnnStatus aclnnNonzero(
 - 确定性计算：
   - aclnnNonzero默认确定性实现。
 
-- 接口的输出size需要按照最大的输出size申请（即全部非0的场景，实测输出size不能超过2G），同时该接口使用的workspace也比较大，需要关注是否超过device内存大小。
+- 接口的输出size需要按照最大的输出size申请（即全部非零元素的场景，实测输出size不能超过2GB），同时该接口使用的workspace也比较大，需要关注是否超过Device内存大小。
 
 ## 调用示例
 

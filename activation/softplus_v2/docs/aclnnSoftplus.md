@@ -77,7 +77,7 @@ aclnnStatus aclnnSoftplus(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
@@ -95,7 +95,7 @@ aclnnStatus aclnnSoftplus(
       <td>beta（aclScalar*）</td>
       <td>输入</td>
       <td>公式中的beta。</td>
-      <td><ul><li>可表示与relu的近似程度。</li><li>数据类型与self的数据类型满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）（当beta是float，self是整型；或者beta不是bool，而self是bool；或者beta是复数，而self不是复数。这些场景不满足推导关系外，其余场景均满足推导关系）。</li></ul></td>
+      <td><ul><li>可表示与relu的近似程度。</li><li>数据类型与self的数据类型满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）（除了当beta是float，self是整型；或者beta不是bool，而self是bool；或者beta是复数，而self不是复数的场景不满足以外，其余场景均满足推导关系）。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -170,7 +170,7 @@ aclnnStatus aclnnSoftplus(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的self，beta，threshold，out是空指针时。</td>
+      <td>传入的self、beta、threshold、out是空指针时。</td>
     </tr>
     <tr>
       <td rowspan="3">ACLNN_ERR_PARAM_INVALID</td>
@@ -178,7 +178,7 @@ aclnnStatus aclnnSoftplus(
       <td>self的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>beta，threshold的数据类型无法转换成self的数据类型。</td>
+      <td>beta、threshold的数据类型无法转换成self的数据类型。</td>
     </tr>
     <tr>
       <td>self与out的数据类型不一致且无法转换。</td>

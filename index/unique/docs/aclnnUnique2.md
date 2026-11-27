@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-对输入张量self进行去重，返回self中的唯一元素，unique功能的增强，新增返回值countsOut，表示valueOut中各元素在输入self中出现的次数，用returnCounts参数控制。
+对输入张量self进行去重，返回self中的唯一元素，本接口是 unique 功能的增强，新增返回值countsOut，表示valueOut中各元素在输入self中出现的次数，用returnCounts参数控制。
 
 ## 函数原型
 
@@ -109,7 +109,7 @@ aclnnStatus aclnnUnique2(
     <tr>
       <td>returnCounts</td>
       <td>输入</td>
-      <td>表示是否返回 valueOut 中每个独特元素在原输入 Tensor 中的数目。</td>
+      <td>表示是否返回 valueOut 中每个唯一元素在输入 self 中出现的次数。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -119,7 +119,7 @@ aclnnStatus aclnnUnique2(
     <tr>
       <td>valueOut</td>
       <td>输出</td>
-      <td>第一个输出张量，保存输入张量中的唯一元素，shape仅支持1维，元素个数小于等于self。</td>
+      <td>第一个输出张量，保存输入张量中的唯一元素，shape仅支持1维，元素个数小于等于 self 的元素个数。</td>
       <td>数据类型与 self 一致。</td>
       <td>BOOL、FLOAT、FLOAT16、DOUBLE、UINT8、INT8、UINT16、INT16、INT32、UINT32、UINT64、INT64、BFLOAT16</td>
       <td>-</td>
@@ -159,7 +159,7 @@ aclnnStatus aclnnUnique2(
     <tr>
       <td>executor</td>
       <td>输出</td>
-      <td>返回 op 执行器，包含了算子计算流程。</td>
+      <td>返回执行器，包含了算子计算流程。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -257,7 +257,7 @@ aclnnStatus aclnnUnique2(
           * self 输入为 1D
           * self 的数据类型为下列类型：FLOAT、FLOAT16、UINT8、INT8、UINT16、INT16、INT32、UINT32、UINT64、INT64、BFLOAT16
       * 由于去重算法实现差异，当满足下列所有条件时，算子的 inverseOut 输出无意义：
-          - returnInverse 输入为 false
+          - returnInverse 输入为 False
           - self 输入为 1D
           - self 的数据类型为下列类型：FLOAT、FLOAT16、UINT8、INT8、UINT16、INT16、INT32、UINT32、UINT64、INT64、BFLOAT16
   <!-- end id7 -->

@@ -116,7 +116,7 @@ aclnnStatus aclnnLeakyReluBackward(
      <tr>
       <td>selfIsResult（bool）</td>
       <td>输入</td>
-      <td>-</td>
+      <td>表示输入self是否为前向计算的输出结果。</td>
       <td>selfIsResult为true时，negativeSlope不可以是负数。</td>
       <td>-</td>
       <td>-</td>

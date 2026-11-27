@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：对输入x进行阈值操作。当x中的elements小于等于threshold时，返回value；否则，返回elements。
+- 接口功能：对输入x进行阈值操作。当x中的元素小于等于threshold时，返回value；否则，返回元素。
 - 计算公式：
 
 $$
@@ -259,7 +259,7 @@ aclnnStatus aclnnInplaceThreshold(
   <thead>
     <tr>
       <th>参数名</th>
-      <th>输入/输出/属性</th>
+      <th>输入/输出</th>
       <th>描述</th>
       <th>数据类型</th>
       <th>数据格式</th>

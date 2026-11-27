@@ -133,7 +133,7 @@ aclnnStatus aclnnCtcLoss(
         <td>-</td>
       </tr>
       <tr>
-        <td>targetlengths（aclIntArray*）</td>
+        <td>targetLengths（aclIntArray*）</td>
         <td>输入</td>
         <td>表示目标序列的实际长度，公式中的l的长度为targetlengths中的元素。</td>
         <td>数组长度为N，当targets的shape为(N,S)时，数组中的每个值必须小于等于S。当logProbs为2维时，N=1。</td>
@@ -175,7 +175,7 @@ aclnnStatus aclnnCtcLoss(
       <tr>
         <td>logAlphaOut（aclTensor*）</td>
         <td>输出</td>
-        <td>表示输入到目标的可能跟踪的概率，公式中的p(l|x)</td>
+        <td>表示输入到目标的可能路径的概率，公式中的p(l|x)</td>
         <td>数据类型必须和logProbs一致。当logProbs为2维时，N=1。</td>
         <td>与logProbs一致</td>
         <td>ND</td>
@@ -300,10 +300,10 @@ aclnnStatus aclnnCtcLoss(
   - `targetlengths`的值域要求为大于等于1。
   - `targetlengths`中的元素要求小于等于`inputLengths`中对应的元素。
 
-  若不满足前三条值域约束，CPU/GPU可能存在越界行为，导致negLogLikelihoodOut和logAlphaOut的计算结果可能与CPU/GPU存在差异。若不满足第四条值域约束，logAlphaOut在对应batch上的计算结果与CPU/GPU存在差异。
+  若不满足前三条值域约束，Device侧可能存在越界行为，导致negLogLikelihoodOut和logAlphaOut的计算结果可能与CPU/GPU存在差异。若不满足第四条值域约束，logAlphaOut在对应batch上的计算结果与CPU/GPU存在差异。
 
 - **半精度规模限制：**
-  - `logProbs`数据类型为FLOAT16或BFLOAT16时，批次数N需小于等于8180，类别数C需小于等于200000，`targetlengths`的最大值需小于等于999（实现上由`logAlphaOut`尾维按8对齐后反算校验，实际生效边界为999），超出任一限制时接口返回`ACLNN_ERR_PARAM_INVALID`。
+  - `logProbs`数据类型为FLOAT16或BFLOAT16时，批处理大小N需小于等于8180，类别数C需小于等于200000，`targetlengths`的最大值需小于等于999（实现上由`logAlphaOut`尾维按8对齐后反算校验，实际生效边界为999），超出任一限制时接口返回`ACLNN_ERR_PARAM_INVALID`。
   - `logProbs`数据类型为FLOAT或DOUBLE时，不受上述规模限制。
 
 - 确定性计算：

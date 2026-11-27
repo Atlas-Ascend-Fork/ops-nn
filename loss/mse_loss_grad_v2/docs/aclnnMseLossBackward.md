@@ -33,7 +33,7 @@
   MseLossBackward(grad, x, y) = grad * (x - y) * 2 / x.numel()
   $$
 
-  其中`x.numel()`表示`x`中的元素个数。如果`reduction`不是`mean`,那么：
+  其中`x.numel()`表示`x`中的元素个数。如果`reduction`不是`mean`，那么：
 
   $$
   MseLossBackward(grad, x, y) = grad * (x - y) * 2
@@ -64,7 +64,7 @@ aclnnStatus aclnnMseLossBackward(
 
 ## aclnnMseLossBackwardGetWorkspaceSize
 
-- **参数说明**
+- **参数说明：**
 
   <table class="tg" style="undefined;table-layout: fixed; width: 1475px"><colgroup>
   <col style="width: 205px">
@@ -89,7 +89,7 @@ aclnnStatus aclnnMseLossBackward(
     </tr></thead>
   <tbody>
     <tr>
-      <td class="tg-0pky">gradOutput(aclTensor*)</td>
+      <td class="tg-0pky">gradOutput（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">梯度反向输入，公式中的输入`grad`。</td>
       <td class="tg-0pky">shape需要与self和target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br></td>
@@ -99,7 +99,7 @@ aclnnStatus aclnnMseLossBackward(
       <td class="tg-0pky">√</td>
     </tr>
     <tr>
-      <td class="tg-0pky">self(aclTensor*)</td>
+      <td class="tg-0pky">self（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">输入张量，公式中的输入`x`。</td>
       <td class="tg-0pky">shape需要与gradOutput、target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br></td>
@@ -109,7 +109,7 @@ aclnnStatus aclnnMseLossBackward(
       <td class="tg-0pky">√</td>
     </tr>
     <tr>
-      <td class="tg-0pky">target(aclTensor*)</td>
+      <td class="tg-0pky">target（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">真实的标签，公式中的输入`y`。</td>
       <td class="tg-0pky">shape需要与gradOutput、self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br></td>
@@ -129,7 +129,7 @@ aclnnStatus aclnnMseLossBackward(
       <td class="tg-0pky">√</td>
     </tr>
     <tr>
-      <td class="tg-0pky">out(aclTensor*)</td>
+      <td class="tg-0pky">out（aclTensor*）</td>
       <td class="tg-0pky">输出</td>
       <td class="tg-0pky">输出的梯度，公式中的输出`MseLossBackward(grad, x, y)`。</td>
       <td class="tg-0pky">out与gradOutput、self、target <a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>之后的tensor的shape一致。<br>数据类型需要是self与target推导之后可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</td>
@@ -192,7 +192,7 @@ aclnnStatus aclnnMseLossBackward(
       <td class="tg-0pky">gradOutput、target的数据类型和self不同。</td>
     </tr>
     <tr>
-      <td class="tg-0pky">gradOutput、self和target的shape无法做<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>。</td>
+      <td class="tg-0pky">gradOutput、self和target的shape无法做<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。</td>
     </tr>
     <tr>
       <td class="tg-0pky">gradOutput、self和target做<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast</a>后的shape与out的shape不一致。</td>

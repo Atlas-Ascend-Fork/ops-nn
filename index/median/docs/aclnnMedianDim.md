@@ -77,7 +77,7 @@ aclnnStatus aclnnMedianDim(
     <tr>
       <td>self（const aclTensor*）</td>
       <td>输入</td>
-      <td>需要计算的输入tensor。</td>
+      <td>需要计算的输入Tensor。</td>
       <td>需要与valuesOut数据类型相同。</td>
       <td>FLOAT、FLOAT16、UINT8、INT8、INT16、INT32、INT64、BFLOAT16</td>
       <td>ND</td>
@@ -237,9 +237,9 @@ aclnnStatus aclnnMedianDim(
 ## 约束说明
 
 - 确定性计算：
-  - aclnnMedianDim默认确定性实现。
+  - aclnnMedianDim默认确定性实现
 
-- self的数据类型不为FLOAT、FLOAT16、BFLOAT16时，tensor size过大可能会导致算子执行超时（aicpu error类型报错，报错reason=[aicpu timeout]）具体类型最大size(与机器具体剩余内存强相关)限制如下：
+- self的数据类型不为FLOAT、FLOAT16、BFLOAT16时，tensor size过大可能会导致算子执行超时（AI CPU error类型报错，报错reason=[aicpu timeout]）具体类型最大size（与机器具体剩余内存强相关）限制如下：
    - INT64类型：150000000
    - UINT8、INT8、INT16、INT32类型：725000000
 - 当self为BFLOAT16数据类型时，不支持dim所在轴为1且不支持标量。

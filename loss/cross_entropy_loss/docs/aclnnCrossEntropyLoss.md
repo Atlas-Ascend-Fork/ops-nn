@@ -52,7 +52,7 @@
   zloss_n = lseSquareScaleForZloss * (lse_n)^2
   $$
 
-  其中，N为batch数，C为标签数。
+  其中，N为批处理大小，C为标签数。
 
 ## 函数原型
 
@@ -183,7 +183,7 @@ aclnnStatus aclnnCrossEntropyLoss(
     <td>returnZloss（bool）</td>
     <td>输入</td>
     <td>控制是否返回zloss输出。</td>
-    <td>需要输出zLoss时传入True，否则传入False。当前暂不支持。</td>
+    <td>需要输出zloss时传入True，否则传入False。当前暂不支持。</td>
     <td>BOOL</td>
     <td>-</td>
     <td>-</td>
@@ -202,7 +202,7 @@ aclnnStatus aclnnCrossEntropyLoss(
     <tr>
     <td>logProbOut（aclTensor*）</td>
     <td>输出</td>
-    <td>输出给反向计算的输出。</td>
+    <td>表示输出给反向计算的logProb。</td>
     <td>-</td>
     <td>与input相同</td>
     <td>ND</td>

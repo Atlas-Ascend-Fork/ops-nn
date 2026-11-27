@@ -30,7 +30,7 @@
   out_{i} = gradOutput_{i} \times gradSelf_{i}
   $$
 
-  其中gradSelf的计算公式为
+  其中gradSelf的计算公式为：
 
   $$
   gradSelf_{i} = \begin{cases}
@@ -110,7 +110,7 @@ aclnnStatus aclnnHardswishBackward(
     <tr>
       <td>out（aclTensor*）</td>
       <td>输出</td>
-      <td>表示输出张量，公式中的out。</td>
+      <td>表示输出张量，公式中的out，shape需要与self相同。</td>
       <td>-</td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>ND</td>
@@ -166,7 +166,7 @@ aclnnStatus aclnnHardswishBackward(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的gradOutput, self是空指针。</td>
+      <td>传入的gradOutput、self是空指针。</td>
     </tr>
     <tr>
       <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>

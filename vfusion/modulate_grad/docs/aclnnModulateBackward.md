@@ -37,8 +37,8 @@
     $$
 
     符号说明：
-    - $\odot$: 表示逐元素乘法；
-    - $\sum_{l=1}^{L}$: 求和操作，沿序列维度$L$(即dim=1)进行
+    - $\odot$：表示逐元素乘法
+    - $\sum_{l=1}^{L}$：求和操作，沿序列维度$L$(即dim=1)进行
     - $b,l,d$：下标，表示张量的维度索引（通常为Batch、Length、Dimension）
     - $(1 + \text{scale})^{\uparrow L}$：表示将scale与正向公式中的常数1相加后，在序列维度 $L$ 上进行广播（扩展）
 
@@ -89,7 +89,7 @@ aclnnStatus aclnnModulateBackward(
       <th>数据类型</th>
       <th>数据格式</th>
       <th>维度(shape)</th>
-      <th>非连续tensor</th>
+      <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
     <tr>
@@ -276,18 +276,18 @@ aclnnStatus aclnnModulateBackward(
 - 确定性计算：
   - aclnnModulateBackward默认确定性实现。
 
-- scale和shift是二维向量，第一维需要和input的第一维shape相同，第二维需要和input的第三维shape相同。
+- scale和shift是2维张量，第一维需要和input的第一维shape相同，第二维需要和input的第三维shape相同。
 - 输入grad_output的shape需要和输入input的shape保持一致，均为3维 [B, L, D]。
-- 数据格式仅支持ND；各tensor的dtype必须一致（FLOAT16/FLOAT/BFLOAT16）。
+- 数据格式仅支持ND；各Tensor的dtype必须一致（FLOAT、FLOAT16、BFLOAT16）。
 - scale和shift为可选输入：未提供scale/shift时，对应的grad_scale/grad_shift不输出；未提供scale时，grad_input = grad_output。
 - 支持空Tensor（B/L/D任一为0）：直接返回对应shape的空输出；此时scale和shift必须为空或缺失。
 - 支持动态shape（含-1维度）：tiling在运行期按实际shape计算多核与UB切分，无需重新编译；rank固定为3。
 - 输出tensor的视图stride不允许在非单例维上为0（如broadcast/expand得到的零stride输出视图）：多个逻辑位置映射到同一物理元素时回拷语义未定义，接口以ACLNN_ERR_PARAM_INVALID拒绝；需要写broadcast视图时请先clone出连续输出。
 
 - 精度说明：
-  - kernel内部以fp32累加归约（grad_scale = Σ input·grad_output, grad_shift = Σ grad_output），结果经RNE舍回输出dtype。
-  - 测试参考（golden）以fp64计算后同样经RNE舍回输出dtype，与kernel舍入路径一致。
-  - fp32 累加饱和行为与普通求和一致：同号上溢输出 ±Inf（与 torch 求和一致）；仅当 ±Inf 项与相反符号项相遇产生 NaN 时输出 NaN。
+  - Kernel内部以FP32累加归约（grad_scale = Σ input·grad_output, grad_shift = Σ grad_output），结果经RNE舍入输出dtype。
+  - 测试参考（golden）以fp64计算后同样经RNE舍入输出dtype，与Kernel舍入路径一致。
+  - FP32 累加饱和行为与普通求和一致：同号上溢输出 ±Inf（与 torch 求和一致）；仅当 ±Inf 项与相反符号项相遇产生 NaN 时输出 NaN。
 
 ## 调用示例
 

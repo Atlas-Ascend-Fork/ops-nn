@@ -116,7 +116,7 @@ aclnnStatus aclnnMedian(
 
 - **返回值：**
 
-  aclnnStatus: 返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
   第一段接口完成入参校验，出现以下场景时报错：
 
@@ -196,7 +196,7 @@ aclnnStatus aclnnMedian(
 ## 约束说明
 
 - 确定性计算：
-  - aclnnMedian默认确定性实现。
+  - aclnnMedian默认确定性实现
 
 - self的数据类型不为FLOAT、FLOAT16、BFLOAT16时，Tensor size过大可能会导致算子执行超时（aicpu error类型报错，报错reason=[aicpu timeout]）具体类型最大size(与机器具体剩余内存强相关)限制如下：
    - INT64类型：150000000

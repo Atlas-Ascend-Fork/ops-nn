@@ -25,13 +25,13 @@
 
 - 接口功能：高斯误差线性单元激活门函数，针对aclnnGeGlu，扩充了设置激活函数操作数据块方向的功能。
 - 计算公式：
-  若activateLeft为true，表示对$self$的左半部分做activate
+  若activateLeft为true，表示对$self$的左半部分做activate：
 
     $$
     out_{i}=GeGlu(self_{i}) = Gelu(A) \cdot B
     $$
 
-  若activateLeft为false，表示对$self$的右半部分做activate
+  若activateLeft为false，表示对$self$的右半部分做activate：
 
     $$
     out_{i}=GeGlu(self_{i}) = A \cdot Gelu(B)
@@ -114,7 +114,7 @@ aclnnStatus aclnnGeGluV3(
       <td>输入</td>
       <td>可选入参。</td>
       <td>GeGluV3计算使用的激活函数索引，0表示使用none，1表示使用tanh。</td>
-      <td>-</td>
+      <td>INT64</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

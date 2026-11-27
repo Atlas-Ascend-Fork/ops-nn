@@ -159,7 +159,7 @@ aclnnStatus aclnnGeGluV3Backward(
       <tr>
       <td>executor（aclOpExecutor**）</td>
       <td>输出</td>
-      <td>返回op执行器，包含了算子计算流程。</td>
+      <td>返回OP执行器，包含了算子计算流程。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -170,7 +170,7 @@ aclnnStatus aclnnGeGluV3Backward(
   </table>
 
   <!-- npu="910,310p" id7 -->
-  - <term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：数据类型支持FLOAT32、FLOAT16。
+  - <term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16。
   <!-- end id7 -->
   <!-- npu="310p" id8 -->
   - <term>Atlas推理系列产品</term>：“approximate”只支持1('tanh')。
@@ -245,7 +245,7 @@ aclnnStatus aclnnGeGluV3Backward(
     <tr>
       <td>executor</td>
       <td>输入</td>
-      <td>op执行器，包含了算子计算流程。</td>
+      <td>OP执行器，包含了算子计算流程。</td>
     </tr>
     <tr>
       <td>stream</td>

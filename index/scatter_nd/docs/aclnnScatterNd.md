@@ -164,7 +164,7 @@ aclnnStatus aclnnScatterNd(
         <td>数据类型不在支持的范围之内。</td>
       </tr>
       <tr>
-        <td>shape不满足要求：1<=rank(data)<=8, 1<=rank(indices)<=8, rank(updates)=rank(data)+rank(indices)- indices.shape[-1] -1。</td>
+        <td>shape不满足要求：1<=rank(data)<=8, 1<=rank(indices)<=8, rank(updates)=rank(data)+rank(indices)-indices.shape[-1]-1。</td>
       </tr>
       <tr>
         <td>shape不满足要求：1<=rank(indices)<=8, indices.shape[-1] <= rank(data)。</td>

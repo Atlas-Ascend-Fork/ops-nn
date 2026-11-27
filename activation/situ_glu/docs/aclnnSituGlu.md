@@ -40,7 +40,7 @@
 
 ## 功能说明
 
-- 接口功能：SiTU门控线性单元（SiTU Gated Linear Unit）激活函数。对输入张量x沿指定维度切分为门控（gate）与上路径（up）两半，按SiTU公式计算输出。
+- 接口功能：SiTU门控线性单元（SiTU Gated Linear Unit）激活函数。对输入张量x沿指定维度切分为门控（gate）与up路径两半，按SiTU公式计算输出。
 - 计算公式：
 
   对给定的输入张量x，其维度为[a, b, c, d, e, f, g, ...]，aclnnSituGlu对其执行以下计算：
@@ -83,7 +83,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用"aclnnSituGluGetWorkspaceSize"接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用"aclnnSituGlu"接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnSituGluGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnSituGlu”接口执行计算。
 
 ```cpp
 aclnnStatus aclnnSituGluGetWorkspaceSize(
@@ -164,7 +164,7 @@ aclnnStatus aclnnSituGlu(
     <tr>
       <td>linearBeta（double）</td>
       <td>输入</td>
-      <td>公式中的输入linearBeta，up路径线性tanh的缩放系数。小于等于0时up路径不进行变换。</td>
+      <td>公式中的输入linearBeta，上路径线性tanh的缩放系数。小于等于0时上路径不进行变换。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

@@ -107,7 +107,7 @@ aclnnStatus aclnnEmbeddingDenseBackward(
       <tr>
         <td>paddingIdx</td>
         <td>输入</td>
-        <td>将输出tensor中第paddingIdx行填充成0。</td>
+        <td>将输出Tensor中第paddingIdx行填充成0。</td>
         <td>如果paddingIdx为负数则不进行处理。</td>
         <td>-</td>
         <td>-</td>
@@ -127,7 +127,7 @@ aclnnStatus aclnnEmbeddingDenseBackward(
       <tr>
         <td>out</td>
         <td>输出</td>
-        <td>梯度求和的结果输出</td>
+        <td>梯度求和的结果输出。</td>
         <td>-</td>
         <td>与grad类型相同</td>
         <td>ND</td>
@@ -247,11 +247,11 @@ aclnnStatus aclnnEmbeddingDenseBackward(
 ## 约束说明
 
 - 确定性计算：
-  - aclnnEmbeddingDenseBackward默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
+  - aclnnEmbeddingDenseBackward默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性
 
 <!-- npu="910" id8 -->
 - <term>Atlas训练系列产品</term>：
-  - 对于scale为true的场景，设定grad最后一维为embeddingDim，其大小超出指定范围时会被拦截报错。其合理范围如下：
+  - 对于scaleGradByFreq为true的场景，设定grad最后一维为embeddingDim，其大小超出指定范围时会被拦截报错。其合理范围如下：
     - indices为int32时，需满足
 
     $$

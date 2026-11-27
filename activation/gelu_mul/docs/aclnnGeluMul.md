@@ -25,7 +25,7 @@
 
 - 接口功能：
 
-  将输入Tensor按照最后一个维度分为左右两个Tensor：x1和x2，对左边的x1进行Gelu计算，将计算结果与x2相乘。
+  将输入Tensor按照最后一个维度分为左右两个Tensor：x1和x2，对左边的x1进行GELU计算，将计算结果与x2相乘。
 
 - 计算公式：
 
@@ -119,8 +119,8 @@ aclnnStatus aclnnGeluMul(
       <tr>
       <td>approximateOptional（char*）</td>
       <td>输入</td>
-      <td>Gelu计算的模式。</td>
-      <td>只支持“none”和“tanh”，分别对应Gelu的erf模式和tanh模式，输入为空指针时为“none”。</td>
+      <td>GELU计算的模式。</td>
+      <td>只支持“none”和“tanh”，分别对应GELU的erf模式和tanh模式，输入为空指针时为“none”。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -130,7 +130,7 @@ aclnnStatus aclnnGeluMul(
       <td>out（aclTensor*）</td>
       <td>输出</td>
       <td>输出的张量，公式中的out。</td>
-      <td><ul><li>输出的数据类型与输入保持一致。</li><li>输出shape和输入shape其他维度一致。</li><li>最后一维的值为输入shape最后一维值的二分之一。</li></ul></td>
+      <td><ul><li>输出的数据类型与输入保持一致。</li><li>输出shape和输入shape的其他维度一致。</li><li>最后一维的值为输入shape最后一维值的二分之一。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
       <td>2-8</td>
@@ -209,7 +209,7 @@ aclnnStatus aclnnGeluMul(
       <td>input其他维度的乘积大于200000。</td>
     </tr>
     <tr>
-      <td>approximate的取值不是"none"和"tanh"。</td>
+      <td>approximate的取值不是“none”或“tanh”。</td>
     </tr>
   </tbody></table>
 
@@ -261,7 +261,7 @@ aclnnStatus aclnnGeluMul(
 - 确定性计算：
   - aclnnGeluMul默认确定性实现。
 
-- 典型场景尾轴为16的倍数，当尾轴为非32 Byte对齐时，建议走小算子拼接逻辑。
+- 典型场景最后一维为16的倍数，当最后一维为非32字节对齐时，建议走小算子拼接逻辑。
 
 ## 调用示例
 

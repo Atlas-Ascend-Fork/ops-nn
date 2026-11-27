@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-找出`self`中非零元素的位置，设self的维度为D，self中非零元素的个数为N，则返回`out`的shape为D * N，每一列表示一个非零元素的位置坐标。
+算子功能：找出`self`中非零元素的位置，设self的维度为D，self中非零元素的个数为N，则返回`out`的shape为D * N，每一列表示一个非零元素的位置坐标。
 
 ## 函数原型
 
@@ -160,7 +160,7 @@ aclnnStatus aclnnNonzeroV2(
 
 ## aclnnNonzeroV2
 
-* **参数说明**
+- **参数说明**
 
   <table style="undefined;table-layout: fixed; width: 1042px"><colgroup>
   <col style="width: 141px">
@@ -206,7 +206,7 @@ aclnnStatus aclnnNonzeroV2(
 - 确定性计算：
   - aclnnNonzeroV2默认确定性实现。
 
-- 接口的输出size需要按照最大的输出size申请（即全部非0的场景，实测输出size不能超过2G），同时该接口使用的workspace也比较大，需要关注是否超过device内存大小。
+- 接口的输出size需要按照最大的输出size申请（即全部非0的场景，实测输出size不能超过2GB），同时该接口使用的workspace也比较大，需要关注是否超过Device内存大小。
 
 ## 调用示例
 

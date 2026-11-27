@@ -38,7 +38,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnForeachPowListGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnForeachPowList”接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnForeachPowListGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的op执行器，再调用“aclnnForeachPowList”接口执行计算。
 
 ```Cpp
 aclnnStatus aclnnForeachPowListGetWorkspaceSize(
@@ -107,7 +107,7 @@ aclnnStatus aclnnForeachPowList(
       <td>out（aclTensorList*）</td>
       <td>输出</td>
       <td>表示进行幂运算的输出张量列表，对应公式中的`y`。</td>
-      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>x1、x2、out三个张量列表的长度必须一致。</li><li>数据类型和数据格式与入参`x1`的数据类型和数据格式一致，shape与入参`x1`的shape完全一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>x1、x2、out三个张量列表的长度必须一致。</li><li>数据类型、数据格式与入参`x1`的数据类型、数据格式一致，shape与入参`x1`的shape完全一致，即各维度逐维相等。</li></ul></td>
       <td>FLOAT32、FLOAT16、INT32、BFLOAT16</td>
       <td>ND</td>
       <td>0-8</td>

@@ -118,7 +118,7 @@ aclnnStatus aclnnForeachAddcmulScalarList(
     <tr>
       <td>scalars（aclTensor*）</td>
       <td>输入</td>
-      <td>表示混合运算中乘法的第一个输入张量。对应公式中的`scalars`。</td>
+      <td>表示进行混合运算中乘法的第一个输入张量。对应公式中的`scalars`。</td>
       <td><ul><li>不支持空Tensor。</li><li>元素个数与`x1`中Tensor的个数相等。</li><li>数据类型和数据格式与入参`x1`一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16、INT32</td>
       <td>ND</td>

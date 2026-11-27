@@ -176,7 +176,7 @@ aclnnStatus aclnnGeGluBackward(
   </table>
 
   <!-- npu="910,310p" id7 -->
-  - <term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：数据类型支持FLOAT32、FLOAT16。
+  - <term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16。
   <!-- end id7 -->
   <!-- npu="310p" id8 -->
   - <term>Atlas推理系列产品</term>：“approximate”只支持1('tanh')。

@@ -37,13 +37,13 @@
 
 - 示例
 
-  1. 输入`x`为: [-1, -2]，dtype为`FLOAT32`。
+  1. 输入`x`为：[-1, -2]，dtype为`FLOAT32`。
   2. 调用`aclnnForeachCos`算子后。
-  3. 输出`out`为[0.5403, -0.4161]，dtype为`FLOAT32`。
+  3. 输出`out`为: [0.5403, -0.4161]，dtype为`FLOAT32`。
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnForeachCosGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnForeachCos”接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用`aclnnForeachCosGetWorkspaceSize`接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用`aclnnForeachCos`接口执行计算。
 
 ```Cpp
 aclnnStatus aclnnForeachCosGetWorkspaceSize(
@@ -218,7 +218,7 @@ aclnnStatus aclnnForeachCos(
 
 ## 约束说明
 
-- 输入值域在[-65504, 65504]范围满足功能精度要求，超过数值范围无法保证精度。
+- 输入值域在[-65504, 65504]范围内满足功能精度要求，超过数值范围无法保证精度。
 - 确定性计算：
   - aclnnForeachCos默认确定性实现。
 

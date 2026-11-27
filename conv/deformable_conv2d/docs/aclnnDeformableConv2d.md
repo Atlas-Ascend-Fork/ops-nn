@@ -27,7 +27,7 @@
 
 - 计算公式：
 
-  假定输入（input）的shape是[N, inC, inH, inW]，输出（out）的shape为[N, outC, outH, outW]，根据已有参数计算outH、outW:
+  假定输入（input）的shape是[N, inC, inH, inW]，输出（out）的shape为[N, outC, outH, outW]，根据已有参数计算outH、outW：
 
   $$
   outH = (inH + padding[0] + padding[1] - ((K_H - 1) * dilation[2] + 1)) // stride[2] + 1
@@ -47,7 +47,7 @@
   y = -padding[0] + oh*stride[2] + kh*dilation[2], kh的取值为(0, K\_H-1)
   $$
 
-  根据传入的offset，进行变形卷积，计算偏移后的下标：
+  根据传入的`offset`，进行可变形卷积，计算偏移后的下标：
 
   $$
   (x,y) = (x + offsetX, y + offsetY)
@@ -158,7 +158,7 @@ aclnnStatus aclnnDeformableConv2d(
       <td>offset</td>
       <td>输入</td>
       <td>表示x-y坐标偏移和掩码的4D张量。对应公式中的`offset`。</td>
-      <td><ul><li>不支持空Tensor。</li><li>数据类型、数据格式与入参`x`保持一致。</li><li>当`modulated`为True时，shape为[N, 3 * deformableGroups * K_H * K_W, outH, outW]；当`modulated`为False时，shape为[N, 2 * deformableGroups * K_H * K_W, outH, outW]。</li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>数据类型、数据格式与入参`x`保持一致。</li><li>当`modulated`为true时，shape为[N, 3 * deformableGroups * K_H * K_W, outH, outW]；当`modulated`为False时，shape为[N, 2 * deformableGroups * K_H * K_W, outH, outW]。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND、NCHW</td>
       <td>4</td>
@@ -198,7 +198,7 @@ aclnnStatus aclnnDeformableConv2d(
       <td>padding</td>
       <td>输入</td>
       <td>表示要添加到输入每侧（顶部、底部、左侧、右侧）的像素数，对应公式中的`padding`。</td>
-      <td>size为4。</td>
+      <td>size为4，各元素均大于等于零，维度顺序根据`x`的数据格式解释。</td>
       <td>aclIntArray</td>
       <td>-</td>
       <td>-</td>
@@ -399,7 +399,7 @@ aclnnStatus aclnnDeformableConv2d(
    </thead>
    <tbody>
    <tr>
-     <th scope="row">input、weight、offset、out、deformOutOptional</th>
+     <th scope="row">x、weight、offset、out、deformOutOptional</th>
      <td>
            数据格式支持ND、NCHW。
      </td>
