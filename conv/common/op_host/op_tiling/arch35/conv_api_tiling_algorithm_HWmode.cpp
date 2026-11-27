@@ -630,7 +630,6 @@ void ConvTilingAlgorithmHWmode::CheckL0DoubleBuffer()
     bool kFullLoadFlag = tilingIns_->l0TilingInfo.kL0 ==
                          (tilingIns_->isC04Flag ? this->l1TilingCalc.c04KSizeAlign : this->l1TilingCalc.kBL1MaxSize);
     bool keepL0DbCase = KeepL0DoubleBufferForDma();
-
     if (!keepL0DbCase && static_cast<uint64_t>(tilingIns_->shapeInfo.singleHo) <= tilingIns_->l0TilingInfo.hoL0 &&
         static_cast<uint64_t>(tilingIns_->shapeInfo.singleWo) <= tilingIns_->l0TilingInfo.woL0 && kFullLoadFlag) {
         this->dbValue.pbAL0 = SINGLE_BUFFER_NUM;

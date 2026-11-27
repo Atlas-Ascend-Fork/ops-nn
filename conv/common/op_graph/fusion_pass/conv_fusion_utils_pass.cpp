@@ -98,7 +98,6 @@ bool ConvFusionUtilsPass::CheckArchList(const std::set<NpuArch>& archList, NpuAr
         return false;
     }
     const NpuArch curArch = static_cast<NpuArch>(std::atoi(npuArchStr));
-
     if (archList.count(curArch) != 0) {
         npuArch = curArch;
         OP_LOGD(UTIL_NAME, "Current NpuArch is DAV_%s.", npuArchStr);

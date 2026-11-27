@@ -147,13 +147,16 @@ struct SocConfig {
         PlatformInfoManager::Instance().opti_compilation_infos_.SetSocVersion(socVersion);
         PlatformInfo probeInfo;
         OptionalInfo probeOptiInfo;
-        if (PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(probeInfo, probeOptiInfo) ==
-            GRAPH_SUCCESS) {
-            auto socIter = PlatformInfoManager::Instance().platform_info_map_.find(socVersion);
-            if (socIter != PlatformInfoManager::Instance().platform_info_map_.end()) {
-                socIter->second.soc_info.arch_type = archType;
-            }
+        (void)PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(probeInfo, probeOptiInfo);
+        // GetPlatformInfoWithOutSocVersion 以 socVersion 为键查 platform_info_map_，键不存在时依赖
+        // EnsureSocVersionLoaded 加载 ini。其他用例只清 platform_info_map_ 不清 loaded_ini_files_，
+        // 已标记加载的 soc 无法再次加载，mock 平台将解析失败或读到过期 arch。此处兜底确保
+        // socVersion 键存在并写入目标 arch，使 arch 门禁不依赖 ini 加载状态。
+        auto socIter = PlatformInfoManager::Instance().platform_info_map_.find(socVersion);
+        if (socIter == PlatformInfoManager::Instance().platform_info_map_.end()) {
+            socIter = PlatformInfoManager::Instance().platform_info_map_.emplace(socVersion, platformInfo).first;
         }
+        socIter->second.soc_info.arch_type = archType;
 
         fe::PlatFormInfos platFormInfos;
         fe::OptionalInfos optionalInfos;
