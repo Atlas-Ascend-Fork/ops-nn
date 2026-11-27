@@ -25,7 +25,7 @@
 
 ## Function
 
-- Description: Performs the backward propagation of [sigmoid](../../sigmoid/docs/aclnnSigmoid&aclnnInplaceSigmoid.md). Computes the gradient input of sigmoid based on the sigmoid backward propagation gradient and the forward output.
+- Description: Performs the backward propagation of [sigmoid](../../sigmoid/docs/aclnnSigmoid&aclnnInplaceSigmoid_en.md). Computes the gradient input of sigmoid based on the sigmoid backward propagation gradient and the forward output.
 - Formula:
 
   $$
