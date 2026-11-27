@@ -149,9 +149,7 @@ const std::vector<std::vector<ge::Format>> SUPPORT_CONV2D_FORMAT_LIST_9201 = {
     {ge::Format::FORMAT_NHWC, ge::Format::FORMAT_HWCN, ge::Format::FORMAT_NHWC}};
 
 const std::vector<std::vector<ge::Format>> SUPPORT_CONV2D_FORMAT_LIST_5162 = {
-    {ge::Format::FORMAT_NCHW, ge::Format::FORMAT_NCHW, ge::Format::FORMAT_NCHW},
-    {ge::Format::FORMAT_NCHW, ge::Format::FORMAT_FRACTAL_Z, ge::Format::FORMAT_NCHW},
-    {ge::Format::FORMAT_NHWC, ge::Format::FORMAT_FRACTAL_Z, ge::Format::FORMAT_NHWC}};
+    {ge::Format::FORMAT_NCHW, ge::Format::FORMAT_FRACTAL_Z, ge::Format::FORMAT_NCHW}};
 
 const std::vector<std::vector<ge::Format>> SUPPORT_QUANT_CONV2D_FORMAT_LIST = {
     {ge::Format::FORMAT_NCHW, ge::Format::FORMAT_NCHW, ge::Format::FORMAT_NCHW}};
@@ -217,7 +215,6 @@ const std::vector<std::vector<ge::Format>> EXTENDCONV2D_SUPPORT_FORMAT_LIST_9201
     {ge::Format::FORMAT_NHWC, ge::Format::FORMAT_HWCN, ge::Format::FORMAT_NHWC}};
 
 const std::vector<std::vector<ge::Format>> EXTENDCONV2D_SUPPORT_FORMAT_LIST_5162 = {
-    {ge::Format::FORMAT_NCHW, ge::Format::FORMAT_NCHW, ge::Format::FORMAT_NCHW},
     {ge::Format::FORMAT_NCHW, ge::Format::FORMAT_FRACTAL_Z, ge::Format::FORMAT_NCHW}};
 
 // arch-keyed format support list maps (extend by adding new arch keys)

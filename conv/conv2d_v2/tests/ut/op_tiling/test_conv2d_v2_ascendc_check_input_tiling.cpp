@@ -985,3 +985,30 @@ TEST_F(TestConv2dCheckInputDirect, dual_output_shape_mismatch)
     sut.oriShapeAttrInfo_.oriOutput1W = 16;
     EXPECT_EQ(sut.CheckExtendDualOutputShape(), ge::GRAPH_FAILED);
 }
+
+// CheckInputDesc: arch5162 用 descInfo_ 的存储格式(NCHW/FRACTAL_Z/NCHW)匹配支持列表并命中
+TEST_F(TestConv2dCheckInputDirect, arch5162_format_match_by_desc_info)
+{
+    compile_info_.npuArch = Ops::Base::DAV_5162;
+    platform_info_.Init();
+    std::vector<gert::StorageShape*> inShapes = {&fmap_, &weight_, &bias_, nullptr};
+    std::vector<InputSpec> inDescs = {{ge::DT_FLOAT16, ge::FORMAT_NCHW},
+                                      {ge::DT_FLOAT16, ge::FORMAT_FRACTAL_Z},
+                                      {ge::DT_FLOAT16, ge::FORMAT_ND},
+                                      {ge::DT_FLOAT, ge::FORMAT_ND}};
+    std::vector<gert::StorageShape*> outShapes = {&output_};
+    std::vector<InputSpec> outDescs = {{ge::DT_FLOAT16, ge::FORMAT_NCHW}};
+    auto holder = BuildCtx(inShapes, inDescs, outShapes, outDescs);
+    auto ctx = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_NE(ctx->GetPlatformInfo(), nullptr);
+    std::map<std::string, std::string> npuArchRes = {{"NpuArch", "5162"}};
+    ctx->GetPlatformInfo()->SetPlatformRes("version", npuArchRes);
+
+    optiling::conv_ops_tiling::Conv2dBaseTiling sut(ctx);
+    InitInputSut(sut, compile_info_, ctx);
+    sut.descInfo_.weightFormat = ge::FORMAT_FRACTAL_Z;
+    sut.paramInfo_.paramsFormat = {ge::FORMAT_NCHW, ge::FORMAT_NCHW, ge::FORMAT_NCHW};
+    sut.convBase_.ConvBaseInit(sut.shapeInfo_, sut.descInfo_, sut.flagInfo_, sut.paramInfo_, ctx);
+    EXPECT_EQ(sut.CheckInputDesc(), ge::GRAPH_SUCCESS);
+}

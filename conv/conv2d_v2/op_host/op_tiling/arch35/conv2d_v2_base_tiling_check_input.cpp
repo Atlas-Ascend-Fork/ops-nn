@@ -453,8 +453,14 @@ ge::graphStatus Conv2dBaseTiling::CheckInputDesc()
     std::vector<std::vector<ge::Format>> supportFormats;
     std::stringstream ss;
     convBase_.GetSupportedFormats(true, ss, supportFormats);
+
+    std::vector<ge::Format> checkFormats = paramInfo_.paramsFormat;
+    if (IsArch5162(opInfo_->npuArch)) {
+        checkFormats = {descInfo_.fMapFormat, descInfo_.weightFormat, descInfo_.outFormat};
+    }
+
     for (uint8_t kindId = 0; kindId < supportFormats.size(); kindId++) {
-        if (ConvArrMatch(paramInfo_.paramsFormat, supportFormats[kindId], paramInfo_.paramsFormat.size())) {
+        if (ConvArrMatch(checkFormats, supportFormats[kindId], checkFormats.size())) {
             formatMatchTag = true;
             break;
         }
