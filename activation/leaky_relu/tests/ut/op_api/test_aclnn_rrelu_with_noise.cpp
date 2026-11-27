@@ -642,3 +642,67 @@ TEST_F(l2_rrelu_with_noise_test, ascend950_case_bf16_training)
 
     ut.TestPrecision();
 }
+
+// 950 训练模式 fp32 精度（单 kernel 路径）
+TEST_F(l2_rrelu_with_noise_test, ascend950_case_fp_training)
+{
+    class SocVersionManager testSocVersion(SocVersion::ASCEND950);
+    auto self = TensorDesc({5, 5}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 2);
+    auto noise = TensorDesc({5, 5}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 2);
+    auto lower = ScalarDesc(0.1f);
+    auto upper = ScalarDesc(0.5f);
+    bool training = true;
+    int64_t seed = 0;
+    int64_t offset = 0;
+    auto out = TensorDesc({5, 5}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.005, 0.005);
+
+    auto ut = OP_API_UT(aclnnRReluWithNoise, INPUT(self, noise, lower, upper, training, seed, offset), OUTPUT(out));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACL_SUCCESS);
+
+    ut.TestPrecision();
+}
+
+// 950 训练模式 fp32 >8 维（拍平/还原路径）
+TEST_F(l2_rrelu_with_noise_test, ascend950_case_fp_training_9dim)
+{
+    class SocVersionManager testSocVersion(SocVersion::ASCEND950);
+    auto self = TensorDesc({1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 2);
+    auto noise = TensorDesc({1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 2);
+    auto lower = ScalarDesc(0.1f);
+    auto upper = ScalarDesc(0.5f);
+    bool training = true;
+    int64_t seed = 0;
+    int64_t offset = 0;
+    auto out = TensorDesc({1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.005, 0.005);
+
+    auto ut = OP_API_UT(aclnnRReluWithNoise, INPUT(self, noise, lower, upper, training, seed, offset), OUTPUT(out));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACL_SUCCESS);
+
+    ut.TestPrecision();
+}
+
+// 950 训练模式 offset 非 4 的倍数：参数错误（offset 需为 4 的倍数）
+TEST_F(l2_rrelu_with_noise_test, ascend950_case_training_offset_not_multiple_of_four)
+{
+    class SocVersionManager testSocVersion(SocVersion::ASCEND950);
+    auto self = TensorDesc({5, 5}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 2);
+    auto noise = TensorDesc({5, 5}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(0, 2);
+    auto lower = ScalarDesc(0.1f);
+    auto upper = ScalarDesc(0.5f);
+    bool training = true;
+    int64_t seed = 0;
+    int64_t offset = 2;
+    auto out = TensorDesc({5, 5}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.005, 0.005);
+
+    auto ut = OP_API_UT(aclnnRReluWithNoise, INPUT(self, noise, lower, upper, training, seed, offset), OUTPUT(out));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}

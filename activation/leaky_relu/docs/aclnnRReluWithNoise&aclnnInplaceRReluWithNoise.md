@@ -522,6 +522,7 @@ aclnnStatus aclnnInplaceRReluWithNoise(
 
 - 确定性计算：
   - aclnnRReluWithNoise&aclnnInplaceRReluWithNoise默认确定性实现。
+- training=true时，Ascend 950PR&950DT系列产品（DAV_3510）会校验offset为4的倍数，不满足时返回ACLNN_ERR_PARAM_INVALID；其他产品接口层不做上述校验。
 
 ## 调用示例
 

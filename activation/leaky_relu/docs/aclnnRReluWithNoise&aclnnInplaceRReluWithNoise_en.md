@@ -522,6 +522,7 @@ aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../
 
 - Deterministic computation:
   - aclnnRReluWithNoise&aclnnInplaceRReluWithNoise default to a deterministic implementation.
+- When training is true, the Ascend 950PR&950DT products (DAV_3510) validate that offset is a multiple of 4; otherwise, ACLNN_ERR_PARAM_INVALID is returned. Other products do not perform this validation at the API layer.
 
 ## Example
 

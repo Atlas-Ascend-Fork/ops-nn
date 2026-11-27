@@ -32,6 +32,7 @@
 #include "norm/common/op_api/batch_norm_backward.h"
 #include "level0/broadcast_to.h"
 #include "level0/concat.h"
+#include "level0/rrelu_with_noise_train.h"
 #include "level0/cumsum.h"
 #include "op_api/dilation.h"
 #include "level0/div.h"
@@ -246,6 +247,13 @@ const aclTensor* DSARandomUniform(const aclIntArray* /*outShape*/, uint64_t /*se
                                   const aclScalar* /*low*/, const aclScalar* /*high*/, aclOpExecutor* /*executor*/)
 {
     return nullptr;
+}
+const aclTensor* RreluWithNoiseTrain(const aclTensor* x, int64_t /*seed*/, int64_t /*offset*/, float /*lower*/,
+                                     float /*upper*/, const aclTensor** noise, aclOpExecutor* executor)
+{
+    auto* y = executor->AllocTensor(x->GetViewShape(), x->GetDataType(), x->GetViewFormat());
+    *noise = executor->AllocTensor(x->GetViewShape(), x->GetDataType(), x->GetViewFormat());
+    return y;
 }
 
 const aclTensor* Fill(const aclTensor* /*dims*/, const aclTensor* value, const aclIntArray* /*outShape*/,

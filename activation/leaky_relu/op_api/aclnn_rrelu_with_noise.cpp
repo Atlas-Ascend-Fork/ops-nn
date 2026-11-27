@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -9,6 +9,7 @@
  */
 #include "aclnn_rrelu_with_noise.h"
 #include "level0/zero_op.h"
+#include "level0/rrelu_with_noise_train.h"
 #include "aclnn_kernels/slice.h"
 #include "level0/concat.h"
 #include "aclnn_kernels/reshape.h"
@@ -45,6 +46,7 @@ extern "C" {
 #endif
 
 static const int DIM_CONSTRAINT = 8;
+static constexpr int64_t RANDOM_OFFSET_ALIGN_ELEMS = 4;
 
 static bool CheckNotNull(const aclTensor* self, const aclTensor* noise, const aclScalar* lower, const aclScalar* upper,
                          const aclTensor* out)
@@ -302,10 +304,32 @@ aclnnStatus aclnnRReluWithNoiseGetWorkspaceSize(const aclTensor* self, const acl
 
     const aclTensor* reluOut = nullptr;
     if (training) {
-        auto status = ComputeTrainingMode(selfReshapeOut, noiseContiguous, self, noise, selfContiguous, lower, upper,
-                                          seed, offset, newSelfShape, oldSelfShape, oldNoiseShape, selfTensorSize,
-                                          noiseTensorSize, &reluOut, uniqueExecutor.get());
-        CHECK_RET(status == ACLNN_SUCCESS, status);
+        auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
+        if (curArch == NpuArch::DAV_3510 || curArch == NpuArch::DAV_9201 || curArch == NpuArch::DAV_9202) {
+            // 950/960 训练模式单 kernel 实现（确定性 PRNG，仅依赖元素线性索引与 seed/offset）
+            if (offset % RANDOM_OFFSET_ALIGN_ELEMS != 0) {
+                OP_LOGE(ACLNN_ERR_PARAM_INVALID, "aclnnRReluWithNoise: offset[%ld] should be a multiple of %ld.",
+                        offset, RANDOM_OFFSET_ALIGN_ELEMS);
+                return ACLNN_ERR_PARAM_INVALID;
+            }
+            const aclTensor* noiseOut = nullptr;
+            reluOut = l0op::RreluWithNoiseTrain(selfReshapeOut, seed, offset, lower->ToFloat(), upper->ToFloat(),
+                                                &noiseOut, uniqueExecutor.get());
+            CHECK_RET(reluOut != nullptr && noiseOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            // 拍平输入时 kernel 产出的 noiseOut 需先还原 oldSelfShape，再写回 noise 输入张量
+            const aclTensor* noiseReshapeOut = noiseOut;
+            if (noiseOut->GetViewShape() != oldSelfShape) {
+                noiseReshapeOut = l0op::Reshape(noiseOut, oldSelfShape, uniqueExecutor.get());
+                CHECK_RET(noiseReshapeOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
+            }
+            auto noiseCopyOut = l0op::ViewCopy(noiseReshapeOut, noise, uniqueExecutor.get());
+            CHECK_RET(noiseCopyOut != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        } else {
+            auto status = ComputeTrainingMode(selfReshapeOut, noiseContiguous, self, noise, selfContiguous, lower,
+                                              upper, seed, offset, newSelfShape, oldSelfShape, oldNoiseShape,
+                                              selfTensorSize, noiseTensorSize, &reluOut, uniqueExecutor.get());
+            CHECK_RET(status == ACLNN_SUCCESS, status);
+        }
     } else {
         auto negativeSlope = (lower->ToFloat() + upper->ToFloat()) / 2;
         reluOut = l0op::LeakyRelu(selfReshapeOut, negativeSlope, uniqueExecutor.get());
