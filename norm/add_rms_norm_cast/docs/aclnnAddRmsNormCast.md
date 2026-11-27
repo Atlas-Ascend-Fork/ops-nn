@@ -95,7 +95,7 @@ aclnnStatus aclnnAddRmsNormCast(
       <td>输入</td>
       <td>表示用于Add计算的第一个输入。对应公式中的`x1`。</td>
       <td>支持空Tensor。</td>
-      <td>BFLOAT16、FLOAT16</td>
+      <td>FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>
       <td>√</td>

@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：[aclnnRmsNorm](../../rms_norm/docs/aclnnRmsNorm.md)的反向计算。用于计算RmsNorm的梯度，即在反向传播过程中计算输入张量的梯度。
+- 接口功能：[aclnnRmsNorm](../../rms_norm/docs/aclnnRmsNorm.md)的反向计算，用于计算RmsNorm的梯度，即在反向传播过程中计算输入张量的梯度。
 - 算子公式：
 
   - 正向公式：
@@ -35,7 +35,7 @@
   - 反向推导：
 
   $$
-  dx_i= (dy_i * g_i - \frac{1}{\operatorname{Rms}(\mathbf{x})} * x_i * \operatorname{Mean}(\mathbf{y})) * \frac{1} {\operatorname{Rms}(\mathbf{x})},  \quad \text { where } \operatorname{Mean}(\mathbf{y}) = \frac{1}{n}\sum_{i=1}^n (dy_i * g_i * x_i * \frac{1}{\operatorname{Rms}(\mathbf{x})})
+  dx_i= (dy_i * g_i - \frac{1}{\operatorname{Rms}(\mathbf{x})} * x_i * \operatorname{Mean}(\mathbf{y})) * \frac{1} {\operatorname{Rms}(\mathbf{x})}, \quad \text { where } \operatorname{Mean}(\mathbf{y}) = \frac{1}{n}\sum_{i=1}^n (dy_i * g_i * x_i * \frac{1}{\operatorname{Rms}(\mathbf{x})})
   $$
 
   $$
@@ -126,7 +126,7 @@ aclnnStatus aclnnRmsNormGrad(
       <td>gamma（aclTensor*）</td>
       <td>输入</td>
       <td>表示正向算子进行归一化计算的缩放因子（权重），对应公式中的`gamma`。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape需要满足gamma_shape = x_shape[n:], n < x_shape.dims()。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape需要满足gamma_shape = x_shape[n:]，n < x_shape.dims()。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1-7</td>
@@ -261,7 +261,7 @@ aclnnStatus aclnnRmsNormGrad(
 ## 约束说明
 
 <!-- npu="310p" id8 -->
-- <term>Atlas推理系列产品</term>：归一化维的总数据量（即`gamma`各维度大小之积×单个元素字节数）必须大于等于32 Bytes。
+- <term>Atlas推理系列产品</term>：归一化维的总数据量（即`gamma`各维度大小之积×单个元素字节数）必须大于等于32字节。
 <!-- end id8 -->
 
 - 各产品支持数据类型说明：

@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：对输入tensor中指定的维度dim进行数据聚集。
+- 接口功能：对输入Tensor中指定的维度dim进行数据聚集。
 
 - 计算公式：
   给定张量$self$，维度$d$，和一个索引张量$index$，定义$n$是$self$的维度，$i_d$表示维度$d$的索引，$index_{i_d}$表示索引张量$index$在维度$d$上的第$i_d$个索引值。对指定维度d的gather功能可以用如下的数学公式表示：
@@ -218,7 +218,7 @@ aclnnStatus aclnnGather(
       <td>除了dim指定的维度，其他维度上index的size大于self。</td>
       </tr>
       <tr>
-      <td>index为非空tensor且self在dim指定的维度上的size为0。</td>
+      <td>index为非空Tensor且self在dim指定的维度上的size为0。</td>
       </tr>
     </tbody>
     </table>

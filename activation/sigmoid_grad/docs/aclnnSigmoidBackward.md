@@ -107,7 +107,7 @@ aclnnStatus aclnnSigmoidBackward(
       <td>gradInput（aclTensor*）</td>
       <td>输出</td>
       <td>为输入张量的梯度值，公式中的grad_input。</td>
-      <td><ul><li>shape需要与gradOutput和output的broadcast结果一致（参见<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>）。</li><li>数据类型需要是gradOutput，output可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li></ul></td>
+      <td><ul><li>shape需要与gradOutput和output的broadcast结果一致（参见<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>）。</li><li>数据类型需要是gradOutput、output可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li></ul></td>
       <td>FLOAT、FLOAT16、BFLOAT16、DOUBLE、COMPLEX64、COMPLEX128</td>
       <td>ND</td>
       <td>1-8</td>

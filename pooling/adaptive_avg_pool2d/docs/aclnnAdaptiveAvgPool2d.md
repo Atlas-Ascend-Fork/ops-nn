@@ -163,7 +163,7 @@ aclnnStatus aclnnAdaptiveAvgPool2d(
       <td>self和out数据类型或者数据格式不一致。</td>
     </tr>
     <tr>
-      <td>outputSize非法,出现除零，负数，越界等不满足算子正常逻辑的现象。</td>
+      <td>outputSize非法，出现除零、负数、越界等不满足算子正常逻辑的现象。</td>
     </tr>
     <tr>
       <td>self的维度不等于3或4。</td>
@@ -172,7 +172,7 @@ aclnnStatus aclnnAdaptiveAvgPool2d(
       <td>outputSize的维度不等于2。</td>
     </tr>
     <tr>
-      <td>仅<term>Ascend 950PR&950DT系列产品</term>：self或out的shape的除第一维度以外不大于0。</td>
+      <td>仅<term>Ascend 950PR&950DT系列产品</term>：self或out的shape除第一维度以外不大于0。</td>
     </tr>
     <tr>
       <td>self和out维度不一致。</td>

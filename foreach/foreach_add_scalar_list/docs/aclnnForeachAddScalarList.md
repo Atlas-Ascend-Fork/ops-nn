@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：输入张量列表和输入标量列表执行逐元素相加运算。
+- 接口功能：对输入张量列表和输入标量列表执行逐元素相加运算。
 
 - 计算公式：
 
@@ -97,7 +97,7 @@ aclnnStatus aclnnForeachAddScalarList(
     <tr>
       <td>scalars（aclScalarList*）</td>
       <td>输入</td>
-      <td>表示加法运算的输入标量。对应公式中的`scalars`。</td>
+      <td>表示进行加法运算的输入标量列表。对应公式中的`scalars`。</td>
       <td><ul><li>元素个数与`x`中Tensor的个数相等。</li><li>数据类型与入参`x`的数据类型存在一定的对应关系：<ul><li>当入参`x`的数据类型为FLOAT32、FLOAT16、BFLOAT16时，`scalars`的数据类型支持FLOAT32、DOUBLE（当数据类型为DOUBLE时，内部转换为FLOAT32后参与计算）。</li><li>当入参`x`的数据类型为INT32时，`scalars`的数据类型仅支持INT64。</li></ul></li></ul></td>
       <td>FLOAT32、DOUBLE、INT64</td>
       <td>-</td>
@@ -252,7 +252,7 @@ aclnnStatus aclnnForeachAddScalarList(
 - `out`的Tensor个数大于等于入参`x`的Tensor个数，多出的Tensor不会被写入计算结果。
 - 确定性计算：
   - aclnnForeachAddScalarList默认确定性实现。
-- 不同产品中out与x的tensorList长度约束关系如下:
+- 不同产品中out与x的tensorList长度约束关系如下：
   <!-- npu="A3,910b" id10 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
     out的tensorList长度（包含的Tensor个数）需大于等于x的tensorList长度（包含的Tensor个数）。

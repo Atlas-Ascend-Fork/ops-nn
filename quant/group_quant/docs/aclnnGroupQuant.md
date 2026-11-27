@@ -85,7 +85,7 @@ aclnnStatus aclnnGroupQuant(
       <td>输入</td>
       <td>表示需要执行量化的输入，对应公式中的`x`。</td>
       <td><ul><li>支持空Tensor。</li><li>如果`dstType`为3(INT32)，shape的最后一维需要能被8整除。</li><li>如果`dstType`为29(INT4)，shape的最后一维需要能被2整除。</li></ul></td>
-      <td>FLOAT32，FLOAT16，BFLOAT16</td>
+      <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2</td>
       <td>√</td>
@@ -95,7 +95,7 @@ aclnnStatus aclnnGroupQuant(
       <td>输入</td>
       <td>表示量化中的scale值，对应公式中的`scale`。</td>
       <td><ul><li>不支持空Tensor。</li><li>`scale`的第0维大小不支持为0。</li><li>`scale`的第2维与x的第2维相等。</li></ul></td>
-      <td>FLOAT32，FLOAT16，BFLOAT16</td>
+      <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>2</td>
       <td>√</td>
@@ -105,7 +105,7 @@ aclnnStatus aclnnGroupQuant(
       <td>输入</td>
       <td>表示量化中的groupIndex值。</td>
       <td><ul><li>不支持空Tensor。</li><li>维度与scale的第1维相等。</li></ul></td>
-      <td>INT32，INT64</td>
+      <td>INT32、INT64</td>
       <td>ND</td>
       <td>1</td>
       <td>√</td>
@@ -115,7 +115,7 @@ aclnnStatus aclnnGroupQuant(
       <td>输入</td>
       <td>可选参数，表示量化中的offset值，对应公式中的`offsetOptional`。</td>
       <td><ul><li>不支持空Tensor。</li><li>数据类型与`scale`一致。</li><li>`offsetOptional`为1个数。</li></ul></td>
-      <td>FLOAT32，FLOAT16，BFLOAT16</td>
+      <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>1</td>
       <td>√</td>
@@ -124,7 +124,7 @@ aclnnStatus aclnnGroupQuant(
       <td>dstType（int32_t）</td>
       <td>输入</td>
       <td>表示指定输出的数据类型。</td>
-      <td><ul><li>支持取值2，3，29，分别表示INT8，INT32，INT4。</li></ul></td>
+      <td><ul><li>支持取值2、3、29，分别表示INT8、INT32、INT4。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -135,7 +135,7 @@ aclnnStatus aclnnGroupQuant(
       <td>输出</td>
       <td>表示分组量化后的输出，对应公式中的`y`。</td>
       <td><ul><li>支持空Tensor。</li><li>类型为INT32时，shape的最后一维是`x`最后一维的1/8，其余维度和x一致。</li><li>其他类型时，shape与`x`一致。</li></ul></td>
-      <td>INT8，INT32，INT4</td>
+      <td>INT8、INT32、INT4</td>
       <td>ND</td>
       <td>2</td>
       <td>√</td>
@@ -163,7 +163,7 @@ aclnnStatus aclnnGroupQuant(
   </tbody>
   </table>
 
-- **返回值**
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
@@ -245,7 +245,7 @@ aclnnStatus aclnnGroupQuant(
   </tbody>
   </table>
 
-- **返回值**
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 

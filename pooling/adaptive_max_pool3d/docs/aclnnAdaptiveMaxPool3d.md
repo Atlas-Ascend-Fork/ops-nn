@@ -27,7 +27,7 @@
 
 - 计算公式：
   N（Batch）表示批量大小、C（Channels）表示特征图通道、D（Depth）表示特征图深度、H（Height）表示特征图高度、W（Width）表示特征图宽度。
-  对于输入self维度$[N,C,D,H,W]$，outputSize值为$[D_o,H_o,W_o]$的场景，其输出output维度为$[N,C,D_o,H_o,W_o]$，索引indices维度为$[N,C,D_o,H_o,W_o]$，相应tensor中每个元素$(l,m,n)$的计算公式如下：
+  对于输入self维度$[N,C,D,H,W]$，outputSize值为$[D_o,H_o,W_o]$的场景，其输出output维度为$[N,C,D_o,H_o,W_o]$，索引indices维度为$[N,C,D_o,H_o,W_o]$，相应Tensor中每个元素$(l,m,n)$的计算公式如下：
 
   $$
   D^{l}_{left} = \lfloor(l*D)/D_o\rfloor
@@ -113,7 +113,7 @@ aclnnStatus aclnnAdaptiveMaxPool3d(
         <td>self</td>
         <td>输入</td>
         <td>待计算张量。</td>
-        <td>D轴H轴W轴3个维度的乘积D*H*W不能大于int32的最大表示，且与outputOut的数据类型保持一致。</td>
+        <td>D轴、H轴、W轴3个维度的乘积D*H*W不能大于int32的最大表示范围，且与outputOut的数据类型保持一致。</td>
         <td>BFLOAT16、FLOAT16、FLOAT32</td>
         <td>NCHW、NCDHW</td>
         <td>4-5</td>
@@ -123,9 +123,9 @@ aclnnStatus aclnnAdaptiveMaxPool3d(
         <td>outputSize</td>
         <td>输入</td>
         <td>输出窗口大小。</td>
-        <td>表示输出结果在Dout，Hout，Wout维度上的空间大小。</td>
-        <td>-</td>
+        <td>表示输出结果在Dout、Hout、Wout维度上的空间大小。</td>
         <td>INT32</td>
+        <td>-</td>
         <td>-</td>
         <td>-</td>
       </tr>
@@ -172,7 +172,7 @@ aclnnStatus aclnnAdaptiveMaxPool3d(
     </tbody></table>
 
   <!-- npu="A3,910b" id7 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：参数`indicesOut`的数据类型不支持INT64，
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>：参数`indicesOut`的数据类型不支持INT64。
 
   <!-- end id7 -->
 

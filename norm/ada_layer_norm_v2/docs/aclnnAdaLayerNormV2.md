@@ -173,7 +173,7 @@ aclnnStatus aclnnAdaLayerNormV2(
     <tr>
       <td>meanOutOptional（aclTensor*）</td>
       <td>输出</td>
-      <td>可选输出，表示归一化后的均值。对应公式中的`mean`。</td>
+      <td>可选输出，表示输入的均值。对应公式中的`mean`。</td>
       <td><ul><li>不支持空Tensor。</li><li>数据类型与入参`x`的数据类型一致。</li><li>shape为[B…, S, 1]，最后一维固定为1，其他维度大小和`x`一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>

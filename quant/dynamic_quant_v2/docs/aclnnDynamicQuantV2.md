@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：为输入张量进行per-token对称/非对称动态量化。在MOE场景下，每个专家的smoothScalesOptional是不同的，根据输入的groupIndexOptional进行区分。
+- 接口功能：为输入张量进行per-token对称/非对称动态量化。在MoE场景下，每个专家的smoothScalesOptional是不同的，根据输入的groupIndexOptional进行区分。
 
 - 计算公式：
   - 对称量化：
@@ -335,7 +335,7 @@ aclnnStatus aclnnDynamicQuantV2(
   - 当有groupIndexOptional时，专家数不超过x剔除最后一维的各个维度乘积。groupIndexOptional的值需要是一组不小于零且非递减的数组，且最后一个值和x剔除最后一维的各个维度乘积相等。若不满足该条件，结果无实际意义。
 <!-- end id9 -->
 <!-- npu="910,310p" id10 -->
-- <term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：输入x的最后一维需满足被32整除，暂时只支持对称量化，不支持BFLOAT16数据类型。
+- <term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：输入x的最后一维需满足能被32整除，暂时只支持对称量化，不支持BFLOAT16数据类型。
 <!-- end id10 -->
 - 确定性计算：
   - aclnnDynamicQuantV2默认确定性实现。

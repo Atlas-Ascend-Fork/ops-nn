@@ -228,7 +228,7 @@ aclnnStatus aclnnForeachMulList(
   - aclnnForeachMulList默认确定性实现。
 - 列表长度：x1、x2、out单个列表长度n满足1≤n≤256。
 - 整数类型（INT32、INT16、INT8、UINT8）乘法发生溢出时，按C语义回绕，不报错。
-- FLOAT16、BFLOAT16类型的输入会先提升为FLOAT32相乘，再将结果舍回为原类型。
+- FLOAT16、BFLOAT16类型的输入会先提升为FLOAT32相乘，再将结果舍入为原类型。
 
 ## 调用示例
 

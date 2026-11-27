@@ -207,7 +207,7 @@ aclnnStatus aclnnThnnFusedLstmCell(
         </ul></td>
         <td>FLOAT、FLOAT16、BFLOAT16</td>
         <td>ND</td>
-        <td>(batch_size, 4 * hidden_size)</td>
+        <td>(batch_size, 4*hidden_size)</td>
         <td>√</td>
       </tr>
       <tr>

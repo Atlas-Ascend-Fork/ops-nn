@@ -29,13 +29,13 @@
   - 当ceilMode=False时，out tensor的shape中H和W维度推导公式：
 
     $$
-    [H_{out}, W_{out}]=[\lfloor{\frac{H_{in}+  padding\_size_{Htop} + padding\_size_{Hbottom} - dilation\_size \times(k_h - 1) - 1}{s_h}}\rfloor + 1,\lfloor{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - dilation\_size \times(k_w - 1) - 1}{s_w}}\rfloor + 1]
+    [H_{out}, W_{out}]=[\lfloor{\frac{H_{in}+ padding\_size_{Htop} + padding\_size_{Hbottom} - dilation\_size \times(k_h - 1) - 1}{s_h}}\rfloor + 1,\lfloor{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - dilation\_size \times(k_w - 1) - 1}{s_w}}\rfloor + 1]
     $$
 
   - 当ceilMode=True时，out tensor的shape中H和W维度推导公式：
 
     $$
-    [H_{out}, W_{out}]=[\lceil{\frac{H_{in}+  padding\_size_{Htop} + padding\_size_{Hbottom} - dilation\_size \times(k_h - 1) - 1}{s_h}}\rceil + 1,\lceil{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - dilation\_size \times(k_w - 1) - 1}{s_w}}\rceil + 1]
+    [H_{out}, W_{out}]=[\lceil{\frac{H_{in}+ padding\_size_{Htop} + padding\_size_{Hbottom} - dilation\_size \times(k_h - 1) - 1}{s_h}}\rceil + 1,\lceil{\frac{W_{in}+ padding\_size_{Wleft} + padding\_size_{Wright} - dilation\_size \times(k_w - 1) - 1}{s_w}}\rceil + 1]
     $$
 
     - 滑窗左上角起始位处在下或右侧pad填充位上或者界外（无法取到有效值）时，舍弃该滑窗结果，在上述推导公式基础上对应空间轴shape需减去1：
@@ -43,7 +43,7 @@
       $$
       \begin{cases}
       H_{out}=H_{out} - 1& \text{if } (H_{out}-1)*s_h>=H_{in}+padding\_size_{Htop} \\
-      W_{out}=W_{out} - 1& \text{if } (W_{out}-1)*s_w>=W_{in}+padding\_size_{Wleft}  \\
+      W_{out}=W_{out} - 1& \text{if } (W_{out}-1)*s_w>=W_{in}+padding\_size_{Wleft} \\
       \end{cases}\\
       $$
 
@@ -142,7 +142,7 @@ aclnnStatus aclnnMaxPool(
       <td>pads（const aclIntArray*）</td>
       <td>输入</td>
       <td>沿着空间轴方向开始和结束的位置填充，对应公式中的padding_size。</td>
-      <td>长度为0、1、2或4。当长度为2时， padding = {上(下),左(右)}，长度为4时，padding = {上,左,下，右}</td>
+      <td>长度为0、1、2或4。当长度为2时，padding = {上(下),左(右)}，长度为4时，padding = {上,左,下,右}</td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
@@ -246,13 +246,13 @@ aclnnStatus aclnnMaxPool(
       <td>kernelShape的长度不等于1或2。</td>
     </tr>
     <tr>
-      <td>kernelShape的数值中存在小于等于0。</td>
+      <td>kernelShape的数值中存在小于等于0的值。</td>
     </tr>
     <tr>
       <td>strides的长度不等于0、1或2。</td>
     </tr>
     <tr>
-      <td>strides的数值中存在小于等于0。</td>
+      <td>strides的数值中存在小于等于0的值。</td>
     </tr>
     <tr>
       <td>单个空间轴方向pad填充量之和需小于等于对应方向kernelShape。</td>

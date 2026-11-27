@@ -31,7 +31,7 @@
   $$
 
   $$
-  \text { where } rstd = \frac{1} {\sqrt{\frac{1}{n} \sum_{i=1}^n (x^{\prime}_i - \bar{x^{\prime}})^2 + epsilon} }, \quad x^{\prime}_i = alpha * x_i   + gx_i
+  \text { where } rstd = \frac{1} {\sqrt{\frac{1}{n} \sum_{i=1}^n (x^{\prime}_i - \bar{x^{\prime}})^2 + epsilon} }, \quad x^{\prime}_i = alpha * x_i + gx_i
   $$
 
 ## 函数原型
@@ -160,7 +160,7 @@ aclnnStatus aclnnDeepNorm(
     <tr>
       <td>rstdOut（aclTensor*）</td>
       <td>输出</td>
-      <td>表示计算输出的标准差倒数，用于归一化操作，对应公式中`rstd`。</td>
+      <td>表示计算输出的标准差倒数，用于归一化操作，对应公式中的`rstd`。</td>
       <td><ul><li>不支持空Tensor。</li><li>shape与输入`x`满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>（前几维的维度和输入`x`前几维的维度相同，前几维表示不需要norm的维度，其余维度大小为1）。</li></ul></td>
       <td>FLOAT32</td>
       <td>ND</td>
@@ -222,7 +222,7 @@ aclnnStatus aclnnDeepNorm(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>如果传入参数是必选输入，输出或者必选属性，且是空指针。</td>
+      <td>如果传入参数是必选输入、输出或者必选属性，且是空指针。</td>
     </tr>
     <tr>
       <td rowspan="2">ACLNN_ERR_PARAM_INVALID</td>
@@ -294,7 +294,7 @@ aclnnStatus aclnnDeepNorm(
     - <term>Ascend 950PR&950DT系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：x、gx、beta、gamma、yOut支持FLOAT32、FLOAT16、BFLOAT16。
     <!-- end id8 -->
     - rstdOut、meanOut支持：FLOAT32。
-  - 数据格式支持：ND
+  - 数据格式支持：ND。
 
 - 未支持类型说明：
 

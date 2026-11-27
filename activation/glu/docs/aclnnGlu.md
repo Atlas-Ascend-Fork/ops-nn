@@ -93,7 +93,7 @@ aclnnStatus aclnnGlu(
       <td>dim（int64_t）</td>
       <td>输入</td>
       <td>表示要拆分输入self的维度。</td>
-      <td>取值范围[-self.dim，self.dim-1]。</td>
+      <td>取值范围[-self.dim, self.dim-1]。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -166,7 +166,7 @@ aclnnStatus aclnnGlu(
       <td>self和out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>入参dim超出了self的shape可选维度范围[-self.dim，self.dim-1]。</td>
+      <td>入参dim超出了self的shape可选维度范围[-self.dim, self.dim-1]。</td>
     </tr>
     <tr>
       <td>入参self根据指定的dim所对应的维度不能整除2。</td>

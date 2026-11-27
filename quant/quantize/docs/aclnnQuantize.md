@@ -133,7 +133,7 @@ aclnnStatus aclnnQuantize(
     <tr>
       <td>out（aclTensor*）</td>
       <td>输出</td>
-      <td>表示量化输出Tensor。对应公式中的`out`。</td>
+      <td>表示量化输出Tensor，对应公式中的`out`。</td>
       <td><ul><li>支持空Tensor。</li><li>其shape需要与`x`一致，数据类型由入参`dtype`指定。</li></ul></td>
       <td>INT8、UINT8、INT32、HIFLOAT8、FLOAT8_E4M3FN、FLOAT8_E5M2</td>
       <td>ND</td>
@@ -167,7 +167,7 @@ aclnnStatus aclnnQuantize(
   - <term>Atlas推理系列产品</term>：
     - 数据类型：
       - 入参`x`、`scales`不支持BFLOAT16、FLOAT32。
-      - 入参`zeroPoints`不支持FLOAT32。且当数据类型为BFLOAT16时，`x`、`scales`数据类型均为BFLOAT16。
+      - 入参`zeroPoints`不支持FLOAT32，且当数据类型为BFLOAT16时，`x`、`scales`数据类型均为BFLOAT16。
       - 出参`out`仅支持INT8、UINT8、INT32。
     - 入参`dtype`仅支持取值ACL_INT8、ACL_UINT8、ACL_INT32。
   <!-- end id7 -->
@@ -175,7 +175,7 @@ aclnnStatus aclnnQuantize(
   <!-- npu="A3,910b" id8 -->
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
     - 数据类型：
-      - 入参`zeroPoints`不支持FLOAT32。且当数据类型为BFLOAT16时，`x`、`scales`数据类型均为BFLOAT16。
+      - 入参`zeroPoints`不支持FLOAT32，且当数据类型为BFLOAT16时，`x`、`scales`数据类型均为BFLOAT16。
       - 出参`out`仅支持INT8、UINT8、INT32。
     - 入参`dtype`仅支持取值ACL_INT8、ACL_UINT8、ACL_INT32。
   <!-- end id8 -->

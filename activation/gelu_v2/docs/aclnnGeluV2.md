@@ -170,7 +170,7 @@ aclnnStatus aclnnGeluV2(
       <td>x和y的数据类型和数据格式不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>x和y数据类型不一致。</td>
+      <td>x和y的数据类型不一致。</td>
     </tr>
     <tr>
       <td>x和y的shape不一致。</td>

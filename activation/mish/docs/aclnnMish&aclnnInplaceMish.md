@@ -319,7 +319,7 @@ aclnnStatus aclnnInplaceMish(
       <td>selfRef的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>dim超出输入selfRef的维度范围时。</td>
+      <td>dim超出输入selfRef的维度范围。</td>
     </tr>
   </tbody></table>
 

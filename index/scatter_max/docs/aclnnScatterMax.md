@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 算子功能：实现兼容tf.compat.v1.scatter_max的功能，将tensor updates中的值按指定的索引tensor indices逐元素取最大值更新到tensor varRef的切片上。若有多于一个updates值作用到varRef的同一个切片，那么依次在这一切片上取最大值。规则如下：
+- 算子功能：实现兼容tf.compat.v1.scatter_max的功能，将Tensor updates中的值按指定的索引Tensor indices逐元素取最大值更新到Tensor varRef的切片上。若有多于一个updates值作用到varRef的同一个切片，那么依次在这一切片上取最大值。规则如下：
 
 $$
 varRef[indices[i],...] = \max(varRef[indices[i],...], updates[i,...])

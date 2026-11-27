@@ -23,11 +23,11 @@
 
 ## 功能说明
 
-- 接口功能：[aclnnBatchNormElemt](../../batch_norm_elemt/docs/aclnnBatchNormElemt.md)的反向计算。用于计算输入张量的元素级梯度，以便在反向传播过程中更新模型参数。
+- 接口功能：[aclnnBatchNormElemt](../../batch_norm_elemt/docs/aclnnBatchNormElemt.md)的反向计算，用于计算输入张量的元素级梯度，以便在反向传播过程中更新模型参数。
 - 计算公式：
 
   $$
-  gradInput = (({gradOut} - \frac{sumDy}{ {counter}}) - (input - mean) * (invstd^{2} *   (\frac{sumDyXmu}{ {counter}}))) * invstd * weight
+  gradInput = (({gradOut} - \frac{sumDy}{ {counter}}) - (input - mean) * (invstd^{2} * (\frac{sumDyXmu}{ {counter}}))) * invstd * weight
   $$
 
 ## 函数原型
@@ -86,7 +86,7 @@ aclnnStatus aclnnBatchNormElemtBackward(
     <tr>
       <td>gradOut（aclTensor*）</td>
       <td>输入</td>
-      <td>表示正向输出的微分，对应公式中的`gradOut`。</td>
+      <td>表示正向输出的梯度，对应公式中的`gradOut`。</td>
       <td><ul><li>支持空Tensor。</li><li>shape与`input`的shape保持一致。</li><li>第2维固定为channel轴。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>

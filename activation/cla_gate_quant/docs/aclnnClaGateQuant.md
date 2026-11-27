@@ -242,7 +242,7 @@ aclnnStatus aclnnClaGateQuant(
     <tr>
       <td>inputAttnLayout（char*）</td>
       <td>输入</td>
-      <td>输入globalAttn/localAttn tensor的排布格式。</td>
+      <td>输入globalAttn/localAttn Tensor的排布格式。</td>
       <td><ul><li>当前仅支持取值TND。</li></ul></td>
       <td>STRING</td>
       <td>-</td>
@@ -414,8 +414,8 @@ aclnnStatus aclnnClaGateQuant(
 - 输入globalAttn / localAttn必须为3维张量且shape一致，为[T, N, D]；N ∈ [1,128]，D ∈ {128, 256}。
 - 输入globalGateLogits / localGateLogits必须为2维张量，为[T, N]，数据类型与globalAttn / localAttn一致。
 - 当dstType为FLOAT4_E2M1/FLOAT4_E1M2时，K=N*D必须可被4整除。
-- FP8输出类型（FLOAT8_E5M2/FLOAT8_E4M3FN）仅支持 “rint” 舍入模式。
-- 量化block固定为32：row-wise为[1,32] block（沿K方向）、col-wise为[32,1] block（沿T方向）；
+- FP8输出类型（FLOAT8_E5M2/FLOAT8_E4M3FN）仅支持“rint”舍入模式。
+- 量化block固定为32：row-wise为[1,32] block（沿K方向）、col-wise为[32,1] block（沿T方向）。
 - 关于rowScaleOut、colScaleOut的shape约束说明：
   - rowScaleOut.shape[1] = ceil(ceil(N*D/32) / 2) = ceil(N*D/64)。
   - rowScaleOut.shape[2] = 2。

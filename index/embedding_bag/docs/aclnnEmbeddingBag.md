@@ -300,7 +300,7 @@ aclnnStatus aclnnEmbeddingBag(
     </tbody></table>
 
   <!-- npu="A3,910b,910,310p" id9 -->
-  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>： indices仅支持0-1维，perSampleWeights仅支持1维且在除sum模式外的其他模式必须为nullptr 。
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：indices仅支持0-1维，perSampleWeights仅支持1维且在除sum模式外的其他模式必须为nullptr。
   - indices和offsets的数据类型至少一个为INT32或INT64；当数据类型为INT16、INT8、UINT8时，接口内部会转换为INT32进行计算。
 
   <!-- end id9 -->
@@ -331,22 +331,22 @@ aclnnStatus aclnnEmbeddingBag(
       <tr>
       <td rowspan="7">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="7">161002</td>
-      <td>weight数据类型不在支持范围内,weight维度不是2维。</td>
+      <td>weight数据类型不在支持范围内，weight维度不是2维。</td>
       </tr>
       <tr>
-      <td>indices数据类型不在支持范围内,indices维度不是1维。</td>
+      <td>indices数据类型不在支持范围内，indices维度不是1维。</td>
       </tr>
       <tr>
-      <td>offsets数据类型不在支持范围内, offsets维度不是1维。</td>
+      <td>offsets数据类型不在支持范围内，offsets维度不是1维。</td>
       </tr>
       <tr>
       <td>indices和offsets的数据类型都不是INT32或INT64。</td>
       </tr>
       <tr>
-      <td>perSampleWeights在传入非nullptr的情况下，数据类型与weight不一致, perSampleWeights不是1维，perSampleWeights元素数量与indices不相等,在非sum模式下，perSampleWeights不是nullptr。</td>
+      <td>perSampleWeights在传入非nullptr的情况下，数据类型与weight不一致，perSampleWeights不是1维，perSampleWeights元素数量与indices不相等，在非sum模式下，perSampleWeights不是nullptr。</td>
       </tr>
       <tr>
-      <td>output数据类型与weight不一致,shape与定义不符。</td>
+      <td>output数据类型与weight不一致，shape与定义不符。</td>
       </tr>
       <tr>
       <td>offset2bag、bagSize、maxIndices数据类型和shape与推导得到的数据类型和shape不符。</td>
@@ -402,7 +402,7 @@ aclnnStatus aclnnEmbeddingBag(
 - 确定性计算：
   - aclnnEmbeddingBag默认确定性实现。
 
-`sparse`与`scaleGradByFreq`仅支持输入`False`。
+`sparse`与`scaleGradByFreq`仅支持输入`false`。
 
 ## 调用示例
 

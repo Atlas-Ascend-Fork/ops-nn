@@ -164,7 +164,7 @@ aclnnStatus aclnnSoftshrinkBackward(
   - <term>Atlas 200I/500 A2推理产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：gradOutput、self和gradInput的数据类型支持FLOAT16、FLOAT。
   <!-- end id8 -->
 
-- **返回值**
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
@@ -246,7 +246,7 @@ aclnnStatus aclnnSoftshrinkBackward(
   </tbody>
   </table>
 
-- **返回值**
+- **返回值：**
 
    aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 

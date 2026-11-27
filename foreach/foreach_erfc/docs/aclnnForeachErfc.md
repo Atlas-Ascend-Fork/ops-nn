@@ -32,7 +32,7 @@
   $$
 
   $$
-  y_i = {\rm erfc}(x_i) = 1 - {\rm erf}(x_i) = 1 - \frac{2}{\sqrt{\pi}} \int_{0}^{x_i} e^{-t^2} dt = \frac{2}{\sqrt{\pi}} \int_{x_i}^{\infty} e^{-t^2} dt   (i=0,1,...n-1)
+  y_i = {\rm erfc}(x_i) = 1 - {\rm erf}(x_i) = 1 - \frac{2}{\sqrt{\pi}} \int_{0}^{x_i} e^{-t^2} dt = \frac{2}{\sqrt{\pi}} \int_{x_i}^{\infty} e^{-t^2} dt (i=0,1,...n-1)
   $$
 
 ## 函数原型
@@ -84,7 +84,7 @@ aclnnStatus aclnnForeachErfc(
     <tr>
       <td>x（aclTensorList*）</td>
       <td>输入</td>
-      <td>表示按元素返回从x到无穷大积分的互补误差函数运算的输入张量列表，对应公式中的`x`。</td>
+      <td>表示按元素执行从x到无穷大积分的互补误差函数运算的输入张量列表，对应公式中的`x`。</td>
       <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>ND</td>

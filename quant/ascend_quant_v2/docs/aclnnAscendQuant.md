@@ -25,13 +25,13 @@
 
 - 接口功能：根据输入的scale和offset对输入x进行量化，且scale和offset的size需要是x的最后一维或1。
 - 计算公式：
-  - sqrtMode为false时，计算公式为:
+  - sqrtMode为false时，计算公式为：
 
     $$
     y = roundMode(x * scale + offset)
     $$
 
-  - sqrtMode为true时，计算公式为:
+  - sqrtMode为true时，计算公式为：
 
     $$
     y = roundMode(x * scale * scale + offset)

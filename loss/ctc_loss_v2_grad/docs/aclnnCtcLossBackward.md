@@ -40,7 +40,7 @@
   将找到使$p(l|x)$值最大的$l$的路径的任务称为解码，公式(3)：
 
   $$
-  h(x)=^{arg \  max}_{l \in L^{ \leq T}} \ p(l|x).\tag{3}
+  h(x)=^{arg \ max}_{l \in L^{ \leq T}} \ p(l|x).\tag{3}
   $$
 
   当zeroInfinity为True时：

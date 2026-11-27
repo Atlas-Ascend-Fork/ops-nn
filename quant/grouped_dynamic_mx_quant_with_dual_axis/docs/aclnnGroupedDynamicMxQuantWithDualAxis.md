@@ -40,7 +40,7 @@
   Amax(D^{b})=\max_i(|d^{i}|)
   $$
 
-  当scaleAlg=1时，根据目标FP8类型最大可表示值计算FP32 scale：
+  当scaleAlg = 1时，根据目标FP8类型最大可表示值计算FP32 scale：
 
   $$
   S_{fp32}^{b}=\frac{Amax(D^{b})}{Amax(dstDtype)}
@@ -356,7 +356,7 @@ aclnnStatus aclnnGroupedDynamicMxQuantWithDualAxis(
 - N需要64对齐。
 - y1Out和y2Out的shape需要与x一致，均为[M,N]；y1Out和y2Out的数据类型需要与dstDtype指定的目标类型一致。
 - y1ScaleOut的shape由x决定，需要为[M,ceil(N/64),2]；y2ScaleOut的shape由x和groupIndex共同决定，需要为[floor(M/64)+G,N,2]，其中G为groupIndex元素个数。
-- groupIndex采用cumsum模式，每个元素表示对应group的结束行索引；每个元素值需要非负且非递减，最后一个元素需要等于M（即x.shape[0]），M=0时最后一个元素为0。
+- groupIndex采用cumsum模式，每个元素表示对应group的结束行索引；每个元素值需要非负且非递减，最后一个元素需要等于M（即x.shape[0]），M = 0时最后一个元素为0。
 
 ## 调用示例
 

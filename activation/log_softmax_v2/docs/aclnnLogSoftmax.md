@@ -23,12 +23,12 @@
 
 ## 功能说明
 
-- 接口功能：对输入张量计算Logsoftmax值。
+- 接口功能：对输入张量计算LogSoftmax值。
 
 - 计算公式：
 
   $$
-  logsoftmax\left ( {{x}_{i}} \right )=log\left ( {\frac {{e}^{{x}_{i}}}   {\sum ^{n-1}_{j=0} {{e}^{{x}_{j}}}}} \right )
+  logsoftmax\left ( {{x}_{i}} \right )=log\left ( {\frac {{e}^{{x}_{i}}} {\sum ^{n-1}_{j=0} {{e}^{{x}_{j}}}}} \right )
   $$
 
   实际计算时，会使用减去输入最大值和直接计算对数差值的方式防止浮点数运算的溢出和下溢问题，保证数值计算的稳定性。
@@ -93,7 +93,7 @@ aclnnStatus aclnnLogSoftmax(
       <tr>
       <td>dim（int64_t）</td>
       <td>输入</td>
-      <td>需要做Logsoftmax的轴。</td>
+      <td>需要做LogSoftmax的轴。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -104,7 +104,7 @@ aclnnStatus aclnnLogSoftmax(
       <td>out（aclTensor*）</td>
       <td>输出</td>
       <td>计算的出参。</td>
-      <td><ul><li>数据类型是self可转化的数据类型。</li><li>输出shape应该与输入shape一致。</li></ul></td>
+      <td><ul><li>数据类型是self可转换的数据类型。</li><li>输出shape应该与输入shape一致。</li></ul></td>
       <td>FLOAT16、FLOAT32、DOUBLE、BFLOAT16</td>
       <td>ND</td>
       <td>1-8</td>

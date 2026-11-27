@@ -28,7 +28,7 @@
 - 计算公式：
 
   $$
-  gradInput = gradOutput  \cdot  \begin{cases}
+  gradInput = gradOutput \cdot  \begin{cases}
   \frac{1}{1+e^{(-\beta * self)}}, ~~~~~~~\beta * self \le threshold \\
   1, ~~~~~~~~~~~~~~~~~~~~~\beta * self > threshold
   \end{cases}
@@ -160,7 +160,7 @@ aclnnStatus aclnnSoftplusBackward(
    - <term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16、DOUBLE。
    <!-- end id7 -->
 
-- **返回值**：
+- **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 

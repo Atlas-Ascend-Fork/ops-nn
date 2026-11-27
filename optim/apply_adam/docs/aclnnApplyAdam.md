@@ -39,19 +39,19 @@
   v_t = \beta_2 \times v_{t-1} + (1 - \beta_2) \times g_t^2
   $$
 
-  若useNesterov = true:
+  若useNesterov = true：
   $$
   var_t = var_{t-1} - lr_t \times \frac{\beta_1 \times m_t + (1 - \beta_1) \times g_t}{\sqrt{v_t} + \epsilon}
   $$
 
-  若useNesterov = false:
+  若useNesterov = false：
   $$
   var_t = var_{t-1} - lr_t \times \frac{m_t}{\sqrt{v_t} + \epsilon}
   $$
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用"aclnnApplyAdamGetWorkspaceSize"接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用"aclnnApplyAdam"接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnApplyAdamGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnApplyAdam”接口执行计算。
 
 ```Cpp
 aclnnStatus aclnnApplyAdamGetWorkspaceSize(
@@ -198,7 +198,7 @@ aclnnStatus aclnnApplyAdam(
     <tr>
       <td class="tg-0lax">grad（aclTensor*）</td>
       <td class="tg-0lax">输入</td>
-      <td class="tg-0lax">梯度数据，公式中的g</td>
+      <td class="tg-0lax">梯度数据，公式中的g。</td>
       <td class="tg-0lax">shape要求与输入varRef保持一致。</td>
       <td class="tg-0lax">与varRef保持一致</td>
       <td class="tg-0lax">ND</td>

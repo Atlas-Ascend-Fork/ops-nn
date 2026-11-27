@@ -66,7 +66,7 @@
     y = round\_to\_dst\_type(geluOut / outScaleOptional, round\_mode)
     $$
 
-  - maxValue: 对应数据类型的最大值。
+  - maxValue: 对应数据类型的最大值
 
     |   DataType    | maxValue |
     | :-----------: | :------: |
@@ -262,12 +262,12 @@ aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/co
   <tr>
     <td>ACLNN_ERR_PARAM_NULLPTR</td>
     <td>161001</td>
-    <td><ul><li>传入的self是空指针。</li><li>当quantMode为static时，传入inputScaleOptional，inputOffsetOptional为空指针。</li></ul></td>
+    <td><ul><li>传入的self是空指针。</li><li>当quantMode为static时，传入inputScaleOptional、inputOffsetOptional为空指针。</li></ul></td>
   </tr>
   <tr>
     <td>ACLNN_ERR_PARAM_INVALID</td>
     <td>161002</td>
-      <td><ul><li>self、inputScaleOptional、inputOffsetOptional、y、outScaleOptional为空tensor。</li><li>self、inputScaleOptional、inputOffsetOptional、y、outScaleOptional的数据类型不在支持的范围之内。</li><li>approximate、quantMode、roundMode、dstType不在支持的范围之内。</li><li>self、inputScaleOptional、inputOffsetOptional、y、outScaleOptional的shape不满足校验条件。</li></ul></td>
+      <td><ul><li>self、inputScaleOptional、inputOffsetOptional、y、outScaleOptional为空Tensor。</li><li>self、inputScaleOptional、inputOffsetOptional、y、outScaleOptional的数据类型不在支持的范围之内。</li><li>approximate、quantMode、roundMode、dstType不在支持的范围之内。</li><li>self、inputScaleOptional、inputOffsetOptional、y、outScaleOptional的shape不满足校验条件。</li></ul></td>
   </tr>
   <tr>
     <td rowspan="1">ACLNN_ERR_RUNTIME_ERROR</td>

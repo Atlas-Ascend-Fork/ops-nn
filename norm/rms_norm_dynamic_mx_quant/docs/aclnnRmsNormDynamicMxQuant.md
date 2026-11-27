@@ -147,7 +147,7 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
       <td>gamma（const aclTensor*）</td>
       <td>输入</td>
       <td>表示标准化过程中的权重张量。对应公式中的gamma。</td>
-      <td><ul><li>支持空Tensor。</li><li>shape只能为一维，需要与x最后一维维度匹配。</li><li>数据类型默认与输入x一致；若不一致，则显式设为FLOAT32。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>shape只能为一维，需要与x的尾轴长度匹配。</li><li>数据类型默认与输入x一致；若不一致，则显式设为FLOAT32。</li></ul></td>
       <td>FLOAT16、BFLOAT16、FLOAT32</td>
       <td>ND</td>
       <td>1</td>
@@ -227,7 +227,7 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
       <td>mxscaleOut（aclTensor*）</td>
       <td>输出</td>
       <td>表示每个分组对应的量化尺度，在场景 1 中对应 mxscale，在场景 2 中对应块缩放因子 S<sub>ue8m0</sub><sup>b</sup>。</td>
-      <td><ul><li>支持空Tensor。</li><li>沿x的尾轴每32个元素对应一个量化尺度，尺度数量向上取整后补齐为偶数，补齐位置填0。</li><li>shape为x.shape[:-1] + (ceil(ceil(x.shape[-1] / 32) / 2), 2)。</li><li>具体计算过程见约束说明。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>沿x的尾轴每32个元素对应一个量化尺度，尺度数量向上取整后补齐为偶数，补齐位置填充0。</li><li>shape为x.shape[:-1] + (ceil(ceil(x.shape[-1] / 32) / 2), 2)。</li><li>具体计算过程见约束说明。</li></ul></td>
       <td>FLOAT8_E8M0</td>
       <td>ND</td>
       <td>2-8</td>
@@ -270,7 +270,7 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
-  第一段接口会检查必需指针。对于尾轴外存在空维的x，指针检查通过后直接返回成功，不触发后续shape、dtype及属性校验。未提前返回的场景继续执行后续检查，出现以下情况时报错：
+  第一段接口会检查必需指针。对于尾轴外存在空维的x，指针检查通过后直接返回成功，不进行后续shape、dtype及属性校验。对于未提前返回的场景，继续执行后续检查，出现以下情况时报错：
 
   <table style="undefined;table-layout: fixed;width: 1170px"><colgroup>
   <col style="width: 268px">
@@ -302,7 +302,7 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
       <td>输入x和输出yOut的shape不是完全相同的shape。</td>
     </tr>
     <tr>
-      <td>gamma、beta(若存在)的shape不是完全相同的shape，或二者的维度数不为1，或轴长不等于x的尾轴大小，或者类型不相同。</td>
+      <td>gamma、beta（若存在）的shape不是完全相同的shape，或二者的维度数不为1，或轴长不等于x的尾轴大小，或者类型不相同。</td>
     </tr>
     <tr>
       <td>gamma的维度和x的需要做norm的维度不相同，或rstdOut的维度和x的不需要norm的维度不相同，或rstdOut对应x归一化维度的轴长不为1。</td>
@@ -314,7 +314,7 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
       <td>dstType为FP8时，roundMode不是"rint"。</td>
     </tr>
     <tr>
-      <td>dstType为fp4时，scaleAlg不是0，或者输入x的尾轴不能被2整除。</td>
+      <td>dstType为FP4时，scaleAlg不是0，或者输入x的尾轴不能被2整除。</td>
     </tr>
     <tr>
       <td>mxscaleOut的维度数不等于输入x的维度数+1，或轴长不符合约束说明。</td>
@@ -366,7 +366,7 @@ aclnnStatus aclnnRmsNormDynamicMxQuant(
 
 ## 约束说明
 
-- x的rank为1–7；gamma和可选beta为一维，长度等于x的尾轴长度。
+- x的rank为1-7；gamma和可选beta为一维，长度等于x的尾轴长度。
 - x尾轴为空时，yOut和mxscaleOut为空，启用的rstdOut为NaN；尾轴以外存在空维时无有效输出数据。
 
 - **边界值场景说明**

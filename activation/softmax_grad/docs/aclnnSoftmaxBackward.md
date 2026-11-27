@@ -82,7 +82,7 @@ aclnnStatus aclnnSoftmaxBackward(
     <tr>
       <td>gradOutput（aclTensor*）</td>
       <td>输入</td>
-      <td>反向传播的梯度值，即上一层的输出梯度。公式中的gradOutput。</td>
+      <td>反向传播的梯度值，即上一层的输出梯度，公式中的gradOutput。</td>
       <td>支持空Tensor。</td>
       <td>FLOAT16、FLOAT32、BFLOAT16</td>
       <td>ND</td>

@@ -145,7 +145,7 @@ aclnnStatus aclnnAscendQuantV3(
       <td>dstType（int32_t）</td>
       <td>输入</td>
       <td>指定输出的数据类型。</td>
-      <td><ul><li>支持取值2，3，29，34，35，36，分别表示INT8、INT32、INT4、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN。</li><li>当输入`x`的数据格式为NZ时，支持取值3，表示INT32。</li></ul></td>
+      <td><ul><li>支持取值2、3、29、34、35、36，分别表示INT8、INT32、INT4、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN。</li><li>当输入`x`的数据格式为NZ时，支持取值3，表示INT32。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -198,16 +198,16 @@ aclnnStatus aclnnAscendQuantV3(
   - <term>Atlas A2系列产品</term>、<term>Atlas A3系列产品</term>：
 
     - 参数`x`、`scale`、`offset`的数据格式为NZ时，数据类型仅支持FLOAT32。
-    - 出参`y`的数据类型仅支持INT8，INT32，INT4。当数据格式为NZ时，数据类型支持INT32。
-    - 入参`roundMode`：支持取值round，ceil，trunc，floor。当输入`x`的数据格式为NZ时，支持取值round。
-    - 入参`dstType`支持取值2，3，29，分别表示INT8、INT32、INT4。当输入`x`的数据格式为NZ时，支持取值3，表示INT32。
+    - 出参`y`的数据类型仅支持INT8、INT32、INT4。当数据格式为NZ时，数据类型支持INT32。
+    - 入参`roundMode`：支持取值round、ceil、trunc、floor。当输入`x`的数据格式为NZ时，支持取值round。
+    - 入参`dstType`支持取值2、3、29，分别表示INT8、INT32、INT4。当输入`x`的数据格式为NZ时，支持取值3，表示INT32。
     - 入参`axis`支持指定x的最后两个维度（假设输入x维度是xDimNum，axis取值范围是[-2，-1]或[xDimNum-2，xDimNum-1]）。
   <!-- end id7 -->
 
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
     - 参数`x`、`scale`、`offset`的数据格式不支持NZ。
-    - 入参`roundMode`：`dstType`表示FLOAT8_E5M2或FLOAT8_E4M3FN时，只支持round。`dstType`表示HIFLOAT8时，支持round和hybrid。`dstType`表示其他类型时，支持round，ceil，trunc和floor。
+    - 入参`roundMode`：`dstType`表示FLOAT8_E5M2或FLOAT8_E4M3FN时，只支持round。`dstType`表示HIFLOAT8时，支持round和hybrid。`dstType`表示其他类型时，支持round、ceil、trunc和floor。
     - 入参`axis`支持指定x的最后两个维度（假设输入x维度是xDimNum，axis取值范围是[-2，-1]或[xDimNum-2，xDimNum-1]）。
   <!-- end id8 -->
 
@@ -215,7 +215,7 @@ aclnnStatus aclnnAscendQuantV3(
   - <term>Atlas推理系列产品</term>：
     - 入参`x`、`scale`、`offset`的数据类型不支持BFLOAT16，数据格式不支持NZ。
     - 出参`y`数据类型仅支持INT8，数据格式不支持NZ。
-    - 入参`roundMode`：支持取值round，ceil，trunc，floor。
+    - 入参`roundMode`：支持取值round、ceil、trunc、floor。
     - 入参`dstType`仅支持取值2，表示INT8。
     - 入参`axis`只支持指定x的最后一个维度（假设输入x维度是xDimNum，axis取值是-1或xDimNum-1）。
   <!-- end id9 -->
@@ -274,7 +274,7 @@ aclnnStatus aclnnAscendQuantV3(
 
 ## aclnnAscendQuantV3
 
-- **参数说明：**
+- **参数说明**
 
   <table style="undefined;table-layout: fixed; width: 953px"><colgroup>
   <col style="width: 173px">

@@ -45,7 +45,7 @@
   输入tensor $self = \begin{bmatrix} [1&2&3] \\ [4&5&6] \\ [7&8&9] \end{bmatrix}$，
   索引tensor $index = \begin{bmatrix} [0&2&1] \\ [0&0&1] \end{bmatrix}$，dim = 1，
   源tensor $src = \begin{bmatrix} [10&11&12] \\ [13&14&15] \end{bmatrix}$，
-  输出tensor $output = \begin{bmatrix} [11&14&14] \\ [31&20&6] \\ [7&8&9] \end{bmatrix}$
+  输出tensor $output = \begin{bmatrix} [11&14&14] \\ [31&20&6] \\ [7&8&9] \end{bmatrix}$。
 
   dim = 1表示scatter_add根据$index$在tensor的列上进行累加。
 
@@ -270,7 +270,7 @@ aclnnStatus aclnnScatterAdd(
 
 ## 约束说明
 
-确定性说明:
+确定性说明：
 
 <!-- npu="950" id7 -->
 - <term>Ascend 950PR&950DT系列产品</term>：默认非确定性。

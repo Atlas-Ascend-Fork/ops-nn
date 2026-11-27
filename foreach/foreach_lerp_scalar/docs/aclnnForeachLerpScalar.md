@@ -155,7 +155,7 @@ aclnnStatus aclnnForeachLerpScalar(
   <!-- npu="950" id8 -->
   - <term>Ascend 950PR&950DT系列产品</term>：
 
-    参数`x1`、`x2`、`out`的shape size保持一致。支持包含的最大Tensor个数为50。
+    参数`x1`、`x2`、`out`的shape size保持一致，支持包含的最大Tensor个数为50。
   <!-- end id8 -->
 
 - **返回值**

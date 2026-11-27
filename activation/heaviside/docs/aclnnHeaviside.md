@@ -29,7 +29,7 @@
 - 计算公式：
 
   $$
-  \text{Heaviside}(\text{input},   \text{values}) =
+  \text{Heaviside}(\text{input}, \text{values}) =
   \begin{cases}
   0, & \text{如果input} < 0 \\
   \text{values}, & \text{如果input} = 0 \\
@@ -159,7 +159,7 @@ aclnnStatus aclnnHeaviside(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的输入参数（input，values）或输出参数out是空指针。</td>
+      <td>传入的输入参数（input、values）或输出参数out是空指针。</td>
     </tr>
     <tr>
       <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>

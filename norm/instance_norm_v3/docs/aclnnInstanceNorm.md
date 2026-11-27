@@ -146,7 +146,7 @@ aclnnStatus aclnnInstanceNorm(
       <td>mean（aclTensor*）</td>
       <td>输出</td>
       <td>表示InstanceNorm的均值，对应公式中的`E(x)`。</td>
-      <td><ul><li>支持空Tensor。</li><li>数据类型与输入`x`的数据类型保持一致。</li><li>shape与输入`x`满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>（前2维的shape和输入x前2维的shape相同，前2维表示不需要norm的维度，其余维度大小为1）。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>数据类型与输入`x`的数据类型保持一致。</li><li>shape与输入`x`满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>（前2维的shape和输入x前2维的shape相同，前2维表示不需要归一化的维度，其余维度大小为1）。</li></ul></td>
       <td>FLOAT32、FLOAT16</td>
       <td>ND</td>
       <td>4</td>
@@ -156,7 +156,7 @@ aclnnStatus aclnnInstanceNorm(
       <td>variance（aclTensor*）</td>
       <td>输出</td>
       <td>表示InstanceNorm的方差，对应公式中的`Var(x)`。</td>
-      <td><ul><li>支持空Tensor。</li><li>数据类型与`x`的数据类型保持一致。</li><li>shape与输入`x`满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>（前2维的shape和输入x前2维的shape相同，前2维表示不需要norm的维度，其余维度大小为1）。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>数据类型与`x`的数据类型保持一致。</li><li>shape与输入`x`满足<a href="../../../docs/zh/context/broadcast_relationship.md">broadcast关系</a>（前2维的shape和输入x前2维的shape相同，前2维表示不需要归一化的维度，其余维度大小为1）。</li></ul></td>
       <td>FLOAT32、FLOAT16</td>
       <td>ND</td>
       <td>4</td>
@@ -207,18 +207,18 @@ aclnnStatus aclnnInstanceNorm(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的x，gamma，beta，y，mean，variance是空指针。</td>
+      <td>传入的x、gamma、beta、y、mean、variance是空指针。</td>
     </tr>
     <tr>
       <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="5">161002</td>
-      <td>传入的x，gamma，beta，y，mean，variance的数据类型不在支持范围内。</td>
+      <td>传入的x、gamma、beta、y、mean、variance的数据类型不在支持范围内。</td>
     </tr>
     <tr>
       <td>x的维度不为4或gamma/beta的维度非1。</td>
     </tr>
     <tr>
-      <td>gamma，beta的shape和x的C轴不一致。</td>
+      <td>gamma、beta的shape和x的C轴不一致。</td>
     </tr>
     <tr>
       <td>不支持的产品型号。</td>
@@ -232,7 +232,7 @@ aclnnStatus aclnnInstanceNorm(
       <td>aclnn接口中间计算结果出现nullptr。</td>
     </tr>
     <tr>
-      <td>x，y的C轴或H*W长度小于32 Bytes。</td>
+      <td>x、y的C轴或H*W长度小于32字节。</td>
     </tr>
     <tr>
       <td>ACLNN_ERR_INNER_CREATE_EXECUTOR</td>
@@ -282,16 +282,16 @@ aclnnStatus aclnnInstanceNorm(
 
 - **返回值**
 
-  aclnnStatus：返回状态码。（具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)）
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 
 - 功能维度：
   - 数据类型支持：
-    - x，gamma，beta，y，mean，variance支持：FLOAT32、FLOAT16。
+    - x、gamma、beta、y、mean、variance支持：FLOAT32、FLOAT16。
   - 数据格式支持：ND。
-  - x，y的shape要求4维，gamma/beta的维度要求1维，且和x，y的C轴一致。
-  - x，y的H\*W大小需要大于等于32 Bytes，且C轴大于等于32 Bytes。
+  - x、y的shape要求4维，gamma/beta的维度要求1维，且和x、y的C轴一致。
+  - x、y的H\*W大小需要大于等于32字节，且C轴大于等于32字节。
   - 参数dataFormat仅支持"NHWC"和"NCHW"。
 - 边界值场景说明：
   - 当输入是Inf时，输出为Inf。

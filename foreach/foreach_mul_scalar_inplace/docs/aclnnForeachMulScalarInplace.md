@@ -128,7 +128,7 @@ aclnnStatus aclnnForeachMulScalarInplace(
   - <term>Ascend 950PR&950DT系列产品</term>：
     - 参数`xRef`支持包含的最大Tensor个数为256。
     - 参数`scalar`的数据类型与入参`xRef`的数据类型具有一定对应关系：
-      - 当`xRef`的数据类型为FLOAT32、INT32时，数据类型与`xRef`的数据类型保持一致。
+      - 当`xRef`的数据类型为FLOAT32、INT32时，参数`scalar`的数据类型与`xRef`的数据类型保持一致。
       - 当`xRef`的数据类型为BFLOAT16时，数据类型支持FLOAT32。
       - 当`xRef`的数据类型为FLOAT16时，数据类型支持FLOAT16、FLOAT32。
   <!-- end id7 -->

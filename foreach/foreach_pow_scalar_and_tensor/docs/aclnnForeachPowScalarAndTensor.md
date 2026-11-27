@@ -86,7 +86,7 @@ aclnnStatus aclnnForeachPowScalarAndTensor(
     <tr>
       <td>scalar（aclScalar*）</td>
       <td>输入</td>
-      <td>表示进行幂运算的底数，对应公式中的`scalar`。</td>
+      <td>表示进行指数运算的底数，对应公式中的`scalar`。</td>
       <td>数据类型与入参`x`的数据类型具有一定对应关系：<ul><li>当`x`的数据类型为FLOAT32、FLOAT16、BFLOAT16时，数据类型支持FLOAT32、DOUBLE。</li><li>当`x`的数据类型为INT32时，数据类型支持INT64。</li></ul></td>
       <td>FLOAT32、DOUBLE、INT64</td>
       <td>-</td>

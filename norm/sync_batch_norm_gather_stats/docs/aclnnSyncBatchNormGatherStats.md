@@ -24,7 +24,7 @@
 ## 功能说明
 
 - 接口功能：
-收集所有device的均值和方差，更新全局的均值和方差。
+收集所有Device的均值和方差，更新全局的均值和方差。
 
 - 计算公式：
 
@@ -45,7 +45,7 @@
   $$
 
   $$
-  runningVar = runningVar*(1-momentum) + momentum*(batchVar*   \frac{\sum^N_{i=0}
+  runningVar = runningVar*(1-momentum) + momentum*(batchVar* \frac{\sum^N_{i=0}
   {sampleCount[i]}}{\sum^N_{i=0}{sampleCount[i]}-1})
   $$
 
@@ -115,7 +115,7 @@ aclnnStatus aclnnSyncBatchNormGatherStats(
     <tr>
       <td>totalSquareSum（aclTensor*）</td>
       <td>输入</td>
-      <td>表示各设备的通道特征平方，对应公式中的totalSquareSum。</td>
+      <td>表示各设备的通道特征平方和，对应公式中的totalSquareSum。</td>
       <td><ul><li>第一维必须大于0。</li><li>shape和数据类型与totalSum的shape和数据类型保持一致。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
@@ -241,18 +241,18 @@ aclnnStatus aclnnSyncBatchNormGatherStats(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的totalSum，totalSquareSum，sampleCount，mean，variance，batchMean，batchInvstd是空指针。</td>
+      <td>传入的totalSum、totalSquareSum、sampleCount、mean、variance、batchMean、batchInvstd是空指针。</td>
     </tr>
     <tr>
       <td rowspan="3">ACLNN_ERR_PARAM_INVALID</td>
       <td rowspan="3">161002</td>
-      <td>输入totalSum，totalSquareSum，sampleCount，mean，variance，batchMean，batchInvstd的数据类型不在支持的范围之内。</td>
+      <td>输入totalSum、totalSquareSum、sampleCount、mean、variance、batchMean、batchInvstd的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>输入totalSum，totalSquareSum，mean，variance，batchMean，batchInvstd的数据类型不满足约束。</td>
+      <td>输入totalSum、totalSquareSum、mean、variance、batchMean、batchInvstd的数据类型不满足约束。</td>
     </tr>
     <tr>
-      <td>输入totalSum，totalSquareSum，sampleCount，mean，variance，batchMean，batchInvstd的shape不在支持的范围之内。</td>
+      <td>输入totalSum、totalSquareSum、sampleCount、mean、variance、batchMean、batchInvstd的shape不在支持的范围之内。</td>
     </tr>
   </tbody></table>
 

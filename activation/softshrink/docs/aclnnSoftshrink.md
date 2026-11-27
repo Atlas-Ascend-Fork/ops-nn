@@ -21,7 +21,7 @@
 - <term>Atlas训练系列产品</term>：支持
 <!-- end id6 -->
 
-> 说明：Ascend 950PR/950DT由本仓Ascend C实现提供；Atlas A3/A2、Atlas推理/训练由canndev TBE实现承接；Atlas 200I/500 A2无对应二进制配置，不支持。Atlas推理/训练仅支持FLOAT、FLOAT16，不支持BFLOAT16。
+> 说明：Ascend 950PR&950DT由本仓Ascend C实现提供；Atlas A3/A2、Atlas推理/训练由canndev TBE实现承接；Atlas 200I/500 A2无对应二进制配置，不支持。Atlas推理/训练仅支持FLOAT、FLOAT16，不支持BFLOAT16。
 
 ## 功能说明
 
@@ -97,7 +97,7 @@ aclnnStatus aclnnSoftshrink(
        <tr>
       <td>lambd（aclScalar*）</td>
       <td>输入</td>
-      <td>输入的标量，公式中的输入λ。</td>
+      <td>输入的标量，公式中的λ。</td>
       <td>必须为FLOAT标量且数值大于等于0；负数和NaN返回参数非法错误，+Inf合法。</td>
       <td>FLOAT</td>
       <td>-</td>
@@ -233,7 +233,7 @@ aclnnStatus aclnnSoftshrink(
   - aclnnSoftshrink默认确定性实现。
 
 - 数据格式仅支持ND。
-- self支持0~8维输入；0维标量输入会被视作shape为(1,)的1维tensor处理。
+- self支持0~8维输入；0维标量输入会被视作shape为(1,)的1维Tensor处理。
 - out的dtype可以与self不同，接口按out的dtype进行Cast；建议与self一致以避免精度损失。
 - lambd仅支持FLOAT标量，取值范围为[0, +∞)：允许0、正数和+Inf，负数或NaN返回ACLNN_ERR_PARAM_INVALID(161002)。
 - 输入self为NaN时，输出为0，不进行NaN透传；依赖NaN传播的调用方需注意该差异。

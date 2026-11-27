@@ -87,7 +87,7 @@ aclnnStatus aclnnForeachSubListInplace(
       <td>x1Ref（aclTensorList*）</td>
       <td>输入/输出</td>
       <td>表示进行减法运算中被减数的输入和输出张量列表，对应公式中的`x1`。</td>
-      <td><ul><li>支持空tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16、INT32</td>
       <td>ND</td>
       <td>0-8</td>
@@ -97,7 +97,7 @@ aclnnStatus aclnnForeachSubListInplace(
       <td>x2（aclTensorList*）</td>
       <td>输入</td>
       <td>表示进行减法运算中减数的张量列表，对应公式中的`x2`。</td>
-      <td><ul><li>支持空tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型、数据格式和shape与入参`x1Ref`的数据类型、数据格式和shape一致。</li></ul></td>
+      <td><ul><li>支持空Tensor。</li><li>该参数中所有Tensor的数据类型保持一致。</li><li>数据类型、数据格式和shape与入参`x1Ref`的数据类型、数据格式和shape一致。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16、INT32</td>
       <td>ND</td>
       <td>0-8</td>
@@ -107,7 +107,7 @@ aclnnStatus aclnnForeachSubListInplace(
       <td>alpha（aclTensor*）</td>
       <td>输入</td>
       <td>表示进行减法运算中减数的系数，对应公式中的`alpha`。</td>
-      <td><ul><li>不支持空tensor。</li><li>元素个数为1。</li><li>数据类型与入参`x1Ref`的数据类型具有一定对应关系：<ul><li>当`x1Ref`的数据类型为FLOAT32、FLOAT16、INT32时，数据类型与`x1Ref`的数据类型保持一致。</li><li>当`x1Ref`的数据类型为BFLOAT16时，数据类型支持FLOAT32。</li></ul></li></ul></td>
+      <td><ul><li>不支持空Tensor。</li><li>元素个数为1。</li><li>数据类型与入参`x1Ref`的数据类型具有一定对应关系：<ul><li>当`x1Ref`的数据类型为FLOAT32、FLOAT16、INT32时，数据类型与`x1Ref`的数据类型保持一致。</li><li>当`x1Ref`的数据类型为BFLOAT16时，数据类型支持FLOAT32。</li></ul></li></ul></td>
       <td>FLOAT32、FLOAT16、INT32</td>
       <td>ND</td>
       <td>0-8</td>

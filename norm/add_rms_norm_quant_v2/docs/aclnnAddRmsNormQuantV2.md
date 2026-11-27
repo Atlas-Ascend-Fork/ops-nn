@@ -63,7 +63,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用"aclnnAddRmsNormQuantV2GetWorkspaceSize"接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用"aclnnAddRmsNormQuantV2"接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnAddRmsNormQuantV2GetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnAddRmsNormQuantV2”接口执行计算。
 
 ```Cpp
 aclnnStatus aclnnAddRmsNormQuantV2GetWorkspaceSize(
@@ -153,7 +153,7 @@ aclnnStatus aclnnAddRmsNormQuantV2(
     <tr>
       <td>scales1（const aclTensor*）</td>
       <td>输入</td>
-      <td>表示量化过程中得到y1Out进行的scales张量，对应公式中的`scales1`。</td>
+      <td>表示量化y1Out时使用的scales张量，对应公式中的`scales1`。</td>
       <td><ul><li>支持空Tensor。</li><li>shape与`gamma`保持一致，或为[1]，具体适用场景参见<a href="#约束说明">约束说明</a>。</li><li>当参数`divMode`的值为True时，该参数的值不能为0。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -173,7 +173,7 @@ aclnnStatus aclnnAddRmsNormQuantV2(
     <tr>
       <td>zeroPoints1Optional（const aclTensor*）</td>
       <td>输入</td>
-      <td>表示量化过程中得到y1Out进行的offset张量。对应公式中的`zero_points1`。</td>
+      <td>表示量化y1Out时使用的offset张量。对应公式中的`zero_points1`。</td>
       <td><ul><li>支持空Tensor。</li><li>可选参数，支持传入空指针。shape与`scales1`保持一致。</li></ul></td>
       <td>INT8、INT32、FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -432,7 +432,7 @@ aclnnStatus aclnnAddRmsNormQuantV2(
 <!-- npu="950" id16 -->
 - <term>Ascend 950PR&950DT系列产品</term>上`betaOptional`与`rmsNormOut`相互独立：
   - `rmsNormOut`输出时，`betaOptional`可以有，也可以没有。
-  - `rmsNormOut`不输出（传入空指针）时，`betaOptional`也可以有，可以没有。
+  - `rmsNormOut`不输出（传入空指针）时，`betaOptional`也可以有，也可以没有。
   - `rmsNormOut`的计算结果为$\frac{1}{\operatorname{Rms}(\mathbf{x})} * x_i * g_i$，不包含beta计算。
 <!-- end id16 -->
 

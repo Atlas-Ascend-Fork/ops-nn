@@ -154,7 +154,7 @@ aclnnStatus aclnnUniqueDim(
       <td>dim</td>
       <td>输入</td>
       <td>示例中的dim。</td>
-      <td>指定做去重操作的维度，数据类型支持 INT64，取值范围为[-self.dim(), self.dim())。</td>
+      <td>指定做去重操作的维度，数据类型支持INT64，取值范围为[-self.dim(), self.dim())。</td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>

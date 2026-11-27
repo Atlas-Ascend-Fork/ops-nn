@@ -23,10 +23,10 @@
 
 ## 功能说明
 
-将tensor `updates`中的值按指定的轴`axis`和索引`indices`逐个更新tensor `data`中的值。该算子为自定义算子语义，无对应的TensorFlow或PyTorch接口。
+将Tensor `updates`中的值按指定的轴`axis`和索引`indices`逐个更新Tensor `data`中的值。该算子为自定义算子语义，无对应的TensorFlow或PyTorch接口。
 
 - 示例：
-  该算子有3个输入和一个属性：`data`、`updates`、`indices`和`axis`，其中`data`是待更新的tensor，`updates`是存储更新数据的tensor，`indices`表示更新位置，`axis`是指定的更新维度。按`indices`为1维或2维划分，存在以下两种场景（`indices`为0维时等价于shape为（1）的1维场景，此时`updates`的0轴必须为1）：
+  该算子有3个输入和一个属性：`data`、`updates`、`indices`和`axis`，其中`data`是待更新的Tensor，`updates`是存储更新数据的Tensor，`indices`表示更新位置，`axis`是指定的更新维度。按`indices`为1维或2维划分，存在以下两种场景（`indices`为0维时等价于shape为（1）的1维场景，此时`updates`的0轴必须为1）：
 
   **场景一：** `indices`为1维。`indices`的第i个元素对应`updates`的第i个batch（`updates`的0轴），表示该batch写入`data`的第i个batch时在`axis`维上的起始偏移。
 
@@ -212,7 +212,7 @@ aclnnStatus aclnnInplaceScatterUpdate(
       <td>indices维度为0时，updates的第0轴不为1。</td>
       </tr>
       <tr>
-      <td>data、indices、updates是空tensor。</td>
+      <td>data、indices、updates是空Tensor。</td>
       </tr>
     </tbody>
     </table>

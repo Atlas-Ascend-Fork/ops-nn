@@ -105,7 +105,7 @@ aclnnStatus aclnnMatmulCompress(
     <tr>
       <td>bias</td>
       <td>输入</td>
-      <td>表示偏置的输入，公式中的矩阵bias，数据类型仅支持FLOAT，支持空指针传入，shape仅支持(1, n)或者(n),其中n为输出shape(m, n)的n。</td>
+      <td>表示偏置的输入，公式中的矩阵bias，数据类型仅支持FLOAT，支持空指针传入，shape仅支持(1, n)或者(n)，其中n为输出shape(m, n)的n。</td>
       <td>-</td>
       <td>FLOAT</td>
       <td>ND</td>
@@ -226,7 +226,7 @@ aclnnStatus aclnnMatmulCompress(
 
 - **返回值**
 
-  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 
@@ -297,8 +297,8 @@ aclnnStatus aclnnMatmulCompress(
 
 2. 对数据进行预处理
 
-    **原始权重通过msModelSlim压缩工具生成压缩后的x2、compressIndex以及compressInfo:**
-    使用以下接口时，需对CANN包中msModelSlim压缩工具进行编译，具体操作参考[Gitcode msmodelslim仓](https://gitcode.com/Ascend/msmodelslim)中docs/zh/user_guide/traditional_quantization_v0目录下的foundation_model_compression.md中第5条,权重压缩基本使用流程。
+    **原始权重通过msModelSlim压缩工具生成压缩后的x2、compressIndex以及compressInfo：**
+    使用以下接口时，需对CANN包中msModelSlim压缩工具进行编译，具体操作参考[Gitcode msmodelslim仓](https://gitcode.com/Ascend/msmodelslim)中docs/zh/user_guide/traditional_quantization_v0目录下的foundation_model_compression.md中第5条，权重压缩基本使用流程。
 
     ```python
     from msmodelslim.pytorch.weight_compression import CompressConfig, Compressor

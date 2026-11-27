@@ -40,7 +40,7 @@
 
   $$
   gradInput = rstd \cdot gamma \begin{bmatrix}
-  gradOut - \frac{1}{N}  (gradBetaOut + \hat{x} \cdot gradGammaOut)
+  gradOut - \frac{1}{N} (gradBetaOut + \hat{x} \cdot gradGammaOut)
   \end{bmatrix}
   $$
 
@@ -195,7 +195,7 @@ aclnnStatus aclnnGroupNormBackward(
       <td>outputMask（aclBoolArray*）</td>
       <td>输入</td>
       <td>表示输出掩码，标识是否输出`gradInput`，`gradGammaOut`，`gradBetaOut`。</td>
-      <td><ul><li>size为3。分别表示是否输出`gradInput`，`gradGammaOut`，`gradBetaOut`，若为true则输出，否则输出对应位置返回空。</li></ul></td>
+      <td><ul><li>size为3，分别表示是否输出`gradInput`、`gradGammaOut`、`gradBetaOut`，若为true则输出，否则输出对应位置返回空。</li></ul></td>
       <td>BoolArray</td>
       <td>-</td>
       <td>-</td>
@@ -204,7 +204,7 @@ aclnnStatus aclnnGroupNormBackward(
     <tr>
       <td>gradInput（aclTensor*）</td>
       <td>输出</td>
-      <td>表示计算输出的梯度，用于更新输入数据的梯度。对应公式中的`gradInput`。</td>
+      <td>表示计算输出的梯度，用于更新输入数据的梯度，对应公式中的`gradInput`。</td>
       <td><ul><li>支持空Tensor。</li><li>数据类型与`gradOut`相同。</li><li>shape与`input`相同。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -214,7 +214,7 @@ aclnnStatus aclnnGroupNormBackward(
     <tr>
       <td>gradGammaOut（aclTensor*）</td>
       <td>输出</td>
-      <td>表示计算输出的梯度，用于更新缩放参数的梯度。对应公式中的`gradGammaOut`。</td>
+      <td>表示计算输出的梯度，用于更新缩放参数的梯度，对应公式中的`gradGammaOut`。</td>
       <td><ul><li>支持空Tensor。</li><li>数据类型与`mean`相同。</li><li>shape与`gamma`相同。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>
@@ -224,7 +224,7 @@ aclnnStatus aclnnGroupNormBackward(
     <tr>
       <td>gradBetaOut（aclTensor*）</td>
       <td>输出</td>
-      <td>表示计算输出的梯度，用于更新偏置参数的梯度。对应公式中的`gradBetaOut`。</td>
+      <td>表示计算输出的梯度，用于更新偏置参数的梯度，对应公式中的`gradBetaOut`。</td>
       <td><ul><li>支持空Tensor。</li><li>数据类型与`mean`相同。</li><li>shape与`gamma`相同。</li></ul></td>
       <td>FLOAT32、FLOAT16、BFLOAT16</td>
       <td>ND</td>

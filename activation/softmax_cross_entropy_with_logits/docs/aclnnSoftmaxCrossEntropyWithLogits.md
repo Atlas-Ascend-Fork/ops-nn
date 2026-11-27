@@ -30,9 +30,9 @@
   \text{loss} = - \sum_i y_i \cdot \log(\text{softmax}(x_i))
   $$
 
-$$
-\text{backprop} = \text{softmax}(x_i) - y_i
-$$
+  $$
+  \text{backprop} = \text{softmax}(x_i) - y_i
+  $$
 
 其中，$x_i$对应输入的features，$y_i$对应输入的labels。
 

@@ -102,7 +102,7 @@ aclnnStatus aclnnRmsNorm(
     <tr>
       <td>epsilon（double）</td>
       <td>输入</td>
-      <td>表示添加到方差中的值，以避免出现除以零的情况。对应公式中的`epsilon`。</td>
+      <td>表示添加到方差中的值，以避免出现除以零的情况，对应公式中的`epsilon`。</td>
       <td>建议值为1e-6。该参数实际按float32精度承载：绝对值小于约1.4e-45的数值会下溢为±0（此时与传入0.0的行为一致），绝对值介于约1.4e-45与约1.18e-38之间的数值以非规格化数形式承载（非零但精度下降）。</td>
       <td>-</td>
       <td>-</td>
@@ -270,7 +270,7 @@ aclnnStatus aclnnRmsNorm(
 
   - `gamma`不支持空Tensor。
   - 参数`x`、`gamma`、`yOut`的数据类型不支持BFLOAT16。
-  - 归一化维的总数据量（即`gamma`各维度大小之积×单个元素字节数）必须大于等于32Bytes。
+  - 归一化维的总数据量（即`gamma`各维度大小之积×单个元素字节数）必须大于等于32字节。
   - 输入不支持Inf和NaN。
 <!-- end id10 -->
 

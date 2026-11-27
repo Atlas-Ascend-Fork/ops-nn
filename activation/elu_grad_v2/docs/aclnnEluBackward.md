@@ -33,7 +33,7 @@
     gradInput = gradOutput *
     \begin{cases}
     scale, \quad x > 0\\
-    inputScale \ast (x + \alpha \ast scale),  \quad x \leq 0
+    inputScale \ast (x + \alpha \ast scale), \quad x \leq 0
     \end{cases}
     $$
 
@@ -112,7 +112,7 @@ aclnnStatus aclnnEluBackward(
       <td>alpha（aclScalar*）</td>
       <td>输入</td>
       <td>表示ELU激活函数的激活系数，公式中的α。</td>
-      <td><ul><li>如果isResult为true，α必须大于等于0。</li><li>数据类型需要是可转换为FLOAT的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li></ul></td>
+      <td><ul><li>如果isResult为True，α必须大于等于0。</li><li>数据类型需要是可转换为FLOAT的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>

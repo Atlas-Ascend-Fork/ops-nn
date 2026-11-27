@@ -151,7 +151,7 @@ aclnnStatus aclnnBroadcastGradientArgs(
       <td>y1</td>
       <td>输出</td>
       <td>表示x1对应的张量shape中需要归约的维度索引。</td>
-      <td>数据类型需与x1一致。<br>输出size需按max(x1_len, x2_len)申请，实际输出可能小于此值，执行完成后通过aclGetViewShape获取实际shape。</td>
+      <td>数据类型需与x1一致。<br>输出size需按max(x1长度, x2长度)申请，实际输出可能小于此值，执行完成后通过aclGetViewShape获取实际shape。</td>
       <td>INT32、INT64</td>
       <td>ND</td>
       <td>1</td>
@@ -161,7 +161,7 @@ aclnnStatus aclnnBroadcastGradientArgs(
       <td>y2</td>
       <td>输出</td>
       <td>表示x2对应的张量shape中需要归约的维度索引。</td>
-      <td>数据类型需与x1一致。<br>输出size需按max(x1_len, x2_len)申请，实际输出可能小于此值，执行完成后通过aclGetViewShape获取实际shape。</td>
+      <td>数据类型需与x1一致。<br>输出size需按max(x1长度, x2长度)申请，实际输出可能小于此值，执行完成后通过aclGetViewShape获取实际shape。</td>
       <td>INT32、INT64</td>
       <td>ND</td>
       <td>1</td>

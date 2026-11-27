@@ -109,7 +109,7 @@ aclnnStatus aclnnGroupNormSiluQuant(
         <td>self</td>
         <td>输入</td>
         <td>计算公式中的x。</td>
-        <td>支持空Tensor：N（第0维）与C（第1维）需大于0，其余维度可为0。此时out为空，meanOut填充为0，rstdOut填充为NAN。</td>
+        <td>支持空Tensor：N（第0维）与C（第1维）需大于0，其余维度可为0。此时out为空，meanOut填充为0，rstdOut填充为NaN。</td>
         <td>FLOAT16、BFLOAT16</td>
         <td>ND</td>
         <td>2-8，其中第0维为N，第1维为C</td>
@@ -276,8 +276,8 @@ aclnnStatus aclnnGroupNormSiluQuant(
         <tbody>
             <tr><td>workspace</td><td>输入</td><td>在Device侧申请的workspace内存地址。</td></tr>
             <tr><td>workspaceSize</td><td>输入</td><td>在Device侧申请的workspace大小，由第一段接口aclnnGroupNormSiluQuantGetWorkspaceSize获取。</td></tr>
-            <tr><td>executor</td><td>输入</td><td> op执行器，包含了算子计算流程。 </td></tr>
-            <tr><td>stream</td><td>输入</td><td> 指定执行任务的Stream。 </td></tr>
+            <tr><td>executor</td><td>输入</td><td> op执行器，包含了算子计算流程。</td></tr>
+            <tr><td>stream</td><td>输入</td><td> 指定执行任务的Stream。</td></tr>
         </tbody>
     </table>
 

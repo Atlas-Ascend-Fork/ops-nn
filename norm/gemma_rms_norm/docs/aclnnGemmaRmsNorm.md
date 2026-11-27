@@ -75,7 +75,7 @@ aclnnStatus aclnnGemmaRmsNorm(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
@@ -102,7 +102,7 @@ aclnnStatus aclnnGemmaRmsNorm(
     <tr>
       <td>epsilon（double）</td>
       <td>输入</td>
-      <td>表示添加到方差中的值，以避免出现除以零的情况。对应公式中的`epsilon`。</td>
+      <td>表示添加到方差中的值，以避免出现除以零的情况，对应公式中的`epsilon`。</td>
       <td>建议值为1e-6。</td>
       <td>-</td>
       <td>-</td>
@@ -174,7 +174,7 @@ aclnnStatus aclnnGemmaRmsNorm(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>如果传入参数是必选输入，输出或者必选属性，且是空指针，则返回161001。</td>
+      <td>如果传入参数是必选输入、输出或者必选属性，且是空指针，则返回161001。</td>
     </tr>
     <tr>
       <td>ACLNN_ERR_PARAM_INVALID</td>
@@ -184,7 +184,7 @@ aclnnStatus aclnnGemmaRmsNorm(
     <tr>
       <td>ACLNN_ERR_INNER_TILING_ERROR</td>
       <td>561002</td>
-      <td> 参数不满足参数说明中的要求。</td>
+      <td>参数不满足参数说明中的要求。</td>
     </tr>
   </tbody></table>
 

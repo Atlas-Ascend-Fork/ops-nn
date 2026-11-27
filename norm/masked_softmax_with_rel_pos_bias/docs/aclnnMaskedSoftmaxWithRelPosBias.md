@@ -135,7 +135,7 @@ aclnnStatus aclnnMaskedSoftmaxWithRelPosBias(
       <td>out</td>
       <td>输出</td>
       <td>待计算出参，对应公式中的out。</td>
-      <td>shape与x相同，仅支持连续tensor。</td>
+      <td>shape与x相同，仅支持连续Tensor。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
       <td>4-5</td>
@@ -262,8 +262,8 @@ aclnnStatus aclnnMaskedSoftmaxWithRelPosBias(
   - x、attenMaskOptional、relativePosBias支持非连续Tensor。
   - out必须为连续Tensor；传入非连续Tensor时不保证结果。
 
-- 空tensor约束：
-  - 空tensor不支持；输出为空时接口返回成功但不保证结果；attenMaskOptional或relativePosBias为空且输出非空时报错。
+- 空Tensor约束：
+  - 空Tensor不支持；输出为空时接口返回成功但不保证结果；attenMaskOptional或relativePosBias为空且输出非空时报错。
 
 - 数据格式约束：
   - ACLNN接口按ND布局解释输入/输出；NCHW、NCDHW等与ND同布局的格式可接受。

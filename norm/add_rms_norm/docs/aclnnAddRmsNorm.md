@@ -81,7 +81,7 @@ aclnnStatus aclnnAddRmsNorm(
       <th>使用说明</th>
       <th>数据类型</th>
       <th>数据格式</th>
-      <th>维度(shape)</th>
+      <th>维度（shape）</th>
       <th>非连续Tensor</th>
     </tr></thead>
   <tbody>
@@ -262,7 +262,7 @@ aclnnStatus aclnnAddRmsNorm(
 
 - **返回值**
 
-  aclnnStatus：返回状态码。（具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)）
+  aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
 

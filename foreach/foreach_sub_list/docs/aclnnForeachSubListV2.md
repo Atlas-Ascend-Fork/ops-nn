@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-- 接口功能：对两个张量列表中的元素执行逐个相减，并可以通过alpha参数调整相减系数。
+- 接口功能：对两个张量列表中的元素执行逐元素相减，并可以通过alpha参数调整相减系数。
   本接口相较于[aclnnForeachSubList](aclnnForeachSubList.md)，修改入参alpha的结构类型aclTensor为aclScalar，请根据实际情况选择合适的接口。
 - 计算公式：
 
@@ -238,11 +238,11 @@ aclnnStatus aclnnForeachSubListV2(
 
 ## 约束说明
 
-- `x1`、`x2`、`out`的Tensor列表长度必须一致。
+- `x1`、`x2`、`out`的Tensor列表数量必须一致。
 <!-- npu="950" id7 -->
 - <term>Ascend 950PR&950DT系列产品</term>：`x1`、`x2`、`out`的单个Tensor列表中Tensor的数量不超过256个。
 <!-- end id7 -->
-- `x1`、`x2`、`out`均为空TensorList时，接口执行成功空操作；其他列表数量失配场景返回参数错误。
+- `x1`、`x2`、`out`均为空TensorList时，接口执行成功，为空操作；其他列表数量失配场景返回参数错误。
 - `-1`（动态维度）与`-2`（动态Rank）标记由Host推导阶段按框架约定处理；内核侧Tiling要求shape已具体化且元素数非负。
 - 整数计算结果溢出时按输出数据类型的位宽进行回绕。
 - 确定性计算：

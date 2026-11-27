@@ -35,7 +35,7 @@
   - accumulate = True:
 
     $$
-    self[indices]  = self[indices]  + values
+    self[indices] = self[indices] + values
     $$
 
 ## 函数原型
@@ -255,7 +255,7 @@ aclnnStatus aclnnIndexPutImpl(
 - 确定性计算：
   - aclnnIndexPutImpl默认非确定性实现，支持通过aclrtSetSysParamOpt开启确定性。
 
-- 输入参数selfRef, indices, values一般有以下约束：
+- 输入参数selfRef、indices、values一般有以下约束：
   - indices中的Tensor个数不能超过selfRef的维度（最大8维）。
   - 当indices数据类型为BOOL时，各Tensor作为掩码输入，按顺序依次对应selfRef的维度，每个掩码Tensor的各维度大小必须与selfRef中对应位置的维度大小完全一致。例如selfRef的shape为(3,4,5)，indices包含两个BOOL类型的Tensor，则第一个掩码的shape必须为(3,)，第二个掩码的shape必须为(4,)。
   - values的维度需满足以下公式或广播后满足以下公式：
