@@ -85,7 +85,7 @@ bool CheckWinoAttrs(const Conv3dBpFilterV2RunInfo& runInfo, const char* opName)
     return true;
 }
 
-bool CheckWinoShape(const Conv3dBpFilterV2RunInfo& runInfo, const char* opName)
+bool CheckWinoShape(const Conv3dBpFilterV2RunInfo& runInfo, const char* opName, bool isSocVersion960)
 {
     // kd=3的3D场景放通各空间维不小于6的shape: 6x6x6实测收益明确, 更大shape有效tile占比更优;
     // 小空间(如3x3x3)有效tile占比低存在劣化风险, 拦截退回stream_k
@@ -112,12 +112,35 @@ bool CheckWinoShape(const Conv3dBpFilterV2RunInfo& runInfo, const char* opName)
         OP_LOGD(opName, "current reduce axis is too large for Winograd impl");
         return false;
     }
-    // pad判据: pad小于kernel时输入侧任意滑窗内至少含1个有效元素, 不会产生全pad tile;
-    // pad不小于kernel时边缘窗口整体落在pad区, 无法跳过的无效计算占比过高, 退回基本块kernel
-    // (D轴pad已在CheckWinoAttrs按kd精确放通, 此处仅校验H/W轴)
-    if (runInfo.kh <= runInfo.pad_u || runInfo.kw <= runInfo.pad_l) {
-        OP_LOGD(opName, "Winograd tiling requires pad smaller than kernel");
-        return false;
+    // pad判据按平台分流: A6(960)上2D/3D统一pad<kernel判据(3D有效tile占比无法用单一比例建模);
+    // A5(950)仅2D场景可达此处, 沿用有效tile比例门禁, 避免拦截2D pad=3..8且比例达标的用例
+    if (isSocVersion960) {
+        // pad小于kernel时输入侧任意滑窗内至少含1个有效元素, 不会产生全pad tile;
+        // pad不小于kernel时边缘窗口整体落在pad区, 无法跳过的无效计算占比过高, 退回基本块kernel
+        if (runInfo.kh <= runInfo.pad_u || runInfo.kw <= runInfo.pad_l) {
+            OP_LOGD(opName, "Winograd tiling requires pad smaller than kernel");
+            return false;
+        }
+    } else {
+        // Winograd当前无法跳过全pad tile，当pad占比过高时计算密度优势会被无效开销抵消
+        // 有效fmap区域(不含pad)对应的tile数与总tile数(含pad)的比值需达标
+        // 有效输出尺寸 = fmap尺寸 - (kernel - 1)，stride=1时有效ho = hi - 2
+        int32_t validHo = runInfo.hi - (runInfo.kh - 1);
+        int32_t validWo = runInfo.wi - (runInfo.kw - 1);
+        if (validHo <= 0 || validWo <= 0) {
+            OP_LOGD(opName, "valid fmap area is too small for winograd");
+            return false;
+        }
+        uint64_t validTileH = Ops::Base::CeilDiv(validHo, 2);
+        uint64_t validTileW = Ops::Base::CeilDiv(validWo, 2);
+        uint64_t validTiles = validTileH * validTileW;
+        uint64_t totalTiles = tileH * tileW;
+        float validRatio = static_cast<float>(validTiles) / static_cast<float>(totalTiles);
+        if (validRatio < Conv3DBackpropFilterV2WinogradTiling::RECOMMEND_FMAP_VALID_TILE_RATIO) {
+            OP_LOGD(opName, "fmap pad ratio is too high (validRatio=%f, threshold=%f) for winograd", validRatio,
+                    Conv3DBackpropFilterV2WinogradTiling::RECOMMEND_FMAP_VALID_TILE_RATIO);
+            return false;
+        }
     }
     return true;
 }
@@ -187,7 +210,7 @@ bool Conv3DBackpropFilterV2WinogradTiling::IsCapable()
         return false;
     }
 
-    if (!CheckWinoShape(runInfo_, opName_)) {
+    if (!CheckWinoShape(runInfo_, opName_, IsSocVersion960())) {
         return false;
     }
 
