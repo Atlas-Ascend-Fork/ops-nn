@@ -37,12 +37,14 @@
   其中$x$是self，$y$是target，$L$为逐元素平方误差张量，其shape为self与target做broadcast后的结果。如果`reduction`不是`none`，那么：
 
   $$
-  \ell(x, y) =
+  \ell(x, y)_i =
   \begin{cases}
       \operatorname{mean}(L, \text{dim}=0), &  \text{if reduction} = \text{'mean';}\\
       \operatorname{sum}(L, \text{dim}=0),  &  \text{if reduction} = \text{'sum'.}
   \end{cases}
   $$
+
+  即先按`reduction`为`none`计算逐元素平方误差，再沿第0轴求均值或求和；out的shape为self与target做broadcast关系后去掉第0轴的shape。
 
 ## 函数原型
 
@@ -96,7 +98,7 @@ aclnnStatus aclnnMseLossOut(
       <td class="tg-0pky">self（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">公式中的输入x。</td>
-      <td class="tg-0pky">shape需要与target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与target的数据类型满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）。</td>
+      <td class="tg-0pky">支持空Tensor，空输入时接口返回成功但不执行计算。<br>shape需要与target满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与target的数据类型满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">1-8</td>
@@ -106,7 +108,7 @@ aclnnStatus aclnnMseLossOut(
       <td class="tg-0pky">target（aclTensor*）</td>
       <td class="tg-0pky">输入</td>
       <td class="tg-0pky">公式中的输入y。</td>
-      <td class="tg-0pky">shape需要与self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与self满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）。</td>
+      <td class="tg-0pky">支持空Tensor，空输入时接口返回成功但不执行计算。<br>shape需要与self满足<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>。<br>数据类型与self满足数据类型推导规则（参见<a href="../../../docs/zh/context/deduction_relationship.md" target="_blank">互推导关系</a>）。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">ND</td>
       <td class="tg-0pky">1-8</td>
@@ -120,13 +122,13 @@ aclnnStatus aclnnMseLossOut(
       <td class="tg-0pky">INT64</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">-</td>
-      <td class="tg-0pky">√</td>
+      <td class="tg-0pky">-</td>
     </tr>
     <tr>
       <td class="tg-0pky">out（aclTensor*）</td>
       <td class="tg-0pky">输出</td>
       <td class="tg-0pky">公式中的输出ℓ(x,y)。</td>
-      <td class="tg-0pky">数据类型需要是self与target推导之后可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。<br>当reduction的值为0时，out的shape与self和target<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>后的shape一致；当reduction的值不为0时，out与self、target做broadcast后，再reduce 0轴得到的tensor的shape一致。</td>
+      <td class="tg-0pky">数据类型需要是self与target推导之后可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。<br>当reduction的值为0时，out的shape与self和target<a href="../../../docs/zh/context/broadcast_relationship.md" target="_blank">broadcast关系</a>后的shape一致；当reduction的值为1或2时，out的shape与self、target做broadcast关系后，再reduce 0轴得到的tensor的shape一致（去掉第0轴后的shape，当输入为1维时out为0维标量）。</td>
       <td class="tg-0pky">FLOAT、FLOAT16、BFLOAT16</td>
       <td class="tg-0pky">-</td>
       <td class="tg-0pky">0-8</td>
@@ -154,6 +156,10 @@ aclnnStatus aclnnMseLossOut(
     </tr>
   </tbody></table>
 
+  <!-- npu="910,310p" id7 -->
+  - <term>Atlas推理系列产品</term>、<term>Atlas训练系列产品</term>：数据类型不支持BFLOAT16。
+  <!-- end id7 -->
+
 - **返回值：**
 
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
@@ -178,8 +184,8 @@ aclnnStatus aclnnMseLossOut(
         <td class="tg-0pky">传入的self、target或out是空指针时。</td>
       </tr>
       <tr>
-        <td class="tg-0pky" rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
-        <td class="tg-0pky" rowspan="5">161002</td>
+        <td class="tg-0pky" rowspan="6">ACLNN_ERR_PARAM_INVALID</td>
+        <td class="tg-0pky" rowspan="6">161002</td>
         <td class="tg-0pky">self、target或out的数据类型不在支持的范围之内。</td>
       </tr>
       <tr>
