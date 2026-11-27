@@ -12,6 +12,7 @@
 #include "conv2d_postcube_to_extendconv2d_fusion_pass.h"
 
 #include <algorithm>
+#include <numeric>
 #include <set>
 #include <sstream>
 
@@ -859,7 +860,7 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::AdjustLayout(const GraphPtr& graph,
     return true;
 }
 
-bool Conv2DPostCubeToExtendConv2DFusionPass::SetWeightFractalZDesc(TensorDesc& weightDesc) const
+bool Conv2DPostCubeToExtendConv2DFusionPass::SetWeightFractalZDesc(TensorDesc& weightDesc, int64_t groups) const
 {
     auto oriDims = weightDesc.GetOriginShape().GetDims();
     FUSION_PASS_CHECK(
@@ -892,9 +893,21 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::SetWeightFractalZDesc(TensorDesc& w
     weightDesc.SetFormat(FORMAT_FRACTAL_Z);
     int64_t c0 = (weightDesc.GetDataType() == DT_INT8 || weightDesc.GetDataType() == DT_UINT8) ? FRACTAL_Z_C0_INT8 :
                                                                                                  FRACTAL_Z_C0_FP16;
+    // GroupOpt weight layout (aligned with runtime nchw_to_fz groupOpt logic): enlarge E =
+    // min(lcm(lcm(cin,c0)/cin, lcm(cout,n0)/cout), groups), cinOpt/coutOpt are padded up to c0/n0
+    // multiples, and storage is groupOpt consecutive FZ blocks folded into dim0.
+    int64_t groupsSafe = groups > 0 ? groups : 1;
+    int64_t coutPerGroup = (oriDims[nIdx] + groupsSafe - 1) / groupsSafe;
+    int64_t cinPerGroup = oriDims[cIdx];
+    int64_t enlargeCin = std::lcm(cinPerGroup, c0) / cinPerGroup;
+    int64_t enlargeCout = std::lcm(coutPerGroup, FRACTAL_Z_N0) / coutPerGroup;
+    int64_t enlarge = std::min(std::lcm(enlargeCin, enlargeCout), groupsSafe);
+    int64_t groupOpt = (groupsSafe + enlarge - 1) / enlarge;
+    int64_t cinOpt = (cinPerGroup * enlarge + c0 - 1) / c0 * c0;
+    int64_t coutOpt = (coutPerGroup * enlarge + FRACTAL_Z_N0 - 1) / FRACTAL_Z_N0 * FRACTAL_Z_N0;
     std::vector<int64_t> fzShape(FILTER_DIM_NUM);
-    fzShape[0] = oriDims[hIdx] * oriDims[wIdx] * ((oriDims[cIdx] + c0 - 1) / c0);
-    fzShape[1] = (oriDims[nIdx] + FRACTAL_Z_N0 - 1) / FRACTAL_Z_N0;
+    fzShape[0] = oriDims[hIdx] * oriDims[wIdx] * (cinOpt / c0) * groupOpt;
+    fzShape[1] = coutOpt / FRACTAL_Z_N0;
     fzShape[2] = FRACTAL_Z_N0;
     fzShape[3] = c0;
     weightDesc.SetShape(Shape(fzShape));
@@ -923,10 +936,10 @@ bool Conv2DPostCubeToExtendConv2DFusionPass::InsertWeightReFormatOp(const GraphP
     FUSION_PASS_CHECK(weightNode.GetOutputDesc(weightPort, reformatInDesc) != GRAPH_SUCCESS,
                       OP_LOGE(convDescInfo.nodeNameStr, "Get weight output desc failed."), return false);
     TensorDesc reformatOutDesc = reformatInDesc;
-    FUSION_PASS_CHECK_NOLOG(!SetWeightFractalZDesc(reformatInDesc), return false);
+    FUSION_PASS_CHECK_NOLOG(!SetWeightFractalZDesc(reformatInDesc, groups), return false);
     reformatInDesc.SetFormat(static_cast<Format>(
         ge::GetFormatFromSub(static_cast<int32_t>(FORMAT_FRACTAL_Z), static_cast<int32_t>(groups))));
-    FUSION_PASS_CHECK_NOLOG(!SetWeightFractalZDesc(reformatOutDesc), return false);
+    FUSION_PASS_CHECK_NOLOG(!SetWeightFractalZDesc(reformatOutDesc, groups), return false);
 
     std::string reformatName = convDescInfo.nodeNameStr + "_const_fold_reformat";
     GNode reformatNode = es::CompliantNodeBuilder(graph.get())

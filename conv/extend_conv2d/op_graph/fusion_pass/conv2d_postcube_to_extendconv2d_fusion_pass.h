@@ -107,7 +107,7 @@ private:
     bool AdjustLayout(const ge::GraphPtr& graph, ge::GNode& fusedNode);
     bool InsertA16W8WeightRearrange(const ge::GraphPtr& graph, ge::GNode& extendConv2DNode);
     bool InsertWeightReFormatOp(const ge::GraphPtr& graph, ge::GNode& extendConv2DNode, int64_t groups);
-    bool SetWeightFractalZDesc(ge::TensorDesc& weightDesc) const;
+    bool SetWeightFractalZDesc(ge::TensorDesc& weightDesc, int64_t groups) const;
     void ScanLeakyReluSlope(const std::vector<ops::PostCubePassInfo>& matchLists, float& slope,
                             bool& hasLeakyRelu) const;
     void PatchVectorMulScalarAttr(const ge::GNode& convNode, float slope) const;

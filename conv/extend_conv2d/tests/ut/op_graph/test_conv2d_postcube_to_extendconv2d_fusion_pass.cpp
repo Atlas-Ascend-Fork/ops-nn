@@ -996,6 +996,82 @@ TEST_F(Conv2DPostCubeToExtendConv2DFusionPassTest, conv2d_postcube_a16w8_weight_
     }
 }
 
+// Grouped FRACTAL_Z storage shape follows the runtime nchw_to_fz groupOpt logic: A=lcm(cin,c0)/cin,
+// B=lcm(cout,n0)/cout, enlarge E = min(lcm(A, B), groups), cinOpt/coutOpt padded to c0/n0 multiples,
+// storage is groupOpt consecutive FZ blocks folded into dim0. Case dwquant_0023: filter NCHW
+// 161x11x6x6, groups=23, int8, A=32, B=16, E=23, groupOpt=1 -> [288, 11, 16, 32], not the ungrouped
+// [36, 11, 16, 32] which under-allocates the folding buffer and causes heap overflow.
+TEST_F(Conv2DPostCubeToExtendConv2DFusionPassTest, conv2d_postcube_a16w8_reformat_groups_fractalz_shape)
+{
+    TestGraph builder("a16w8_reformat_groups");
+    Conv2DConfig convCfg = Conv2DConfig::Basic("Conv2D", DT_FLOAT16, DT_FLOAT16, FORMAT_NCHW, {1, 253, 9, 9},
+                                               {161, 11, 6, 6}, {1, 161, 6, 6});
+    convCfg.inputs[1].SetDtype(DT_INT8);
+    convCfg.inputs[1].tensorDesc.SetDataType(DT_INT8);
+    convCfg.SetAttr("groups", int64_t(23));
+    auto graph = builder.SetSocFuse()
+                     .AddConv2D(convCfg)
+                     .AddAscendDequant(AscendDequantConfig::Basic("AscendDequant", DT_FLOAT16, FORMAT_NCHW))
+                     .Connect("Conv2D", 0, "AscendDequant", 0)
+                     .SetOutput("AscendDequant")
+                     .Build();
+
+    TestTotalPass("a16w8_reformat_groups", graph, SUCCESS);
+
+    GNode reformat;
+    ASSERT_TRUE(GraphChecker::FindFirstNodeByOpType(graph, "ReFormat", reformat));
+    TensorDesc inDesc;
+    ASSERT_EQ(reformat.GetInputDesc(0, inDesc), GRAPH_SUCCESS);
+    EXPECT_EQ(inDesc.GetFormat(),
+              static_cast<Format>(ge::GetFormatFromSub(static_cast<int32_t>(FORMAT_FRACTAL_Z), 23)));
+    EXPECT_EQ(inDesc.GetShape().GetDims(), (std::vector<int64_t>{288, 11, 16, 32}));
+    TensorDesc outDesc;
+    ASSERT_EQ(reformat.GetOutputDesc(0, outDesc), GRAPH_SUCCESS);
+    EXPECT_EQ(outDesc.GetFormat(), FORMAT_FRACTAL_Z);
+    EXPECT_EQ(outDesc.GetShape().GetDims(), (std::vector<int64_t>{288, 11, 16, 32}));
+
+    GNode fused;
+    ASSERT_TRUE(GraphChecker::FindFirstNodeByOpType(graph, "ExtendConv2D", fused));
+    TensorDesc filterDesc;
+    ASSERT_EQ(fused.GetInputDesc(1, filterDesc), GRAPH_SUCCESS);
+    EXPECT_EQ(filterDesc.GetFormat(), FORMAT_FRACTAL_Z);
+    EXPECT_EQ(filterDesc.GetShape().GetDims(), (std::vector<int64_t>{288, 11, 16, 32}));
+}
+
+// Multi-block groupOpt case: filter NCHW 64x32x3x3, groups=4, int8. A=lcm(32,32)/32=1 and B=1 keep
+// enlarge=1, so groupOpt=4 blocks of [9, 1, 16, 32] fold into dim0 -> [36, 1, 16, 32]. The naive
+// total-Cin formula would give [36, 4, 16, 32] (4x oversized).
+TEST_F(Conv2DPostCubeToExtendConv2DFusionPassTest, conv2d_postcube_a16w8_reformat_groupopt_multiblock_shape)
+{
+    TestGraph builder("a16w8_reformat_groupopt_multiblock");
+    Conv2DConfig convCfg = Conv2DConfig::Basic("Conv2D", DT_FLOAT16, DT_FLOAT16, FORMAT_NCHW, {1, 128, 9, 9},
+                                               {64, 32, 3, 3}, {1, 64, 7, 7});
+    convCfg.inputs[1].SetDtype(DT_INT8);
+    convCfg.inputs[1].tensorDesc.SetDataType(DT_INT8);
+    convCfg.SetAttr("groups", int64_t(4));
+    auto graph = builder.SetSocFuse()
+                     .AddConv2D(convCfg)
+                     .AddAscendDequant(AscendDequantConfig::Basic("AscendDequant", DT_FLOAT16, FORMAT_NCHW))
+                     .Connect("Conv2D", 0, "AscendDequant", 0)
+                     .SetOutput("AscendDequant")
+                     .Build();
+
+    TestTotalPass("a16w8_reformat_groupopt_multiblock", graph, SUCCESS);
+
+    GNode reformat;
+    ASSERT_TRUE(GraphChecker::FindFirstNodeByOpType(graph, "ReFormat", reformat));
+    TensorDesc outDesc;
+    ASSERT_EQ(reformat.GetOutputDesc(0, outDesc), GRAPH_SUCCESS);
+    EXPECT_EQ(outDesc.GetFormat(), FORMAT_FRACTAL_Z);
+    EXPECT_EQ(outDesc.GetShape().GetDims(), (std::vector<int64_t>{36, 1, 16, 32}));
+
+    GNode fused;
+    ASSERT_TRUE(GraphChecker::FindFirstNodeByOpType(graph, "ExtendConv2D", fused));
+    TensorDesc filterDesc;
+    ASSERT_EQ(fused.GetInputDesc(1, filterDesc), GRAPH_SUCCESS);
+    EXPECT_EQ(filterDesc.GetShape().GetDims(), (std::vector<int64_t>{36, 1, 16, 32}));
+}
+
 // ==========================================================================================
 // ==========================================================================================
 TEST_F(Conv2DPostCubeToExtendConv2DFusionPassTest, conv2d_postcube_fixed_shift_value)
