@@ -97,7 +97,7 @@ aclnnStatus aclnnMatmulCompress(
       <td>输入</td>
       <td>表示压缩后的矩阵乘的右输入，公式中的矩阵$x2$，为通过msModelSlim工具中weight_compression模块压缩后的输入。</td>
       <td>-</td>
-      <td>FLOAT16</td>
+      <td>INT8</td>
       <td>ND</td>
       <td>1</td>
       <td>√</td>

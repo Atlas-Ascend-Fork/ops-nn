@@ -99,7 +99,7 @@ aclnnStatus aclnnMatmulCompress(
       <td>Input</td>
       <td>Right input of the compressed matrix multiplication, matrix $x2$ in the formula. It is the input compressed by the weight_compression module in the msModelSlim tool.</td>
       <td>-</td>
-      <td>FLOAT16</td>
+      <td>INT8</td>
       <td>ND</td>
       <td>1</td>
       <td>√</td>
