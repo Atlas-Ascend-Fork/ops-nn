@@ -1,8 +1,8 @@
 # Copyright (c) 2025 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms and conditions of 
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, 
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
@@ -11,41 +11,77 @@ import sys
 import os
 import math
 import numpy as np
-import copy
-import re
 import torch
 from torch import Tensor
-import tensorflow as tf
-bf16 = tf.bfloat16.as_numpy_dtype
+
+try:
+    # ml_dtypes 与 torch 可同进程共存；本机 torch+tf 同进程导入会段错误
+    import ml_dtypes
+
+    bf16 = ml_dtypes.bfloat16
+except ImportError:
+    import tensorflow as tf
+
+    bf16 = tf.bfloat16.as_numpy_dtype
 np.random.seed(5)
 
 
-def do_adam_w(var, m, v, max_grad_norm, grad, step, lr, beta1, beta2, weight_decay, eps, amsgrad, maximize):
+def do_adam_w(
+    var,
+    m,
+    v,
+    max_grad_norm,
+    grad,
+    step,
+    lr,
+    beta1,
+    beta2,
+    weight_decay,
+    eps,
+    amsgrad,
+    maximize,
+):
     param = torch.tensor(var)
     grad = torch.tensor(grad)
     exp_avg = torch.tensor(m)
-    exp_avg_sq = torch.tensor(max_grad_norm)
-    max_exp_avg_sq = torch.tensor(v)
+    # 角色映射对齐算子定义：v=二阶矩(exp_avg_sq)，max_grad_norm=running max(max_exp_avg_sq)
+    exp_avg_sq = torch.tensor(v)
+    max_exp_avg_sq = torch.tensor(max_grad_norm)
     step_t = step.item()
-    param, max_exp_avg_sq, exp_avg, exp_avg_sq = single_tensor_adamw(param, grad, exp_avg,
-        exp_avg_sq, max_exp_avg_sq, step_t, amsgrad, beta1, beta2, lr, weight_decay, eps, maximize)
+    param, max_exp_avg_sq, exp_avg, exp_avg_sq = single_tensor_adamw(
+        param,
+        grad,
+        exp_avg,
+        exp_avg_sq,
+        max_exp_avg_sq,
+        step_t,
+        amsgrad,
+        beta1,
+        beta2,
+        lr,
+        weight_decay,
+        eps,
+        maximize,
+    )
 
     return param.numpy(), max_exp_avg_sq.numpy(), exp_avg.numpy(), exp_avg_sq.numpy()
 
 
-def single_tensor_adamw(param: Tensor,
-                        grad: Tensor,
-                        exp_avg: Tensor,
-                        exp_avg_sq: Tensor,
-                        max_exp_avg_sq: Tensor,
-                        step_t,
-                        amsgrad,
-                        beta1,
-                        beta2,
-                        lr,
-                        weight_decay,
-                        eps,
-                        maximize):
+def single_tensor_adamw(
+    param: Tensor,
+    grad: Tensor,
+    exp_avg: Tensor,
+    exp_avg_sq: Tensor,
+    max_exp_avg_sq: Tensor,
+    step_t,
+    amsgrad,
+    beta1,
+    beta2,
+    lr,
+    weight_decay,
+    eps,
+    maximize,
+):
     dtype1, dtype2 = param.dtype, grad.dtype
     if dtype1 != dtype2:
         grad = grad.to(dtype1)
@@ -60,8 +96,8 @@ def single_tensor_adamw(param: Tensor,
 
     exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
 
-    bias_correction1 = 1 - beta1 ** step_t
-    bias_correction2 = 1 - beta2 ** step_t
+    bias_correction1 = 1 - beta1**step_t
+    bias_correction2 = 1 - beta2**step_t
 
     step_size = lr / bias_correction1
     bias_correction2_sqrt = math.sqrt(bias_correction2)
@@ -70,19 +106,20 @@ def single_tensor_adamw(param: Tensor,
         torch.maximum(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
         denom = (max_exp_avg_sq.sqrt() / bias_correction2_sqrt) + eps
     else:
-        denom = (exp_avg_sq.sqrt() / bias_correction2) + eps
+        # 分母与 kernel/tests/assets/golden.py 及 torch 单张量 AdamW 一致：sqrt(bc2)
+        denom = (exp_avg_sq.sqrt() / bias_correction2_sqrt) + eps
 
-    param.addcdiv_(exp_avg, denom)
+    param.addcdiv_(exp_avg, denom, value=-step_size)
 
     return param, max_exp_avg_sq, exp_avg, exp_avg_sq
 
 
-def gen_input_data(shape, dtype, input_range, dtype2=None, step_size='float32'):
+def gen_input_data(shape, dtype, input_range, dtype2=None, step_size="float32"):
     d_type_dict = {
         "float32": np.float32,
         "float16": np.float16,
         "bfloat16": bf16,
-        'int64': np.int64
+        "int64": np.int64,
     }
     if dtype2 is None:
         dtype2 = dtype
@@ -92,8 +129,12 @@ def gen_input_data(shape, dtype, input_range, dtype2=None, step_size='float32'):
 
     var = np.random.uniform(input_range[0], input_range[1], shape).astype(dtype)
     m = np.random.uniform(input_range[0], input_range[1], shape).astype(dtype)
-    v = np.random.uniform(input_range[0], input_range[1], shape).astype(dtype)
-    max_grad_norm = np.random.uniform(input_range[0], input_range[1], shape).astype(dtype2)
+    # v(二阶矩)与 max_grad_norm(running max) 语义上非负：若按对称范围生成会出现
+    # v_out<0 → sqrt NaN，golden 与 kernel 均不可比（存量缺陷修复）
+    v = np.abs(np.random.uniform(input_range[0], input_range[1], shape)).astype(dtype)
+    max_grad_norm = np.abs(
+        np.random.uniform(input_range[0], input_range[1], shape)
+    ).astype(dtype2)
     grad = np.random.uniform(input_range[0], input_range[1], shape).astype(dtype2)
 
     step = np.array(np.random.randint(1000)).astype(step_size)
@@ -101,22 +142,35 @@ def gen_input_data(shape, dtype, input_range, dtype2=None, step_size='float32'):
     return var, m, v, max_grad_norm, grad, step, workspace
 
 
-def gen_golden_data_simple(shape, dtype, input_range, lr, beta1, beta2, weight_decay, eps, amsgrad, maximize,
-                           dtype2=None, step_size='float32'):
+def gen_golden_data_simple(
+    shape,
+    dtype,
+    input_range,
+    lr,
+    beta1,
+    beta2,
+    weight_decay,
+    eps,
+    amsgrad,
+    maximize,
+    dtype2=None,
+    step_size="float32",
+):
+    var, m, v, max_grad_norm, grad, step, workspace = gen_input_data(
+        shape, dtype, input_range, dtype2, step_size
+    )
 
-    var, m, v, max_grad_norm, grad, step, workspace = gen_input_data(shape, dtype, input_range, dtype2, step_size)
-
-    var.tofile(f"var.bin")
-    m.tofile(f"m.bin")
-    v.tofile(f"v.bin")
-    max_grad_norm.tofile(f"max_grad_norm.bin")
-    grad.tofile(f"grad.bin")
-    step.tofile(f"step.bin")
-    workspace.tofile(f"workspace.bin")
+    var.tofile("var.bin")
+    m.tofile("m.bin")
+    v.tofile("v.bin")
+    max_grad_norm.tofile("max_grad_norm.bin")
+    grad.tofile("grad.bin")
+    step.tofile("step.bin")
+    workspace.tofile("workspace.bin")
 
 
 def parse_bool_param(param):
-    if param.lower() in ['true', 't']:
+    if param.lower() in ["true", "t"]:
         return True
     return False
 
@@ -136,9 +190,21 @@ if __name__ == "__main__":
     if len(sys.argv) > 5:
         step_size = sys.argv[5]
     else:
-        step_size = 'float32'
+        step_size = "float32"
 
     shape, input_range = [30, 4, 2], [-10, 10]
     lr, beta1, beta2, weight_decay, eps = 0.01, 0.99, 0.1, 5e-3, 1e-6
-    gen_golden_data_simple(shape, dtype, input_range, lr, beta1, beta2, weight_decay, eps, amsgrad, maximize, dtype2, step_size)
-
+    gen_golden_data_simple(
+        shape,
+        dtype,
+        input_range,
+        lr,
+        beta1,
+        beta2,
+        weight_decay,
+        eps,
+        amsgrad,
+        maximize,
+        dtype2,
+        step_size,
+    )

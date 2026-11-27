@@ -28,7 +28,7 @@ using namespace ge;
 using namespace ApplyAdamWV2RegbaseOp;
 
 namespace optiling {
-constexpr static int32_t OPTIONAL_INPUT_INDEX = 11;
+constexpr static int32_t OPTIONAL_INPUT_INDEX = 5;
 constexpr static int32_t SCALAR_INPUT_INDEX = 4;
 constexpr static int32_t INPUT_GRAD_INDEX = 3;
 constexpr static float ATTR_INIT_VALUE = 0.1;
@@ -67,7 +67,15 @@ ge::graphStatus ApplyAdamWV2RegbaseTiling::SetTilingData()
     tilingKey = GET_TPL_TILING_KEY(schMode, amsgrad);
     tilingContext_->SetTilingKey(tilingKey);
     uint32_t numBlocks = static_cast<uint32_t>(tiling_->elewiseTiling.blockNum);
-    OP_CHECK_IF(numBlocks <= 0, OP_LOGE(tilingContext_, "Get numBlocks failed"), return ge::GRAPH_FAILED);
+    if (numBlocks <= 0) {
+        const std::vector<const char*> msgKey = {"opName", "reason"};
+        const std::vector<const char*> msgValue = {
+            "ApplyAdamWV2",
+            "RunTiling: the blockNum of elewiseTiling is not positive. Check the ElewiseBaseTiling result."};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+        OP_LOGE_WITHOUT_REPORT("ApplyAdamWV2", "RunTiling: the blockNum of elewiseTiling is not positive.");
+        return ge::GRAPH_FAILED;
+    }
     tilingContext_->SetBlockDim(numBlocks);
     return ge::GRAPH_SUCCESS;
 }
@@ -126,6 +134,10 @@ ge::graphStatus ApplyAdamWV2RegbaseTiling::CheckMixAndOptionalInput(const gert::
     auto gradDtype = inputGradDesc->GetDataType();
     // check optional input
     auto maxGradNormDesc = tilingContext_->GetOptionalInputDesc(OPTIONAL_INPUT_INDEX);
+    OP_CHECK_IF(amsgradAttr_ && maxGradNormDesc == nullptr,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("ApplyAdamWV2", "max_grad_norm", "None",
+                                                      "max_grad_norm is required when amsgrad is true"),
+                return ge::GRAPH_FAILED);
     if (maxGradNormDesc != nullptr) {
         auto maxGradNormDtype = maxGradNormDesc->GetDataType();
         OP_CHECK_IF(maxGradNormDtype != gradDtype,
@@ -160,7 +172,9 @@ ge::graphStatus ApplyAdamWV2RegbaseTiling::CheckShapeAndType()
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputDesc);
     auto inputDtype = inputDesc->GetDataType();
     // check scalar input
-    OP_CHECK_IF(CheckScalarInput() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext_, "CheckScalarInput failed."),
+    OP_CHECK_IF(CheckScalarInput() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(),
+                                       "CheckScalarInput failed; propagate the lower-layer first error."),
                 return ge::GRAPH_FAILED);
     // check tensor input
     for (const auto& pair : TENSOR_INDEX_LIST) {
@@ -182,7 +196,9 @@ ge::graphStatus ApplyAdamWV2RegbaseTiling::CheckShapeAndType()
                     return ge::GRAPH_FAILED);
     }
     OP_CHECK_IF(CheckMixAndOptionalInput(inputStorageShape) != ge::GRAPH_SUCCESS,
-                OP_LOGE(tilingContext_, "CheckMixDtypeAndOptionalInput failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(),
+                                       "CheckMixAndOptionalInput failed; propagate the lower-layer first error."),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -298,18 +314,35 @@ ge::graphStatus ApplyAdamWV2RegbaseTiling::GetAttributes()
 ge::graphStatus ApplyAdamWV2RegbaseTiling::RunTiling()
 {
     if (tilingContext_ == nullptr) {
+        const std::vector<const char*> msgKey = {"opName", "reason"};
+        const std::vector<const char*> msgValue = {
+            "ApplyAdamWV2", "RunTiling: TilingContext is nullptr. Check the GE tiling invocation."};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+        OP_LOGE_WITHOUT_REPORT("ApplyAdamWV2", "RunTiling: TilingContext is nullptr. Check the GE tiling invocation.");
         return ge::GRAPH_FAILED;
     }
-    OP_CHECK_IF(CheckShapeAndType() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext_, "Shape and Dtype check failed."),
+    OP_CHECK_IF(GetAttributes() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(),
+                                       "GetAttributes failed; propagate the lower-layer first error."),
                 return ge::GRAPH_FAILED);
 
-    OP_CHECK_IF(GetAttributes() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext_, "GetAttributes failed"),
+    OP_CHECK_IF(CheckShapeAndType() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(),
+                                       "CheckShapeAndType failed; propagate the lower-layer first error."),
                 return ge::GRAPH_FAILED);
 
     tiling_ = tilingContext_->GetTilingData<ApplyAdamWV2RegbaseTilingData>();
-    OP_CHECK_IF((tiling_ == nullptr), OP_LOGE(tilingContext_, "Get ApplyAdamWV2RegbaseTiling from GE context failed"),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(DoElewiseTiling() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext_, "elewiseBaseTiling failed"),
+    if (tiling_ == nullptr) {
+        const std::vector<const char*> msgKey = {"opName", "reason"};
+        const std::vector<const char*> msgValue = {
+            "ApplyAdamWV2", "RunTiling: GetTilingData returns nullptr. Check the GE tiling data allocation."};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+        OP_LOGE_WITHOUT_REPORT("ApplyAdamWV2", "RunTiling: GetTilingData returns nullptr.");
+        return ge::GRAPH_FAILED;
+    }
+    OP_CHECK_IF(DoElewiseTiling() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(),
+                                       "DoElewiseTiling failed; propagate the lower-layer first error."),
                 return ge::GRAPH_FAILED);
     return SetTilingData();
 }

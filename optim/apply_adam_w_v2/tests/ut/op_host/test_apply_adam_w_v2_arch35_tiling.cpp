@@ -588,3 +588,129 @@ TEST_F(TestApplyAdamWV2RegbaseTiling, adamw_v2_mixtype_float_02)
                                     ge::DT_FLOAT /*stepDtype*/, lr, beta1, beta2, weightDecay, eps, amsgrad, maximize,
                                     expectStr);
 }
+
+// arch35/regbase 负向 tiling 公共流程: 只返回 tiling 状态, 内部不做 EXPECT/ASSERT, 供负向用例断言
+// GRAPH_FAILED; irInstanceNum 为 0 的输入视为未实例化(可选输入缺失), 不再设置对应 NodeInputTd;
+// inputDtypes 按输入下标覆盖 dtype, 未覆盖的输入默认 DT_FLOAT
+static ge::graphStatus RunApplyAdamWV2RegbaseNegCase(const std::vector<gert::StorageShape*>& inputShapes,
+                                                     const std::vector<ge::DataType>& inputDtypes,
+                                                     const std::vector<uint32_t>& irInstanceNum, bool amsgrad)
+{
+    // init platform
+    fe::PlatFormInfos platFormInfo;
+    map<string, string> socInfos;
+    map<string, string> aicoreSpec;
+    map<string, string> intrinsics;
+    map<string, string> socVersion = {{"Short_SoC_version", "ASCEND950"}};
+    InitPlatForm(platFormInfo, socInfos, aicoreSpec, intrinsics, socVersion);
+
+    std::string opType("ApplyAdamWV2");
+    auto opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl(opType.c_str());
+    if (opImpl == nullptr || opImpl->tiling == nullptr) {
+        return ge::GRAPH_FAILED;
+    }
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+
+    // compile info
+    optiling::ApplyAdamWV2CompileInfo compileInfo;
+    compileInfo.totalCoreNum = 64;
+    compileInfo.ubSize = 262114;
+    compileInfo.isRegbase = true;
+
+    // 注意: TilingContextFaker 的移动构造只搬移 KernelRunContextHolder 基类状态, 因此所有设置
+    // 必须在同一具名对象上顺序调用, 不能在 std::move 的临时对象链上设置 CompileInfo/PlatformInfo;
+    // 可选输入缺失场景须 IrInstanceNum 保持全 1 且 InputShapes 对应位传 nullptr(实测结论):
+    // 若把 IrInstanceNum 对应位置 0, 会引起 ComputeNodeInfo 声明与实际 tensor 数错位,
+    // platform 槽位读到垃圾指针; 全 1 + nullptr shape 时 faker 对该槽位返回空 desc/shape,
+    // 正确命中可选输入缺失校验分支(neg_amsgrad_without_mgn 红转绿已实证);
+    // OutputShapes 不接受 nullptr, 第 4 个输出(原地 mgn)复用 var 的 shape 指针
+    gert::TilingContextFaker faker;
+    faker.SetOpType(opType)
+        .NodeIoNum(6, 4)
+        .IrInstanceNum(irInstanceNum)
+        .InputShapes(inputShapes)
+        .OutputShapes({inputShapes[0], inputShapes[1], inputShapes[2], inputShapes[0]})
+        .CompileInfo(&compileInfo)
+        .PlatformInfo(reinterpret_cast<char*>(&platFormInfo));
+    for (size_t i = 0; i < inputShapes.size(); ++i) {
+        if (irInstanceNum[i] != 0) {
+            ge::DataType dtype = i < inputDtypes.size() ? inputDtypes[i] : ge::DT_FLOAT;
+            faker.NodeInputTd(static_cast<int32_t>(i), dtype, ge::FORMAT_ND, ge::FORMAT_ND);
+        }
+    }
+    for (size_t i = 0; i < 4; ++i) {
+        faker.NodeOutputTd(static_cast<int32_t>(i), ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
+    faker
+        .NodeAttrs({{"lr", Ops::NN::AnyValue::CreateFrom<float>(0.001f)},
+                    {"beta1", Ops::NN::AnyValue::CreateFrom<float>(0.01f)},
+                    {"beta2", Ops::NN::AnyValue::CreateFrom<float>(0.09f)},
+                    {"weight_decay", Ops::NN::AnyValue::CreateFrom<float>(0.0001f)},
+                    {"eps", Ops::NN::AnyValue::CreateFrom<float>(0.000001f)},
+                    {"amsgrad", Ops::NN::AnyValue::CreateFrom<bool>(amsgrad)},
+                    {"maximize", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+        .TilingData(param.get())
+        .Workspace(ws_size);
+
+    auto holder = faker.Build();
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    tiling_context->GetPlatformInfo()->SetPlatformRes("SoCInfo", socInfos);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicoreSpec);
+    tiling_context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("version", socVersion);
+    return opImpl->tiling(tiling_context);
+}
+
+// SEQ15: max_grad_norm dtype 与 grad 不一致时, arch35 tiling 应返回 GRAPH_FAILED
+TEST_F(TestApplyAdamWV2RegbaseTiling, neg_mgn_dtype_mismatch)
+{
+    std::initializer_list<int64_t> inputShape = {2048, 16384};
+    gert::StorageShape varShape = {inputShape, inputShape};
+    gert::StorageShape mShape = {inputShape, inputShape};
+    gert::StorageShape vShape = {inputShape, inputShape};
+    gert::StorageShape gradShape = {inputShape, inputShape};
+    gert::StorageShape stepShape = {{1}, {1}};
+    gert::StorageShape mgnShape = {inputShape, inputShape};
+    EXPECT_EQ(RunApplyAdamWV2RegbaseNegCase(
+                  {&varShape, &mShape, &vShape, &gradShape, &stepShape, &mgnShape},
+                  {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_INT64, ge::DT_FLOAT16},
+                  {1, 1, 1, 1, 1, 1}, true),
+              ge::GRAPH_FAILED);
+}
+
+// SEQ15: max_grad_norm shape 与 grad 不一致时, arch35 tiling 应返回 GRAPH_FAILED
+TEST_F(TestApplyAdamWV2RegbaseTiling, neg_mgn_shape_mismatch)
+{
+    std::initializer_list<int64_t> inputShape = {2048, 16384};
+    std::initializer_list<int64_t> mgnShapeList = {2048, 8192};
+    gert::StorageShape varShape = {inputShape, inputShape};
+    gert::StorageShape mShape = {inputShape, inputShape};
+    gert::StorageShape vShape = {inputShape, inputShape};
+    gert::StorageShape gradShape = {inputShape, inputShape};
+    gert::StorageShape stepShape = {{1}, {1}};
+    gert::StorageShape mgnShape = {mgnShapeList, mgnShapeList};
+    EXPECT_EQ(RunApplyAdamWV2RegbaseNegCase(
+                  {&varShape, &mShape, &vShape, &gradShape, &stepShape, &mgnShape},
+                  {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_INT64, ge::DT_FLOAT},
+                  {1, 1, 1, 1, 1, 1}, true),
+              ge::GRAPH_FAILED);
+}
+
+// SEQ28: amsgrad=true 且 max_grad_norm 缺失时, arch35 tiling 应返回 GRAPH_FAILED
+TEST_F(TestApplyAdamWV2RegbaseTiling, neg_amsgrad_without_mgn)
+{
+    std::initializer_list<int64_t> inputShape = {2048, 16384};
+    gert::StorageShape varShape = {inputShape, inputShape};
+    gert::StorageShape mShape = {inputShape, inputShape};
+    gert::StorageShape vShape = {inputShape, inputShape};
+    gert::StorageShape gradShape = {inputShape, inputShape};
+    gert::StorageShape stepShape = {{1}, {1}};
+    EXPECT_EQ(RunApplyAdamWV2RegbaseNegCase({&varShape, &mShape, &vShape, &gradShape, &stepShape, nullptr},
+                                            {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_INT64},
+                                            {1, 1, 1, 1, 1, 1}, true),
+              ge::GRAPH_FAILED);
+}

@@ -170,7 +170,7 @@ TEST_F(apply_adam_w_v2_test, test_case_float32_amsgrad_false_maximize_false)
     tilingData->weightDecay = weightDecay;
     tilingData->eps = eps;
     tilingData->amsgrad = false;
-    tilingData->maximize = true;
+    tilingData->maximize = false;
     tilingData->isBfloat16 = false;
 
     std::string curPath = ".";
@@ -708,8 +708,8 @@ TEST_F(apply_adam_w_v2_test, test_case_float32_bfloat16_amsgrad_false_maximize_f
     tilingData->beta2 = beta2;
     tilingData->weightDecay = weightDecay;
     tilingData->eps = eps;
-    tilingData->amsgrad = true;
-    tilingData->maximize = true;
+    tilingData->amsgrad = false;
+    tilingData->maximize = false;
     tilingData->isBfloat16 = true;
 
     std::string curPath = ".";
@@ -787,8 +787,8 @@ TEST_F(apply_adam_w_v2_test, test_case_float32_bfloat16_amsgrad_false_maximize_f
     tilingData->beta2 = beta2;
     tilingData->weightDecay = weightDecay;
     tilingData->eps = eps;
-    tilingData->amsgrad = true;
-    tilingData->maximize = true;
+    tilingData->amsgrad = false;
+    tilingData->maximize = false;
     tilingData->isBfloat16 = true;
 
     std::string curPath = ".";
