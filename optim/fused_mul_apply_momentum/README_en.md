@@ -47,7 +47,7 @@ English | [简体中文](./README.md)
 | var | Input | Model parameters to be updated, corresponding to var<sub>t-1</sub> in the formula. | FLOAT, FLOAT16 | ND |
 | accum | Input | Momentum accumulator, corresponding to accum<sub>t-1</sub> in the formula. The shape is the same as var. | FLOAT, FLOAT16 | ND |
 | lr | Input | Learning rate, corresponding to η in the formula, a single-element tensor. | FLOAT, FLOAT16 | ND |
-| x1 | Input | Gradient tensor, corresponding to x<sub>1</sub> in the formula. The shape is the same as var. | FLOAT, FLOAT16 | ND |
+| x1 | Input | Gradient tensor, corresponding to x<sub>1</sub> in the formula. Its shape must be broadcastable under ND rules to the existing shape of var and accum, and the resulting shape must equal var.shape. | FLOAT, FLOAT16 | ND |
 | momentum | Input | Momentum coefficient, corresponding to m in the formula, a single-element tensor, with the typical value 0.9. | FLOAT, FLOAT16 | ND |
 | x2 | Input | Gradient scaling factor, corresponding to x<sub>2</sub> in the formula, a single-element tensor. | FLOAT, FLOAT16 | ND |
 | use_nesterov | Attribute | <ul><li>Switch of the Nesterov mode.</li><li>The default value is false.</li></ul> | BOOL | - |
@@ -61,7 +61,7 @@ English | [简体中文](./README.md)
 - ND format is supported.
 - No additional floating-point input value range is imposed.
 
-- The shapes and data types of the three tensors var, accum, and x1 must be exactly the same.
+- The shapes of var and accum must be identical. The shape of x1 must be broadcastable in one direction to their existing shape under ND rules, and the resulting shape must equal var.shape; x1 must not enlarge the state tensors. For example, with var=accum=[2,3], x1=[1,3] is supported; with var=accum=[1,3], x1=[2,3] is not supported. The data types of var, accum, and x1 must be identical.
 - lr, momentum, and x2 must each contain one element, including scalar shapes, and have the same data type as var.
 - The use_locking attribute is retained for TensorFlow compatibility and is not used.
 - The operator is deterministic by default, and the same input produces the same output.

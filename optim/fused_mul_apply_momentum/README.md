@@ -45,7 +45,7 @@
 | var | 输入 | 待更新的模型参数，对应公式中 var<sub>t-1</sub>。 | FLOAT、FLOAT16 | ND |
 | accum | 输入 | 动量累积器，对应公式中 accum<sub>t-1</sub>。shape 与 var 相同。 | FLOAT、FLOAT16 | ND |
 | lr | 输入 | 学习率，对应公式中 η，单元素Tensor。 | FLOAT、FLOAT16 | ND |
-| x1 | 输入 | 梯度张量，对应公式中 x<sub>1</sub>。shape 与 var 相同。 | FLOAT、FLOAT16 | ND |
+| x1 | 输入 | 梯度张量，对应公式中x<sub>1</sub>。shape必须能按ND规则广播至var和accum的既有shape，且广播结果必须等于var.shape。 | FLOAT、FLOAT16 | ND |
 | momentum | 输入 | 动量系数，对应公式中 m，单元素Tensor，典型值 0.9。 | FLOAT、FLOAT16 | ND |
 | x2 | 输入 | 梯度缩放因子，对应公式中 x<sub>2</sub>，单元素Tensor。 | FLOAT、FLOAT16 | ND |
 | use_nesterov | 属性 | <ul><li>Nesterov模式开关。</li><li>默认值为false。</li></ul> | BOOL | - |
@@ -57,9 +57,9 @@
 
 - 直接调用Kernel时，输入需为连续Tensor。
 
-- var、accum、x1 三个 Tensor 的 shape 和数据类型必须完全一致。
+- var和accum的shape必须完全一致。x1的shape必须能按ND广播规则单向广播到该既有shape，且广播结果必须等于var.shape；x1不能扩大状态张量的shape。例如var=accum=[2,3]、x1=[1,3]支持；var=accum=[1,3]、x1=[2,3]不支持。var、accum、x1的数据类型必须完全一致。
 - lr、momentum、x2 为单元素Tensor（可为0维或其他元素数为1的shape），数据类型必须与 Tensor 的数据类型一致。
-- 仅 lr、momentum、x2 三个标量支持广播参与计算；var、accum、x1 之间不支持广播，shape 必须完全一致。
+- 仅lr、momentum、x2三个标量支持广播参与计算；var与accum之间不支持广播，shape必须完全一致，x1按上述规则单向广播至var的shape。
 - 支持ND格式。
 - use_locking属性为接口兼容保留，不使用。
 - 算子默认确定性实现，相同输入产生相同输出。
