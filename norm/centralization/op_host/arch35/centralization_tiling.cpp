@@ -1078,10 +1078,11 @@ static int64_t StridedSuffixAxis(const CentralizationTilingData* tiling, int64_t
     }
     constexpr int64_t kMinStridedRows = 512;
     const bool manyGroups = tiling->groupCount > coreNum;
-    const bool shortRows = (manyGroups ?
-                                suffix <= kKernelTileElements && tiling->reduceDims[axis] >= 32 :
-                                suffix <= kRegbaseVectorElements && tiling->reduceDims[axis] >= kMinStridedRows) &&
-                           static_cast<uint64_t>(tiling->reduceStrides[axis]) <= UINT32_MAX / elementBytes;
+    const bool longRun = tiling->reduceDims[axis] >= kMinStridedRows;
+    const bool batchRows = (longRun && suffix <= Centralization::kMaxBatchedSuffixElements) ||
+                           (tiling->groupCount >= coreNum / 2 && tiling->reduceDims[axis] >= 32 &&
+                            suffix <= kKernelTileElements);
+    const bool shortRows = batchRows && static_cast<uint64_t>(tiling->reduceStrides[axis]) <= UINT32_MAX / elementBytes;
     const bool splitWithinSuffix = suffix >= kLargeReduceThreshold &&
                                    (manyGroups ? tiling->reduceCount / suffix <= 16 :
                                                  tiling->reduceCount / suffix < coreNum / tiling->groupCount);
@@ -1167,7 +1168,7 @@ static bool CanUseFastPath(const CentralizationTilingData* tiling, ge::DataType 
     if (dtype == DT_FLOAT && tiling->reduceCount > kRegbaseVectorElements) {
         // Each packed block carries several independent rows through the compensated reduction.
         return tiling->reduceCount <= Centralization::kMaxPackedFp32Columns &&
-               tiling->groupCount / coreNum >= kRegbaseVectorElements / 2 &&
+               tiling->groupCount / coreNum >= kRegbaseVectorElements / 4 &&
                perBufferBytes / rowBytes >= kRegbaseVectorElements / 4;
     }
     return rowBytes <= perBufferBytes;
@@ -1342,9 +1343,18 @@ static ge::graphStatus ConfigurePath(gert::TilingContext* context, Centralizatio
                                     StridedSuffixAxis(tiling, coreNum, elementBytes) :
                                     -1;
     size_t fastPerBufferBytes = 0;
-    if (planeWidth > 0 && LargePlaneRowFits(ubSize, elementBytes, planeWidth)) {
-        tiling->contiguousOuterCount = 1;
-        tiling->contiguousInnerCount = planeWidth;
+    // Split wide rows along the reduction when their column tiles leave most cores idle.
+    const int64_t inner = tiling->contiguousInnerCount;
+    const bool splitRows = continuousAxes && !trailing && tiling->reduceCount > kLargeReduceThreshold &&
+                           contiguousTaskCount < coreNum / 2 && inner > kRegbaseVectorElements &&
+                           inner <= kGenericContiguousTileElements &&
+                           genericPerBuffer >= 2 * static_cast<size_t>(AlignToVectorElements(inner)) * sizeof(float);
+    const bool repeatingPlane = planeWidth > 0 && LargePlaneRowFits(ubSize, elementBytes, planeWidth);
+    if (repeatingPlane || splitRows) {
+        if (repeatingPlane) {
+            tiling->contiguousOuterCount = 1;
+            tiling->contiguousInnerCount = planeWidth;
+        }
         if (ApplyLargePlanePath(context, tiling, coreNum, workspace, key, blockDim) != GRAPH_SUCCESS) {
             return GRAPH_FAILED;
         }
@@ -1386,7 +1396,7 @@ static ge::graphStatus ConfigurePath(gert::TilingContext* context, Centralizatio
             context->SetScheduleMode(1);
         }
     } else if (tiling->largePath) {
-        // LargeTrailing 的 tile 固定 1024 元素；放不下时回退到 Generic large（7020）。
+        // 按 1024 元素的基础 tile 检查 UB；长归约可在 kernel 内扩大 tile。
         const bool useLargeTrailing = trailing && LargeTrailingUbFits(elementBytes, ubSize);
         // Plane：单 reduce 段且 inner ∈ (1,256]，平面连续可行批，优先于标量 gather。
         const bool useLargePlane = !trailing && continuousAxes && tiling->contiguousInnerCount > 1 &&

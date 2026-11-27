@@ -39,7 +39,7 @@ __aicore__ inline StridedSuffixTile GetStridedSuffixTile(int64_t base, int64_t p
     const int64_t width = Min(capacity, Min(suffix - column, remaining));
     const int64_t ubStride = AlignToBlock(width);
     constexpr int64_t kMaxDmaRows = 4095;
-    const int64_t rows = (width == suffix && suffix <= 1024 && tiling_->reduceStrides[axis] <= UINT32_MAX / sizeof(T)) ?
+    const int64_t rows = (width == suffix && tiling_->reduceStrides[axis] <= UINT32_MAX / sizeof(T)) ?
                              Min(kMaxDmaRows, Min(axisDim - axisRow, Min(remaining / width, capacity / ubStride))) :
                              1;
     return {offset, rows, width, ubStride, rows > 1 ? tiling_->reduceStrides[axis] : width};
@@ -139,7 +139,7 @@ __aicore__ inline void ProcessStridedSuffix(int64_t core)
     const int64_t axis = tiling_->stridedReduceAxis;
     const int64_t count = tiling_->reduceCount;
     const int64_t suffix = tiling_->irregularReduceSuffixElements;
-    const int64_t unit = suffix <= 1024 ? suffix : 32 / sizeof(T);
+    const int64_t unit = suffix <= kMaxBatchedSuffixElements ? suffix : 32 / sizeof(T);
     const int64_t units = (count - 1) / unit + 1;
     const int64_t begin = (units / parts * part + Min(part, units % parts)) * unit;
     const int64_t end = part + 1 == parts ? count : (units / parts * (part + 1) + Min(part + 1, units % parts)) * unit;

@@ -581,6 +581,24 @@ TEST(CentralizationTiling, BatchesStridedReductionAlongLongestOuterAxis)
     EXPECT_EQ(many.workspace, 0U);
 }
 
+TEST(CentralizationTiling, SplitsTallMatricesByReductionRows)
+{
+    const auto tall = RunTiling({116, 111, 107, 108}, ge::DT_FLOAT, {0, 1, 2});
+    ASSERT_TRUE(tall.ok);
+    EXPECT_EQ(tall.td.largePlane, 1);
+    EXPECT_EQ(tall.td.contiguousInnerCount, 108);
+    EXPECT_GT(tall.td.coresPerRow, 14);
+}
+
+TEST(CentralizationTiling, BatchesMediumWidthSuffixes)
+{
+    const auto r = RunTiling({54612, 6, 343}, ge::DT_FLOAT, {0, 2});
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.td.largePath, Centralization::kStridedSuffixPath);
+    EXPECT_GT(r.td.coresPerRow, 1);
+    EXPECT_EQ(r.blocks, r.td.groupCount * r.td.coresPerRow);
+}
+
 TEST(CentralizationTiling, DividesLongSuffixWithinEachPhysicalSegment)
 {
     auto r = RunTiling({2, 2, 131073}, ge::DT_FLOAT, {0, 2});

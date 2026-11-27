@@ -38,6 +38,12 @@ public:
         eventSToMte3_ = static_cast<event_t>(pipe_->FetchEventID(HardEvent::S_MTE3));
         eventMte3ToMte2_ = static_cast<event_t>(pipe_->FetchEventID(HardEvent::MTE3_MTE2));
         eventMte2ToS_ = static_cast<event_t>(pipe_->FetchEventID(HardEvent::MTE2_S));
+        // Larger tiles amortize queue and residual-fold costs when each core owns many complete tiles.
+        constexpr int64_t largeTile = 4 * kBaseTileElements;
+        if (tiling_->rowParallel == 0 && tiling_->reduceCount / tiling_->coresPerRow >= 4 * largeTile &&
+            tiling_->largeTrailingCalcBufferBytes >= largeTile * sizeof(float)) {
+            tileElements_ = largeTile;
+        }
         InitScale();
     }
 
@@ -53,7 +59,8 @@ public:
     }
 
 private:
-    static constexpr int64_t kTileElements = 1024;
+    static constexpr int64_t kBaseTileElements = 1024;
+    int64_t tileElements_ = kBaseTileElements;
     static constexpr int64_t kWorkspaceElements = 32 / sizeof(float);
     static constexpr uint16_t kMaxAccSlots = 16;
     static constexpr bool kUseCompensatedReduce = IsSameType<T, float>::value || IsSameType<T, half>::value;
@@ -227,15 +234,15 @@ private:
 
     __aicore__ inline float ReduceRowSingleCore(int64_t row)
     {
-        const int64_t chunkCount = (tiling_->reduceCount + kTileElements - 1) / kTileElements;
+        const int64_t chunkCount = (tiling_->reduceCount + tileElements_ - 1) / tileElements_;
         const int64_t rowBase = RowBase(row);
         const uint16_t numSlots = static_cast<uint16_t>(
             (tiling_->numAccSlots > 0 && tiling_->numAccSlots <= kMaxAccSlots) ? tiling_->numAccSlots : 1);
         float slots[kMaxAccSlots] = {0.0f};
         uint16_t slot = 0;
         for (int64_t chunk = 0; chunk < chunkCount; ++chunk) {
-            const int64_t col = chunk * kTileElements;
-            const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
+            const int64_t col = chunk * tileElements_;
+            const int64_t validElements = Min(tileElements_, tiling_->reduceCount - col);
             slots[slot] += ReduceTile(rowBase + col, validElements);
             slot = static_cast<uint16_t>((slot + 1 == numSlots) ? 0 : (slot + 1));
         }
@@ -250,7 +257,7 @@ private:
 
     __aicore__ inline MeanHiLo ReduceRowSingleCoreCompensated(int64_t row)
     {
-        const int64_t chunkCount = (tiling_->reduceCount + kTileElements - 1) / kTileElements;
+        const int64_t chunkCount = (tiling_->reduceCount + tileElements_ - 1) / tileElements_;
         const int64_t rowBase = RowBase(row);
         const uint16_t numSlots = static_cast<uint16_t>(
             (tiling_->numAccSlots > 0 && tiling_->numAccSlots <= kMaxAccSlots) ? tiling_->numAccSlots : 1);
@@ -260,8 +267,8 @@ private:
         }
         uint16_t slot = 0;
         for (int64_t chunk = 0; chunk < chunkCount; ++chunk) {
-            const int64_t col = chunk * kTileElements;
-            const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
+            const int64_t col = chunk * tileElements_;
+            const int64_t validElements = Min(tileElements_, tiling_->reduceCount - col);
             const CompensatedSum tilePartial = ReduceTileCompensated(rowBase + col, validElements);
             AddCompensated(slots[slot], tilePartial.sum);
             AddCompensated(slots[slot], tilePartial.correction);
@@ -302,16 +309,49 @@ private:
         Muls(calc, calc, inputScale_, static_cast<uint32_t>(alignedElements));
         PipeBarrier<PIPE_V>();
 
-        LocalTensor<float> meanTensor = meanBuf_.Get<float>();
-        Duplicate(meanTensor, meanHi, static_cast<int32_t>(alignedElements));
-        PipeBarrier<PIPE_V>();
-        Sub(calc, calc, meanTensor, static_cast<uint32_t>(alignedElements));
-        PipeBarrier<PIPE_V>();
-        Duplicate(meanTensor, meanLo, static_cast<int32_t>(alignedElements));
-        PipeBarrier<PIPE_V>();
-        Sub(calc, calc, meanTensor, static_cast<uint32_t>(alignedElements));
-        PipeBarrier<PIPE_V>();
-        Muls(calc, calc, outputScale_, static_cast<uint32_t>(alignedElements));
+        CenterScaledTile(calc, alignedElements, meanHi, meanLo);
+        inQueue_.FreeTensor(input);
+    }
+
+    __aicore__ inline void CenterScaledTile(LocalTensor<float>& calc, int64_t alignedElements, float meanHi,
+                                            float meanLo)
+    {
+        if constexpr (IsSameType<T, float>::value) {
+            using namespace AscendC::Reg;
+            constexpr uint32_t lanes = NormCommon::V_LENGTH;
+            const uint16_t blocks = static_cast<uint16_t>((alignedElements + lanes - 1) / lanes);
+            const float scale = outputScale_;
+            const uint32_t count = static_cast<uint32_t>(alignedElements);
+            __local_mem__ float* addr = (__local_mem__ float*)calc.GetPhyAddr();
+            __VEC_SCOPE__
+            {
+                MaskReg full = CreateMask<float, MaskPattern::ALL>();
+                RegTensor<float> negativeHi;
+                RegTensor<float> low;
+                Duplicate(negativeHi, -meanHi, full);
+                Duplicate(low, meanLo, full);
+                uint32_t remaining = count;
+                for (uint16_t block = 0; block < blocks; ++block) {
+                    MaskReg active = UpdateMask<float>(remaining);
+                    RegTensor<float> value;
+                    LoadAlign(value, addr + block * lanes);
+                    SubtractMeanWithResidual(value, negativeHi, low, active);
+                    Muls(value, value, scale, active);
+                    StoreAlign(addr + block * lanes, value, active);
+                }
+            }
+        } else {
+            LocalTensor<float> meanTensor = meanBuf_.Get<float>();
+            Duplicate(meanTensor, meanHi, static_cast<int32_t>(alignedElements));
+            PipeBarrier<PIPE_V>();
+            Sub(calc, calc, meanTensor, static_cast<uint32_t>(alignedElements));
+            PipeBarrier<PIPE_V>();
+            Duplicate(meanTensor, meanLo, static_cast<int32_t>(alignedElements));
+            PipeBarrier<PIPE_V>();
+            Sub(calc, calc, meanTensor, static_cast<uint32_t>(alignedElements));
+            PipeBarrier<PIPE_V>();
+            Muls(calc, calc, outputScale_, static_cast<uint32_t>(alignedElements));
+        }
         PipeBarrier<PIPE_V>();
 
         LocalTensor<T> output = outQueue_.AllocTensor<T>();
@@ -322,7 +362,6 @@ private:
         }
         PipeBarrier<PIPE_V>();
         outQueue_.EnQue(output);
-        inQueue_.FreeTensor(input);
     }
 
     __aicore__ inline void CopyOutTile(int64_t offset, int64_t validElements)
@@ -336,25 +375,25 @@ private:
 
     __aicore__ inline void SubtractRowSingleCore(int64_t row, float meanHi, float meanLo)
     {
-        const int64_t chunkCount = (tiling_->reduceCount + kTileElements - 1) / kTileElements;
+        const int64_t chunkCount = (tiling_->reduceCount + tileElements_ - 1) / tileElements_;
         const int64_t rowBase = RowBase(row);
         for (int64_t stage = 0; stage < chunkCount + 2; ++stage) {
             if (stage < chunkCount) {
                 const int64_t chunk = stage;
-                const int64_t col = chunk * kTileElements;
-                const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
+                const int64_t col = chunk * tileElements_;
+                const int64_t validElements = Min(tileElements_, tiling_->reduceCount - col);
                 CopyInTile(rowBase + col, validElements);
             }
             if (stage >= 1 && (stage - 1) < chunkCount) {
                 const int64_t chunk = stage - 1;
-                const int64_t col = chunk * kTileElements;
-                const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
+                const int64_t col = chunk * tileElements_;
+                const int64_t validElements = Min(tileElements_, tiling_->reduceCount - col);
                 ComputeTile(validElements, meanHi, meanLo);
             }
             if (stage >= 2 && (stage - 2) < chunkCount) {
                 const int64_t chunk = stage - 2;
-                const int64_t col = chunk * kTileElements;
-                const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
+                const int64_t col = chunk * tileElements_;
+                const int64_t validElements = Min(tileElements_, tiling_->reduceCount - col);
                 CopyOutTile(rowBase + col, validElements);
             }
         }
@@ -362,13 +401,13 @@ private:
 
     __aicore__ inline float PartialReduceRow(int64_t row, uint32_t localCore, uint32_t coresPerRow)
     {
-        const int64_t chunkCount = (tiling_->reduceCount + kTileElements - 1) / kTileElements;
+        const int64_t chunkCount = (tiling_->reduceCount + tileElements_ - 1) / tileElements_;
         const int64_t rowBase = RowBase(row);
         float partial = 0.0f;
         for (int64_t chunk = static_cast<int64_t>(localCore); chunk < chunkCount;
              chunk += static_cast<int64_t>(coresPerRow)) {
-            const int64_t col = chunk * kTileElements;
-            const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
+            const int64_t col = chunk * tileElements_;
+            const int64_t validElements = Min(tileElements_, tiling_->reduceCount - col);
             partial += ReduceTile(rowBase + col, validElements);
         }
         return partial;
@@ -376,13 +415,13 @@ private:
 
     __aicore__ inline CompensatedSum PartialReduceRowCompensated(int64_t row, uint32_t localCore, uint32_t coresPerRow)
     {
-        const int64_t chunkCount = (tiling_->reduceCount + kTileElements - 1) / kTileElements;
+        const int64_t chunkCount = (tiling_->reduceCount + tileElements_ - 1) / tileElements_;
         const int64_t rowBase = RowBase(row);
         CompensatedSum partial{0.0f, 0.0f};
         for (int64_t chunk = static_cast<int64_t>(localCore); chunk < chunkCount;
              chunk += static_cast<int64_t>(coresPerRow)) {
-            const int64_t col = chunk * kTileElements;
-            const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
+            const int64_t col = chunk * tileElements_;
+            const int64_t validElements = Min(tileElements_, tiling_->reduceCount - col);
             const CompensatedSum tilePartial = ReduceTileCompensated(rowBase + col, validElements);
             AddCompensated(partial, tilePartial.sum);
             AddCompensated(partial, tilePartial.correction);
@@ -475,10 +514,19 @@ private:
     __aicore__ inline void FinalizeMeanRowCompensated(int64_t row)
     {
         CompensatedSum partial{0.0f, 0.0f};
-        for (int64_t slot = 0; slot < tiling_->coresPerRow; ++slot) {
-            const CompensatedSum slotPartial = LoadWorkspaceCompensated(row, slot);
-            AddCompensated(partial, slotPartial.sum);
-            AddCompensated(partial, slotPartial.correction);
+        const int64_t slots = tiling_->coresPerRow;
+        const int64_t capacity = tiling_->largeTrailingCalcBufferBytes / (kWorkspaceElements * sizeof(float));
+        LocalTensor<float> values = calcBuf_.Get<float>();
+        for (int64_t start = 0; start < slots; start += capacity) {
+            const int64_t count = Min(capacity, slots - start);
+            DataCopy(values, workspaceGm_[WorkspaceOffset(row, start)],
+                     static_cast<uint32_t>(count * kWorkspaceElements));
+            SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+            WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+            for (int64_t i = 0; i < count; ++i) {
+                AddCompensated(partial, values.GetValue(i * kWorkspaceElements));
+                AddCompensated(partial, values.GetValue(i * kWorkspaceElements + 1));
+            }
         }
         StoreWorkspaceMean(row, FinalizeMeanHiLo(partial, tiling_->reduceCount));
     }
@@ -487,6 +535,17 @@ private:
     {
         for (int64_t row = core; row < tiling_->groupCount; row += cores) {
             if constexpr (kUseCompensatedReduce) {
+                if (tiling_->reduceCount <= tileElements_) {
+                    const int64_t count = tiling_->reduceCount;
+                    const int64_t offset = RowBase(row);
+                    const CompensatedSum partial = ReduceTileCompensated(offset, count);
+                    const MeanHiLo mean = FinalizeMeanHiLo(partial, count);
+                    // The residual reduction leaves the scaled input in calcBuf_ for the output pass.
+                    LocalTensor<float> calc = calcBuf_.Get<float>();
+                    CenterScaledTile(calc, AlignToBlock(count), mean.hi, mean.lo);
+                    CopyOutTile(offset, count);
+                    continue;
+                }
                 const MeanHiLo mean = ReduceRowSingleCoreCompensated(row);
                 SubtractRowSingleCore(row, mean.hi, mean.lo);
             } else {
@@ -544,7 +603,7 @@ private:
 
     __aicore__ inline void SubtractRow(int64_t row, uint32_t localCore, uint32_t coresPerRow)
     {
-        const int64_t chunkCount = (tiling_->reduceCount + kTileElements - 1) / kTileElements;
+        const int64_t chunkCount = (tiling_->reduceCount + tileElements_ - 1) / tileElements_;
         const MeanHiLo mean = LoadWorkspaceMean(row);
         const int64_t rowBase = RowBase(row);
         const int64_t tileCount = (chunkCount - static_cast<int64_t>(localCore) + static_cast<int64_t>(coresPerRow) -
@@ -557,22 +616,22 @@ private:
             if (stage < tileCount) {
                 const int64_t localTile = stage;
                 const int64_t chunk = static_cast<int64_t>(localCore) + localTile * static_cast<int64_t>(coresPerRow);
-                const int64_t col = chunk * kTileElements;
-                const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
+                const int64_t col = chunk * tileElements_;
+                const int64_t validElements = Min(tileElements_, tiling_->reduceCount - col);
                 CopyInTile(rowBase + col, validElements);
             }
             if (stage >= 1 && (stage - 1) < tileCount) {
                 const int64_t localTile = stage - 1;
                 const int64_t chunk = static_cast<int64_t>(localCore) + localTile * static_cast<int64_t>(coresPerRow);
-                const int64_t col = chunk * kTileElements;
-                const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
+                const int64_t col = chunk * tileElements_;
+                const int64_t validElements = Min(tileElements_, tiling_->reduceCount - col);
                 ComputeTile(validElements, mean.hi, mean.lo);
             }
             if (stage >= 2 && (stage - 2) < tileCount) {
                 const int64_t localTile = stage - 2;
                 const int64_t chunk = static_cast<int64_t>(localCore) + localTile * static_cast<int64_t>(coresPerRow);
-                const int64_t col = chunk * kTileElements;
-                const int64_t validElements = Min(kTileElements, tiling_->reduceCount - col);
+                const int64_t col = chunk * tileElements_;
+                const int64_t validElements = Min(tileElements_, tiling_->reduceCount - col);
                 CopyOutTile(rowBase + col, validElements);
             }
         }

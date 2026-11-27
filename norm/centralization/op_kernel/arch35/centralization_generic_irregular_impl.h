@@ -615,7 +615,10 @@ __aicore__ inline bool GetPackedSuffixLayout(PackedSuffixLayout& layout) const
     const int64_t keepRank = tiling_->irregularKeepOuterRank;
     const int64_t outerRank = tiling_->irregularReduceOuterRank;
     const int64_t suffix = tiling_->irregularReduceSuffixElements;
-    if (keepRank == 0 || outerRank == 0 || suffix > V_LENGTH ||
+    const int64_t maxSuffix = IsSameType<T, half>::value && tiling_->irregularKeepInnerCount >= V_LENGTH ?
+                                  2 * V_LENGTH :
+                                  V_LENGTH;
+    if (keepRank == 0 || outerRank == 0 || suffix > maxSuffix ||
         tiling_->genericSumBufferBytes < kPackedSuffixAccElements * sizeof(float)) {
         return false;
     }

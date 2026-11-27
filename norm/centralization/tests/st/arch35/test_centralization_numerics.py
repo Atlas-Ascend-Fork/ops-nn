@@ -64,6 +64,33 @@ class TestCentralizationNumerics(unittest.TestCase):
                     x[-1, :, -1] = np.finfo(dtype).max
                     self.assert_centered(x, 1)
 
+    def test_partial_tiles_and_split_reductions(self):
+        layouts = (
+            ((97, 1, 70), (2,)),
+            ((512, 618), (1,)),
+            ((19, 23, 32), (0, 1)),
+            ((10001, 108), (0,)),
+            ((513, 6, 343), (0, 2)),
+            ((2, 4, 128, 120), (0, 3)),
+            ((1, 1310721), (1,)),
+        )
+        for dtype in (np.float16, np.float32):
+            for shape, axes in layouts:
+                with self.subTest(dtype=dtype, shape=shape, axes=axes):
+                    values = np.arange(np.prod(shape), dtype=np.int32) % 173 - 86
+                    self.assert_centered(values.astype(dtype).reshape(shape), axes)
+
+    def test_plane_overflow_within_and_between_partials(self):
+        x = np.zeros((10001, 108), dtype=np.float32)
+        peak = np.float32(2.0**127)
+        # A 1001-row split puts the two positive values in the same partial.
+        x[1000:1004, 0] = [-peak, peak, peak, -peak]
+        # Here each partial is finite and overflow occurs only during the merge.
+        x[[0, 1001, 2002, 3003], 1] = [peak, peak, -peak, -peak]
+        x[:, 2] = -x[:, 1]
+        x[:, 3] = np.float32(2.0**-120)
+        self.assert_centered(x, (0,))
+
     def test_segmented_suffix_cancels_before_overflow(self):
         x = np.zeros((7, 6, 2, 7, 4, 3, 8, 2), dtype=np.float32)
         peak = np.float32(np.finfo(np.float32).max * 0.75)

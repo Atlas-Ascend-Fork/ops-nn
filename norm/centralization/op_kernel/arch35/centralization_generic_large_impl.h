@@ -734,6 +734,39 @@ __aicore__ inline void StorePlanePartials(int64_t o, int64_t localCore, LocalTen
     outQueue_.FreeTensor(output);
 }
 
+// If a partial or its merge overflows, reread this logical group with binary scaling.
+// Batch the innermost reduction axis into DMA rows without disturbing the other groups in UB.
+__aicore__ inline MeanHiLo RecomputePlaneMean(int64_t group)
+{
+    const int64_t base = GroupBase(group);
+    const int64_t count = tiling_->reduceCount;
+    const int64_t axis = tiling_->reduceRank - 1;
+    const int64_t width = tiling_->reduceDims[axis];
+    const int64_t stride = tiling_->reduceStrides[axis];
+    const int64_t pitch = AlignToBlock(1);
+    const int64_t capacity = tiling_->genericInputBufferBytes / (pitch * sizeof(T));
+    const int64_t maxRows = stride <= UINT32_MAX / sizeof(T) ? Min(capacity, 4095) : 1;
+    const float restore = ReductionRestoreFactor(count);
+    const float scale = 1.0f / restore;
+    LargeCompensatedSum acc{};
+    for (int64_t r = 0; r < count;) {
+        const int64_t rows = Min(maxRows, width - r % width);
+        CopyInRowsPadded(base + ReduceOffset(r), rows, 1, pitch, rows > 1 ? stride : 1);
+        LocalTensor<T> input = inQueue_.DeQue<T>();
+        SetFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+        WaitFlag<HardEvent::MTE2_S>(eventMte2ToS_);
+        for (int64_t i = 0; i < rows; ++i) {
+            AddLargeCompensated(acc, static_cast<float>(input.GetValue(i * pitch)) * scale);
+        }
+        inQueue_.FreeTensor(input);
+        r += rows;
+    }
+    MeanHiLo mean = FinalizeMeanHiLo(acc, count);
+    mean.hi *= restore;
+    mean.lo *= restore;
+    return mean;
+}
+
 // 合并 plane o 的 coresPerRow 份 partial，写 hi/lo 均值块到 workspace。
 // 高位从块首写入，低位从 OptimalRowStride(inner) 个 float 处写入。
 __aicore__ inline void MergePlaneMeans(int64_t o, int64_t inner, int64_t coresPerRow)
@@ -786,7 +819,10 @@ __aicore__ inline void MergePlaneMeans(int64_t o, int64_t inner, int64_t coresPe
     }
     for (int64_t i = 0; i < inner; ++i) {
         const LargeCompensatedSum acc{sum.GetValue(i), sum.GetValue(corrOffset + i)};
-        const MeanHiLo m = FinalizeMeanHiLo(acc, tiling_->reduceCount);
+        const MeanHiLo m = IsFinitePair(acc.sum, acc.correction) ?
+                               FinalizeMeanHiLo(acc, tiling_->reduceCount) :
+                               RecomputePlaneMean(
+                                   GroupFromOffset(o * (tiling_->totalCount / tiling_->contiguousOuterCount) + i));
         output.SetValue(i, m.hi);
         output.SetValue(rowStride + i, m.lo);
     }

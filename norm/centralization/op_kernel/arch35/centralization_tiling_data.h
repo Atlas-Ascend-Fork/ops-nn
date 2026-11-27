@@ -13,6 +13,7 @@
 
 namespace Centralization {
 constexpr int64_t kMaxPackedFp32Columns = 320;
+constexpr int64_t kMaxBatchedSuffixElements = 2048;
 constexpr int64_t kStridedSuffixPath = 2;
 constexpr int64_t kInterleavedColumnsPath = 3;
 constexpr int64_t kMaxInterleavedGroups = 32;

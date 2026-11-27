@@ -34,6 +34,11 @@ __aicore__ inline InterleavedTile GetInterleavedTile(int64_t base, int64_t posit
     if (period == 3) {
         const int64_t pitch = AlignToBlock(period);
         const int64_t rows = Min(4095, Min(capacity / pitch, Min(span - row, remaining)));
+        if (axis == 0 && IsSameType<T, float>::value) {
+            // Move the contiguous rows in one DMA. Gather and scatter retain the three-column pitch.
+            const int64_t width = rows * period;
+            return {{offset, 1, width, AlignToBlock(width), width}, rows, rows, period};
+        }
         return {{offset, rows, period, pitch, period}, rows, rows, pitch};
     }
     const int64_t rows = Min(capacity / period, Min(span - row, remaining));

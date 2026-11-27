@@ -383,15 +383,6 @@ __aicore__ inline void CentralizeContiguousRows(LocalTensor<T>& input, LocalTens
 __aicore__ inline void ProcessContiguousTask(int64_t outer, int64_t innerOffset, int64_t validElements)
 {
     LocalTensor<float> sum = sumBuf_.Get<float>();
-    const uint16_t numSlots = static_cast<uint16_t>(tiling_->numAccSlots > 0 ? tiling_->numAccSlots : 1);
-    const int64_t sumStride = kLargeChunkElements;
-    const int64_t corrBase = static_cast<int64_t>(numSlots) * sumStride;
-    for (uint16_t slot = 0; slot < numSlots; ++slot) {
-        ZeroSumTileAt(sum, static_cast<int64_t>(slot) * sumStride, validElements);
-        ZeroSumTileAt(sum, corrBase + static_cast<int64_t>(slot) * sumStride, validElements);
-    }
-    PipeBarrier<PIPE_V>();
-
     const int64_t base = ContiguousBase(outer, innerOffset);
     const int64_t innerCount = tiling_->contiguousInnerCount;
     const int64_t rowStride = OptimalRowStride(validElements);
@@ -401,6 +392,19 @@ __aicore__ inline void ProcessContiguousTask(int64_t outer, int64_t innerOffset,
     constexpr int64_t kMaxAbiRows = 65535;
     const int64_t rowsPerBatch = batchRows ? Min(Min(bufferElements / rowStride, kMaxAbiRows), tiling_->reduceCount) :
                                              1;
+
+    const int64_t batches = (tiling_->reduceCount - 1) / rowsPerBatch + 1;
+    uint16_t numSlots = 1;
+    while (numSlots < batches && numSlots < tiling_->numAccSlots) {
+        numSlots *= 2;
+    }
+    const int64_t sumStride = kLargeChunkElements;
+    const int64_t corrBase = static_cast<int64_t>(numSlots) * sumStride;
+    for (uint16_t slot = 0; slot < numSlots; ++slot) {
+        ZeroSumTileAt(sum, static_cast<int64_t>(slot) * sumStride, validElements);
+        ZeroSumTileAt(sum, corrBase + static_cast<int64_t>(slot) * sumStride, validElements);
+    }
+    PipeBarrier<PIPE_V>();
 
     uint16_t slot = 0;
     for (int64_t reduceOffset = 0; reduceOffset < tiling_->reduceCount; reduceOffset += rowsPerBatch) {
@@ -415,6 +419,17 @@ __aicore__ inline void ProcessContiguousTask(int64_t outer, int64_t innerOffset,
         if (batchRows) {
             AccumulateContiguousRows(input, sum, numSlots, sumStride, corrBase, rows, validElements, rowStride, slot);
             PipeBarrier<PIPE_V>();
+            if (batches == 1) {
+                FinalizeMeanHiLoAt(sum, 0, corrBase, validElements);
+                PipeBarrier<PIPE_V>();
+                LocalTensor<T> output = outQueue_.AllocTensor<T>();
+                CentralizeContiguousRows(input, output, sum, 0, corrBase, rows, validElements, rowStride);
+                PipeBarrier<PIPE_V>();
+                outQueue_.EnQue(output);
+                inQueue_.FreeTensor(input);
+                CopyOutRowsPadded(gmOffset, rows, validElements, rowStride, innerCount);
+                return;
+            }
             inQueue_.FreeTensor(input);
         } else {
             AccumulateContiguousNeumaierAt(input, sum, static_cast<int64_t>(slot) * sumStride,
