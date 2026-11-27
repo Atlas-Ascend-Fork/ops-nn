@@ -169,6 +169,9 @@ ge::graphStatus Conv3DBackpropFilterV2Tiling::DoLibApiTiling()
 {
     enableDeterministic_ = static_cast<bool>(context_->GetDeterministic()) ? true : false;
     SetDwTilingFromTbeTiling();
+    OP_TILING_CHECK(!ShrinkBaseMForL0A(tilingData_.dwTiling),
+                    CUBE_INNER_ERR_REPORT(opName_, "failed to fit the final tiling into L0A/L0B"),
+                    return ge::GRAPH_FAILED);
     PrintTilingData();
     return ge::GRAPH_SUCCESS;
 }
@@ -277,6 +280,39 @@ bool Conv3DBackpropFilterV2Tiling::CheckL0Size(uint32_t baseM, uint32_t baseN, u
     int64_t l0bSize = static_cast<int64_t>(baseN) * baseK * byteSize * DB_ON;
 
     return l0aSize <= L0_SIZE && l0bSize <= L0_SIZE;
+}
+
+bool Conv3DBackpropFilterV2Tiling::ShrinkBaseMForL0A(TConv3DDwTiling& dwt) const
+{
+    if (dwt.m0 == 0 || dwt.baseK == 0 || dwt.baseN == 0 || dtypeByte_ <= 0 || dwt.al0Pbuffer == 0 ||
+        dwt.bl0Pbuffer == 0) {
+        OP_LOGE(opName_, "invalid tiling fields, m0:%u baseK:%u baseN:%u dtypeByte:%d al0Pbuffer:%u bl0Pbuffer:%u",
+                dwt.m0, dwt.baseK, dwt.baseN, dtypeByte_, dwt.al0Pbuffer, dwt.bl0Pbuffer);
+        return false;
+    }
+
+    const uint64_t aBytesPerM = static_cast<uint64_t>(dwt.baseK) * dtypeByte_ * dwt.al0Pbuffer;
+    const uint64_t bBytesPerN = static_cast<uint64_t>(dwt.baseK) * dtypeByte_ * dwt.bl0Pbuffer;
+    const uint64_t l0bSize = static_cast<uint64_t>(dwt.baseN) * bBytesPerN;
+    if (l0bSize > static_cast<uint64_t>(L0_SIZE)) {
+        OP_LOGE(opName_, "baseN:%u baseK:%u bl0Pbuffer:%u exceeds L0B size:%ld", dwt.baseN, dwt.baseK, dwt.bl0Pbuffer,
+                L0_SIZE);
+        return false;
+    }
+
+    const uint64_t maxBaseM = (static_cast<uint64_t>(L0_SIZE) / aBytesPerM) / dwt.m0 * dwt.m0;
+    if (maxBaseM < dwt.m0) {
+        OP_LOGE(opName_, "baseK:%u al0Pbuffer:%u cannot fit one m0:%u block into L0A", dwt.baseK, dwt.al0Pbuffer,
+                dwt.m0);
+        return false;
+    }
+
+    if (dwt.baseM > maxBaseM) {
+        OP_LOGD(opName_, "shrink baseM for L0A, original:%u, max:%lu, baseK:%u, al0Pbuffer:%u", dwt.baseM, maxBaseM,
+                dwt.baseK, dwt.al0Pbuffer);
+        dwt.baseM = static_cast<uint32_t>(maxBaseM);
+    }
+    return true;
 }
 
 int32_t Conv3DBackpropFilterV2Tiling::GetDimFactor(const int64_t& value, const std::vector<int32_t>& factorLists) const

@@ -101,6 +101,7 @@ protected:
     void GetCoreDim(CoreDimDw& coreDim, uint32_t curCoreNum);
     void SetTilingParamByDimInfo(TilingValueDw& tilingParams, CoreDimDw& coreDim);
     bool CheckL0Size(uint32_t baseM, uint32_t baseN, uint32_t baseK, uint32_t byteSize) const;
+    bool ShrinkBaseMForL0A(TConv3DDwTiling& dwt) const;
     int32_t GetDimFactor(const int64_t& value, const std::vector<int32_t>& factorLists) const;
     void CalCoreDimTiling(TilingValueDw& tilingParams, bool& enableTbeBlock);
     uint32_t CalCin(const uint32_t& nL1Size);

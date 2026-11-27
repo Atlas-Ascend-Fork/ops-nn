@@ -28,6 +28,7 @@
 #include "test_cube_util.h"
 #include "../../../../../common/op_host/op_tiling/conv_platform_util.h"
 #include "../../../../op_host/op_tiling/arch22/conv3d_backprop_filter_v2_base_tiling.h"
+#include "../../../../op_host/op_tiling/arch22/conv3d_backprop_filter_v2_basic_block_tiling.h"
 
 using namespace std;
 using namespace ge;
@@ -70,6 +71,8 @@ struct Conv3DBpFilterV2TilingTestParam {
     uint32_t block_dim;
     uint64_t tiling_key;
     std::string tiling_data;
+    bool verify_tiling_data = true;
+    bool check_l0_size = false;
 };
 
 class Conv3DBackpropFilterV2TilingRunTime2 : public testing::TestWithParam<Conv3DBpFilterV2TilingTestParam> {};
@@ -178,7 +181,68 @@ static void TestOneParamCase(const Conv3DBpFilterV2TilingTestParam& param)
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
     ASSERT_EQ(*tiling_key, param.tiling_key);
     ASSERT_EQ(*block_dim, param.block_dim);
-    ASSERT_EQ(tiling_data_result, param.tiling_data);
+    if (param.verify_tiling_data) {
+        ASSERT_EQ(tiling_data_result, param.tiling_data);
+    }
+    if (param.check_l0_size) {
+        const auto* tiling_data = reinterpret_cast<const AscendC::Conv3DBackpropFilterV2TilingData*>(
+            tiling_context->GetRawTilingData()->GetData());
+        const auto& dwt = tiling_data->dwTiling;
+        const uint64_t dtype_bytes = ge::GetSizeByDataType(param.dtype);
+        const uint64_t l0a_size = static_cast<uint64_t>(dwt.baseM) * dwt.baseK * dtype_bytes * dwt.al0Pbuffer;
+        const uint64_t l0b_size = static_cast<uint64_t>(dwt.baseN) * dwt.baseK * dtype_bytes * dwt.bl0Pbuffer;
+        EXPECT_EQ(dwt.baseM, 1024U);
+        EXPECT_EQ(dwt.baseK, 16U);
+        EXPECT_EQ(dwt.baseN, 16U);
+        EXPECT_EQ(dwt.al0Pbuffer, 2U);
+        EXPECT_LE(l0a_size, 65536U);
+        EXPECT_LE(l0b_size, 65536U);
+
+        Ops::NN::Conv::Conv3DBackpropFilterV2Tiling capacity_tiling(tiling_context);
+        capacity_tiling.opName_ = "Conv3DBackpropFilterV2L0ACapacityGuard";
+        capacity_tiling.dtypeByte_ = static_cast<int32_t>(dtype_bytes);
+
+        Ops::NN::Conv::TConv3DDwTiling capacity_dwt{};
+        capacity_dwt.m0 = 16;
+        capacity_dwt.baseM = 2048;
+        capacity_dwt.baseN = 16;
+        capacity_dwt.baseK = 16;
+        capacity_dwt.al0Pbuffer = 2;
+        capacity_dwt.bl0Pbuffer = 2;
+
+        auto invalid_dwt = capacity_dwt;
+        invalid_dwt.m0 = 0;
+        EXPECT_FALSE(capacity_tiling.ShrinkBaseMForL0A(invalid_dwt));
+
+        auto l0b_overflow_dwt = capacity_dwt;
+        l0b_overflow_dwt.baseN = 2048;
+        EXPECT_FALSE(capacity_tiling.ShrinkBaseMForL0A(l0b_overflow_dwt));
+
+        auto l0a_min_block_overflow_dwt = capacity_dwt;
+        l0a_min_block_overflow_dwt.baseK = 2048;
+        l0a_min_block_overflow_dwt.bl0Pbuffer = 1;
+        EXPECT_FALSE(capacity_tiling.ShrinkBaseMForL0A(l0a_min_block_overflow_dwt));
+
+        auto no_shrink_dwt = capacity_dwt;
+        no_shrink_dwt.baseM = 512;
+        EXPECT_TRUE(capacity_tiling.ShrinkBaseMForL0A(no_shrink_dwt));
+        EXPECT_EQ(no_shrink_dwt.baseM, 512U);
+
+        EXPECT_TRUE(capacity_tiling.ShrinkBaseMForL0A(capacity_dwt));
+        EXPECT_EQ(capacity_dwt.baseM, 1024U);
+
+        Ops::NN::Conv::Conv3DDWV2BasicBlockTiling basic_block_tiling(tiling_context);
+        basic_block_tiling.opName_ = "Conv3DBackpropFilterV2BasicBlockL0BCapacityGuard";
+        basic_block_tiling.dtypeByte_ = static_cast<int32_t>(dtype_bytes);
+        basic_block_tiling.runInfo_.wo = 1;
+        basic_block_tiling.tilingData_.dwTiling.m0 = 16;
+        basic_block_tiling.tilingData_.dwTiling.al0Pbuffer = 2;
+        basic_block_tiling.tilingData_.dwTiling.bl0Pbuffer = 2;
+        basic_block_tiling.blockTiling_.blockBaseM = 16;
+        basic_block_tiling.blockTiling_.blockBaseN = 2048;
+        basic_block_tiling.blockTiling_.blockBaseK = 16;
+        EXPECT_EQ(basic_block_tiling.DoLibApiTiling(), ge::GRAPH_FAILED);
+    }
 }
 
 // Negative cases for the invalid-attribute failure exits: assert the tiling returns GRAPH_FAILED and that
@@ -1340,6 +1404,38 @@ Conv3DBpFilterV2TilingTestParam milan_binary_params[] =
          4,
          "1 0 1 12 2 1 1 524288 1 4 1152 1 72 1 16 16 1 32 32 1 2 2 1 1 2 2 0 0 0 0 0 0 1 1 1 16 2 2 2 2 2 256 64 64 "
          "16 16 16 1 1 4 4 1 16384 0 1 1 256 16 1 0 16 0 1 20 256 64 256 0 2 4 "},
+
+        {"issue_10211_det_bf16_1x1_l0a_boundary",
+         "Ascend910B3",
+         "Ascend910B",
+         R"({"_pattern": "Conv3d_backprop_filter", "hardware_info": {"BT_SIZE": 1024, "load3d_constraints": "0", "Intrinsic_fix_pipe_l0c2out": true, "Intrinsic_data_move_l12ub": false, "Intrinsic_data_move_l0c2ub": false, "Intrinsic_data_move_out2l1_nd2nz": true, "UB_SIZE": 196608, "L2_SIZE": 201326592, "L1_SIZE": 524288, "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072, "CORE_NUM": 20}, "block_dim": {"CORE_NUM": 20}, "tiling_type": "binary", "max_core_num": 20, "binary_mode": 1})",
+         {1, 1536, 1, 1, 10992},
+         {1, 96, 1, 1, 10992, 16},
+         {1536, 1536, 1, 1, 1},
+         {1536, 96, 16, 16},
+         {1, 1536, 1, 1, 10992},
+         {1, 96, 1, 1, 10992, 16},
+         ge::FORMAT_NCDHW,
+         ge::FORMAT_NDC1HWC0,
+         ge::FORMAT_NCDHW,
+         ge::FORMAT_FRACTAL_Z_3D,
+         ge::FORMAT_NCDHW,
+         ge::FORMAT_NDC1HWC0,
+         ge::DT_BF16,
+         {1, 1, 1, 1, 1},
+         {0, 0, 0, 0, 0, 0},
+         {1, 1, 1, 1, 1},
+         1,
+         "NCDHW",
+         "VALID",
+         1,
+         true,
+         true,
+         20,
+         4,
+         "",
+         false,
+         true},
 };
 
 static std::string GetPlatformConfigKey(const std::string& compile_info)

@@ -883,6 +883,9 @@ ge::graphStatus Conv3DDWV2BasicBlockTiling::DoLibApiTiling()
     dwt.al1Pbuffer = blockTiling_.dbL1A;
     dwt.bl1Pbuffer = blockTiling_.dbL1B;
     dwt.cl0Pbuffer = blockTiling_.dbL0C;
+    OP_TILING_CHECK(!ShrinkBaseMForL0A(dwt),
+                    CUBE_INNER_ERR_REPORT(opName_, "failed to fit the final tiling into L0A/L0B"),
+                    return ge::GRAPH_FAILED);
     tilingData_.dwTiling.bl1Bound = static_cast<uint32_t>(
         CalBL1Bound()); // bl1Bound不超过L1Size，不会超过uint32_t最大值
     dwt.singleCoreCout = blockTiling_.singleCoreM;
