@@ -49,6 +49,7 @@ static ge::graphStatus GetWorkspaceSize(gert::TilingContext* context, size_t usr
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
     currentWorkspace[0] = usrSize + sysWorkspaceSize;
     return ge::GRAPH_SUCCESS;
 }
@@ -64,11 +65,18 @@ static ge::graphStatus OptimizedTransducerTilingFunc(gert::TilingContext* contex
     int64_t coreNum;
     ge::graphStatus ret = GetPlatformInfo(context, ubSize, coreNum);
     OP_CHECK_IF(ret != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetPlatformInfo error"), return ge::GRAPH_FAILED);
-    const int64_t* blank = context->GetAttrs()->GetInt(0);
-    const float* clamp = context->GetAttrs()->GetFloat(1);
-    const bool* fused_log_softmax = context->GetAttrs()->GetBool(2);
-    const bool* requires_grad = context->GetAttrs()->GetBool(3);
+    const auto* attrs = context->GetAttrs();
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    const int64_t* blank = attrs->GetInt(0);
+    const float* clamp = attrs->GetFloat(1);
+    const bool* fused_log_softmax = attrs->GetBool(2);
+    const bool* requires_grad = attrs->GetBool(3);
+    OP_CHECK_NULL_WITH_CONTEXT(context, blank);
+    OP_CHECK_NULL_WITH_CONTEXT(context, clamp);
+    OP_CHECK_NULL_WITH_CONTEXT(context, fused_log_softmax);
+    OP_CHECK_NULL_WITH_CONTEXT(context, requires_grad);
     const gert::StorageShape* logitsShape = context->GetInputShape(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, logitsShape);
     uint64_t batch_size = logitsShape->GetStorageShape().GetDim(0); // 批次数量
     uint64_t maxT = logitsShape->GetStorageShape().GetDim(1);       // 输入序列长度的最大值
     uint64_t maxU = logitsShape->GetStorageShape().GetDim(2);       // 目标序列长度的最大值 + 1
@@ -92,7 +100,9 @@ static ge::graphStatus OptimizedTransducerTilingFunc(gert::TilingContext* contex
     OP_CHECK_IF(GetWorkspaceSize(context, batch_size * (maxT * maxU * 4 + 63) / 64 * 64 * 5) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context, "GetWorkspaceSize error"), return ge::GRAPH_FAILED);
     uint64_t tilingKey = 0;
-    auto dataType = context->GetInputTensor(0)->GetDataType();
+    auto logitsDesc = context->GetInputDesc(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, logitsDesc);
+    auto dataType = logitsDesc->GetDataType();
     if (dataType == ge::DT_FLOAT) {
         tilingKey = GET_TPL_TILING_KEY(TRANSDUCER_TPL_SCH_MODE_0);
         context->SetTilingKey(tilingKey);

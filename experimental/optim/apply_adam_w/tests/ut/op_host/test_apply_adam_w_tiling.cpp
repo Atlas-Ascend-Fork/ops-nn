@@ -482,3 +482,66 @@ TEST_F(ApplyAdamWTilingTest, apply_adam_w_tiling_1004)
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
 }
+
+TEST_F(ApplyAdamWTilingTest, apply_adam_w_tiling_null_and_missing_attrs)
+{
+    const auto* opImpl = gert::OpImplRegistry::GetInstance().GetOpImpl("ApplyAdamW");
+    ASSERT_NE(opImpl, nullptr);
+    auto tilingFunc = opImpl->tiling;
+
+    fe::PlatFormInfos platformInfo;
+    platformInfo.Init();
+    std::map<std::string, std::string> socInfos = {{"ai_core_cnt", "64"}};
+    std::map<std::string, std::string> aicoreSpec = {{"ub_size", "196608"}};
+    platformInfo.SetPlatformRes("SoCInfo", socInfos);
+    platformInfo.SetPlatformRes("AICoreSpec", aicoreSpec);
+    platformInfo.SetCoreNumByCoreType("AICore");
+
+    optiling::ApplyAdamWCompileInfo compileInfo;
+    compileInfo.coreNum = 64;
+    compileInfo.ubSize = 196608;
+
+    auto tilingParam = gert::TilingData::CreateCap(8192);
+    auto wsHolder = gert::ContinuousVector::Create<size_t>(32);
+    auto* wsSize = reinterpret_cast<gert::ContinuousVector*>(wsHolder.get());
+    gert::StorageShape tensorShape = {{16, 32}, {16, 32}};
+    gert::StorageShape scalarShape = {{1}, {1}};
+
+    // 场景 1: 缺少第二个布尔属性 maximize，触发 maximizePtr 判空保护
+    auto partialAttrHolder = gert::TilingContextFaker()
+                                 .SetOpType("ApplyAdamW")
+                                 .NodeIoNum(12, 3)
+                                 .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
+                                 .InputShapes({&tensorShape, &tensorShape, &tensorShape, &scalarShape, &scalarShape,
+                                               &scalarShape, &scalarShape, &scalarShape, &scalarShape, &scalarShape,
+                                               &tensorShape, &tensorShape})
+                                 .OutputShapes({&tensorShape, &tensorShape, &tensorShape})
+                                 .CompileInfo(&compileInfo)
+                                 .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                                 .NodeAttrs({{"amsgrad", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                                 .TilingData(tilingParam.get())
+                                 .Workspace(wsSize)
+                                 .Build();
+    EXPECT_EQ(tilingFunc(partialAttrHolder.GetContext<gert::TilingContext>()), ge::GRAPH_FAILED);
+
+    // 场景 2: 未传入任何属性，触发 amsgradPtr 判空保护
+    auto emptyAttrHolder = gert::TilingContextFaker()
+                               .SetOpType("ApplyAdamW")
+                               .NodeIoNum(12, 3)
+                               .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
+                               .InputShapes({&tensorShape, &tensorShape, &tensorShape, &scalarShape, &scalarShape,
+                                             &scalarShape, &scalarShape, &scalarShape, &scalarShape, &scalarShape,
+                                             &tensorShape, &tensorShape})
+                               .OutputShapes({&tensorShape, &tensorShape, &tensorShape})
+                               .CompileInfo(&compileInfo)
+                               .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                               .TilingData(tilingParam.get())
+                               .Workspace(wsSize)
+                               .Build();
+    auto* emptyAttrCtx = emptyAttrHolder.GetContext<gert::TilingContext>();
+    EXPECT_EQ(tilingFunc(emptyAttrCtx), ge::GRAPH_FAILED);
+
+    // 场景 3: ComputeNodeInfo 置空使 GetAttrs() 返回 nullptr，触发 attrs 判空保护
+    emptyAttrCtx->GetContext()->compute_node_info = nullptr;
+    EXPECT_EQ(tilingFunc(emptyAttrCtx), ge::GRAPH_FAILED);
+}

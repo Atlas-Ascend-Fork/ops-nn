@@ -183,8 +183,13 @@ static ge::graphStatus ApplyAdamWTilingFunc(gert::TilingContext* context)
     OP_CHECK_IF(blockSize == 0, OP_LOGE(context, "blockSize is 0"), return ge::GRAPH_FAILED);
 
     auto attrs = context->GetAttrs();
-    bool amsgrad = *(attrs->GetBool(0));
-    bool maximize = *(attrs->GetBool(1));
+    OP_CHECK_NULL_WITH_CONTEXT(context, attrs);
+    const bool* amsgradPtr = attrs->GetBool(0);
+    const bool* maximizePtr = attrs->GetBool(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, amsgradPtr);
+    OP_CHECK_NULL_WITH_CONTEXT(context, maximizePtr);
+    bool amsgrad = *amsgradPtr;
+    bool maximize = *maximizePtr;
 
     ret = GetShapeAttrsInfo(context, ubSize, coreNum, inputNum, bytesPerElement, tileBlockNum, tileDataNum,
                             inputLengthAlgin, bufferNum, amsgrad, blockSize);
