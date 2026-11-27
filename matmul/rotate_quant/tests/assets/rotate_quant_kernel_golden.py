@@ -19,7 +19,6 @@ rotate_quant kernel golden 实现。
 4. MX 量化: group=32, scale=e8m0, 输出 y + scale
 """
 
-import ast
 from functools import lru_cache
 import os
 import sys
@@ -76,16 +75,18 @@ def _first_differences(mismatch):
     ]
 
 
-def _result(mismatch, *, allowed_fraction=0.0, reason="", **metrics):
+def _result(
+    mismatch, *, allowed_per_thousand=0, checked_elements=None, reason="", **metrics
+):
     count = int(np.count_nonzero(mismatch))
-    size = mismatch.size
+    size = mismatch.size if checked_elements is None else checked_elements
     result = {
-        "pass": count <= allowed_fraction * size,
+        "pass": count * 1000 <= allowed_per_thousand * size,
         "precision": 100.0 * (size - count) / size if size else 100.0,
         "metrics": {
             "checked_elements": int(size),
             "bad_elements": count,
-            "allowed_bad_fraction": allowed_fraction,
+            "allowed_bad_fraction": allowed_per_thousand / 1000,
             **metrics,
         },
     }
@@ -106,23 +107,6 @@ def _shape_dtype_failure(output, golden):
             f"golden={golden.shape}/{golden.dtype}"
         ),
     }
-
-
-def _allowed_bad_fraction(compare_context):
-    fields = (
-        getattr(compare_context, "csv_fields", {})
-        if compare_context is not None
-        else {}
-    )
-    tolerances = fields.get("precision_tolerances", "")
-    if isinstance(tolerances, str):
-        tolerances = ast.literal_eval(tolerances) if tolerances else ()
-    fraction = float(tolerances[0][1]) if tolerances else 0.0
-    if not 0 <= fraction <= 1:
-        raise ValueError(
-            "precision_tolerances must specify a failure fraction in [0, 1]"
-        )
-    return fraction
 
 
 @lru_cache(maxsize=4)
@@ -147,11 +131,22 @@ def _finite_values(dtype_name):
     return np.concatenate((-positive[:0:-1], positive))
 
 
+def _unpack_fp4(packed):
+    """Return two logical FP4 values per byte, low nibble first."""
+    codes = np.empty(packed.shape[:-1] + (packed.shape[-1] * 2,), dtype=np.uint8)
+    codes[..., 0::2] = packed & 0x0F
+    codes[..., 1::2] = packed >> 4
+    return codes.view(np_fp4_e2m1)
+
+
 def compare_quantized(output, golden, compare_context=None):
+    """Allow at most one in 1,000 logical y elements to exceed one ULP."""
     output, golden = _as_numpy(output), _as_numpy(golden)
     failure = _shape_dtype_failure(output, golden)
     if failure is not None:
         return failure
+    if golden.dtype == np.uint8:
+        output, golden = _unpack_fp4(output), _unpack_fp4(golden)
     values = _finite_values(golden.dtype.name)
     actual, expected = output.astype(np.float32), golden.astype(np.float32)
     # Single-sided NaN and differing infinities always fail, regardless of tolerance.
@@ -168,7 +163,7 @@ def compare_quantized(output, golden, compare_context=None):
     mismatch[finite] = distances > 1
     return _result(
         mismatch,
-        allowed_fraction=_allowed_bad_fraction(compare_context),
+        allowed_per_thousand=1,
         reason="Y exceeds one adjacent representable value",
         max_adjacent_distance=int(distances.max()) if distances.size else 0,
     )
@@ -188,15 +183,41 @@ def compare_codes(output, golden):
     )
 
 
-def compare_scale(output, golden):
+def compare_scale(output, golden, *, has_padding=False):
+    """Compare finite E8M0 exponent codes and check NaN and padding separately."""
     output, golden = _as_numpy(output), _as_numpy(golden)
     failure = _shape_dtype_failure(output, golden)
     if failure is not None:
         return failure
     if "float8_e8m0" not in golden.dtype.name or golden.dtype.itemsize != 1:
         raise ValueError("RotateQuant scales must retain their E8M0 dtype")
-    # Includes padding and NaN codes. A code delta of one is never tolerated.
-    return compare_codes(output, golden)
+    actual, expected = output.view(np.uint8), golden.view(np.uint8)
+    checked_elements = expected.size
+    if has_padding:
+        # Each row with an odd number of MX groups ends in one fixed zero byte.
+        pad = (..., -1, 1)
+        bad_padding = (actual[pad] != 0) | (expected[pad] != 0)
+        if np.any(bad_padding):
+            mismatch = np.zeros(expected.shape, dtype=bool)
+            mismatch[pad] = bad_padding
+            return _result(mismatch, reason="scale padding must have code 0")
+        checked_elements -= bad_padding.size
+
+    nan_mismatch = (actual == 255) != (expected == 255)
+    if np.any(nan_mismatch):
+        return _result(
+            nan_mismatch,
+            checked_elements=checked_elements,
+            reason="scale NaN positions differ",
+        )
+    distances = np.abs(np.subtract(actual, expected, dtype=np.int16))
+    return _result(
+        distances > 1,
+        allowed_per_thousand=1,
+        checked_elements=checked_elements,
+        reason="scale exceeds one adjacent E8M0 code",
+        max_adjacent_distance=int(distances.max()) if distances.size else 0,
+    )
 
 
 def grouped_ranges(group_list, group_list_type, row_count, group_count=None):
@@ -244,27 +265,18 @@ def compare_grouped_outputs(
     """
     arrays = [_as_numpy(value) for value in (y, scale, golden_y, golden_scale)]
     y, scale, golden_y, golden_scale = arrays
-    failures = [
-        _shape_dtype_failure(y, golden_y),
-        _shape_dtype_failure(scale, golden_scale),
-    ]
-    if any(failure is not None for failure in failures):
-        return [
-            failure if failure is not None else {"pass": True, "precision": 100.0}
-            for failure in failures
-        ]
     covered = _covered_rows(compare_context, golden_y.shape[0])
-    if covered is None:
-        return [
-            compare_quantized(y, golden_y, compare_context),
-            compare_scale(scale, golden_scale),
-        ]
-    y_result = compare_quantized(y[:covered], golden_y[:covered], compare_context)
-    scale_result = compare_scale(scale[:covered], golden_scale[:covered])
-    for actual, expected, result in (
-        (y, golden_y, y_result),
-        (scale, golden_scale, scale_result),
-    ):
+    valid = slice(0, covered)
+    logical_n = golden_y.shape[-1] * (2 if golden_y.dtype == np.uint8 else 1)
+    scale_groups = (logical_n + 31) // 32
+
+    def compare_rows(actual, expected, compare, **options):
+        failure = _shape_dtype_failure(actual, expected)
+        if failure is not None:
+            return failure
+        result = compare(actual[valid], expected[valid], **options)
+        if covered is None:
+            return result
         if preserve_tail:
             tail = compare_codes(actual[covered:], expected[covered:])
             if not tail["pass"]:
@@ -284,7 +296,14 @@ def compare_grouped_outputs(
                 "tail_policy": "exact" if preserve_tail else "unspecified",
             }
         )
-    return [y_result, scale_result]
+        return result
+
+    return [
+        compare_rows(y, golden_y, compare_quantized),
+        compare_rows(
+            scale, golden_scale, compare_scale, has_padding=scale_groups % 2 == 1
+        ),
+    ]
 
 
 def compare_outputs(*outputs, compare_context=None, **kwargs):
@@ -399,9 +418,10 @@ def mx_quantize(
         raise ValueError(f"Unsupported scale_alg={scale_alg} for {mx_ele_dtype}")
     if mx_ele_dtype != "float4_e2m1" and round_mode != "rint":
         raise ValueError("RotateQuant FP8 only supports rint")
-    dst_type_max = float(np.float32(dst_type_max))
+    # ACLNN checks the double before the L0 attribute is narrowed to FP32.
     if not (6 <= dst_type_max <= 12 if scale_alg == 2 else dst_type_max == 0):
         raise ValueError("dst_type_max must be in [6,12] for scale_alg=2, otherwise 0")
+    dst_type_max = float(np.float32(dst_type_max))
 
     shape = fp_array.shape
     n = shape[-1]
@@ -447,7 +467,7 @@ def _to_numpy(t):
 
 def _apply_clamp(y_bf16, alpha):
     """alpha 在 (0.0, 1.0) 开区间内时, 按 32 一组 clamp 到 ±alpha*groupMax (bf16 域)."""
-    a = float(np.asarray(alpha).reshape(-1)[0])
+    a = float(alpha[0])
     if not (0.0 < a < 1.0):
         return y_bf16
     orig_shape = y_bf16.shape
@@ -472,10 +492,30 @@ def compute_rotate_mx(
     dst_type_max=0,
 ):
     """旋转 + 可选 clamp + MX 量化."""
-    x_f = _to_numpy(x).astype(np.float32)
-    rot_f = _to_numpy(rotation).astype(np.float32)
-    orig_shape = x_f.shape
-    k = rot_f.shape[-1]
+    x, rotation, alpha = map(_to_numpy, (x, rotation, alpha))
+    if not 1 <= x.ndim <= 7 or rotation.ndim not in (2, 3):
+        raise ValueError(
+            "Expected x of rank 1..7 and rotation[K,K] or rotation[N/K,K,K]"
+        )
+    # TTK Promote supplies the same FP16/BF16 values as FP32 tensors.
+    if (
+        x.dtype not in (np.float16, np_bfloat16, np.float32)
+        or rotation.dtype != x.dtype
+    ):
+        raise ValueError(
+            "x and rotation must have matching FP16/BF16 (or promoted FP32) dtype"
+        )
+    if alpha is not None and (
+        alpha.shape != (1,) or alpha.dtype not in (np_bfloat16, np.float32)
+    ):
+        raise ValueError("alpha must be BF16 [1] (or promoted FP32)")
+    orig_shape = x.shape
+    n, k = orig_shape[-1], rotation.shape[-1]
+    if k not in (32, 64, 128, 256) or rotation.shape[-2] != k or n % k:
+        raise ValueError("rotation must be square with supported K dividing N")
+    if rotation.ndim == 3 and rotation.shape[0] != n // k:
+        raise ValueError("per-column rotation count must equal N/K")
+    x_f, rot_f = x.astype(np.float32), rotation.astype(np.float32)
     if rot_f.ndim == 3:
         blocks = rot_f.shape[0]
         rows = int(np.prod(orig_shape[:-1]))
@@ -485,7 +525,7 @@ def compute_rotate_mx(
         y = np.matmul(x_f.reshape(-1, k), rot_f).reshape(orig_shape)
     y = y.astype(np_bfloat16)
     if alpha is not None:
-        y = _apply_clamp(y, _to_numpy(alpha))
+        y = _apply_clamp(y, alpha)
     ele_array, scale_array = mx_quantize(
         y,
         mx_ele_dtype=mx_ele_dtype,
@@ -518,13 +558,10 @@ def compute_grouped_rotate_mx(
             "Grouped inputs require x[M,N] and rotation[E,K,K] or [E,N/K,K,K]"
         )
     m, n = x.shape
-    k = rotation.shape[-1]
-    if k not in (32, 64, 128, 256) or rotation.shape[-2] != k or n <= 0 or n % k:
-        raise ValueError("Invalid grouped rotation dimensions")
-    if rotation.ndim == 4 and rotation.shape[1] != n // k:
-        raise ValueError("Grouped 4D rotation dim1 must equal N/K")
+    if n == 0:
+        raise ValueError("Grouped N must be positive")
     ranges = grouped_ranges(group_list, group_list_type, m, rotation.shape[0])
-    # Validate quantization attributes even when every group is empty.
+    # All groups share rotation metadata. Validate it and the attributes even for empty groups.
     compute_rotate_mx(
         x[:0],
         rotation[0],

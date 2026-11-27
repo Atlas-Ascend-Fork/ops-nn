@@ -13,6 +13,7 @@
 
 import os
 import sys
+from operator import index
 
 import numpy as np
 import torch
@@ -20,6 +21,7 @@ import torch
 sys.path.insert(0, os.path.dirname(__file__))
 from rotate_quant_kernel_golden import (
     _as_numpy,
+    _unpack_fp4,
     compare_grouped_outputs,
     compute_grouped_rotate_mx,
     compute_rotate_mx,
@@ -28,6 +30,8 @@ from rotate_quant_kernel_golden import (
 )
 
 _DST_TO_MX = {
+    torch.float8_e5m2: "float8_e5m2",
+    torch.float8_e4m3fn: "float8_e4m3fn",
     296: "float4_e2m1",
     23: "float8_e5m2",
     24: "float8_e4m3fn",
@@ -36,35 +40,34 @@ _DST_TO_MX = {
 }
 
 
+def _schema_int(value):
+    # The Torch dispatcher also accepts a scalar tensor for an int argument.
+    return int(value) if isinstance(value, torch.Tensor) else index(value)
+
+
 def _mx_dtype(dst_dtype):
-    # Direct callers may use torch.dtype; CSV/schema callers use integer IDs.
-    name = str(dst_dtype).split(".")[-1]
-    if name in ("float8_e5m2", "float8_e4m3fn"):
-        return name
-    if dst_dtype not in _DST_TO_MX:
-        raise ValueError("Ascend 950 E2E golden requires an explicit MX dst_dtype")
-    return _DST_TO_MX[dst_dtype]
-
-
-def _unpack_fp4(value):
-    """Decode the public uint8 FP4 carrier without numerically converting its bytes."""
-    packed = _as_numpy(value)
-    if packed.dtype != np.dtype(np.uint8):
-        raise ValueError("Packed FP4 output dtype must equal uint8")
-    codes = np.empty(packed.shape[:-1] + (packed.shape[-1] * 2,), dtype=np.uint8)
-    codes[..., 0::2] = packed & 0x0F
-    codes[..., 1::2] = packed >> 4
-    return codes.view(np_fp4_e2m1)
+    try:
+        key = (
+            dst_dtype if isinstance(dst_dtype, torch.dtype) else _schema_int(dst_dtype)
+        )
+        return _DST_TO_MX[key]
+    except (KeyError, TypeError) as error:
+        raise ValueError(
+            "Ascend 950 E2E golden requires an explicit MX dst_dtype"
+        ) from error
 
 
 def _logical_output(value, golden, name):
     """Validate public Torch dtypes before using byte views for NumPy comparison."""
     if isinstance(value, torch.Tensor):
         dtype_names = {
+            "uint8": "uint8",
             "float4_e2m1": "uint8",
+            "float4_e2m1fn": "uint8",
             "float8_e4m3fn": "float8_e4m3fn",
             "float8_e5m2": "float8_e5m2",
             "float8_e8m0": "float8_e8m0fnu",
+            "float8_e8m0fnu": "float8_e8m0fnu",
         }
         expected = getattr(torch, dtype_names[golden.dtype.name])
         if value.dtype != expected:
@@ -73,11 +76,17 @@ def _logical_output(value, golden, name):
                 "precision": 0.0,
                 "error_info": f"{name} dtype mismatch: actual={value.dtype}, expected={expected}",
             }
-        if golden.dtype == np.dtype(np_fp4_e2m1):
-            return _unpack_fp4(value), None
     array = _as_numpy(value)
-    if golden.dtype == np.dtype(np_fp4_e2m1) and array.dtype == np.dtype(np.uint8):
-        return _unpack_fp4(array), None
+    if golden.dtype == np.dtype(np_fp4_e2m1):
+        # TTK may replay older logical FP4 goldens with an already unpacked 1-D y.
+        if (
+            array.dtype == golden.dtype
+            and array.ndim == 1
+            and array.size == golden.size
+        ):
+            return array.reshape(golden.shape), None
+        if array.dtype == np.uint8 and array.ndim > 0:
+            return _unpack_fp4(array), None
     if array.dtype != golden.dtype:
         return None, {
             "pass": False,
@@ -85,33 +94,6 @@ def _logical_output(value, golden, name):
             "error_info": f"{name} dtype mismatch: actual={array.dtype}, expected={golden.dtype}",
         }
     return array, None
-
-
-def _ordinary_torch_golden(
-    x,
-    rotation,
-    *,
-    alpha=None,
-    dst_dtype=None,
-    axis=-1,
-    round_mode="rint",
-    scale_alg=0,
-    dst_type_max=0.0,
-    transpose_y=False,
-):
-    if (axis is not None and axis not in (-1, x.ndim - 1)) or transpose_y:
-        raise ValueError("RotateQuant requires the last axis and transpose_y=False")
-    dtype = _mx_dtype(dst_dtype)
-    y, scale = compute_rotate_mx(
-        x,
-        rotation,
-        alpha=alpha,
-        mx_ele_dtype=dtype,
-        round_mode="rint" if round_mode is None else str(round_mode),
-        scale_alg=0 if scale_alg is None else int(scale_alg),
-        dst_type_max=0.0 if dst_type_max is None else float(dst_type_max),
-    )
-    return [y, scale]
 
 
 def _compare_torch_outputs(
@@ -123,8 +105,14 @@ def _compare_torch_outputs(
     compare_context=None,
 ):
     golden_y, golden_scale = _as_numpy(golden_y), _as_numpy(golden_scale)
-    if golden_y.dtype.name not in ("float4_e2m1", "float8_e4m3fn", "float8_e5m2"):
-        raise ValueError("Torch golden y must retain its logical FP4/FP8 dtype")
+    if golden_y.dtype.name not in (
+        "uint8",
+        "float4_e2m1",
+        "float4_e2m1fn",
+        "float8_e4m3fn",
+        "float8_e5m2",
+    ):
+        raise ValueError("Torch golden y must use packed FP4 or native FP4/FP8")
     if golden_scale.dtype != np.dtype(np_mx_scale):
         raise ValueError("Torch golden scale must retain its E8M0 dtype")
     y, y_failure = _logical_output(y, golden_y, "y")
@@ -137,14 +125,14 @@ def _compare_torch_outputs(
         compare_context,
         preserve_tail=False,
     )
-    for index, failure in enumerate((y_failure, scale_failure)):
+    for result_idx, failure in enumerate((y_failure, scale_failure)):
         if failure is not None:
-            results[index] = failure
+            results[result_idx] = failure
     return results
 
 
 class CannOpsNnRotateQuantTestSpec:
-    """Packed uint8 FP4, native FP8 and E8M0 scales with logical NumPy references."""
+    """Match the Torch output carriers: packed uint8 FP4, native FP8 and E8M0."""
 
     @staticmethod
     def golden(
@@ -162,37 +150,33 @@ class CannOpsNnRotateQuantTestSpec:
         group_list_type=0,
         **kwargs,
     ):
+        axis = -1 if axis is None else _schema_int(axis)
+        if axis not in (-1, x.ndim - 1) or (
+            transpose_y is not None and transpose_y != 0
+        ):
+            raise ValueError("RotateQuant requires the last axis and transpose_y=False")
+        group_list_type = _schema_int(group_list_type)
         if group_list_type not in (0, 1):
             raise ValueError("group_list_type must be 0 or 1")
+        if isinstance(round_mode, bytes):
+            round_mode = round_mode.decode()
+        if isinstance(dst_type_max, torch.Tensor):
+            dst_type_max = dst_type_max.item()
+        quant_options = {
+            "mx_ele_dtype": _mx_dtype(dst_dtype),
+            "round_mode": "rint" if round_mode is None else round_mode,
+            "scale_alg": 0 if scale_alg is None else _schema_int(scale_alg),
+            "dst_type_max": 0.0 if dst_type_max is None else dst_type_max,
+        }
         if group_list is not None:
-            if (axis is not None and axis not in (-1, x.ndim - 1)) or transpose_y:
-                raise ValueError(
-                    "RotateQuant requires the last axis and transpose_y=False"
-                )
-            dtype = _mx_dtype(dst_dtype)
             y, scale = compute_grouped_rotate_mx(
-                x,
-                rotation,
-                alpha,
-                group_list,
-                group_list_type,
-                dtype,
-                "rint" if round_mode is None else str(round_mode),
-                0 if scale_alg is None else int(scale_alg),
-                0.0 if dst_type_max is None else float(dst_type_max),
+                x, rotation, alpha, group_list, group_list_type, **quant_options
             )
-            return [y, scale]
-        y, scale = _ordinary_torch_golden(
-            x,
-            rotation,
-            alpha=alpha,
-            dst_dtype=dst_dtype,
-            axis=axis,
-            round_mode=round_mode,
-            scale_alg=scale_alg,
-            dst_type_max=dst_type_max,
-            transpose_y=transpose_y,
-        )
+        else:
+            y, scale = compute_rotate_mx(x, rotation, alpha, **quant_options)
+        if y.dtype == np.dtype(np_fp4_e2m1):
+            codes = y.view(np.uint8)
+            y = (codes[..., 0::2] & 0x0F) | (codes[..., 1::2] << 4)
         return [y, scale]
 
     @staticmethod
