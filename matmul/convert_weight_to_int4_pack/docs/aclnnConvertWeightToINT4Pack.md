@@ -698,8 +698,8 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
 <!-- npu="950" id13 -->
 - <term>Ascend 950PR&950DT系列产品</term>：
 
-  示例代码如下（INT32 输入），仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
-  Ascend 950 上 FRACTAL_NZ 场景需调用 aclnnWeightQuantBatchMatmulNz 接口，这里以 aclnnWeightQuantBatchMatmulNz 为例。
+  示例代码如下（INT32输入），仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
+  Ascend 950上FRACTAL_NZ场景需调用aclnnWeightQuantBatchMatmulNz接口，这里以aclnnWeightQuantBatchMatmulNz为例。
 
   ```cpp
   #include <iostream>
@@ -984,8 +984,8 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
 <!-- end id13 -->
 <!-- npu="950" id14 -->
 - <term>Ascend 950PR&950DT系列产品</term>：
-  示例代码如下（FLOAT 输入），仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
-  Ascend 950 上 FRACTAL_NZ 场景需调用 aclnnWeightQuantBatchMatmulNz 接口，这里以 aclnnWeightQuantBatchMatmulNz 为例。
+  示例代码如下（FLOAT输入），仅供参考，具体编译和执行过程请参考[编译与运行样例](../../../docs/zh/context/compile_and_run_sample.md)。
+  Ascend 950上FRACTAL_NZ场景需调用aclnnWeightQuantBatchMatmulNz接口，这里以aclnnWeightQuantBatchMatmulNz为例。
 
   ```cpp
   #include <iostream>
@@ -1119,7 +1119,7 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> xTensorPtr(x, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> xDeviceAddrPtr(xDeviceAddr, aclrtFree);
-    // 创建weight aclTensor（INT32）
+    // 创建weight aclTensor（FLOAT）
     void* weightDeviceAddr = nullptr;
     aclTensor* weight = nullptr;
     ret = CreateAclTensor(weightHostData, weightShape, &weightDeviceAddr, aclDataType::ACL_FLOAT, &weight);

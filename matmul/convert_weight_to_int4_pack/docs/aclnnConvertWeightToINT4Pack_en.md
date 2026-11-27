@@ -1121,7 +1121,7 @@ aclnnStatus aclnnConvertWeightToINT4Pack(
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> xTensorPtr(x, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> xDeviceAddrPtr(xDeviceAddr, aclrtFree);
-    // Create the weight aclTensor (INT32)
+    // Create the weight aclTensor (FLOAT)
     void* weightDeviceAddr = nullptr;
     aclTensor* weight = nullptr;
     ret = CreateAclTensor(weightHostData, weightShape, &weightDeviceAddr, aclDataType::ACL_FLOAT, &weight);
