@@ -41,6 +41,7 @@ static constexpr int64_t MIN_CP_AXIS_LIMIT = 512;
 // Norm切核达标门限：模拟Norm的batch/CP切分后，usedCore达到totalCoreNum_的3/4（75%）即视为满足要求
 static constexpr int64_t CORE_USAGE_THRESHOLD_NUM = 3;
 static constexpr int64_t CORE_USAGE_THRESHOLD_DEN = 4;
+static constexpr int64_t MIN_SCALAR_CP_AXIS_LIMIT = 128;
 
 bool RepeatInterleaveTilingKernelRepeatTiling::IsCapable()
 {
@@ -52,6 +53,9 @@ bool RepeatInterleaveTilingKernelRepeatTiling::IsCapable()
     MergDimForTensor();
     // repeats为scalar/广播（shape为空或为1）时，接纳几乎所有场景的用例处理
     if (repeatShape_.GetDimNum() == 0 || repeatShape_.GetDim(0) == 1) {
+        if (mergedDim_[CP_AXIS] < MIN_SCALAR_CP_AXIS_LIMIT / ge::GetSizeByDataType(inputDtype_)) {
+            return false;
+        }
         int64_t allCpNums = mergedDim_[0] * yShape_.GetDim(axis_);
         if (allCpNums < totalCoreNum_ / DOUBLE &&
             (mergedDim_[CP_AXIS] * ge::GetSizeByDataType(inputDtype_) / (totalCoreNum_ / allCpNums) >

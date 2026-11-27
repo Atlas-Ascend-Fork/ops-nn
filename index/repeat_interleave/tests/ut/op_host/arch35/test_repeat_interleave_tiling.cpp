@@ -190,8 +190,8 @@ TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_0_test0)
     std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> const_tensors;
     SetConstInput<int32_t>(1, ge::DT_INT32, repeatsValue, 1, const_tensors);
 
-    string expectTilingData = "1 1 1 1 1 1 1 1 2 4 1 0 1055 0 1 0 0 0 1 4 1 2 12 ";
-    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 600);
+    string expectTilingData = "64 2 1 1 0 0 0 0 10560 2 4 2 1 12 ";
+    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 101);
 }
 
 TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_1_test1)
@@ -209,8 +209,8 @@ TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_1_test1)
     std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> const_tensors;
     SetConstInput<int32_t>(1, ge::DT_INT32, repeatsValue, 1, const_tensors);
 
-    string expectTilingData = "1 1 1 1 1 1 1 1 10 64 30 0 3167 0 1 0 0 0 1 30 64 3 4 ";
-    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 600);
+    string expectTilingData = "64 64 3 3 0 0 0 0 10560 10 30 192 1 4 ";
+    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 101);
 }
 
 TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_1_test2)
@@ -246,8 +246,8 @@ TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_1_test3)
     std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> const_tensors;
     SetConstInput<int32_t>(1, ge::DT_INT32, repeatsValue, 1, const_tensors);
 
-    string expectTilingData = "1 1 1 1 1 1 1 1 5 64 15 0 3167 0 1 0 0 0 1 15 64 3 4 ";
-    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 600);
+    string expectTilingData = "64 64 3 3 0 0 0 0 10560 5 15 192 1 4 ";
+    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 101);
 }
 
 TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_2_test4)
@@ -265,8 +265,8 @@ TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_2_test4)
     std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> const_tensors;
     SetConstInput<int32_t>(1, ge::DT_INT32, repeatsValue, 1, const_tensors);
 
-    string expectTilingData = "1 1 1 1 1 1 1 1 5 64 60 0 12670 0 1 0 0 0 1 20 192 4 1 ";
-    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 600);
+    string expectTilingData = "64 64 12 12 0 0 0 0 10560 5 20 768 1 1 ";
+    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 101);
 }
 TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_None_test5)
 {
@@ -283,8 +283,8 @@ TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_None_test5)
     std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> const_tensors;
     SetConstInput<int32_t>(1, ge::DT_INT32, repeatsValue, 1, const_tensors);
 
-    string expectTilingData = "1 1 1 1 1 1 1 1 5 64 60 0 12670 0 1 0 0 0 1 20 192 4 1 ";
-    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 600);
+    string expectTilingData = "64 64 12 12 0 0 0 0 10560 5 20 768 1 1 ";
+    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 101);
 }
 
 TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_None_test6)
@@ -321,8 +321,8 @@ TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_1_test7)
     std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> const_tensors;
     SetConstInput<int32_t>(1, ge::DT_INT32, repeatsValue, 1, const_tensors);
 
-    string expectTilingData = "1 1 1 1 1 1 1 1 4 64 18 0 3167 0 1 0 0 0 1 12 96 3 4 ";
-    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 600);
+    string expectTilingData = "64 58 5 3 0 0 0 0 10560 4 12 288 1 4 ";
+    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 101);
 }
 
 TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_1_test8)
@@ -340,8 +340,8 @@ TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_1_test8)
     std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> const_tensors;
     SetConstInput<int32_t>(1, ge::DT_INT32, repeatsValue, 1, const_tensors);
 
-    string expectTilingData = "1 1 1 1 1 1 1 1 4 64 6 36 3167 0 1 0 0 0 1 12 35 3 4 ";
-    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 600);
+    string expectTilingData = "64 53 2 1 0 0 0 0 10560 4 12 105 1 4 ";
+    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 101);
 }
 
 TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_1_test9)
@@ -359,8 +359,8 @@ TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_1_test9)
     std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> const_tensors;
     SetConstInput<int32_t>(1, ge::DT_INT32, repeatsValue, 1, const_tensors);
 
-    string expectTilingData = "1 1 1 1 1 1 1 1 4 64 3 0 3167 0 1 0 0 0 1 12 16 3 4 ";
-    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 600);
+    string expectTilingData = "64 48 1 1 0 0 0 0 10560 4 12 48 1 4 ";
+    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 101);
 }
 
 TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_0_test10)
@@ -378,8 +378,8 @@ TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_0_test10)
     std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> const_tensors;
     SetConstInput<int32_t>(1, ge::DT_INT32, repeatsValue, 1, const_tensors);
 
-    string expectTilingData = "1 1 1 1 1 1 1 1 2 64 13 48 12670 0 1 0 0 0 1 880 1 440 1 ";
-    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 600);
+    string expectTilingData = "64 63 7 6 0 0 0 0 10560 2 880 440 1 1 ";
+    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 101);
 }
 TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_Axis_0_test11)
 {
@@ -453,8 +453,8 @@ TEST_F(RepeatInterleaveTilingAscendC, Repeats_ZeroDim_Scalar_Axis_1_test14)
     std::vector<std::pair<size_t, std::unique_ptr<uint8_t[]>>> const_tensors;
     SetConstInput<int32_t>(1, ge::DT_INT32, repeatsValue, 1, const_tensors);
 
-    string expectTilingData = "1 1 1 1 1 1 1 1 2 12 1 0 3167 0 1 0 0 0 1 6 2 3 4 ";
-    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 600);
+    string expectTilingData = "64 6 1 1 0 0 0 0 10560 2 6 6 1 4 ";
+    ExecuteTestCase(opsParamInfos, expectTilingData, const_tensors, ge::GRAPH_SUCCESS, 101);
 }
 
 TEST_F(RepeatInterleaveTilingAscendC, Repeats_Scalar_LargeCP_Float32_Axis_1_test15)
