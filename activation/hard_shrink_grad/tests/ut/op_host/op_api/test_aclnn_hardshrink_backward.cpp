@@ -253,3 +253,34 @@ TEST_F(l2_hardshrink_backward_test, case_rank9_float16_rejected)
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
+
+// empty gradOutput/self must not bypass the broadcast shape check: a mismatched
+// gradInput shape is rejected with 161002 before the empty-tensor early return
+TEST_F(l2_hardshrink_backward_test, case_empty_broadcast_fail)
+{
+    auto gradOutput_desc = TensorDesc({0, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto self_desc = TensorDesc({0, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto lambd_desc = ScalarDesc(8.0f);
+    auto gradInput_desc = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.0001, 0.0001);
+
+    auto ut = OP_API_UT(aclnnHardshrinkBackward, INPUT(gradOutput_desc, self_desc, lambd_desc), OUTPUT(gradInput_desc));
+    // SAMPLE: only test GetWorkspaceSize
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// empty 2-D inputs with a matching gradInput shape still take the legal empty path
+TEST_F(l2_hardshrink_backward_test, case_empty_tensor_2d)
+{
+    auto gradOutput_desc = TensorDesc({0, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto self_desc = TensorDesc({0, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto lambd_desc = ScalarDesc(8.0f);
+    auto gradInput_desc = TensorDesc({0, 3}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.0001, 0.0001);
+
+    auto ut = OP_API_UT(aclnnHardshrinkBackward, INPUT(gradOutput_desc, self_desc, lambd_desc), OUTPUT(gradInput_desc));
+    // SAMPLE: only test GetWorkspaceSize
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
