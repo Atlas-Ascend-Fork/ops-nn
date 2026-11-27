@@ -149,8 +149,8 @@ __aicore__ inline void HardSwishGradV2<T, BUFFER_MODE>::Compute(int64_t currentN
 
         // Group 1: Cast self → fp32, then linear part + first Compares (independent)
         Cast(selfFp32, selfLocal, RoundMode::CAST_NONE, alignedNum);
-        // Muls & Compares both read selfFp32
-        Muls(derivFp32, selfFp32, (1.0f / 3.0f), alignedNum);
+        // Divs & Compares both read selfFp32
+        Divs(derivFp32, selfFp32, 3.0f, alignedNum);
         Adds(derivFp32, derivFp32, 0.5f, alignedNum);                  // chain on derivFp32
         Compares(maskLocal, selfFp32, -3.0f, CMPMODE::GT, alignedNum); // reads selfFp32 only
                                                                        // Select reads both derivFp32 and maskLocal
@@ -173,7 +173,7 @@ __aicore__ inline void HardSwishGradV2<T, BUFFER_MODE>::Compute(int64_t currentN
         LocalTensor<uint8_t> maskLocal = maskBuf.Get<uint8_t>();
 
         // Group 1: linear part + first Compares (Compares reads selfLocal, independent of deriv)
-        Muls(derivLocal, selfLocal, (T)(1.0 / 3.0), alignedNum);
+        Divs(derivLocal, selfLocal, (T)3.0, alignedNum);
         Adds(derivLocal, derivLocal, (T)0.5, alignedNum); // chain on derivLocal
         Compares(maskLocal, selfLocal, (T)(-3.0), CMPMODE::GT,
                  alignedNum); // reads selfLocal only

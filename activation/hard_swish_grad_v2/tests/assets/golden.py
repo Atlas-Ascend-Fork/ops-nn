@@ -17,10 +17,17 @@ __spec__ = {
     "aclnnHardswishBackwardV2": "HardSwishGradV2AclnnSpec",
 }
 
+# bf16 的 rtol 为元素级判据 (isclose/mixed) 的 Spec 透传容差: bf16 尾数仅 7 位,
+# 1 个 ULP 的相对尺寸为 2^-7/m, m∈[1,2), 上限 2^-7(~7.8e-3); 默认 rtol (1e-3)
+# 远低于它, 元素级判据对任意两个独立实现的 ±1 ULP 量化翻转均不可满足。
+# 取 2^-7 完整覆盖单 ULP 翻转 (等号含于 <=), ±2 ULP 及以上仍判超差。同仓
+# norm 系 (bn_training_update 等) 的 bf16 容差定标 (4e-3) 同源于此物理特性。
+# cross_check 路由不消费该键 (判据参数解析各取所需), 仅在被强制元素级判据时
+# 经 _isclose_params 透传生效, 默认精度标准仍为本处声明的 cross_check L1。
 _TOL = {
     "float32": {"standard": "cross_check", "level": "L1"},
     "float16": {"standard": "cross_check", "level": "L1"},
-    "bfloat16": {"standard": "cross_check", "level": "L1"},
+    "bfloat16": {"standard": "cross_check", "level": "L1", "rtol": 2.0**-7},
 }
 
 
