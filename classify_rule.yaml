@@ -400,7 +400,11 @@ conv_forward_ascendc@ops-nn:
   src:
     release:
       style:
+        - ops/ops-nn/conv/common/op_host/conv_forward_infershape.cpp
+        - ops/ops-nn/conv/common/op_host/conv_npu_arch_resolver.h
         - ops/ops-nn/conv/common/op_host/op_tiling/arch35/
+        - ops/ops-nn/conv/common/op_host/op_tiling/conv_math_util.cpp
+        - ops/ops-nn/conv/common/op_host/op_tiling/conv_platform_util.cpp
         - ops/ops-nn/conv/common/op_host/op_tiling/conv_tiling_templates_registry.h
         - ops/ops-nn/conv/common/op_kernel/arch35/
         - ops/ops-nn/conv/common/op_kernel/arch51/
@@ -423,6 +427,7 @@ conv_forward_ascendc@ops-nn:
         - ops/ops-nn/conv/conv2d_v2/op_kernel/conv2d_v2.cpp
         - ops/ops-nn/conv/conv3d_v2/op_graph/
         - ops/ops-nn/conv/conv3d_v2/op_host/config/ascend950/
+        - ops/ops-nn/conv/conv3d_v2/op_host/op_tiling/
         - ops/ops-nn/conv/conv3d_v2/op_host/op_tiling/arch35/
         - ops/ops-nn/conv/conv3d_v2/op_kernel/arch35/
         - ops/ops-nn/conv/extend_conv2d/op_graph/
