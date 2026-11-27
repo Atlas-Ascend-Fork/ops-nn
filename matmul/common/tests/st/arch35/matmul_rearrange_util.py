@@ -16,7 +16,8 @@ matmul golden 公共 util 的 rearrange 分类模块，包含：
   - transdata：FRACTAL_NZ ↔ ND 互转（nz_to_nd / nd_to_nz）
   - NZ 输入规范化：张量 storage 读写（overwrite_storage / nz_storage_to_nd）
   - transpose：末两维交换与多维转置轴序生成
-  - 排布识别：从 strides 推断末两维是否转置
+  - 排布识别：从 strides 推断末两维是否转置；NZ 输入规范化/解码共用的
+    转置判定（显式传入优先，strides 启发式兜底，无法确证时报错）
 
 golden 资产请统一从总入口 ``matmul_golden_util`` 引用。
 """
@@ -56,6 +57,35 @@ def detect_transpose_from_strides(tensor):
         itemsize = tensor.itemsize
         s = tuple(st // itemsize for st in tensor.strides)
     return s[-2] == 1 and s[-1] == tensor.shape[-2]
+
+
+def _resolve_transposed(tensor, transposed):
+    """生成/解码两侧（prepare_nz_input / nz_input_to_nd）共用的 NZ 转置判定。
+
+    判定权优先在调用方：已知转置语义（如 permX2=[0,2,1] 的 weight 末两维
+    转置 view、batched NZ 转置场景）的用例应显式传入 transposed=True/False，
+    不依赖启发式。transposed=None 时按末两维 strides 启发式兜底（batched 与
+    2D 同判，仅看末两维）：
+
+    - 规范转置形态（s[-2]==1 且 s[-1]==shape[-2]）→ True；
+    - 规范连续形态（s[-1]==1 且 s[-2]==shape[-1]）→ False；
+    - 其余（切片转置 view、重叠步长等）无法从 strides 确证 → 抛
+      ValueError，由调用方显式传参，避免静默按非转置处理产出错误 golden。
+    """
+    if transposed is not None:
+        return bool(transposed)
+    if not isinstance(tensor, torch.Tensor) or tensor.dim() < 2:
+        return False
+    if detect_transpose_from_strides(tensor):
+        return True
+    s = tensor.stride()
+    if s[-1] == 1 and s[-2] == tensor.shape[-1]:
+        return False
+    raise ValueError(
+        "cannot infer NZ transpose flag from strides "
+        f"(shape={tuple(tensor.shape)}, strides={tuple(s)}); "
+        "pass transposed=True/False explicitly"
+    )
 
 
 # ============================================================================
@@ -229,9 +259,16 @@ def nz_storage_to_nd(tensor, nd_shape=None, n0=None):
     return nz_to_nd(arr, nd_shape)
 
 
-def prepare_nz_input(tensor, tensor_formats, tensor_idx=1, n0=None):
+def prepare_nz_input(tensor, tensor_formats, tensor_idx=1, n0=None, transposed=None):
     """NZ 输入规范化（customize_inputs 侧）：view 数据 -> nd_to_nz（零填充）
     -> 覆写 tensor storage；非 NZ / 非 torch 张量直接返回。
+
+    转置场景（2D view (K,N) + strides (1,K)）：
+    转置不物化进数据——storage 覆写为 NZ(view.T)（view.T 即 (N,K)
+    矩阵 W，块序 [k1,n1,16,n0]），转置由 kernel 以 B_TRANS 按 (N,K) 方向
+    隐式完成；物化编码 nd_to_nz(view) 产出非转置块序 [n1,k1]，与转置分支的
+    字节解读错配。transposed 缺省仅对 2D 末两维转置 view 自动判定（batched
+    NZ 不受影响），可显式传入覆盖。
 
     框架按 storage shape 生成的随机 buffer 并非"某 ND 数据经 ND→NZ"的结果，
     非对齐场景下 view 只是线性重解释；改写为规范 NZ 后 NPU 与 golden 看到同一
@@ -242,14 +279,29 @@ def prepare_nz_input(tensor, tensor_formats, tensor_idx=1, n0=None):
         return
     if len(tensor_formats) <= tensor_idx or tensor_formats[tensor_idx] != "FRACTAL_NZ":
         return
+    transposed = _resolve_transposed(tensor, transposed)
     nd_view = torch_to_numpy(tensor)
+    if transposed:
+        nd_view = transpose_last_two_dims(nd_view)
     overwrite_storage(tensor, nd_to_nz(np.ascontiguousarray(nd_view), n0=n0))
 
 
-def nz_input_to_nd(tensor, tensor_formats, tensor_idx=1, n0=None):
-    """NZ 张量 -> ND（返回与生成侧一致的 view 数值）；非 NZ / 非 torch 原样返回。"""
+def nz_input_to_nd(tensor, tensor_formats, tensor_idx=1, n0=None, transposed=None):
+    """NZ 张量 -> ND（返回与生成侧一致的 view 数值）；非 NZ / 非 torch 原样返回。
+
+    转置场景：storage 为 NZ(W)（W 为 (N,K)），
+    按 view 末两维交换后的形状 (N,K) 解码出 W，再转置回逻辑 view 数值 (K,N)。
+    """
     if not isinstance(tensor, torch.Tensor):
         return tensor
     if len(tensor_formats) <= tensor_idx or tensor_formats[tensor_idx] != "FRACTAL_NZ":
         return tensor
+    transposed = _resolve_transposed(tensor, transposed)
+    if transposed:
+        weight_nd = nz_storage_to_nd(
+            tensor,
+            nd_shape=tuple(tensor.shape[:-2]) + (tensor.shape[-1], tensor.shape[-2]),
+            n0=n0,
+        )
+        return np.ascontiguousarray(transpose_last_two_dims(weight_nd))
     return nz_storage_to_nd(tensor, nd_shape=tuple(tensor.shape), n0=n0)
