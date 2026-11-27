@@ -120,29 +120,29 @@ aclnnStatus aclnnNLLLoss2d(
       <tr>
         <td>weight（aclTensor*）</td>
         <td>输入</td>
-        <td>表示每个类别的缩放权重。</td>
-        <td>公式中的w，shape为(C,)。</td>
-        <td>数据类型和self保持一致。</td>
-        <td>ND</td>
-        <td>(C,)</td>
-        <td>√</td>
-      </tr>
+      <td>表示每个类别的缩放权重。</td>
+      <td><ul><li>公式中的w，shape为(C,)。</li><li>通过aclnn接口直调时weight指针不可为空，传空指针返回161001。</li></ul></td>
+      <td>FLOAT、FLOAT16、BFLOAT16（与self一致）</td>
+      <td>ND</td>
+      <td>(C,)</td>
+      <td>√</td>
+    </tr>
       <tr>
         <td>reduction（int64_t）</td>
         <td>输入</td>
-        <td>指定要应用到输出的缩减。</td>
-        <td><ul><li>支持0(none)|1(mean)|2(sum)</li><li>'none'表示不应用缩减</li><li>'mean'表示输出的总和将除以输出中的元素数</li><li>'sum'表示输出将被求和</li></ul></td>
-        <td>INT64</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
-      <tr>
-        <td>ignoreIndex（int64_t）</td>
-        <td>输入</td>
-         <td>指定一个被忽略且不影响输入梯度的目标值。
-        </td>
-        <td>-</td>
+      <td>指定要应用到输出的缩减。</td>
+      <td><ul>支持0(none)|1(mean)|2(sum)。<li>'none'表示不应用缩减</li><li>'mean'表示输出为各元素损失之和除以权重之和totalWeight（即Σw_{y_n}）</li><li>'sum'表示输出将被求和</li></ul></td>
+      <td>INT64</td>
+      <td>-</td>
+      <td>-</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>ignoreIndex（int64_t）</td>
+      <td>输入</td>
+       <td>指定一个被忽略且不影响损失计算的目标值。
+      </td>
+      <td><ul><li>取值为[0, C - 1]之外且与target数据类型可比较的整数；若落在[0, C - 1]内，对应类别的损失将被跳过。</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>
@@ -151,23 +151,23 @@ aclnnStatus aclnnNLLLoss2d(
       <tr>
         <td>out（aclTensor*）</td>
         <td>输出</td>
-        <td>公式中的out。</td>
-        <td>当reduction为0（none）时，shape与target的shape相同，否则为(1,)。</td>
-        <td>数据类型和self保持一致。</td>
-        <td>ND</td>
-        <td>-</td>
-        <td>√</td>
-      </tr>
-      <tr>
-        <td>totalWeightOut（aclTensor*）</td>
-        <td>输出</td>
-        <td>公式中的totalWeightOut。</td>
-        <td>在reduction为非0（非none）下输出值有效，shape为(1,)。</td>
-        <td>数据类型和self保持一致。</td>
-        <td>ND</td>
-        <td>-</td>
-        <td>-</td>
-      </tr>
+      <td>公式中的out。</td>
+      <td><ul><li>当reduction为0（none）时，shape与target的shape相同，否则为(1,)。</li><li>数据类型与self保持一致。</li><li>支持非连续Tensor，计算结果经ViewCopy回写。</li></ul></td>
+      <td>FLOAT、FLOAT16、BFLOAT16</td>
+      <td>ND</td>
+      <td>-</td>
+      <td>√</td>
+    </tr>
+    <tr>
+      <td>totalWeightOut（aclTensor*）</td>
+      <td>输出</td>
+      <td>公式中的totalWeight。</td>
+      <td><ul><li>在reduction为非0（非none）下输出值有效，shape为(1,)；reduction为none时取值无效。</li><li>数据类型与self保持一致。</li><li>支持非连续Tensor，计算结果经ViewCopy回写。</li></ul></td>
+      <td>FLOAT、FLOAT16、BFLOAT16</td>
+      <td>ND</td>
+      <td>-</td>
+      <td>√</td>
+    </tr>
       <tr>
         <td>workspaceSize（uint64_t*）</td>
         <td>输出</td>
@@ -215,15 +215,18 @@ aclnnStatus aclnnNLLLoss2d(
       <td>传入的self、target、weight、out、totalWeightOut为空指针。</td>
       </tr>
       <tr>
-      <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="4">161002</td>
-      <td>self、target、weight、out或totalWeightOut的数据类型或数据格式不在支持的范围之内。</td>
+      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="5">161002</td>
+      <td>self、target、weight的数据类型或数据格式不在支持的范围之内。</td>
       </tr>
       <tr>
-      <td>self、weight、out或totalWeightOut的数据类型不一致。</td>
+      <td>self、weight的数据类型不一致；或out、totalWeightOut的数据类型与self不一致。</td>
       </tr>
        <tr>
       <td>self、target、weight、out、totalWeightOut的shape和format不正确。</td>
+      </tr>
+      <tr>
+      <td>self的类别维C为0且target非空。</td>
       </tr>
       <tr>
       <td> reduction值不在0~2范围之内。</td>
@@ -275,6 +278,12 @@ aclnnStatus aclnnNLLLoss2d(
   aclnnStatus：返回状态码，具体参见[aclnn返回码](../../../docs/zh/context/aclnn_return_code.md)。
 
 ## 约束说明
+
+- 空输入场景：输入self元素个数为0时，reduction为mean输出NaN、为sum输出0，totalWeightOut为0；reduction为none时输出不写入。
+- self的类别维C为0且target非空时属非法输入，接口报161002错误。
+- target元素取值范围为[0, C - 1]；取值为ignoreIndex的元素不参与损失计算。当前实现未对越界取值做显式校验，越界取值的行为不在公开契约内。
+- ignoreIndex应取[0, C - 1]之外且与target数据类型可比较的整数值。
+- 精度说明：输出精度比较参考容差为rtol=1e-4、atol=1e-4（与仓内kernel ST用例声明一致）；FLOAT16、BFLOAT16输入在极值输入下输出可能存在1 ULP（最低位）量级的舍入偏差。
 
 - 确定性计算
 
