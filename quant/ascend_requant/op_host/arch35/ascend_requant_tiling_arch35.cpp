@@ -22,7 +22,6 @@
 #include "register/op_def_registry.h"
 #include "op_common/log/log.h"
 #include "op_common/op_host/util/platform_util.h"
-#include "graph/utils/type_utils.h"
 #include "../../op_kernel/arch35/ascend_requant_struct.h"
 #include <sstream>
 #endif
@@ -651,8 +650,8 @@ private:
 
         if (ascend_requant::public_api::ValidateDtype(xDesc->GetDataType(), scaleDesc->GetDataType()) !=
             ascend_requant::public_api::kOk) {
-            const std::string dtypes = ge::TypeUtils::DataTypeToSerialString(xDesc->GetDataType()) + ", " +
-                                       ge::TypeUtils::DataTypeToSerialString(scaleDesc->GetDataType());
+            const std::string dtypes = Ops::Base::ToString(xDesc->GetDataType()) + ", " +
+                                       Ops::Base::ToString(scaleDesc->GetDataType());
             OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(ctx_->GetNodeName(), "x, req_scale", dtypes.c_str(),
                                                    "The dtype of x must be INT32 and the dtype of req_scale must be "
                                                    "UINT64");
@@ -661,9 +660,9 @@ private:
 
         if (ascend_requant::public_api::ValidateFormat(xDesc->GetStorageFormat(), scaleDesc->GetStorageFormat(),
                                                        yDesc->GetStorageFormat()) != ascend_requant::public_api::kOk) {
-            const std::string formats = ge::TypeUtils::FormatToSerialString(xDesc->GetStorageFormat()) + ", " +
-                                        ge::TypeUtils::FormatToSerialString(scaleDesc->GetStorageFormat()) + ", " +
-                                        ge::TypeUtils::FormatToSerialString(yDesc->GetStorageFormat());
+            const std::string formats = Ops::Base::ToString(xDesc->GetStorageFormat()) + ", " +
+                                        Ops::Base::ToString(scaleDesc->GetStorageFormat()) + ", " +
+                                        Ops::Base::ToString(yDesc->GetStorageFormat());
             OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(ctx_->GetNodeName(), "x, req_scale, y", formats.c_str(),
                                                     "The format of x, req_scale and y must be ND");
             return ge::GRAPH_FAILED;
