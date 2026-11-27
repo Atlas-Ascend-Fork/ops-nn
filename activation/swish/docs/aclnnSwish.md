@@ -163,7 +163,7 @@ aclnnStatus aclnnSwish(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的self或out是空指针。</td>
+      <td>传入的self、out、workspaceSize或executor是空指针。</td>
     </tr>
     <tr>
       <td rowspan="3">ACLNN_ERR_PARAM_INVALID</td>

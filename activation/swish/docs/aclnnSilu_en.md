@@ -148,7 +148,7 @@ aclnnStatus aclnnSilu(
     <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>self or out is a null pointer.</td>
+      <td>self, out, workspaceSize, or executor is a null pointer.</td>
     </tr>
     <tr>
       <td rowspan="3">ACLNN_ERR_PARAM_INVALID</td>
