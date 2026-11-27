@@ -123,8 +123,9 @@ void AddRmsNormQuantRegbaseTiling::CheckOptionalInput()
 
     // V2: Check for resOut output via output_res attr (set by l0op from rmsNormOut != nullptr)
     // V1 has 3 outputs (y1=0, y2=1, x=2), V2 has 4 outputs (+ resOut=3)
+    // V1 has no output_res attribute; check the count before reading the V2-only slot.
     auto resOutAttrs = context_->GetAttrs();
-    if (resOutAttrs != nullptr) {
+    if (resOutAttrs != nullptr && resOutAttrs->GetAttrNum() > OUTPUT_RES_ATTR_INDEX) {
         const bool* outputResPtr = resOutAttrs->GetBool(OUTPUT_RES_ATTR_INDEX);
         tilingParams.hasResOut = (outputResPtr != nullptr) && *outputResPtr;
     } else {
