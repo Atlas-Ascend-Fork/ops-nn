@@ -218,6 +218,7 @@ aclnnStatus aclnnForeachAcos(
 
 ## 约束说明
 
+- x/out中单个Tensor列表的Tensor数量不能超过256。
 - 确定性计算：
   - aclnnForeachAcos默认确定性实现。
 

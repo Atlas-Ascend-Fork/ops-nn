@@ -216,6 +216,7 @@ aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../
 
 ## Constraints
 
+- The number of tensors in a single tensor list of x/out cannot exceed 256.
 - Deterministic computation:
   - aclnnForeachAcos defaults to a deterministic implementation.
 
