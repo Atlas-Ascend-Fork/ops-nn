@@ -79,6 +79,8 @@
 
 ## 约束说明
 
+本页的参数表和约束适用于 GEIR 调用。通过 [aclnnSeluBackward](./docs/aclnnSeluBackward.md) 调用时，请以接口文档中的数据类型和维度约束为准。该接口不支持 UINT8 或 0 维标量。
+
 - gradients与outputs的shape必须完全一致（不支持广播），shape不一致时返回错误。
 - 支持0-8维，0维表示标量；支持含零长度维度的空Tensor。
 - 确定性计算：SeluGrad默认确定性实现。

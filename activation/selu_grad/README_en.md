@@ -81,6 +81,8 @@ English | [简体中文](./README.md)
 
 ## Constraints
 
+The parameter table and constraints in this README describe GEIR calls. For ACLNN calls, see the data type and rank requirements in [aclnnSeluBackward](./docs/aclnnSeluBackward_en.md). The ACLNN API rejects UINT8 and rank-0 scalars.
+
 - The shapes of gradients and outputs must be exactly the same (broadcasting is not supported). An error is returned when the shapes are inconsistent.
 - Ranks 0-8 are supported, including rank-0 scalars and empty tensors with zero-length dimensions.
 - Deterministic computation: SeluGrad is a default deterministic implementation.
