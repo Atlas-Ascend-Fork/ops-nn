@@ -140,7 +140,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertoken_sym)
     ASSERT_EQ(tiling_key, 97);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "549755813952 8589934592 8589934594 2 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertoken_MOE_noSym)
@@ -236,7 +238,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertoken_MOE_noSym)
     ASSERT_EQ(tiling_key, 37);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "549755813952 8589934592 8589934594 2 0 10 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_fullload_sym)
@@ -331,7 +335,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_fullload_
     ASSERT_EQ(tiling_key, 105);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "549755813952 8589934592 8589934594 2 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_fullload_nosym)
@@ -426,7 +432,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_fullload_
     ASSERT_EQ(tiling_key, 41);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "549755813952 8589934592 8589934594 2 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_largeshape_sym)
@@ -521,7 +529,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_largeshap
     ASSERT_EQ(tiling_key, 107);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "140874927308864 8589934592 4294967298 86861418594305 54013508714497 0 1 0 0 0 0 0 0 "
+                                  "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_largeshape_nosym)
@@ -616,7 +626,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_largeshap
     ASSERT_EQ(tiling_key, 43);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "140874927308864 8589934592 4294967298 86861418594305 54013508714497 0 1 0 0 0 0 0 0 "
+                                  "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_recompute_sym)
@@ -712,7 +724,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_recomput
     ASSERT_EQ(tiling_key, 113);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "140874927308864 8589934656 4294967298 1 0 0 1 0 0 0 0 0 0 16 800 607 193 2 256 64 "
+                                  "64 4 64 1 1 0 64 16 1 1 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_recompute_nosym)
@@ -808,7 +822,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_recomput
     ASSERT_EQ(tiling_key, 49);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "140874927308864 8589934656 4294967298 1 0 0 1 0 0 0 0 0 0 16 800 607 193 2 256 64 "
+                                  "64 4 64 1 1 0 64 16 1 1 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_full_load_sym)
@@ -903,7 +919,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_full_loa
     std::cout << "tiling_key: " << tiling_key << std::endl;
     ASSERT_EQ(tiling_key, 111);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "140874927308864 8589934656 4294967298 1 0 0 1 0 0 0 0 0 0 64 100 0 100 1 256 256 "
+                                  "256 1 64 4 1 0 64 1 1 64 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_full_load_nosym)
@@ -999,7 +1017,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_full_loa
     ASSERT_EQ(tiling_key, 47);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "140874927308864 8589934656 4294967298 1 0 0 1 0 0 0 0 0 0 64 100 0 100 1 256 256 "
+                                  "256 1 64 4 1 0 64 1 1 64 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_split_m_sym)
@@ -1094,7 +1114,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_split_m_
     std::cout << "tiling_key: " << tiling_key << std::endl;
     ASSERT_EQ(tiling_key, 115);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "140874927308864 8589934594 4294967298 1 0 0 1 0 0 0 0 0 0 1 800 607 193 2 64 64 64 "
+                                  "1 64 1 1 0 2 1 1 1 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_split_m_nosym)
@@ -1190,7 +1212,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_split_m_
     ASSERT_EQ(tiling_key, 51);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "140874927308864 8589934594 4294967298 1 0 0 1 0 0 0 0 0 0 1 800 607 193 2 64 64 64 "
+                                  "1 64 1 1 0 2 1 1 1 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_MOE_fullload_sym)
@@ -1282,7 +1306,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_MOE_fulll
     ASSERT_EQ(tiling_key, 117);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "549755813952 8589934592 8589934594 2 0 10 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_MOE_fullload_nosym)
@@ -1374,7 +1400,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_MOE_fulll
     ASSERT_EQ(tiling_key, 53);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "549755813952 8589934592 8589934594 2 0 10 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_MOE_largeshape_sym)
@@ -1466,7 +1494,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_MOE_large
     ASSERT_EQ(tiling_key, 119);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "140874927308864 8589934592 4294967298 86861418594305 54013508714497 10 1 0 0 0 0 0 "
+                                  "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_MOE_largeshape_nosym)
@@ -1558,7 +1588,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertensor_MOE_large
     ASSERT_EQ(tiling_key, 55);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "140874927308864 8589934592 4294967298 86861418594305 54013508714497 10 1 0 0 0 0 0 "
+                                  "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertoken_multicore_sym)
@@ -1645,7 +1677,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertoken_multicore_
     std::cout << "tiling_key: " << tiling_key << std::endl;
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "214748364800001 4294967297 4294967296 130841883705344 83906481094657 0 0 0 0 0 0 0 "
+                                  "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertoken_multicore_smooth_nosym)
@@ -1734,7 +1768,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertoken_multicore_
     std::cout << "tiling_key: " << tiling_key << std::endl;
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "171798691840002 4294967298 4294967296 86861418594304 84937273245697 0 1 0 0 0 0 0 0 "
+                                  "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 // 大 m perchannel 边界看护（Issue #10100）：IsCapableForFullLoad 的 UB 估算必须全程 int64，

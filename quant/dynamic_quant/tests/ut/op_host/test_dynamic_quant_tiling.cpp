@@ -135,7 +135,9 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_01)
     ASSERT_EQ(tiling_key, 3);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "4393751543848 17179869192 17179869187 3 0 0 1 196608 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_02)
@@ -225,7 +227,9 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_02)
     ASSERT_EQ(tiling_key, 2);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "4393751543848 17179869192 17179869187 3 0 0 1 196608 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_03)
@@ -315,7 +319,9 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_03)
     ASSERT_EQ(tiling_key, 0);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "48374216654849 4294967296 4294967297 1 0 0 1 196608 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_04)
@@ -802,7 +808,10 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_09)
     ASSERT_EQ(tiling_key, 7);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(
+        tiling_data_result,
+        "4398046511144 17179869192 17179869187 3 0 34359738376 1 196608 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_10)
@@ -893,7 +902,9 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_10)
     ASSERT_EQ(tiling_key, 8);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "64424509440040 17179869192 4294967299 43980465111041 20444044328961 34359738376 1 "
+                                  "196608 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_11)
@@ -1062,7 +1073,9 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_12)
     ASSERT_EQ(tiling_key, 10);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "4398046511114 55834574856 51539607555 43980465111052 20444044328961 34359738376 1 "
+                                  "196608 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_regbase_01)
@@ -1154,7 +1167,10 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_regbase_01)
     ASSERT_EQ(tiling_key, 97);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(
+        tiling_data_result,
+        "4398046511144 17179869192 17179869187 3 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_regbase_02)
@@ -1245,7 +1261,10 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_regbase_02)
     ASSERT_EQ(tiling_key, 97);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(
+        tiling_data_result,
+        "4398046511144 17179869192 17179869187 3 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_regbase_03)
@@ -1336,7 +1355,9 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_regbase_03)
     ASSERT_EQ(tiling_key, 97);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "48378511622145 4294967297 4294967296 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_regbase_04)
@@ -1836,7 +1857,9 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_largeShape_db_01)
     ASSERT_EQ(tiling_key, 99);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "116758685941800 231928234009 4294967349 69269232549889 47489453391873 0 1 0 0 0 0 0 "
+                                  "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1191182336 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_regbase_empty_tensor)
@@ -1925,7 +1948,8 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_regbase_empty_tensor)
     ASSERT_EQ(tiling_key, 12);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, ""); // 该用例tiling data为空串，属预期行为
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_regbase_has_group_index_failed)
@@ -2187,7 +2211,10 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tilin_310_01)
     ASSERT_EQ(tiling_key, 10100);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(
+        tiling_data_result,
+        "48 0 0 0 0 0 0 549755813888 549755814016 34359738376 30064771073 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tilin_310_02)
@@ -2278,7 +2305,9 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tilin_310_02)
     ASSERT_EQ(tiling_key, 11001);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "48 0 0 17592186044416 13194139533313 0 0 30786325577728 30786325584896 34359738376 "
+                                  "30064771073 1 4294967296 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tilin_310_03)
@@ -2369,7 +2398,9 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tilin_310_03)
     ASSERT_EQ(tiling_key, 11000);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "48 0 0 17592186044416 13194139533313 0 0 4672924418048 4672924419136 34359738376 "
+                                  "30064771073 1 4294967298 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tilin_910_01)
@@ -2460,7 +2491,9 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tilin_910_01)
     ASSERT_EQ(tiling_key, 11000);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "48 0 0 17592186044416 13194139533313 0 0 4672924418048 4672924419136 34359738376 "
+                                  "30064771073 1 4294967298 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_special_01)
@@ -2551,7 +2584,9 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_special_01)
     ASSERT_EQ(tiling_key, 100);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "21990232555542 25769803797 12884901890 43980465111043 20444044328961 34359738376 1 "
+                                  "196608 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(DynamicQuantTiling, dynamic_quant_tiling_special_02)
@@ -2641,5 +2676,7 @@ TEST_F(DynamicQuantTiling, dynamic_quant_tiling_special_02)
     ASSERT_EQ(tiling_key, 100);
 
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "17592186044448 17179869215 17179869188 43980465111044 20444044328961 34359738376 1 "
+                                  "196608 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }

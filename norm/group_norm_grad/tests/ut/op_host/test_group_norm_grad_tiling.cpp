@@ -53,12 +53,13 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_0)
                           "Intrinsic_data_move_out2l1_nd2nz": false,
                           "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
                           "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
-                          "CORE_NUM": 48}
+                          "CORE_NUM": 48, "socVersion": "Ascend910B"}
                           })";
     map<string, string> soc_infos;
     map<string, string> aicore_spec;
     map<string, string> intrinsics;
-    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+    map<string, string> version;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics, version);
 
     // platform info
     fe::PlatFormInfos platform_info;
@@ -89,6 +90,7 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_0)
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
                                                                                             intrinsics);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
     ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
     // tilingFunc simulate
@@ -103,8 +105,8 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_0)
     uint32_t W = 128;
     uint32_t G = 32;
     gert::StorageShape dy_shape = {{N, C, H, W}, {N, C, H, W}};
-    gert::StorageShape mean_shape = {{G}, {G}};
-    gert::StorageShape rstd_shape = {{G}, {G}};
+    gert::StorageShape mean_shape = {{N, G}, {N, G}};
+    gert::StorageShape rstd_shape = {{N, G}, {N, G}};
     gert::StorageShape x_shape = {{N, C, H, W}, {N, C, H, W}};
     gert::StorageShape gamma_shape = {{C}, {C}};
 
@@ -141,11 +143,14 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_0)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(tiling_context->GetTilingKey(), 10);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "3 12 64 16384 32 384 2 8 8 48 0 0 0 16256 2 128 384 1 64 64 3 3 1 1 1 1 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradEmptyTiling_multi_block)
@@ -255,7 +260,8 @@ TEST_F(GroupNormGradTiling, GroupNormGradEmptyTiling_multi_block)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 500);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "64 75000 4800000 245760 16384 4 9464 4 9464 75000 0 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_1)
@@ -269,12 +275,13 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_1)
                           "Intrinsic_data_move_out2l1_nd2nz": false,
                           "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
                           "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
-                          "CORE_NUM": 48}
+                          "CORE_NUM": 48, "socVersion": "Ascend910B"}
                           })";
     map<string, string> soc_infos;
     map<string, string> aicore_spec;
     map<string, string> intrinsics;
-    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+    map<string, string> version;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics, version);
 
     // platform info
     fe::PlatFormInfos platform_info;
@@ -305,6 +312,7 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_1)
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
                                                                                             intrinsics);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
     ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
     // tilingFunc simulate
@@ -319,8 +327,8 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_1)
     uint32_t W = 128;
     uint32_t G = 32;
     gert::StorageShape dy_shape = {{N, C, H, W}, {N, C, H, W}};
-    gert::StorageShape mean_shape = {{G}, {G}};
-    gert::StorageShape rstd_shape = {{G}, {G}};
+    gert::StorageShape mean_shape = {{N, G}, {N, G}};
+    gert::StorageShape rstd_shape = {{N, G}, {N, G}};
     gert::StorageShape x_shape = {{N, C, H, W}, {N, C, H, W}};
     gert::StorageShape gamma_shape = {{C}, {C}};
 
@@ -357,14 +365,15 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_1)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
     // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
+    EXPECT_EQ(tiling_context->GetTilingKey(), 0);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_key << std::endl;
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "3 1 64 16384 32 32 2 1 1 32 0 0 0 16256 2 128 0 0 0 0 0 0 0 1 1 1 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_2)
@@ -378,12 +387,13 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_2)
                           "Intrinsic_data_move_out2l1_nd2nz": false,
                           "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
                           "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
-                          "CORE_NUM": 48}
+                          "CORE_NUM": 48, "socVersion": "Ascend910B"}
                           })";
     map<string, string> soc_infos;
     map<string, string> aicore_spec;
     map<string, string> intrinsics;
-    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+    map<string, string> version;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics, version);
 
     // platform info
     fe::PlatFormInfos platform_info;
@@ -414,6 +424,7 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_2)
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
                                                                                             intrinsics);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
     ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
     // tilingFunc simulate
@@ -428,8 +439,8 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_2)
     uint32_t W = 128;
     uint32_t G = 32;
     gert::StorageShape dy_shape = {{N, C, H, W}, {N, C, H, W}};
-    gert::StorageShape mean_shape = {{G}, {G}};
-    gert::StorageShape rstd_shape = {{G}, {G}};
+    gert::StorageShape mean_shape = {{N, G}, {N, G}};
+    gert::StorageShape rstd_shape = {{N, G}, {N, G}};
     gert::StorageShape x_shape = {{N, C, H, W}, {N, C, H, W}};
     gert::StorageShape gamma_shape = {{C}, {C}};
 
@@ -466,14 +477,15 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_2)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
     // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
+    EXPECT_EQ(tiling_context->GetTilingKey(), 2);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_key << std::endl;
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "3 1 64 16384 32 32 2 1 1 32 0 0 0 10752 2 5632 64 1 64 64 0 0 0 1 1 1 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_3)
@@ -487,12 +499,13 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_3)
                           "Intrinsic_data_move_out2l1_nd2nz": false,
                           "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
                           "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
-                          "CORE_NUM": 48}
+                          "CORE_NUM": 48, "socVersion": "Ascend910B"}
                           })";
     map<string, string> soc_infos;
     map<string, string> aicore_spec;
     map<string, string> intrinsics;
-    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+    map<string, string> version;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics, version);
 
     // platform info
     fe::PlatFormInfos platform_info;
@@ -523,6 +536,7 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_3)
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
                                                                                             intrinsics);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
     ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
     // tilingFunc simulate
@@ -537,8 +551,8 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_3)
     uint32_t W = 1664;
     uint32_t G = 71;
     gert::StorageShape dy_shape = {{N, C, H, W}, {N, C, H, W}};
-    gert::StorageShape mean_shape = {{G}, {G}};
-    gert::StorageShape rstd_shape = {{G}, {G}};
+    gert::StorageShape mean_shape = {{N, G}, {N, G}};
+    gert::StorageShape rstd_shape = {{N, G}, {N, G}};
     gert::StorageShape x_shape = {{N, C, H, W}, {N, C, H, W}};
     gert::StorageShape gamma_shape = {{C}, {C}};
 
@@ -575,14 +589,15 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_3)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
     // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
+    EXPECT_EQ(tiling_context->GetTilingKey(), 0);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_key << std::endl;
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "2 1 2130 1664 71 71 30 2 1 35 9 4 3 0 0 0 0 0 0 0 0 0 0 1 1 1 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_4)
@@ -596,12 +611,13 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_4)
                           "Intrinsic_data_move_out2l1_nd2nz": false,
                           "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
                           "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
-                          "CORE_NUM": 48}
+                          "CORE_NUM": 48, "socVersion": "Ascend910B"}
                           })";
     map<string, string> soc_infos;
     map<string, string> aicore_spec;
     map<string, string> intrinsics;
-    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+    map<string, string> version;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics, version);
 
     // platform info
     fe::PlatFormInfos platform_info;
@@ -631,6 +647,7 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_4)
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
                                                                                             intrinsics);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
     ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
     // tilingFunc simulate
@@ -685,14 +702,15 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_4)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
     // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
+    EXPECT_EQ(tiling_context->GetTilingKey(), 10);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_key << std::endl;
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "5 32 64 1 64 2048 1 43 42 32 2033 1 1 0 0 0 1024 1 64 64 8 8 1 1 1 1 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_5)
@@ -706,12 +724,13 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_5)
                           "Intrinsic_data_move_out2l1_nd2nz": false,
                           "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
                           "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
-                          "CORE_NUM": 48}
+                          "CORE_NUM": 48, "socVersion": "Ascend910B"}
                           })";
     map<string, string> soc_infos;
     map<string, string> aicore_spec;
     map<string, string> intrinsics;
-    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+    map<string, string> version;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics, version);
 
     // platform info
     fe::PlatFormInfos platform_info;
@@ -741,6 +760,7 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_5)
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
                                                                                             intrinsics);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
     ASSERT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
     // tilingFunc simulate
@@ -795,14 +815,15 @@ TEST_F(GroupNormGradTiling, GroupNormGrad_tiling_5)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("version", version);
 
     // workspaces nullptr return failed
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
     // todo check tiling result
-    auto tiling_key = tiling_context->GetTilingKey();
+    EXPECT_EQ(tiling_context->GetTilingKey(), 11);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_key << std::endl;
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "5 32 64 1 64 2048 1 43 42 32 677 1 1 0 0 0 1024 1 64 64 16 16 1 1 1 1 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_0)
@@ -917,7 +938,10 @@ TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_0)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 101);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "12 64 1024 32 512 384 25769803777 274877906950 17179869248 9 0 0 0 4294967680 4294967297 0 0 512 "
+              "34359738368 32 0 7318624272385 34359738376 8 0 0 6 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_1)
@@ -1032,7 +1056,10 @@ TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_1)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 101);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "12 64 1024 32 512 384 25769803777 274877906950 17179869248 9 0 0 0 4294967680 4294967297 0 0 512 "
+              "34359738368 32 0 7318624272385 34359738376 8 0 0 6 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_2)
@@ -1147,7 +1174,9 @@ TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_2)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 103);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "1 128 4096 32 512 128 4294967297 137438953473 4294967328 4 0 0 0 4294967424 "
+                                  "4294967297 0 0 2048 137438953472 32 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_3)
@@ -1262,7 +1291,11 @@ TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_3)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 302);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(
+        tiling_data_result,
+        "1 2130 2768896 71 512 82 8589934597 150323855361 36 70368744177664 70368744177833 352187318528 35184372097024 "
+        "4294969426 4294967297 0 0 2097152 274877906953 32 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_4)
@@ -1377,7 +1410,10 @@ TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_4)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 101);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "12 64 1024 32 512 384 25769803777 274877906950 17179869248 9 0 0 0 4294967680 4294967297 0 0 512 "
+              "34359738368 32 0 7318624272385 34359738376 8 0 0 6 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_5)
@@ -1492,7 +1528,10 @@ TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_5)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 103);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "5 128 4096 32 512 384 12884901889 223338299394 4294967350 4 0 0 0 4294967680 4294967297 0 0 2048 "
+              "137438953472 32 0 11957188952065 68719476752 8 0 0 3 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_6)
@@ -1607,7 +1646,10 @@ TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_6)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 302);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "6 2130 2768896 71 512 246 30064771085 257698037766 61 70368744177664 70368744177833 "
+                                  "352187318528 35184372097024 4294973686 4294967297 0 0 2097152 274877906953 32 0 "
+                                  "11957188952065 94489280546 63 0 0 3 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_7)
@@ -1722,7 +1764,10 @@ TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_7)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 401);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "2 120 5120 4 512 240 4294967297 34359738369 8 1 0 0 0 4294967536 4294967297 17179869188 257698037820 "
+              "4096 274877906944 32 0 13194139533313 34359738376 15 0 0 2 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradEmptyTiling_single_core)
@@ -1832,7 +1877,8 @@ TEST_F(GroupNormGradTiling, GroupNormGradEmptyTiling_single_core)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 500);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "1 64 64 245760 64 0 64 0 64 64 0 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradEmptyTiling_multi_core)
@@ -1942,7 +1988,8 @@ TEST_F(GroupNormGradTiling, GroupNormGradEmptyTiling_multi_core)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 500);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result, "64 160 10240 245760 160 0 160 0 160 160 0 ");
 }
 TEST_F(GroupNormGradTiling, GroupNormGradRegbase_mode1_fp32)
 {
@@ -2051,7 +2098,10 @@ TEST_F(GroupNormGradTiling, GroupNormGradRegbase_mode1_fp32)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 201);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "20 1000 2048 20 512 272 30064771092 223338299398 58 4 0 0 0 4294977296 4294967297 0 0 1024 68719476736 "
+              "32 0 4398046511105 34359738384 63 0 8 10 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(GroupNormGradTiling, Regbase_InputCheck_dimNum_less_2)
@@ -2369,7 +2419,10 @@ TEST_F(GroupNormGradTiling, Regbase_Stage2Mode2)
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
     auto tiling_key = tiling_context->GetTilingKey();
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "8000 64 1 32 4000 4000 17179869184064 274877910944 3294239916096 1279 0 0 0 4295223296 4294967297 0 0 "
+              "32 0 32 0 2 0 2 0 0 4000 0 0 32 1 32 1 32 512 4 3 416 3 2 ");
 }
 
 TEST_F(GroupNormGradTiling, Empty_InputCheck_shape_mismatch)
@@ -2908,7 +2961,10 @@ TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_9)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 403);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "2 120 10240 4 512 240 4294967297 34359738369 8 1 0 0 0 4294967536 4294967297 17179869188 257698037820 "
+              "8192 274877906945 32 0 14637248544769 34359738384 8 0 0 2 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_10)
@@ -3023,7 +3079,10 @@ TEST_F(GroupNormGradTiling, GroupNormGradRegbase_tiling_10)
     auto tiling_key = tiling_context->GetTilingKey();
     EXPECT_EQ(tiling_key, 403);
     auto tiling_data_result = TilingData2Str(tiling_context->GetRawTilingData());
-    std::cout << tiling_data_result << std::endl;
+
+    EXPECT_EQ(tiling_data_result,
+              "2 120 10240 3 512 240 4294967297 25769803777 6 1 0 0 0 4294967536 4294967297 17179869188 257698037820 "
+              "8192 274877906945 32 0 14637248544769 34359738384 8 0 0 2 0 0 0 0 0 0 0 0 0 0 0 0 0 ");
 }
 
 class GroupNormGradPlatformError : public testing::TestWithParam<int> {};

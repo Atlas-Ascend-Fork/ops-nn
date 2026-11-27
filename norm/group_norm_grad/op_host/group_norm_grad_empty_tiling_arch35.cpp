@@ -304,8 +304,9 @@ uint64_t GroupNormGradEmptyTiling::NearestLowerPowerOfTwo(int32_t tmp)
 ge::graphStatus GroupNormGradEmptyTiling::CalcuTilingData()
 {
     if (commonParams.ubSizePlatForm >= BUFFER_NUM * (colsPerCoreDG_ * BYTES_OF_FLOAT)) {
-        // full-load
+        // full-load：单次 UB 即可容纳本核全部列，colsPerUBDG_ 需与 colsPerCoreDG_ 一致（kernel 按其分配 UB）
         coreUbBlockCount_ = 0;
+        colsPerUBDG_ = colsPerCoreDG_;
         tailUbCols_ = colsPerCoreDG_;
         lastCoreBlockCount_ = 0;
         lastCoreTailUbCols_ = colsLastCoreDG_;
