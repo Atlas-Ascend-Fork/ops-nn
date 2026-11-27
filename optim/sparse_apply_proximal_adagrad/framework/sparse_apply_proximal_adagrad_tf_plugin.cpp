@@ -18,7 +18,7 @@ namespace domi {
 // SparseApplyProximalAdagrad maps directly from the TensorFlow op of the same name; auto operator mapping suffices.
 REGISTER_CUSTOM_OP("SparseApplyProximalAdagrad")
     .FrameworkType(TENSORFLOW)
-    .OriginOpType("SparseApplyProximalAdagrad")
+    .OriginOpType(std::vector<ge::AscendString>{"SparseApplyProximalAdagrad", "ResourceSparseApplyProximalAdagrad"})
     .ParseParamsByOperatorFn(AutoMappingByOpFn)
     .ImplyType(ImplyType::TVM);
 } // namespace domi
