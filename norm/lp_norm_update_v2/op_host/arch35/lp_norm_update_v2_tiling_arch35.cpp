@@ -255,8 +255,8 @@ static ge::graphStatus ComputeTilingSplit(gert::TilingContext* context, LpNormUp
 // Tiling 分发入口
 static ge::graphStatus LpNormUpdateV2TilingFunc(gert::TilingContext* context)
 {
-    OP_LOGD(context->GetNodeName(), "Begin the tiling process for Arch35 architecture");
     OP_CHECK_NULL_WITH_CONTEXT(context, context);
+    OP_LOGD(context->GetNodeName(), "Begin the tiling process for Arch35 architecture");
     OP_LOGI(context->GetNodeName(), "Enter LpNormUpdateV2TilingFunc");
 
     // Step 1: 获取平台运行信息
