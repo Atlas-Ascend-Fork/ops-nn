@@ -91,7 +91,10 @@ bool GetAxisToReverseRunInfo(const gert::TilingContext* context, const gert::Sha
 {
     const gert::Tensor* axes_tensor = context->GetInputTensor(axes_idx);
     OP_CHECK_NULL_WITH_CONTEXT(context, axes_tensor);
-    OP_CHECK_IF(!Ops::Nn::IsConstTensor(axes_tensor), OP_LOGE(context->GetNodeName(), "get axes const value failed."),
+    OP_CHECK_IF(!Ops::Nn::IsConstTensor(axes_tensor),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "axes", "non-const",
+                                                      "the axes input must be a const tensor so that ReverseV2 can "
+                                                      "read the axes values during tiling"),
                 return false);
     ge::DataType axes_dtype = axes_tensor->GetDataType();
     switch (axes_dtype) {
@@ -349,12 +352,14 @@ static ge::graphStatus Tiling4ReverseV2(gert::TilingContext* context)
     run_info.Init();
     constexpr size_t input_axis = 1;
     OP_CHECK_IF(!GetAxisToReverseRunInfo(context, x_shape, input_axis, run_info),
-                OP_LOGE(context->GetNodeName(), "do GetAxisToReverseRunInfo failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "do GetAxisToReverseRunInfo failed."),
+                return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "after GetAxisToReverseRunInfo, run info: %s.",
             run_info.OriginInfoToString().c_str());
     OP_CHECK_IF(run_info.shape_size == 0,
-                OP_LOGE(context->GetNodeName(), "reverse does not support empty tensor, shape is %s.",
-                        Ops::Base::ToString(x_shape).c_str()),
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "x", Ops::Base::ToString(x_shape).c_str(),
+                                                      "ReverseV2 does not support empty tensor, all dims of the "
+                                                      "input x must be positive"),
                 return ge::GRAPH_FAILED);
 
     run_info.reverse_shape[run_info.real_shape_size] = compile_info->dtype_rate;
@@ -399,12 +404,18 @@ static ge::graphStatus TilingPrepareReverseV2ForAscendC(gert::TilingParseContext
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     compileInfo->totalCoreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((compileInfo->totalCoreNum <= 0), OP_LOGE(context->GetNodeName(), "Failed to get core num."),
+    OP_CHECK_IF((compileInfo->totalCoreNum <= 0),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "totalCoreNum",
+                                                      std::to_string(compileInfo->totalCoreNum).c_str(),
+                                                      "the core num obtained from the platform must be positive"),
                 return ge::GRAPH_FAILED);
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     compileInfo->ubSize = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF((compileInfo->ubSize <= 0), OP_LOGE(context->GetNodeName(), "Failed to get ub size."),
+    OP_CHECK_IF((compileInfo->ubSize <= 0),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "ubSize",
+                                                      std::to_string(compileInfo->ubSize).c_str(),
+                                                      "the UB size obtained from the platform must be positive"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -432,7 +443,11 @@ static ge::graphStatus TilingPrepare4ReverseV2(gert::TilingParseContext* context
                 OP_LOGE(context->GetNodeName(), "get max_elements_last_large_size from compile info failed."),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(!ReadCompileItem(vars, "dtype_rate", compile_info->dtype_rate),
-                OP_LOGE(context->GetNodeName(), "get dtype_rate from compile info failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "x", "unknown",
+                                                      "dtype_rate is missing from the compile info; it is derived "
+                                                      "from the dtype of x (1 for fp16/int16 and 2 for fp32/int32), "
+                                                      "check that the dtype of x is supported"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(!ReadCompileItem(vars, "topk_threshold", compile_info->topk_threshold),
                 OP_LOGE(context->GetNodeName(), "get topk_threshold from compile info failed."),
                 return ge::GRAPH_FAILED);

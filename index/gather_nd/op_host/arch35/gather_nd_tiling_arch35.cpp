@@ -628,7 +628,9 @@ ge::graphStatus GatherNdSimtTiling::DoMixKernelOpTiling()
 
     uint64_t singleUbProNum = availableSingleBuf / (xLastAxisBytes + singleIndicesBytes);
     if (singleUbProNum == static_cast<uint64_t>(0)) {
-        OP_LOGE("GatherNdSimt", "singleUbProNum is zero!");
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context_->GetNodeName(), "singleUbProNum", "0",
+                                              "the available UB size cannot hold one element of x and its indices, "
+                                              "check the last dim of x and the rank of indices");
         return ge::GRAPH_FAILED;
     }
 

@@ -39,12 +39,18 @@ ge::graphStatus TilingPrepare4GatherNd(gert::TilingParseContext* context)
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfo);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
     gatherNdCompileInfo->core_num = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF((gatherNdCompileInfo->core_num <= 0), OP_LOGE(context->GetNodeName(), "Failed to core num."),
+    OP_CHECK_IF((gatherNdCompileInfo->core_num <= 0),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "core_num",
+                                                      std::to_string(gatherNdCompileInfo->core_num).c_str(),
+                                                      "the core num obtained from the platform must be positive"),
                 return ge::GRAPH_FAILED);
     uint64_t ubSize;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     gatherNdCompileInfo->ub_size = static_cast<int64_t>(ubSize);
-    OP_CHECK_IF((gatherNdCompileInfo->ub_size <= 0), OP_LOGE(context->GetNodeName(), "Failed to get ub size."),
+    OP_CHECK_IF((gatherNdCompileInfo->ub_size <= 0),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "ub_size",
+                                                      std::to_string(gatherNdCompileInfo->ub_size).c_str(),
+                                                      "the UB size obtained from the platform must be positive"),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }

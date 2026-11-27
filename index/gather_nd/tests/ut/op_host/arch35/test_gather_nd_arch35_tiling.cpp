@@ -17,7 +17,13 @@
 #include <vector>
 #include <gtest/gtest.h>
 
+#include <cstring>
+#include <memory>
+#include <vector>
+
 #include "log/log.h"
+#include "base/err_msg.h"
+#include "experiment/metadef/common/util/error_manager/error_manager.h"
 #include "kernel_run_context_facker.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
@@ -890,4 +896,188 @@ TEST_F(AscendGatherNdTest, gather_nd_tiling_7)
     gert::StorageShape y = {{2, 0}, {2, 0}};
 
     runCase(x, indices, y);
+}
+
+// ---------------------------------------------------------------------------
+// 错误码负向UT：覆盖扫描表 7954/7955/7961（推荐码 EZ0026）的外部错误上报路径。
+// 断言口径：公开返回值 GRAPH_FAILED + ErrorManager 正式首报（GetRawErrorMessages）
+//          + 消息关键字段（参数名/实际值/reason）+ 同一路径首错唯一（仅1条，无内部泛化码残留）。
+// ---------------------------------------------------------------------------
+static std::vector<error_message::ErrorItem> PopRawErrorMessages()
+{
+    return ErrorManager::GetInstance().GetRawErrorMessages();
+}
+
+static void ClearRawErrorMessages() { (void)ErrorManager::GetInstance().GetRawErrorMessages(); }
+
+static void DumpRawErrorMessages(const std::vector<error_message::ErrorItem>& items)
+{
+    for (const auto& item : items) {
+        std::cout << "[ut-dump] error_id=" << item.error_id << " message=" << item.error_message << std::endl;
+    }
+}
+
+// TilingParse 平台 AIV 核数为 0：EZ0026（7954, TilingPrepare4GatherNd）
+TEST_F(AscendGatherNdTest, test_tiling_parse_core_num_zero)
+{
+    string compile_info_string = R"({
+        "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                          "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true,
+                          "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
+                          "UB_SIZE": 196608, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                          "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                          "CORE_NUM": 0, "version": "Ascend950"}
+    })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+
+    optiling::GatherNdCompileInfo compile_info;
+
+    std::string op_type("GatherNd");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
+    ASSERT_NE(tiling_parse_func, nullptr);
+
+    char compile_json[] = "{}";
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(compile_json), reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+    ASSERT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+
+    ClearRawErrorMessages();
+    EXPECT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_FAILED);
+    auto errs = PopRawErrorMessages();
+    DumpRawErrorMessages(errs);
+    ASSERT_EQ(errs.size(), 1UL); // 首错唯一
+    EXPECT_EQ(errs[0].error_id, "EZ0026");
+    EXPECT_NE(errs[0].error_message.find("core_num"), string::npos);
+    EXPECT_NE(errs[0].error_message.find("core num"), string::npos);
+}
+
+// TilingParse 平台 UB 大小为 0：EZ0026（7955, TilingPrepare4GatherNd）
+TEST_F(AscendGatherNdTest, test_tiling_parse_ub_size_zero)
+{
+    string compile_info_string = R"({
+        "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                          "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true,
+                          "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
+                          "UB_SIZE": 0, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                          "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                          "CORE_NUM": 48, "version": "Ascend950"}
+    })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+
+    optiling::GatherNdCompileInfo compile_info;
+
+    std::string op_type("GatherNd");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
+    ASSERT_NE(tiling_parse_func, nullptr);
+
+    char compile_json[] = "{}";
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(compile_json), reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+    ASSERT_TRUE(kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init());
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+
+    ClearRawErrorMessages();
+    EXPECT_EQ(tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()), ge::GRAPH_FAILED);
+    auto errs = PopRawErrorMessages();
+    DumpRawErrorMessages(errs);
+    ASSERT_EQ(errs.size(), 1UL); // 首错唯一
+    EXPECT_EQ(errs[0].error_id, "EZ0026");
+    EXPECT_NE(errs[0].error_message.find("ub_size"), string::npos);
+    EXPECT_NE(errs[0].error_message.find("UB size"), string::npos);
+}
+
+// MixKernel 场景可用 UB 放不下单元素（singleUbProNum == 0）：EZ0026（7961, DoMixKernelOpTiling）
+// 路由条件：rank(=2)>1、indicesNum(=1039)>=640、gatherSize*xDtypeSize(=2) <= SIMD_THRES(2048)、
+//          UB_SIZE=34816 -> ubSize_=2048 -> availableSingleBuf=(2048-2048)/2=0 -> singleUbProNum=0
+TEST_F(AscendGatherNdTest, test_tiling_mix_single_ub_pro_num_zero)
+{
+    string compile_info_string = R"({
+        "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                          "Intrinsic_fix_pipe_l0c2out": false, "Intrinsic_data_move_l12ub": true,
+                          "Intrinsic_data_move_l0c2ub": true, "Intrinsic_data_move_out2l1_nd2nz": false,
+                          "UB_SIZE": 34816, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                          "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                          "CORE_NUM": 48, "version": "Ascend950"}
+    })";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+
+    optiling::GatherNdCompileInfo compile_info;
+
+    std::string op_type("GatherNd");
+    ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()), nullptr);
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+
+    auto param = gert::TilingData::CreateCap(4096);
+    ASSERT_NE(param, nullptr);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    gert::StorageShape x = {{1000, 1000, 1}, {1000, 1000, 1}};
+    gert::StorageShape indices = {{1039, 2}, {1039, 2}};
+    gert::StorageShape y = {{1039, 1}, {1039, 1}};
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1})
+                      .InputShapes({&x, &indices})
+                      .OutputShapes({&y})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT32, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeAttrs({{"negative_index_support", Ops::NN::AnyValue::CreateFrom<bool>(false)}})
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    ASSERT_NE(tiling_context->GetPlatformInfo(), nullptr);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    tiling_context->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    tiling_context->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+
+    ClearRawErrorMessages();
+    EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+    auto errs = PopRawErrorMessages();
+    DumpRawErrorMessages(errs);
+    ASSERT_EQ(errs.size(), 1UL); // 首错唯一
+    EXPECT_EQ(errs[0].error_id, "EZ0026");
+    EXPECT_NE(errs[0].error_message.find("singleUbProNum"), string::npos);
+    EXPECT_NE(errs[0].error_message.find("UB size"), string::npos);
 }
