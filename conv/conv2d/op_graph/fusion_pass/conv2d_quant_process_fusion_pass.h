@@ -36,7 +36,6 @@ const std::string K_AIPP_QUANT_NEED_ADJUST = "_aipp_quant_need_adjust";
 const std::string K_AIPP_QUANT_MEAN_VEC = "_aipp_quant_mean_vec";
 const std::string K_QUANT_SCALE_RATE = "_quant_scale_rate";
 const std::string OPTION_FIRST_LAYER_QUANT = "enable_first_layer_quantization";
-constexpr int64_t FP16_C0 = 16;
 constexpr int32_t K_BASE_OFFSET = 128;
 constexpr int32_t K_MAX_CHN_NUM = 4;
 
@@ -73,6 +72,7 @@ protected:
     bool ConvFusionReplaceImpl(ge::GraphPtr& graph, ge::GNode& convNode, ge::CustomPassContext& passContext) override;
 
     // BiasOptimizeQuantRollbackBase 覆写钩子（老 Conv2DQuantProcessFusionPass 的 conv2d 特化）
+    bool CheckOpSupported(const ge::GNode& node) const override;
     ge::Status GetQuantProcessMode(const ge::GNodePtr& quantNode, const ge::GNodePtr& cubeNode,
                                    ops::QuantProcessMode& quantProcessMode) override;
     ge::GNodePtr GetCubeNodeInputNode(const ge::GNodePtr& cubeNode) const override;

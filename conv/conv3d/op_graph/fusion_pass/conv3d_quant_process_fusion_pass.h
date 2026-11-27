@@ -32,6 +32,7 @@ protected:
     void PrintGraphStructure() const override;
 
     ge::Status GetCoValue(const ge::GNodePtr& cubeNode, int64_t& co) override;
+    bool CheckOpSupported(const ge::GNode& node) const override;
     ge::Status SetDataTypeOfNodes(const ge::GNodePtr& cubeNode) override;
     ge::GNodePtr GetCubeNodeInputNode(const ge::GNodePtr& cubeNode) const override;
 

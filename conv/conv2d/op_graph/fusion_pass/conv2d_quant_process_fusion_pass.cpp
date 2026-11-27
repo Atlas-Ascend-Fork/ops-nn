@@ -17,6 +17,7 @@
 #include <fstream>
 #include <limits.h>
 #include <map>
+#include <set>
 
 #include "conv/common/op_graph/fusion_pass/conv_fusion_utils_pass.h"
 #include "acl/acl_platform.h"
@@ -53,11 +54,105 @@ bool ResolveAippArch(NpuArch& npuArch)
 {
     char npuArchStr[kNpuArchStrLen] = {};
     if (aclplatformGetDeviceInfo(ACL_PLATFORM_NPU_ARCH, npuArchStr, sizeof(npuArchStr)) != ACL_SUCCESS) {
-        OP_LOGW("ResolveAippArch", "Get npu arch failed, skip aipp adjust.");
+        OP_LOGW(FUSION_NAME, "Get npu arch failed, skip aipp adjust.");
         return false;
     }
     npuArch = static_cast<NpuArch>(std::atoi(npuArchStr));
     return true;
+}
+
+// 各 NpuArch 算子信息库的 (x/filter)/bias/offset_w 支持 dtype 白名单与 x/filter 支持 format 白名单
+struct Conv2DQuantWhitelist {
+    std::vector<ge::DataType> supportedDtypes;
+    std::vector<ge::DataType> biasDtypes;
+    std::vector<ge::DataType> offsetWDtypes;
+    std::vector<ge::Format> fmapFormats;
+    std::vector<ge::Format> filterFormats;
+};
+
+// dtype、format白名单源自：静态算子信息库（opdef.cpp、ops-info.ini) + 动态查询 op_select_format
+const Conv2DQuantWhitelist* GetConv2DWhitelist(const NpuArch arch)
+{
+    static const std::map<NpuArch, Conv2DQuantWhitelist> whitelistTable = {
+        {NpuArch::DAV_3510,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_HIFLOAT8, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NCHW, ge::FORMAT_NHWC},
+          {ge::FORMAT_NCHW, ge::FORMAT_HWCN}}},
+        {NpuArch::DAV_9201,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_HIFLOAT8, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NCHW, ge::FORMAT_NHWC},
+          {ge::FORMAT_NCHW, ge::FORMAT_HWCN}}},
+        {NpuArch::DAV_9202,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_HIFLOAT8, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NCHW, ge::FORMAT_NHWC},
+          {ge::FORMAT_NCHW, ge::FORMAT_HWCN}}},
+        {NpuArch::DAV_2201,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_ND},
+          {ge::FORMAT_ND}}},
+        {NpuArch::DAV_1001,
+         {{ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_ND},
+          {ge::FORMAT_ND}}},
+        {NpuArch::DAV_2002,
+         {{ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_ND},
+          {ge::FORMAT_ND}}},
+        {NpuArch::DAV_3002,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_ND},
+          {ge::FORMAT_ND}}},
+        {NpuArch::DAV_5102,
+         {{ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NCHW, ge::FORMAT_NHWC},
+          {ge::FORMAT_FRACTAL_Z}}},
+    };
+    const auto iter = whitelistTable.find(arch);
+    return iter == whitelistTable.end() ? nullptr : &iter->second;
+}
+
+// origin format 非 ND 直接放行（量化图 x/filter origin 为 NCHW/NHWC/HWCN 等原生布局，不做列表校验）；
+// origin format 为 ND 时，算子信息库 format 列表须含 ND 可转格式（ND/FRACTAL_NZ/ND_RNN_BIAS/FRACTAL_ZN_RNN/FRACTAL_Z）
+bool IsOriginFormatSupported(const ge::TensorDesc& inputDesc, const std::vector<ge::Format>& supportedFormats)
+{
+    if (supportedFormats.empty()) {
+        return true;
+    }
+    const ge::Format originFormat = inputDesc.GetOriginFormat();
+    if (originFormat != ge::FORMAT_ND) {
+        return true;
+    }
+    static const std::vector<ge::Format> ndTransableFormats = {
+        ge::FORMAT_ND, ge::FORMAT_FRACTAL_NZ, ge::FORMAT_ND_RNN_BIAS, ge::FORMAT_FRACTAL_ZN_RNN, ge::FORMAT_FRACTAL_Z};
+    const auto transIter = std::find_first_of(supportedFormats.begin(), supportedFormats.end(),
+                                              ndTransableFormats.begin(), ndTransableFormats.end());
+    return transIter != supportedFormats.end();
+}
+
+NpuArch GetCurNpuArch()
+{
+    char npuArchStr[kNpuArchStrLen] = {};
+    if (aclplatformGetDeviceInfo(ACL_PLATFORM_NPU_ARCH, npuArchStr, sizeof(npuArchStr)) != ACL_SUCCESS) {
+        OP_LOGW(FUSION_NAME, "Get npu arch failed.");
+        return NpuArch::DAV_RESV;
+    }
+    return static_cast<NpuArch>(std::atoi(npuArchStr));
 }
 } // namespace
 
@@ -168,6 +263,43 @@ ge::GNodePtr Conv2DQuantProcessFusionPass::GetCubeNodeInputNode(const ge::GNodeP
     return cubeNode;
 }
 
+bool Conv2DQuantProcessFusionPass::CheckOpSupported(const ge::GNode& node) const
+{
+    const NpuArch arch = GetCurNpuArch();
+    const Conv2DQuantWhitelist* whitelist = GetConv2DWhitelist(arch);
+    if (whitelist == nullptr) {
+        OP_LOGW(convDescInfo.nodeNameStr, "No Conv2D quant whitelist for NpuArch[%u], skip dtype check.",
+                static_cast<uint32_t>(arch));
+        return true;
+    }
+    const int32_t biasIndex = static_cast<int32_t>(GetBiasInputIndex());
+    const int32_t offsetWIndex = biasIndex + 1;
+    const int32_t inputIndexes[] = {INPUT_INDEX_0, static_cast<int32_t>(GetWeightInputIndex()), biasIndex,
+                                    offsetWIndex};
+    const std::vector<ge::DataType>* inputDtypes[] = {&whitelist->supportedDtypes, &whitelist->supportedDtypes,
+                                                      &whitelist->biasDtypes, &whitelist->offsetWDtypes};
+    const std::vector<ge::Format>* inputFormats[] = {&whitelist->fmapFormats, &whitelist->filterFormats, nullptr,
+                                                     nullptr};
+    for (size_t i = 0; i < sizeof(inputIndexes) / sizeof(inputIndexes[0]); ++i) {
+        ge::TensorDesc inputDesc;
+        if (node.GetInputDesc(inputIndexes[i], inputDesc) != ge::GRAPH_SUCCESS) {
+            continue;
+        }
+        const ge::DataType dtype = inputDesc.GetDataType();
+        if (std::find(inputDtypes[i]->begin(), inputDtypes[i]->end(), dtype) == inputDtypes[i]->end()) {
+            OP_LOGD(convDescInfo.nodeNameStr, "Node input[%d] dtype[%s] is not in Conv2D supported dtypes.",
+                    inputIndexes[i], ge::TypeUtils::DataTypeToSerialString(dtype).c_str());
+            return false;
+        }
+        if (inputFormats[i] != nullptr && !IsOriginFormatSupported(inputDesc, *inputFormats[i])) {
+            OP_LOGD(convDescInfo.nodeNameStr, "Node input[%d] origin format is ND without a transferable format.",
+                    inputIndexes[i]);
+            return false;
+        }
+    }
+    return true;
+}
+
 // 基类默认判定（不支持→ROLLBACK；C unknown→跳过；
 // C>16 或不支持 fp16→BIAS_OPTIMIZE）+ conv2d 特化
 ge::Status Conv2DQuantProcessFusionPass::GetQuantProcessMode(const ge::GNodePtr& quantNode,
@@ -175,11 +307,17 @@ ge::Status Conv2DQuantProcessFusionPass::GetQuantProcessMode(const ge::GNodePtr&
                                                              QuantProcessMode& quantProcessMode)
 {
     if (BiasOptimizeQuantRollbackBase::GetQuantProcessMode(quantNode, cubeNode, quantProcessMode) != ge::SUCCESS) {
-        OP_LOGE(convDescInfo.nodeNameStr, "Base quant process mode decide failed.");
+        OP_LOGE(convDescInfo.nodeNameStr, "Base quant process mode decision failed.");
         return ge::FAILED;
     }
     if (quantProcessMode == QuantProcessMode::QUANT_UNDEFINED) {
         OP_LOGD(convDescInfo.nodeNameStr, "Quant input is unknown shape, skip fusion.");
+        return ge::SUCCESS;
+    }
+    // 能力不支持时必须强制回退
+    if (!CheckOpSupported(*cubeNode)) {
+        OP_LOGD(convDescInfo.nodeNameStr, "Cube node dtype or format is unsupported, force quant rollback.");
+        quantProcessMode = QuantProcessMode::QUANT_ROLLBACK;
         return ge::SUCCESS;
     }
     if (quantProcessMode == QuantProcessMode::QUANT_ROLLBACK && IsTinyProduct()) {
@@ -344,7 +482,7 @@ bool Conv2DQuantProcessFusionPass::CheckAippVarChn() const
     }
     for (size_t i = 1; i < aippChnInfo.varReciChnVec.size(); ++i) {
         if (!FloatEqual(aippChnInfo.varReciChnVec[i], aippChnInfo.varReciChnVec[0])) {
-            OP_LOGD(convDescInfo.nodeNameStr, "Aipp not all var channel's value is equal.");
+            OP_LOGD(convDescInfo.nodeNameStr, "AIPP var channel values are not all equal.");
             return false;
         }
     }
@@ -361,8 +499,8 @@ ge::Status Conv2DQuantProcessFusionPass::QuantParamRevise()
     ge::float32_t qScale = 0.0F;
     FUSION_PASS_CHECK(quantNode->GetAttr(ATTR_SCALE.c_str(), qScale) != ge::GRAPH_SUCCESS,
                       OP_LOGE(convDescInfo.nodeNameStr, "Get quant scale attr failed."), return ge::FAILED);
-    FUSION_PASS_CHECK(FloatEqual(qScale, 0.0F), OP_LOGE(convDescInfo.nodeNameStr, "Quant scale is 0."),
-                      return ge::FAILED);
+    FUSION_PASS_CHECK(!std::isfinite(qScale) || FloatEqual(qScale, 0.0F),
+                      OP_LOGE(convDescInfo.nodeNameStr, "Quant scale is invalid."), return ge::FAILED);
     ge::float32_t newScale = FloatEqual(aippChnInfo.varReciChnVec[0], 0.0F) ? 0.0F :
                                                                               1.0F / aippChnInfo.varReciChnVec[0];
     FUSION_PASS_CHECK(quantNode->SetAttr(ATTR_SCALE.c_str(), newScale) != ge::GRAPH_SUCCESS,
@@ -393,7 +531,7 @@ ge::Status Conv2DQuantProcessFusionPass::ConvFusionPreImpl(ge::GraphPtr& graph, 
         return ge::SUCCESS;
     }
     if (quantNode == nullptr || quantNode->GetInputsSize() != 1) {
-        OP_LOGD(convDescInfo.nodeNameStr, "Quant node in data size is not one, no aipp adjust.");
+        OP_LOGD(convDescInfo.nodeNameStr, "Quant node input data size is not one, no aipp adjust.");
         return ge::SUCCESS;
     }
     auto preNode = quantNode->GetInDataNodesAndPortIndexs(INPUT_INDEX_0).first;
@@ -406,11 +544,11 @@ ge::Status Conv2DQuantProcessFusionPass::ConvFusionPreImpl(ge::GraphPtr& graph, 
         return ge::SUCCESS;
     }
     if (npuArch == Ops::Base::DAV_2002) {
-        OP_LOGD(convDescInfo.nodeNameStr, "Current arch not support aipp adjust yet.");
+        OP_LOGD(convDescInfo.nodeNameStr, "Current arch does not support aipp adjust yet.");
         return ge::SUCCESS;
     }
     if (npuArch != Ops::Base::DAV_1001 && npuArch != Ops::Base::DAV_2201) {
-        OP_LOGD(convDescInfo.nodeNameStr, "Current arch no need adjust aipp param.");
+        OP_LOGD(convDescInfo.nodeNameStr, "Current arch does not need to adjust aipp param.");
         aippFirstConvType = AIPPFirstConvType::NO_NEED_ADJUST_TYPE;
         return ge::SUCCESS;
     }
@@ -466,7 +604,7 @@ bool Conv2DQuantProcessFusionPass::ConvFusionReplaceImpl(ge::GraphPtr& graph, ge
     ge::AscendString convNodeName;
     (void)convNode.GetName(convNodeName);
     OP_LOGI(convDescInfo.nodeNameStr,
-            "New op_graph fusion pass Conv2DQuantProcessFusionPass execute fusion on node [%s].",
+            "New op_graph fusion pass Conv2DQuantProcessFusionPass executes fusion on node [%s].",
             convNodeName.GetString() == nullptr ? "" : convNodeName.GetString());
     std::vector<ge::GNode> nodesBeforeFuse = {convNode};
     if (quantNode != nullptr) {

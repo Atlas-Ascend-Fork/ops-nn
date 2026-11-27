@@ -55,7 +55,8 @@ void SetSoc(const std::string& socVersion, bool tinyL1 = false, int32_t archType
 
 void SetSocDav3510() { SetSoc("dav3510"); }
 
-NodeConfig MakeWeightQuantNode(const std::string& name, const std::vector<int64_t>& filterShape)
+NodeConfig MakeWeightQuantNode(const std::string& name, const std::vector<int64_t>& filterShape,
+                               DataType quantDtype = DT_INT8)
 {
     NodeConfig cfg(name);
     cfg.opType = "AscendWeightQuant";
@@ -64,8 +65,8 @@ NodeConfig MakeWeightQuantNode(const std::string& name, const std::vector<int64_
     cfg.outputDefs = {{"y", CompliantNodeBuilder::kEsIrOutputRequired, ""}};
     cfg.AddInput(DT_FLOAT, FORMAT_NCHW, filterShape, name + "_w")
         .AddInput(DT_FLOAT, FORMAT_ND, {1}, name + "_offset")
-        .AddOutput(DT_INT8, FORMAT_NCHW, filterShape, "y")
-        .SetAttr("dst_type", int64_t(DT_INT8));
+        .AddOutput(quantDtype, FORMAT_NCHW, filterShape, "y")
+        .SetAttr("dst_type", int64_t(quantDtype));
     return cfg;
 }
 
@@ -107,7 +108,9 @@ GraphPtr AttachDeqScaleConst(const GraphPtr& graph, const std::vector<int64_t>& 
 // Data(fmap) -> AscendQuant -> [Pad] -> Conv2D <- WeightQuant <- Data(weight/offset)
 //                                          ^-- Data(bias)?        Conv2D -> AscendDequant <- Const(deq_scale)
 // caffeWeight=true 时 conv.filter 直连 Data(weight)（无 AscendWeightQuant）
-GraphPtr BuildQuantChain(const std::string& tag, int64_t cDim, bool withPad, bool withBias, bool caffeWeight = false)
+// quantDtype 为量化链 dtype（DT_INT8/DT_INT4），决定 quant 输出与 conv x/filter 的 dtype
+GraphPtr BuildQuantChain(const std::string& tag, int64_t cDim, bool withPad, bool withBias, bool caffeWeight = false,
+                         DataType quantDtype = DT_INT8)
 {
     TestGraph builder(tag);
     builder.SetSocDav3510();
@@ -119,6 +122,8 @@ GraphPtr BuildQuantChain(const std::string& tag, int64_t cDim, bool withPad, boo
 
     auto quantCfg = AscendQuantConfig::Basic(NODE_QUANT, DT_FLOAT, FORMAT_NCHW, fmapShape);
     quantCfg.SetAttr("offset", 2.0F);
+    quantCfg.outputs[0] = TensorInfo(quantDtype, FORMAT_NCHW, fmapShape, NODE_QUANT + "_y");
+    quantCfg.SetAttr("dst_type", int64_t(quantDtype));
     builder.AddAscendQuant(quantCfg, true);
     std::string quantOut = NODE_QUANT;
     if (withPad) {
@@ -126,7 +131,8 @@ GraphPtr BuildQuantChain(const std::string& tag, int64_t cDim, bool withPad, boo
         builder.Connect(NODE_QUANT, 0, NODE_PAD, 0);
         quantOut = NODE_PAD;
     }
-    auto convCfg = Conv2DConfig::Basic(NODE_CONV, DT_INT8, DT_FLOAT, FORMAT_NCHW, convInShape, filterShape, outShape);
+    auto convCfg = Conv2DConfig::Basic(NODE_CONV, quantDtype, DT_FLOAT, FORMAT_NCHW, convInShape, filterShape,
+                                       outShape);
     if (withBias) {
         convCfg.WithBias(DT_INT32, {CO_OUT});
     }
@@ -134,12 +140,12 @@ GraphPtr BuildQuantChain(const std::string& tag, int64_t cDim, bool withPad, boo
     builder.Connect(quantOut, 0, NODE_CONV, 0);
 
     if (caffeWeight) {
-        builder.AddData(DataConfig::Basic("caffe_weight", DT_INT8, FORMAT_NCHW, filterShape), false);
+        builder.AddData(DataConfig::Basic("caffe_weight", quantDtype, FORMAT_NCHW, filterShape), false);
         builder.Connect("caffe_weight", 0, NODE_CONV, 1);
     } else {
         builder.AddData(DataConfig::Basic("weight_data", DT_FLOAT, FORMAT_NCHW, filterShape), false);
         builder.AddData(DataConfig::Basic("offset_data", DT_FLOAT, FORMAT_ND, {1}), false);
-        builder.AddNode(MakeWeightQuantNode(NODE_WEIGHT_QUANT, filterShape), {});
+        builder.AddNode(MakeWeightQuantNode(NODE_WEIGHT_QUANT, filterShape, quantDtype), {});
         builder.Connect("weight_data", 0, NODE_WEIGHT_QUANT, 0);
         builder.Connect("offset_data", 0, NODE_WEIGHT_QUANT, 1);
         builder.Connect(NODE_WEIGHT_QUANT, 0, NODE_CONV, 1);
@@ -165,27 +171,9 @@ ge::GNodePtr FindNodeByType(const GraphPtr& graph, const std::string& type)
 }
 } // namespace
 
-// CheckOpSupported 走 GeUtils::CheckNodeSupportOnAicore（需 GELib+ops-info 初始化），UT 环境不可用，
-// 桩化之；isCubeSupported=false 模拟能力不支持场景。
-class TestableConv2DQuantProcessFusionPass : public Conv2DQuantProcessFusionPass {
-public:
-    static inline bool isCubeSupported = true;
-
-protected:
-    bool CheckOpSupported(const ge::GNode& node) const override
-    {
-        (void)node;
-        return isCubeSupported;
-    }
-};
-
 class Conv2DQuantProcessFusionPassTest : public testing::Test {
 protected:
-    static void SetUpTestCase()
-    {
-        SetSocDav3510();
-        TestableConv2DQuantProcessFusionPass::isCubeSupported = true;
-    }
+    static void SetUpTestCase() { SetSocDav3510(); }
     static void TearDownTestCase() {}
 
     void RunPass(GraphPtr& graph, Status expectRes)
@@ -195,7 +183,7 @@ protected:
         }
         CustomPassContext passContext;
         passContext.SetPassName(FUSION_NAME.c_str());
-        TestableConv2DQuantProcessFusionPass pass;
+        Conv2DQuantProcessFusionPass pass;
         auto res = pass.Run(graph, passContext);
         if (CONV_DEBUG) {
             graph->DumpToFile(Graph::DumpFormat::kOnnx, AscendString("conv2d_quant_after"));
@@ -373,15 +361,177 @@ TEST_F(Conv2DQuantProcessFusionPassTest, RollbackDequantMultiConsumer)
     EXPECT_NE(FindNodeByType(graph, "Relu"), nullptr);
 }
 
-// 能力不支持（CheckOpSupported false）仍走 rollback（老语义）
-TEST_F(Conv2DQuantProcessFusionPassTest, RollbackNonSupportSoc)
+// 能力不支持（int4 量化输入，IR dtype 白名单不含 DT_INT4）仍走 rollback（老语义）
+TEST_F(Conv2DQuantProcessFusionPassTest, RollbackNonSupportDtype)
 {
-    TestableConv2DQuantProcessFusionPass::isCubeSupported = false;
-    auto graph = BuildQuantChain("soc_notsupport", C_SMALL, false, true);
+    auto graph = BuildQuantChain("int4_notsupport", C_SMALL, false, true, false, DT_INT4);
     RunPass(graph, ge::SUCCESS);
     EXPECT_EQ(FindNodeByType(graph, NODE_QUANT), nullptr);
     EXPECT_EQ(FindNodeByType(graph, NODE_DEQUANT), nullptr);
-    TestableConv2DQuantProcessFusionPass::isCubeSupported = true;
+}
+
+// issue 核心场景：int4 + C > 16（原本会走 BIAS_OPTIMIZE），能力校验须强制 rollback
+TEST_F(Conv2DQuantProcessFusionPassTest, RollbackInt4LargeChannel)
+{
+    auto graph = BuildQuantChain("int4_large_c", C_LARGE, false, true, false, DT_INT4);
+    RunPass(graph, ge::SUCCESS);
+    EXPECT_EQ(FindNodeByType(graph, NODE_QUANT), nullptr);
+    EXPECT_EQ(FindNodeByType(graph, NODE_DEQUANT), nullptr);
+    EXPECT_EQ(FindNodeByType(graph, "AscendWeightQuant"), nullptr);
+    EXPECT_NE(FindNodeByType(graph, "QuantWeightRollBack"), nullptr);
+    EXPECT_EQ(FindNodeByType(graph, "QuantBiasOptimization"), nullptr);
+    auto conv = FindNodeByType(graph, NODE_CONV);
+    ASSERT_NE(conv, nullptr);
+    TensorDesc inDesc;
+    EXPECT_EQ(conv->GetInputDesc(0, inDesc), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(inDesc.GetDataType(), ge::DT_FLOAT16);
+}
+
+// ==========================================================================================
+// int4 量化链构造与回退断言（表内/表外 arch 用例共用）
+// ==========================================================================================
+static GraphPtr BuildInt4QuantChain(TestGraph& builder)
+{
+    const std::vector<int64_t> fmapShape = {1, C_LARGE, 8, 8};
+    const std::vector<int64_t> filterShape = {CO_OUT, C_LARGE, 1, 1};
+    const std::vector<int64_t> outShape = {1, CO_OUT, 8, 8};
+    auto quantCfg = AscendQuantConfig::Basic(NODE_QUANT, DT_FLOAT, FORMAT_NCHW, fmapShape);
+    quantCfg.SetAttr("offset", 2.0F);
+    quantCfg.outputs[0] = TensorInfo(DT_INT4, FORMAT_NCHW, fmapShape, NODE_QUANT + "_y");
+    quantCfg.SetAttr("dst_type", int64_t(DT_INT4));
+    builder.AddAscendQuant(quantCfg, true);
+    auto convCfg = Conv2DConfig::Basic(NODE_CONV, DT_INT4, DT_FLOAT, FORMAT_NCHW, fmapShape, filterShape, outShape);
+    convCfg.WithBias(DT_INT32, {CO_OUT});
+    builder.AddConv2D(convCfg, false, false, true);
+    builder.Connect(NODE_QUANT, 0, NODE_CONV, 0);
+    builder.AddData(DataConfig::Basic("weight_data", DT_FLOAT, FORMAT_NCHW, filterShape), false);
+    builder.AddData(DataConfig::Basic("offset_data", DT_FLOAT, FORMAT_ND, {1}), false);
+    builder.AddNode(MakeWeightQuantNode(NODE_WEIGHT_QUANT, filterShape, DT_INT4), {});
+    builder.Connect("weight_data", 0, NODE_WEIGHT_QUANT, 0);
+    builder.Connect("offset_data", 0, NODE_WEIGHT_QUANT, 1);
+    builder.Connect(NODE_WEIGHT_QUANT, 0, NODE_CONV, 1);
+    builder.AddAscendDequant(AscendDequantConfig::Basic(NODE_DEQUANT, DT_FLOAT, FORMAT_NCHW, outShape, {CO_OUT}), false,
+                             false);
+    builder.Connect(NODE_CONV, 0, NODE_DEQUANT, 0);
+    builder.SetOutput(NODE_DEQUANT);
+    return AttachDeqScaleConst(builder.Build(), {CO_OUT});
+}
+
+static void AssertInt4RollbackResult(GraphPtr& graph)
+{
+    EXPECT_EQ(FindNodeByType(graph, NODE_QUANT), nullptr);
+    EXPECT_EQ(FindNodeByType(graph, NODE_DEQUANT), nullptr);
+    EXPECT_EQ(FindNodeByType(graph, "QuantBiasOptimization"), nullptr);
+    EXPECT_NE(FindNodeByType(graph, "QuantWeightRollBack"), nullptr);
+}
+
+// 表外 arch（DAV_3004/031，Conv2D 信息库为动态格式查询且无实测白名单依据）→ 不校验（WARNING 可见）
+// → int4 + C>16 仍走 BIAS_OPTIMIZE；表内 arch 须回退（见 RollbackInt4On*InTable 系列）
+TEST_F(Conv2DQuantProcessFusionPassTest, BiasOptimizeInt4OnOutOfWorklistSoc)
+{
+    TestGraph builder("int4_out_of_whitelist_soc");
+    builder.SetSoc(SocConfig("Ascend031", "Ascend031", "split", static_cast<int32_t>(Ops::Base::DAV_3004)));
+    auto graph = BuildInt4QuantChain(builder);
+    RunPass(graph, ge::SUCCESS);
+    EXPECT_NE(FindNodeByType(graph, "QuantBiasOptimization"), nullptr);
+    EXPECT_NE(FindNodeByType(graph, NODE_QUANT), nullptr);
+    EXPECT_NE(FindNodeByType(graph, NODE_DEQUANT), nullptr);
+}
+
+// 表外 arch 不校验：无表 arch 上 int8 + C>16 亦走 BIAS_OPTIMIZE（与 int4 用例同语义，双 dtype 锁定）
+TEST_F(Conv2DQuantProcessFusionPassTest, BiasOptimizeInt8OnOutOfWorklistSoc)
+{
+    TestGraph builder("int8_out_of_whitelist_soc");
+    builder.SetSoc(SocConfig("Ascend031", "Ascend031", "split", static_cast<int32_t>(Ops::Base::DAV_3004)));
+    const std::vector<int64_t> fmapShape = {1, C_LARGE, 8, 8};
+    const std::vector<int64_t> filterShape = {CO_OUT, C_LARGE, 1, 1};
+    const std::vector<int64_t> outShape = {1, CO_OUT, 8, 8};
+    builder.AddAscendQuant(AscendQuantConfig::Basic(NODE_QUANT, DT_FLOAT, FORMAT_NCHW, fmapShape), true);
+    auto convCfg = Conv2DConfig::Basic(NODE_CONV, DT_INT8, DT_FLOAT, FORMAT_NCHW, fmapShape, filterShape, outShape);
+    convCfg.WithBias(DT_INT32, {CO_OUT});
+    builder.AddConv2D(convCfg, false, false, true);
+    builder.Connect(NODE_QUANT, 0, NODE_CONV, 0);
+    builder.AddNode(MakeWeightQuantNode(NODE_WEIGHT_QUANT, filterShape), {});
+    builder.Connect(NODE_WEIGHT_QUANT, 0, NODE_CONV, 1);
+    builder.AddAscendDequant(AscendDequantConfig::Basic(NODE_DEQUANT, DT_FLOAT, FORMAT_NCHW, outShape, {CO_OUT}), false,
+                             false);
+    builder.Connect(NODE_CONV, 0, NODE_DEQUANT, 0);
+    builder.SetOutput(NODE_DEQUANT);
+    auto graph = AttachDeqScaleConst(builder.Build(), {CO_OUT});
+    RunPass(graph, ge::SUCCESS);
+    EXPECT_NE(FindNodeByType(graph, "QuantBiasOptimization"), nullptr);
+    EXPECT_NE(FindNodeByType(graph, NODE_QUANT), nullptr);
+    EXPECT_NE(FindNodeByType(graph, NODE_DEQUANT), nullptr);
+}
+
+// ==========================================================================================
+// per-arch 白名单表内 arch：int4 不在该 arch 信息库支持列表 → 白名单拒绝 → quant rollback
+// （DAV_2201/1001/2002/3002/5102 表项锁定；表外 arch 见 BiasOptimizeInt4OnOutOfWorklistSoc）
+// ==========================================================================================
+
+// DAV_2201：x/filter {FP16, BF16, F32, INT8}，int4 须回退
+TEST_F(Conv2DQuantProcessFusionPassTest, RollbackInt4OnDav2201InTable)
+{
+    TestGraph builder("int4_dav2201_in_table");
+    builder.SetSoc(SocConfig("Ascend910B", "Ascend910B4", "split", static_cast<int32_t>(Ops::Base::DAV_2201)));
+    auto graph = BuildInt4QuantChain(builder);
+    RunPass(graph, ge::SUCCESS);
+    AssertInt4RollbackResult(graph);
+}
+
+// DAV_1001/DAV_2002/DAV_3002：int4 不在
+// {FP16, INT8} / {FP16, BF16, F32, INT8} 内，均须回退
+TEST_F(Conv2DQuantProcessFusionPassTest, RollbackInt4OnDynamicQuerySocTable)
+{
+    const std::vector<std::pair<std::string, int32_t>> socs = {
+        {"Ascend910A", static_cast<int32_t>(Ops::Base::DAV_1001)},
+        {"Ascend310P3", static_cast<int32_t>(Ops::Base::DAV_2002)},
+        {"Ascend310B4", static_cast<int32_t>(Ops::Base::DAV_3002)}};
+    for (const auto& soc : socs) {
+        SCOPED_TRACE("soc=" + soc.first);
+        TestGraph builder("int4_dynamic_query_soc_" + soc.first);
+        builder.SetSoc(SocConfig(soc.first, soc.first, "split", soc.second));
+        auto graph = BuildInt4QuantChain(builder);
+        RunPass(graph, ge::SUCCESS);
+        AssertInt4RollbackResult(graph);
+    }
+}
+
+// DAV_5102（信息库 dynamicFormat=true 动态推导）：x/filter {FP16, INT8}，int4 须回退
+TEST_F(Conv2DQuantProcessFusionPassTest, RollbackInt4OnMc62InTable)
+{
+    TestGraph builder("int4_mc62_in_table");
+    builder.SetSoc(SocConfig("MC62", "Ascend950DT_9571", "split", static_cast<int32_t>(Ops::Base::DAV_5102)));
+    auto graph = BuildInt4QuantChain(builder);
+    RunPass(graph, ge::SUCCESS);
+    AssertInt4RollbackResult(graph);
+}
+
+// format 校验：x origin format 为 ND 且算子 format 列表无可转
+// 格式时拒绝；非 ND 原生布局（NCHW/NHWC）放行
+TEST_F(Conv2DQuantProcessFusionPassTest, RollbackNdOriginFormat)
+{
+    TestGraph builder("nd_origin_fmt");
+    builder.SetSocDav3510();
+    const std::vector<int64_t> fmapShape = {1, C_LARGE, 8, 8};
+    const std::vector<int64_t> filterShape = {CO_OUT, C_LARGE, 1, 1};
+    const std::vector<int64_t> outShape = {1, CO_OUT, 8, 8};
+    builder.AddAscendQuant(AscendQuantConfig::Basic(NODE_QUANT, DT_FLOAT, FORMAT_NCHW, fmapShape), true);
+    auto convCfg = Conv2DConfig::Basic(NODE_CONV, DT_INT8, DT_FLOAT, FORMAT_ND, fmapShape, filterShape, outShape);
+    builder.AddConv2D(convCfg, false, true, false);
+    builder.Connect(NODE_QUANT, 0, NODE_CONV, 0);
+    builder.AddNode(MakeWeightQuantNode(NODE_WEIGHT_QUANT, filterShape), {});
+    builder.Connect(NODE_WEIGHT_QUANT, 0, NODE_CONV, 1);
+    builder.AddAscendDequant(AscendDequantConfig::Basic(NODE_DEQUANT, DT_FLOAT, FORMAT_NCHW, outShape, {CO_OUT}), false,
+                             false);
+    builder.Connect(NODE_CONV, 0, NODE_DEQUANT, 0);
+    builder.SetOutput(NODE_DEQUANT);
+    auto graph = AttachDeqScaleConst(builder.Build(), {CO_OUT});
+    RunPass(graph, ge::SUCCESS);
+    EXPECT_EQ(FindNodeByType(graph, NODE_QUANT), nullptr);
+    EXPECT_EQ(FindNodeByType(graph, NODE_DEQUANT), nullptr);
+    EXPECT_EQ(FindNodeByType(graph, "QuantBiasOptimization"), nullptr);
+    EXPECT_NE(FindNodeByType(graph, "QuantWeightRollBack"), nullptr);
 }
 
 // 拒绝：deq_scale 非 1-D（bias optimize 路径）

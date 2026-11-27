@@ -10,7 +10,12 @@
 
 #include "dwconv2d_quant_process_fusion_pass.h"
 
+#include <algorithm>
 #include <limits>
+#include <map>
+#include <vector>
+
+#include "acl/acl_platform.h"
 
 #include "conv/common/op_graph/fusion_pass/tensor_desc_origin_dtype_api.h"
 #include "platform/platform_info.h"
@@ -30,6 +35,150 @@ const std::string FUSION_NAME = "DWConv2DQuantProcessFusionPass";
 const ge::AscendString PAD = "Pad";
 const std::string DN2NZ_INTRINSIC = "Intrinsic_data_move_out2l1_dn2nz";
 
+// 各 NpuArch 算子信息库的 (x/filter)/bias/offset_w 支持 dtype 白名单与 x/filter 支持 format 白名单
+struct DepthwiseQuantWhitelist {
+    std::vector<ge::DataType> supportedDtypes;
+    std::vector<ge::DataType> biasDtypes;
+    std::vector<ge::DataType> offsetWDtypes;
+    std::vector<ge::Format> fmapFormats;
+    std::vector<ge::Format> filterFormats;
+};
+
+// dtype、format白名单源自：静态算子信息库（opdef.cpp、ops-info.ini) + 动态查询 op_select_format
+const DepthwiseQuantWhitelist* GetDepthwiseWhitelist(const NpuArch arch)
+{
+    static const std::map<NpuArch, DepthwiseQuantWhitelist> whitelistTable = {
+        {NpuArch::DAV_3510,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_HIFLOAT8, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {},
+          {}}},
+        {NpuArch::DAV_9201,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_HIFLOAT8, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {},
+          {}}},
+        {NpuArch::DAV_9202,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_HIFLOAT8, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {},
+          {}}},
+        {NpuArch::DAV_2002,
+         {{ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::FORMAT_NC1HWC0},
+          {ge::FORMAT_FRACTAL_Z}}},
+        {NpuArch::DAV_1001,
+         {{ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::FORMAT_NC1HWC0},
+          {ge::FORMAT_FRACTAL_Z}}},
+        {NpuArch::DAV_3004,
+         {{ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_INT32},
+          {ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::FORMAT_NC1HWC0},
+          {ge::FORMAT_FRACTAL_Z}}},
+        {NpuArch::DAV_3102,
+         {{ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::FORMAT_NC1HWC0},
+          {ge::FORMAT_FRACTAL_Z}}},
+        {NpuArch::DAV_2201,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NC1HWC0},
+          {ge::FORMAT_FRACTAL_Z}}},
+        {NpuArch::DAV_3002,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NC1HWC0},
+          {ge::FORMAT_FRACTAL_Z}}},
+        // DAV_5102信息库无 DepthwiseConv2D section：空表项使 dtype 校验恒拒绝以镜像该行为
+        {NpuArch::DAV_5102, {}},
+    };
+    const auto iter = whitelistTable.find(arch);
+    return iter == whitelistTable.end() ? nullptr : &iter->second;
+}
+
+NpuArch GetCurNpuArch()
+{
+    char npuArchStr[kNpuArchStrLen] = {};
+    if (aclplatformGetDeviceInfo(ACL_PLATFORM_NPU_ARCH, npuArchStr, sizeof(npuArchStr)) != ACL_SUCCESS) {
+        OP_LOGW(FUSION_NAME, "Get npu arch failed.");
+        return NpuArch::DAV_RESV;
+    }
+    return static_cast<NpuArch>(std::atoi(npuArchStr));
+}
+
+// 量化链决策相关输入（x、filter）的 dtype 白名单校验，不在支持列表（如 950 家族不含 DT_INT4）时须走
+// 量化回退。format 维度不设白名单：各 SoC 信息库中 DepthwiseConv2D 的 format 为动态查询（950 家族
+// legacy json）或 NC1HWC0/FRACTAL_Z（静态 SoC，非 ND 布局老校验直接放行，且 FRACTAL_Z 可转 ND），
+// 老 CheckFormatSupported 对该算子 format 维度实际全放行，保持一致。
+// 表外 SoC（动态格式查询/无映射遗留 SoC）不校验，沿用历史行为（待 GE 能力查询接口长期解决）
+// 老 FE CheckFormatSupported 等价（sub_ops_store.cc DTYPE_FORMAT_MODE）：信息库 format 列表为空
+// 直接放行（950 家族 legacy json 无静态列表）；origin format 非 ND 直接放行（量化图 x/filter origin
+// 为 NC1HWC0/FRACTAL_Z/NCHW 等布局，不做列表校验）；origin format 为 ND 时，算子信息库 format 列表
+// 须含 ND 可转格式（ND/FRACTAL_NZ/ND_RNN_BIAS/FRACTAL_ZN_RNN/FRACTAL_Z）
+bool IsOriginFormatSupported(const ge::TensorDesc& inputDesc, const std::vector<ge::Format>& supportedFormats)
+{
+    if (supportedFormats.empty()) {
+        return true;
+    }
+    const ge::Format originFormat = inputDesc.GetOriginFormat();
+    if (originFormat != ge::FORMAT_ND) {
+        return true;
+    }
+    static const std::vector<ge::Format> ndTransableFormats = {
+        ge::FORMAT_ND, ge::FORMAT_FRACTAL_NZ, ge::FORMAT_ND_RNN_BIAS, ge::FORMAT_FRACTAL_ZN_RNN, ge::FORMAT_FRACTAL_Z};
+    const auto transIter = std::find_first_of(supportedFormats.begin(), supportedFormats.end(),
+                                              ndTransableFormats.begin(), ndTransableFormats.end());
+    return transIter != supportedFormats.end();
+}
+
+bool CheckQuantInputSupported(const ge::GNode& node, const uint32_t weightInputIndex)
+{
+    const NpuArch arch = GetCurNpuArch();
+    const DepthwiseQuantWhitelist* whitelist = GetDepthwiseWhitelist(arch);
+    if (whitelist == nullptr) {
+        OP_LOGW(FUSION_NAME, "No DepthwiseConv2D quant whitelist for NpuArch[%u], skip dtype check.",
+                static_cast<uint32_t>(arch));
+        return true;
+    }
+    const int32_t biasIndex = static_cast<int32_t>(weightInputIndex) + 1;
+    const int32_t offsetWIndex = biasIndex + 1;
+    const int32_t inputIndexes[] = {0, static_cast<int32_t>(weightInputIndex), biasIndex, offsetWIndex};
+    const std::vector<ge::DataType>* inputDtypes[] = {&whitelist->supportedDtypes, &whitelist->supportedDtypes,
+                                                      &whitelist->biasDtypes, &whitelist->offsetWDtypes};
+    const std::vector<ge::Format>* inputFormats[] = {&whitelist->fmapFormats, &whitelist->filterFormats, nullptr,
+                                                     nullptr};
+    for (size_t i = 0; i < sizeof(inputIndexes) / sizeof(inputIndexes[0]); ++i) {
+        ge::TensorDesc inputDesc;
+        if (node.GetInputDesc(inputIndexes[i], inputDesc) != ge::GRAPH_SUCCESS) {
+            continue;
+        }
+        const ge::DataType dtype = inputDesc.GetDataType();
+        if (std::find(inputDtypes[i]->begin(), inputDtypes[i]->end(), dtype) == inputDtypes[i]->end()) {
+            OP_LOGD(FUSION_NAME, "Node input[%d] dtype[%s] is not in DepthwiseConv2D supported dtypes.",
+                    inputIndexes[i], ge::TypeUtils::DataTypeToSerialString(dtype).c_str());
+            return false;
+        }
+        if (inputFormats[i] != nullptr && !IsOriginFormatSupported(inputDesc, *inputFormats[i])) {
+            OP_LOGD(FUSION_NAME, "Node input[%d] origin format is ND without a transferable format.", inputIndexes[i]);
+            return false;
+        }
+    }
+    return true;
+}
+
 bool IsNodeType(const ge::GNodePtr& node, const ge::AscendString& expectType)
 {
     if (node == nullptr) {
@@ -42,6 +191,10 @@ bool IsNodeType(const ge::GNodePtr& node, const ge::AscendString& expectType)
 
 bool PadShapeTo4Dim(ge::Format filterFormat, const std::vector<int64_t>& filterDims, std::vector<int64_t>& filterDims4D)
 {
+    if (filterDims.empty()) {
+        OP_LOGE(FUSION_NAME, "Filter dims is empty, can not pad shape.");
+        return false;
+    }
     size_t sizeOfFilter = filterDims.size();
     for (size_t i = 0; i <= LAST_AXIS_INDEX; ++i) {
         if (i < sizeOfFilter) {
@@ -275,7 +428,10 @@ bool DWConv2DQuantProcessFusionPass::MeetRequirements(const ge::GNode& convNode)
 
 bool DWConv2DQuantProcessFusionPass::CheckOpSupported(const ge::GNode& node) const
 {
-    (void)node;
+    // dtype 白名单校验（按 NpuArch 取信息库支持列表，如 950 家族不含 DT_INT4），须走量化回退
+    if (!CheckQuantInputSupported(node, GetWeightInputIndex())) {
+        return false;
+    }
     fe::PlatformInfo platformInfo;
     fe::OptionalInfo optionalInfo;
     if (fe::PlatformInfoManager::Instance().GetPlatformInfoWithOutSocVersion(platformInfo, optionalInfo) != 0U) {
@@ -284,7 +440,7 @@ bool DWConv2DQuantProcessFusionPass::CheckOpSupported(const ge::GNode& node) con
     }
     if (platformInfo.ai_core_intrinsic_dtype_map.find(DN2NZ_INTRINSIC) !=
         platformInfo.ai_core_intrinsic_dtype_map.end()) {
-        OP_LOGD(FUSION_NAME, "Cube node is unsupported on soc without legacy depthwise impl, quant rollback.");
+        OP_LOGD(FUSION_NAME, "Soc has dn2nz intrinsic without legacy depthwise impl, quant rollback.");
         return false;
     }
     return true;

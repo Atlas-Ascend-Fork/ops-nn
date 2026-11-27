@@ -132,11 +132,6 @@ static void NormalizeDeqScaleSource(GraphPtr& graph)
     }
 }
 
-class Conv3DQuantProcessFusionPassForUT : public Conv3DQuantProcessFusionPass {
-protected:
-    bool CheckOpSupported(const ge::GNode&) const override { return true; }
-};
-
 class Conv3DQuantProcessFusionPassTest : public testing::Test {
 protected:
     static void SetUpTestCase() {}
@@ -147,7 +142,7 @@ protected:
     {
         CustomPassContext passContext;
         passContext.SetPassName(passName.c_str());
-        Conv3DQuantProcessFusionPassForUT pass;
+        Conv3DQuantProcessFusionPass pass;
 
         if (CONV_DEBUG) {
             graph->DumpToFile(Graph::DumpFormat::kOnnx, AscendString((passName + "_before").c_str()));
@@ -214,7 +209,8 @@ TEST_F(Conv3DQuantProcessFusionPassTest, conv3d_quant_bias_optimize_no_bias_succ
     EXPECT_EQ(biasDesc.GetShape().GetDim(0), 32);
     GNode fused = GetFirstNodeByType(graph, "QuantBiasOptimization");
     AscendString cubeOpType;
-    EXPECT_EQ(fused.GetAttr(AscendString("cube_op_type"), cubeOpType), GRAPH_SUCCESS);
+    ASSERT_EQ(fused.GetAttr(AscendString("cube_op_type"), cubeOpType), GRAPH_SUCCESS);
+    ASSERT_TRUE(cubeOpType.GetString() != nullptr);
     EXPECT_EQ(std::string(cubeOpType.GetString()), "Conv3D");
 
     GNode convNode = GetFirstNodeByType(graph, "Conv3D");
@@ -483,18 +479,19 @@ TEST_F(Conv3DQuantProcessFusionPassTest, conv3d_quant_bias_optimize_5d_filter_wi
     EXPECT_FALSE(GraphChecker::FindNodeByNameSuffix(graph, "_quant_bias", biasConstUnused));
 }
 
-// ==========================================================================================
-// ND filter + 无 bias: GetCoValue 的 ND 分支直接返回，co 取调用方默认 1，bias shape{1}
-// ==========================================================================================
-TEST_F(Conv3DQuantProcessFusionPassTest, conv3d_quant_bias_optimize_nd_filter_no_bias_success)
+// DAV_5102：信息库无 Conv3D section，空表项恒拒（老 FE 查询必失败→恒回退）。
+// 注：借用 Ascend950DT_9571 作为 socVersion 载体，
+// 经 SocConfig::Apply 将其 arch 覆写为 DAV_5102 以真实命中空表项分支
+TEST_F(Conv3DQuantProcessFusionPassTest, conv3d_quant_rollback_dav5102_nd_filter_no_bias)
 {
-    TestGraph builder("conv3d_quant_bias_optimize_nd_filter_no_bias_success");
+    TestGraph builder("conv3d_quant_rollback_dav5102_nd_filter_no_bias");
     Conv3DConfig convConfig;
     convConfig.SetName("Conv3D")
         .AddInput(DT_INT8, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPT, "Conv3D_x")
         .AddInput(DT_INT8, FORMAT_ND, FILTER_SHAPE_ROLLBACK, "Conv3D_filter")
         .AddOutput(DT_INT32, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT, "y");
-    auto graph = builder.SetSocDav3510()
+    auto graph = builder
+                     .SetSoc(SocConfig("MC62", "Ascend950DT_9571", "split", static_cast<int32_t>(Ops::Base::DAV_5102)))
                      .AddAscendQuant(
                          AscendQuantConfig::Basic("AscendQuant", DT_FLOAT16, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPT), true)
                      .AddConv3D(convConfig, false, false, false)
@@ -515,14 +512,11 @@ TEST_F(Conv3DQuantProcessFusionPassTest, conv3d_quant_bias_optimize_nd_filter_no
                      .SetOutput("Relu")
                      .Build();
 
-    TestTotalPass("conv3d_quant_bias_optimize_nd_filter_no_bias_success", graph, SUCCESS);
+    TestTotalPass("conv3d_quant_rollback_dav5102_nd_filter_no_bias", graph, SUCCESS);
 
-    EXPECT_TRUE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
-    GNode biasConst;
-    EXPECT_TRUE(GraphChecker::FindNodeByNameSuffix(graph, "_quant_bias", biasConst));
-    TensorDesc biasDesc;
-    ASSERT_EQ(biasConst.GetOutputDesc(0, biasDesc), GRAPH_SUCCESS);
-    EXPECT_EQ(biasDesc.GetShape().GetDim(0), 1);
+    EXPECT_FALSE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendQuant"), 0);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendDequant"), 0);
 }
 
 // ==========================================================================================
@@ -876,6 +870,155 @@ TEST_F(Conv3DQuantProcessFusionPassTest, conv3d_quant_bias_optimize_nhwc_success
     TensorDesc biasDesc;
     ASSERT_EQ(biasConst.GetOutputDesc(0, biasDesc), GRAPH_SUCCESS);
     EXPECT_EQ(biasDesc.GetShape().GetDim(0), 20);
+}
+
+// ==========================================================================================
+// per-arch 白名单（DAV_2201）：int8 在信息库支持列表 {FP16, INT8, BF16, FLOAT} 内 → bias optimize
+// ==========================================================================================
+TEST_F(Conv3DQuantProcessFusionPassTest, conv3d_quant_bias_optimize_dav2201_int8_success)
+{
+    TestGraph builder("conv3d_quant_bias_optimize_dav2201_int8_success");
+    Conv3DConfig convConfig;
+    convConfig.SetName("Conv3D")
+        .AddInput(DT_INT8, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPT, "Conv3D_x")
+        .AddInput(DT_INT8, FORMAT_NCHW, FILTER_SHAPE_BIAS_OPT_4D, "Conv3D_filter")
+        .AddOutput(DT_INT32, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT, "y");
+    auto graph = builder
+                     .SetSoc(SocConfig("Ascend910B", "Ascend910B4", "split", static_cast<int32_t>(Ops::Base::DAV_2201)))
+                     .AddAscendQuant(
+                         AscendQuantConfig::Basic("AscendQuant", DT_FLOAT16, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPT), true)
+                     .AddConv3D(convConfig, false, false, false)
+                     .AddNode(AscendWeightQuantConfig::Basic("AscendWeightQuant", DT_INT8, FORMAT_NCHW,
+                                                             FILTER_SHAPE_BIAS_OPT_4D),
+                              {})
+                     .AddNode(ConstConfig::Basic("weight_const", DT_INT8, FORMAT_NCHW, FILTER_SHAPE_BIAS_OPT_4D), {})
+                     .AddNode(ConstConfig::Basic("offset_const", DT_INT8, FORMAT_ND, {1}), {})
+                     .AddAscendDequant(
+                         AscendDequantConfig::Basic("AscendDequant", DT_FLOAT16, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT))
+                     .AddRelu(ReluConfig::Basic("Relu", DT_FLOAT16, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT))
+                     .Connect("AscendQuant", 0, "Conv3D", 0)
+                     .Connect("weight_const", 0, "AscendWeightQuant", 0)
+                     .Connect("offset_const", 0, "AscendWeightQuant", 1)
+                     .Connect("AscendWeightQuant", 0, "Conv3D", 1)
+                     .Connect("Conv3D", 0, "AscendDequant", 0)
+                     .Connect("AscendDequant", 0, "Relu", 0)
+                     .SetOutput("Relu")
+                     .Build();
+
+    TestTotalPass("conv3d_quant_bias_optimize_dav2201_int8_success", graph, SUCCESS);
+    EXPECT_TRUE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
+}
+
+// ==========================================================================================
+// per-arch 白名单（DAV_2201）：DT_INT4 不在信息库支持列表 → quant rollback
+// ==========================================================================================
+TEST_F(Conv3DQuantProcessFusionPassTest, conv3d_quant_rollback_dav2201_int4)
+{
+    TestGraph builder("conv3d_quant_rollback_dav2201_int4");
+    Conv3DConfig convConfig;
+    convConfig.SetName("Conv3D")
+        .AddInput(DT_INT4, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPT, "Conv3D_x")
+        .AddInput(DT_INT4, FORMAT_NCHW, FILTER_SHAPE_BIAS_OPT_4D, "Conv3D_filter")
+        .AddOutput(DT_INT32, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT, "y");
+    auto graph = builder
+                     .SetSoc(SocConfig("Ascend910B", "Ascend910B4", "split", static_cast<int32_t>(Ops::Base::DAV_2201)))
+                     .AddAscendQuant(
+                         AscendQuantConfig::Basic("AscendQuant", DT_FLOAT16, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPT), true)
+                     .AddConv3D(convConfig, false, false, false)
+                     .AddNode(AscendWeightQuantConfig::Basic("AscendWeightQuant", DT_INT4, FORMAT_NCHW,
+                                                             FILTER_SHAPE_BIAS_OPT_4D),
+                              {})
+                     .AddNode(ConstConfig::Basic("weight_const", DT_INT4, FORMAT_NCHW, FILTER_SHAPE_BIAS_OPT_4D), {})
+                     .AddNode(ConstConfig::Basic("offset_const", DT_INT8, FORMAT_ND, {1}), {})
+                     .AddAscendDequant(
+                         AscendDequantConfig::Basic("AscendDequant", DT_FLOAT16, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT))
+                     .AddRelu(ReluConfig::Basic("Relu", DT_FLOAT16, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT))
+                     .Connect("AscendQuant", 0, "Conv3D", 0)
+                     .Connect("weight_const", 0, "AscendWeightQuant", 0)
+                     .Connect("offset_const", 0, "AscendWeightQuant", 1)
+                     .Connect("AscendWeightQuant", 0, "Conv3D", 1)
+                     .Connect("Conv3D", 0, "AscendDequant", 0)
+                     .Connect("AscendDequant", 0, "Relu", 0)
+                     .SetOutput("Relu")
+                     .Build();
+
+    TestTotalPass("conv3d_quant_rollback_dav2201_int4", graph, SUCCESS);
+    EXPECT_FALSE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendQuant"), 0);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendDequant"), 0);
+}
+
+// 表外 arch（DAV_3003/035，Conv3D 无实测白名单依据）→ 不校验（WARNING 可见）→ int4 仍走 BIAS_OPTIMIZE
+TEST_F(Conv3DQuantProcessFusionPassTest, conv3d_quant_bias_optimize_int4_on_unconfigured_soc)
+{
+    TestGraph builder("conv3d_quant_bias_optimize_int4_on_unconfigured_soc");
+    Conv3DConfig convConfig;
+    convConfig.SetName("Conv3D")
+        .AddInput(DT_INT4, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPT, "Conv3D_x")
+        .AddInput(DT_INT4, FORMAT_NCHW, FILTER_SHAPE_BIAS_OPT_4D, "Conv3D_filter")
+        .AddOutput(DT_INT32, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT, "y");
+    auto graph = builder.SetSoc(SocConfig("Ascend035", "Ascend035", "split", static_cast<int32_t>(Ops::Base::DAV_3003)))
+                     .AddAscendQuant(
+                         AscendQuantConfig::Basic("AscendQuant", DT_FLOAT16, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPT), true)
+                     .AddConv3D(convConfig, false, false, false)
+                     .AddNode(AscendWeightQuantConfig::Basic("AscendWeightQuant", DT_INT4, FORMAT_NCHW,
+                                                             FILTER_SHAPE_BIAS_OPT_4D),
+                              {})
+                     .AddNode(ConstConfig::Basic("weight_const", DT_INT4, FORMAT_NCHW, FILTER_SHAPE_BIAS_OPT_4D), {})
+                     .AddNode(ConstConfig::Basic("offset_const", DT_INT8, FORMAT_ND, {1}), {})
+                     .AddAscendDequant(
+                         AscendDequantConfig::Basic("AscendDequant", DT_FLOAT16, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT))
+                     .AddRelu(ReluConfig::Basic("Relu", DT_FLOAT16, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT))
+                     .Connect("AscendQuant", 0, "Conv3D", 0)
+                     .Connect("weight_const", 0, "AscendWeightQuant", 0)
+                     .Connect("offset_const", 0, "AscendWeightQuant", 1)
+                     .Connect("AscendWeightQuant", 0, "Conv3D", 1)
+                     .Connect("Conv3D", 0, "AscendDequant", 0)
+                     .Connect("AscendDequant", 0, "Relu", 0)
+                     .SetOutput("Relu")
+                     .Build();
+
+    TestTotalPass("conv3d_quant_bias_optimize_int4_on_unconfigured_soc", graph, SUCCESS);
+    EXPECT_TRUE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
+}
+
+// ==========================================================================================
+// ND filter + DAV_3510（信息库静态 format 列表 {NCDHW, NDHWC}/{NCDHW, DHWCN} 无 ND 可转格式）→
+// 老 CheckFormatSupported 语义拒绝 → quant rollback
+// ==========================================================================================
+TEST_F(Conv3DQuantProcessFusionPassTest, conv3d_quant_rollback_dav3510_nd_filter)
+{
+    TestGraph builder("conv3d_quant_rollback_dav3510_nd_filter");
+    Conv3DConfig convConfig;
+    convConfig.SetName("Conv3D")
+        .AddInput(DT_INT8, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPT, "Conv3D_x")
+        .AddInput(DT_INT8, FORMAT_ND, FILTER_SHAPE_ROLLBACK, "Conv3D_filter")
+        .AddOutput(DT_INT32, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT, "y");
+    auto graph = builder.SetSocDav3510()
+                     .AddAscendQuant(
+                         AscendQuantConfig::Basic("AscendQuant", DT_FLOAT16, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPT), true)
+                     .AddConv3D(convConfig, false, false, false)
+                     .AddNode(
+                         AscendWeightQuantConfig::Basic("AscendWeightQuant", DT_INT8, FORMAT_ND, FILTER_SHAPE_ROLLBACK),
+                         {})
+                     .AddNode(ConstConfig::Basic("weight_const", DT_INT8, FORMAT_ND, FILTER_SHAPE_ROLLBACK), {})
+                     .AddNode(ConstConfig::Basic("offset_const", DT_INT8, FORMAT_ND, {1}), {})
+                     .AddAscendDequant(
+                         AscendDequantConfig::Basic("AscendDequant", DT_FLOAT16, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT))
+                     .AddRelu(ReluConfig::Basic("Relu", DT_FLOAT16, FORMAT_NCHW, OUT_SHAPE_BIAS_OPT))
+                     .Connect("AscendQuant", 0, "Conv3D", 0)
+                     .Connect("weight_const", 0, "AscendWeightQuant", 0)
+                     .Connect("offset_const", 0, "AscendWeightQuant", 1)
+                     .Connect("AscendWeightQuant", 0, "Conv3D", 1)
+                     .Connect("Conv3D", 0, "AscendDequant", 0)
+                     .Connect("AscendDequant", 0, "Relu", 0)
+                     .SetOutput("Relu")
+                     .Build();
+
+    TestTotalPass("conv3d_quant_rollback_dav3510_nd_filter", graph, SUCCESS);
+    EXPECT_FALSE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendQuant"), 0);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendDequant"), 0);
 }
 
 // ==========================================================================================

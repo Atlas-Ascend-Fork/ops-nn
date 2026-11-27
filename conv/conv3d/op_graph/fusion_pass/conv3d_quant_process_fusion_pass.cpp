@@ -10,6 +10,13 @@
 
 #include "conv3d_quant_process_fusion_pass.h"
 
+#include <algorithm>
+#include <map>
+#include <set>
+#include <vector>
+
+#include "acl/acl_platform.h"
+
 #include "conv/common/op_graph/fusion_pass/tensor_desc_origin_dtype_api.h"
 #include "register/register_custom_pass.h"
 #include "version/ge-compiler_version.h"
@@ -23,6 +30,104 @@ using namespace ge;
 namespace {
 const std::string FUSION_NAME = "Conv3DQuantProcessFusionPass";
 const ge::AscendString PAD = "Pad";
+
+// 各 NpuArch 算子信息库的 (x/filter)/bias/offset_w 支持 dtype 白名单与 x/filter 支持 format 白名单
+struct Conv3DQuantWhitelist {
+    std::vector<ge::DataType> supportedDtypes;
+    std::vector<ge::DataType> biasDtypes;
+    std::vector<ge::DataType> offsetWDtypes;
+    std::vector<ge::Format> fmapFormats;
+    std::vector<ge::Format> filterFormats;
+};
+
+// dtype、format白名单源自：静态算子信息库（opdef.cpp、ops-info.ini) + 动态查询 op_select_format
+const Conv3DQuantWhitelist* GetConv3DWhitelist(const NpuArch arch)
+{
+    static const std::map<NpuArch, Conv3DQuantWhitelist> whitelistTable = {
+        {NpuArch::DAV_3510,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_HIFLOAT8, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NCDHW, ge::FORMAT_NDHWC},
+          {ge::FORMAT_NCDHW, ge::FORMAT_DHWCN}}},
+        {NpuArch::DAV_9201,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_HIFLOAT8, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NCDHW, ge::FORMAT_NDHWC},
+          {ge::FORMAT_NCDHW, ge::FORMAT_DHWCN}}},
+        {NpuArch::DAV_9202,
+         {{ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_HIFLOAT8, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NCDHW, ge::FORMAT_NDHWC},
+          {ge::FORMAT_NCDHW, ge::FORMAT_DHWCN}}},
+        {NpuArch::DAV_2201,
+         {{ge::DT_FLOAT16, ge::DT_INT8, ge::DT_BF16, ge::DT_FLOAT},
+          {ge::DT_FLOAT16, ge::DT_INT32, ge::DT_FLOAT},
+          {ge::DT_INT8},
+          {ge::FORMAT_NDC1HWC0},
+          {ge::FORMAT_FRACTAL_Z_3D}}},
+        {NpuArch::DAV_2002,
+         {{ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NDC1HWC0},
+          {ge::FORMAT_FRACTAL_Z_3D}}},
+        {NpuArch::DAV_1001,
+         {{ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NDC1HWC0},
+          {ge::FORMAT_FRACTAL_Z_3D}}},
+        {NpuArch::DAV_3002,
+         {{ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NDC1HWC0},
+          {ge::FORMAT_FRACTAL_Z_3D}}},
+        {NpuArch::DAV_3004,
+         {{ge::DT_FLOAT16, ge::DT_INT8},
+          {ge::DT_FLOAT16, ge::DT_INT32},
+          {ge::DT_INT8},
+          {ge::FORMAT_NDC1HWC0},
+          {ge::FORMAT_FRACTAL_Z_3D}}},
+        // DAV_3505/3102/5102 信息库无 Conv3D section →恒回退；空表项使 dtype 校验恒拒绝以镜像该行为
+        {NpuArch::DAV_3505, {}},
+        {NpuArch::DAV_3102, {}},
+        {NpuArch::DAV_5102, {}},
+    };
+    const auto iter = whitelistTable.find(arch);
+    return iter == whitelistTable.end() ? nullptr : &iter->second;
+}
+
+NpuArch GetCurNpuArch()
+{
+    char npuArchStr[kNpuArchStrLen] = {};
+    if (aclplatformGetDeviceInfo(ACL_PLATFORM_NPU_ARCH, npuArchStr, sizeof(npuArchStr)) != ACL_SUCCESS) {
+        OP_LOGW(FUSION_NAME, "Get npu arch failed.");
+        return NpuArch::DAV_RESV;
+    }
+    return static_cast<NpuArch>(std::atoi(npuArchStr));
+}
+
+// origin format 非 ND 直接放行（量化图 x/filter origin 为 NCHW/NCDHW/NDHWC/DHWCN/NDC1HWC0 等原生布局，不做列表校验）；
+// origin format 为 ND 时，算子信息库 format 列表须含 ND 可转格式（ND/FRACTAL_NZ/ND_RNN_BIAS/FRACTAL_ZN_RNN/FRACTAL_Z）
+bool IsOriginFormatSupported(const ge::TensorDesc& inputDesc, const std::vector<ge::Format>& supportedFormats)
+{
+    if (supportedFormats.empty()) {
+        return true;
+    }
+    const ge::Format originFormat = inputDesc.GetOriginFormat();
+    if (originFormat != ge::FORMAT_ND) {
+        return true;
+    }
+    static const std::vector<ge::Format> ndTransableFormats = {
+        ge::FORMAT_ND, ge::FORMAT_FRACTAL_NZ, ge::FORMAT_ND_RNN_BIAS, ge::FORMAT_FRACTAL_ZN_RNN, ge::FORMAT_FRACTAL_Z};
+    const auto transIter = std::find_first_of(supportedFormats.begin(), supportedFormats.end(),
+                                              ndTransableFormats.begin(), ndTransableFormats.end());
+    return transIter != supportedFormats.end();
+}
 
 bool IsNodeType(const ge::GNodePtr& node, const ge::AscendString& expectType)
 {
@@ -144,6 +249,42 @@ bool Conv3DQuantProcessFusionPass::CheckQuantChain(const ge::GNode& cubeNode)
     }
     FUSION_PASS_CHECK(dequantNode_ == nullptr,
                       OP_LOGD(FUSION_NAME, "Conv3D output consumer is not AscendDequant, no fusion."), return false);
+    return true;
+}
+
+bool Conv3DQuantProcessFusionPass::CheckOpSupported(const ge::GNode& node) const
+{
+    const NpuArch arch = GetCurNpuArch();
+    const Conv3DQuantWhitelist* whitelist = GetConv3DWhitelist(arch);
+    if (whitelist == nullptr) {
+        OP_LOGW(FUSION_NAME, "No Conv3D quant whitelist for NpuArch[%u], skip dtype check.",
+                static_cast<uint32_t>(arch));
+        return true;
+    }
+    const int32_t biasIndex = static_cast<int32_t>(GetBiasInputIndex());
+    const int32_t offsetWIndex = biasIndex + 1;
+    const int32_t inputIndexes[] = {INPUT_FMAP_INDEX, static_cast<int32_t>(GetWeightInputIndex()), biasIndex,
+                                    offsetWIndex};
+    const std::vector<ge::DataType>* inputDtypes[] = {&whitelist->supportedDtypes, &whitelist->supportedDtypes,
+                                                      &whitelist->biasDtypes, &whitelist->offsetWDtypes};
+    const std::vector<ge::Format>* inputFormats[] = {&whitelist->fmapFormats, &whitelist->filterFormats, nullptr,
+                                                     nullptr};
+    for (size_t i = 0; i < sizeof(inputIndexes) / sizeof(inputIndexes[0]); ++i) {
+        ge::TensorDesc inputDesc;
+        if (node.GetInputDesc(inputIndexes[i], inputDesc) != GRAPH_SUCCESS) {
+            continue;
+        }
+        const ge::DataType dtype = inputDesc.GetDataType();
+        if (std::find(inputDtypes[i]->begin(), inputDtypes[i]->end(), dtype) == inputDtypes[i]->end()) {
+            OP_LOGD(FUSION_NAME, "Node input[%d] dtype[%s] is not in Conv3D supported dtypes.", inputIndexes[i],
+                    ge::TypeUtils::DataTypeToSerialString(dtype).c_str());
+            return false;
+        }
+        if (inputFormats[i] != nullptr && !IsOriginFormatSupported(inputDesc, *inputFormats[i])) {
+            OP_LOGD(FUSION_NAME, "Node input[%d] origin format is ND without a transferable format.", inputIndexes[i]);
+            return false;
+        }
+    }
     return true;
 }
 

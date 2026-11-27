@@ -30,7 +30,6 @@ using namespace test_conv_fusion_framework;
 #define CONV_DEBUG false
 
 namespace {
-const Status kConvNotChanged = ge::GRAPH_NOT_CHANGED;
 const std::vector<int64_t> FMAP_SHAPE_BIAS_OPTIMIZE = {1, 20, 8, 8};
 const std::vector<int64_t> FMAP_SHAPE_ROLLBACK = {1, 16, 8, 8};
 const std::vector<int64_t> FILTER_SHAPE_BIAS_OPTIMIZE = {1, 1, 8, 20};
@@ -239,7 +238,8 @@ TEST_F(DWConv2DQuantProcessFusionPassTest, dwconv2d_quant_bias_optimize_no_bias_
     EXPECT_EQ(fused.GetAttr(AscendString("groups"), groups), GRAPH_SUCCESS);
     EXPECT_EQ(groups, 1);
     AscendString cubeOpType;
-    EXPECT_EQ(fused.GetAttr(AscendString("cube_op_type"), cubeOpType), GRAPH_SUCCESS);
+    ASSERT_EQ(fused.GetAttr(AscendString("cube_op_type"), cubeOpType), GRAPH_SUCCESS);
+    ASSERT_TRUE(cubeOpType.GetString() != nullptr);
     EXPECT_EQ(std::string(cubeOpType.GetString()), "DepthwiseConv2D");
     bool comeFromConst = false;
     EXPECT_TRUE(GraphChecker::GetNodeBoolAttr(fused, "_is_come_from_const_op", comeFromConst));
@@ -797,7 +797,7 @@ TEST_F(DWConv2DQuantProcessFusionPassTest, dwconv2d_quant_no_fusion)
         SCOPED_TRACE(p.pointName);
         auto graph = p.build();
         EXPECT_TRUE(GraphChecker::HasNode(graph, "DepthwiseConv2D"));
-        TestTotalPass(std::string("dwconv2d_quant_no_fusion_") + p.pointName, graph, kConvNotChanged);
+        TestTotalPass(std::string("dwconv2d_quant_no_fusion_") + p.pointName, graph, ge::GRAPH_NOT_CHANGED);
         EXPECT_FALSE(GraphChecker::HasNode(graph, "QuantWeightRollBack"));
         EXPECT_FALSE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
     }
@@ -970,6 +970,147 @@ TEST_F(DWConv2DQuantProcessFusionPassTest, dwconv2d_quant_rollback_reentrant)
     EXPECT_EQ(GraphChecker::CountNodes(graph, "QuantWeightRollBack"), 2);
     EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendQuant"), 0);
     EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendDequant"), 0);
+}
+
+// ==========================================================================================
+// int8 在表内（且无 dn2nz intrinsic）→ bias optimize；int4 不在表内 → quant rollback
+// ==========================================================================================
+static void BuildDwQuantChain(TestGraph& builder, DataType quantDtype)
+{
+    auto quantCfg = AscendQuantConfig::Basic("AscendQuant", DT_FLOAT16, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPTIMIZE);
+    if (quantDtype != DT_INT8) {
+        quantCfg.outputs[0] = TensorInfo(quantDtype, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPTIMIZE, "AscendQuant_y");
+        quantCfg.SetAttr("dst_type", int64_t(quantDtype));
+    }
+    builder.AddAscendQuant(quantCfg, true)
+        .AddDepthwiseConv2D(
+            DepthwiseConv2DConfig::Basic("DepthwiseConv2D", quantDtype, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPTIMIZE,
+                                         FILTER_SHAPE_BIAS_OPTIMIZE, FMAP_SHAPE_BIAS_OPTIMIZE),
+            false, false, false)
+        .AddNode(
+            AscendWeightQuantConfig::Basic("AscendWeightQuant", quantDtype, FORMAT_HWCN, FILTER_SHAPE_BIAS_OPTIMIZE),
+            {})
+        .AddNode(ConstConfig::Basic("weight_const", quantDtype, FORMAT_HWCN, FILTER_SHAPE_BIAS_OPTIMIZE), {})
+        .AddNode(ConstConfig::Basic("offset_const", DT_INT8, FORMAT_ND, {1}), {})
+        .AddAscendDequant(
+            AscendDequantConfig::Basic("AscendDequant", DT_FLOAT16, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPTIMIZE))
+        .AddRelu(ReluConfig::Basic("Relu", DT_FLOAT16, FORMAT_NCHW, FMAP_SHAPE_BIAS_OPTIMIZE))
+        .Connect("AscendQuant", 0, "DepthwiseConv2D", 0)
+        .Connect("weight_const", 0, "AscendWeightQuant", 0)
+        .Connect("offset_const", 0, "AscendWeightQuant", 1)
+        .Connect("AscendWeightQuant", 0, "DepthwiseConv2D", 1)
+        .Connect("DepthwiseConv2D", 0, "AscendDequant", 0)
+        .Connect("AscendDequant", 0, "Relu", 0)
+        .SetOutput("Relu");
+}
+
+// DAV_2201：int8 表内 → C > 16 走 bias optimize
+TEST_F(DWConv2DQuantProcessFusionPassTest, dwconv2d_quant_bias_optimize_dav2201_int8_success)
+{
+    TestGraph builder("dwconv2d_quant_bias_optimize_dav2201_int8_success");
+    builder.SetSoc(SocConfig("Ascend910B", "Ascend910B4", "split", static_cast<int32_t>(Ops::Base::DAV_2201)));
+    BuildDwQuantChain(builder, DT_INT8);
+    auto graph = builder.Build();
+
+    TestTotalPass("dwconv2d_quant_bias_optimize_dav2201_int8_success", graph, SUCCESS);
+
+    EXPECT_TRUE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
+    EXPECT_FALSE(GraphChecker::HasNode(graph, "QuantWeightRollBack"));
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendQuant"), 1);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendDequant"), 1);
+    GNode biasConst;
+    EXPECT_TRUE(GraphChecker::FindNodeByNameSuffix(graph, "_quant_bias", biasConst));
+    TensorDesc biasDesc;
+    ASSERT_EQ(biasConst.GetOutputDesc(0, biasDesc), GRAPH_SUCCESS);
+    EXPECT_EQ(biasDesc.GetDataType(), DT_INT32);
+}
+
+// DAV_2201：int4 不在表内 → quant rollback
+TEST_F(DWConv2DQuantProcessFusionPassTest, dwconv2d_quant_rollback_dav2201_int4)
+{
+    TestGraph builder("dwconv2d_quant_rollback_dav2201_int4");
+    builder.SetSoc(SocConfig("Ascend910B", "Ascend910B4", "split", static_cast<int32_t>(Ops::Base::DAV_2201)));
+    BuildDwQuantChain(builder, DT_INT4);
+    auto graph = builder.Build();
+
+    TestTotalPass("dwconv2d_quant_rollback_dav2201_int4", graph, SUCCESS);
+
+    EXPECT_TRUE(GraphChecker::HasNode(graph, "QuantWeightRollBack"));
+    EXPECT_FALSE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendQuant"), 0);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendDequant"), 0);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendWeightQuant"), 0);
+    GNode dwNode = GetDepthwiseNode(graph);
+    TensorDesc inDesc;
+    ASSERT_EQ(dwNode.GetInputDesc(0, inDesc), GRAPH_SUCCESS);
+    EXPECT_EQ(inDesc.GetDataType(), DT_FLOAT16);
+}
+
+// DAV_3002：int8 表内 → C > 16 走 bias optimize
+TEST_F(DWConv2DQuantProcessFusionPassTest, dwconv2d_quant_bias_optimize_dav3002_int8_success)
+{
+    TestGraph builder("dwconv2d_quant_bias_optimize_dav3002_int8_success");
+    builder.SetSoc(SocConfig("Ascend310B", "Ascend310B4", "split", static_cast<int32_t>(Ops::Base::DAV_3002)));
+    BuildDwQuantChain(builder, DT_INT8);
+    auto graph = builder.Build();
+
+    TestTotalPass("dwconv2d_quant_bias_optimize_dav3002_int8_success", graph, SUCCESS);
+
+    EXPECT_TRUE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
+    EXPECT_FALSE(GraphChecker::HasNode(graph, "QuantWeightRollBack"));
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendQuant"), 1);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendDequant"), 1);
+}
+
+// DAV_3002：int4 不在表内 → quant rollback
+TEST_F(DWConv2DQuantProcessFusionPassTest, dwconv2d_quant_rollback_dav3002_int4)
+{
+    TestGraph builder("dwconv2d_quant_rollback_dav3002_int4");
+    builder.SetSoc(SocConfig("Ascend310B", "Ascend310B4", "split", static_cast<int32_t>(Ops::Base::DAV_3002)));
+    BuildDwQuantChain(builder, DT_INT4);
+    auto graph = builder.Build();
+
+    TestTotalPass("dwconv2d_quant_rollback_dav3002_int4", graph, SUCCESS);
+
+    EXPECT_TRUE(GraphChecker::HasNode(graph, "QuantWeightRollBack"));
+    EXPECT_FALSE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendQuant"), 0);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendDequant"), 0);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendWeightQuant"), 0);
+}
+
+// 表外 arch（DAV_3003/035，DW 无实测白名单依据）→ 不校验（WARNING 可见）→ int4 + C>16 仍走 BIAS_OPTIMIZE
+TEST_F(DWConv2DQuantProcessFusionPassTest, dwconv2d_quant_bias_optimize_int4_on_unconfigured_soc)
+{
+    TestGraph builder("dwconv2d_quant_bias_optimize_int4_on_unconfigured_soc");
+    builder.SetSoc(SocConfig("Ascend035", "Ascend035", "split", static_cast<int32_t>(Ops::Base::DAV_3003)));
+    BuildDwQuantChain(builder, DT_INT4);
+    auto graph = builder.Build();
+
+    TestTotalPass("dwconv2d_quant_bias_optimize_int4_on_unconfigured_soc", graph, SUCCESS);
+
+    EXPECT_TRUE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
+    EXPECT_FALSE(GraphChecker::HasNode(graph, "QuantWeightRollBack"));
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendQuant"), 1);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendDequant"), 1);
+}
+
+// DAV_5102（MC62）：信息库无 DepthwiseConv2D section，空表项恒拒（老 FE 查询必失败→恒回退）。
+// 借用本地真实存在的 Ascend950DT_9571 作为 socVersion 载体覆写 arch=5102，真实命中空表项分支。
+TEST_F(DWConv2DQuantProcessFusionPassTest, dwconv2d_quant_rollback_dav5102_no_section)
+{
+    TestGraph builder("dwconv2d_quant_rollback_dav5102_no_section");
+    builder.SetSoc(SocConfig("MC62", "Ascend950DT_9571", "split", static_cast<int32_t>(Ops::Base::DAV_5102)));
+    BuildDwQuantChain(builder, DT_INT8);
+    auto graph = builder.Build();
+
+    TestTotalPass("dwconv2d_quant_rollback_dav5102_no_section", graph, SUCCESS);
+
+    EXPECT_TRUE(GraphChecker::HasNode(graph, "QuantWeightRollBack"));
+    EXPECT_FALSE(GraphChecker::HasNode(graph, "QuantBiasOptimization"));
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendQuant"), 0);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendDequant"), 0);
+    EXPECT_EQ(GraphChecker::CountNodes(graph, "AscendWeightQuant"), 0);
 }
 
 #endif
