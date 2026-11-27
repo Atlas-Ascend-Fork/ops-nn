@@ -11,14 +11,24 @@
 /*!
  * \file situ_glu_group_quant_base.h
  * \brief Fused sparse-SiTU activation + MXFP8(e4m3fn, group=32) quantization.
- *        Kernel body ported verbatim from cann-recipes-infer SituGluGroupQuant
+ *        Kernel body ported from cann-recipes-infer SituGluGroupQuant
  *        (standalone port into ops-nn; not the merged SituMxQuant op).
  *
  * Backbone: situ_and_mul_sparse (per-row pipeline, sparse validRows, register
  * SiTU activation VF). The activation result stays in UB (never spilled to GM)
  * and is quantized in place by the dynamic_mx_quant tail-axis e4m3 OCP
- * three-pass VF. Bit-identical (within validRows) to the two small ops chained
- * npu_situ_and_mul_sparse -> npu_dynamic_mx_quant(dst=e4m3fn).
+ * three-pass VF.
+ *
+ * ACTIVATION CALIBER CHANGE (aligned with situ_glu / situ_mx_quant, i.e. the
+ * standard tanh.h reference): the recipes naive exp-subtraction tanh form
+ * 2*beta/(1+Exp(-2x)) - beta is replaced by the two-path form (degree-9
+ * polynomial FMA Horner below |x|=0.6, sigmoid decomposition above). The
+ * recipes form catastrophically cancels for tiny |gate/beta|, amplifying
+ * ULP(beta) noise and the hardware Exp approximation into visible activation
+ * divergence; the two-path form has no cancellation anywhere and the
+ * polynomial region is exp-free. Outputs differ from the recipes original by
+ * <= ~1.3e-5 relative in the sigmoid region (saturated, harmless) and no
+ * longer degrade at extreme beta x tiny-gate; quantization is unchanged.
  *
  * VF form: __simd_vf__ functions invoked via asc_vf_call (the arch35 built-in
  * convention, e.g. dawsn/acos). asc_vf_call carries the MTE/VF boundary sync, so
@@ -63,18 +73,66 @@ __aicore__ inline int64_t CeilDivI(int64_t a, int64_t b) { return (a + b - 1) / 
 __aicore__ inline int64_t CeilAlignI(int64_t a, int64_t b) { return CeilDivI(a, b) * b; }
 
 // ---------------------------------------------------------------------------
-// SiTU activation VF (__simd_vf__; ported verbatim from situ_and_mul_sparse).
-// 64-fp32 tile per iter. Output is T (bf16/fp16) written to `out`.
-// Invoked via asc_vf_call.
+// SiTU activation VF (__simd_vf__). 64-fp32 tile per iter. Output is T
+// (bf16/fp16) written to `out`. Invoked via asc_vf_call.
 // kLinearDisabled (TPL dimension): linear_beta <= 0 disables the up-branch
 // tanh soft-clamp — upF stays the loaded value (passthrough) and the whole
-// tanh chain is compile-time eliminated; per-element instruction sequence of
-// the enabled path is unchanged.
+// tanh chain is compile-time eliminated.
+// Two-path tanh caliber (aligned with situ_glu / situ_mx_quant, i.e. the
+// standard tanh.h reference): the recipes naive exp-subtraction form
+// 2*beta/(1+Exp(-2x)) - beta catastrophically cancels for tiny |gate/beta|
+// (beta-scale intermediates subtract to a gate-scale residue, amplifying
+// ULP(beta) noise and the hardware Exp approximation into visible divergence).
+// The two-path form replaces it everywhere: |x| < 0.6 -> degree-9 polynomial
+// (FMA Horner, matches tanh.h exactly, no exp, no cancellation); |x| >= 0.6
+// -> sigmoid decomposition 2*sigmoid(2x)-1 (tanh saturated there, so the
+// hardware Exp error is harmless). Scratch discipline: VFTanhTwoPathVf
+// overwrites every register operand except the preloaded constants, so only
+// DEAD registers may be passed as its temps.
 // ---------------------------------------------------------------------------
+constexpr float kTanhC1 = -0.333327681f;
+constexpr float kTanhC2 = 0.133152977f;
+constexpr float kTanhC3 = -0.0523039624f;
+constexpr float kTanhC4 = 0.0157396831f;
+constexpr float kTanhThreshold = 0.6f;
+
+// Two-path tanh(x) (tanh.h reference, register form as in situ_mx_quant):
+//   |x| < 0.6:  degree-9 polynomial, FMA Horner
+//   |x| >= 0.6: sigmoid decomposition, sign naturally preserved
+// dst receives the result; x is consumed; x2/naive/t are scratch (overwritten);
+// one/c1/c2 are preloaded constant registers (preserved); cmpMask is scratch.
+__simd_callee__ inline void VFTanhTwoPathVf(Reg::RegTensor<float>& dst, Reg::RegTensor<float>& x,
+                                            Reg::RegTensor<float>& x2, Reg::RegTensor<float>& naive,
+                                            Reg::RegTensor<float>& t, Reg::RegTensor<float>& one,
+                                            Reg::RegTensor<float>& c1, Reg::RegTensor<float>& c2, Reg::MaskReg& cmpMask,
+                                            Reg::MaskReg preg)
+{
+    // polynomial path -> dst: tanh(x) ~= x * (1 + c1*x^2 + c2*x^4 + c3*x^6 + c4*x^8)
+    Reg::Mul(x2, x, x, preg);
+    Reg::Muls(dst, x2, kTanhC4, preg);
+    Reg::Adds(dst, dst, kTanhC3, preg);
+    Reg::FusedMulDstAdd(dst, x2, c2, preg);
+    Reg::FusedMulDstAdd(dst, x2, c1, preg);
+    Reg::Mul(dst, dst, x2, preg);
+    Reg::FusedMulDstAdd(dst, x, x, preg);
+    // sigmoid decomposition path -> naive: 2/(1+exp(-2x)) - 1
+    Reg::Muls(t, x, -2.0f, preg);
+    Reg::Exp(t, t, preg);
+    Reg::Adds(t, t, 1.0f, preg);
+    Reg::Div(naive, one, t, preg);
+    Reg::Muls(naive, naive, 2.0f, preg);
+    Reg::Adds(naive, naive, -1.0f, preg);
+    // path selection: sigmoid decomposition if |x| >= 0.6, else polynomial
+    Reg::Muls(x2, x, -1.0f, preg);
+    Reg::Max(x2, x, x2, preg);
+    Reg::Duplicate(t, kTanhThreshold, preg);
+    Reg::Compare<float, AscendC::CMPMODE::GE>(cmpMask, x2, t, preg);
+    Reg::Select(dst, naive, dst, cmpMask);
+}
+
 template <typename T, bool kLinearDisabled>
 __simd_vf__ inline void SituActivationVF(__ubuf__ T* gate, __ubuf__ T* up, __ubuf__ T* out, uint32_t elements,
-                                         float neg2OverBeta, float negBeta, float neg2OverLinearBeta,
-                                         float negLinearBeta, float beta, float linearBeta)
+                                         float invBeta, float beta, float invLinearBeta, float linearBeta)
 {
     static constexpr Reg::CastTrait kF32ToTCastTrait = {Reg::RegLayout::ZERO, Reg::SatMode::SAT,
                                                         Reg::MaskMergeMode::ZEROING, RoundMode::CAST_RINT};
@@ -85,10 +143,21 @@ __simd_vf__ inline void SituActivationVF(__ubuf__ T* gate, __ubuf__ T* up, __ubu
     uint32_t remaining = elements;
     Reg::RegTensor<float> gateF;
     Reg::RegTensor<float> upF;
-    Reg::RegTensor<float> tmpF;
+    Reg::RegTensor<float> xF;
+    Reg::RegTensor<float> x2F;
+    Reg::RegTensor<float> workF;
+    Reg::RegTensor<float> naiveF;
+    Reg::RegTensor<float> tF;
+    Reg::RegTensor<float> oneF;
+    Reg::RegTensor<float> c1F;
+    Reg::RegTensor<float> c2F;
     Reg::RegTensor<float> branchF;
     Reg::RegTensor<T> packedF;
     Reg::MaskReg preg;
+    Reg::MaskReg cmpMask;
+    Reg::Duplicate(oneF, 1.0f);
+    Reg::Duplicate(c1F, kTanhC1);
+    Reg::Duplicate(c2F, kTanhC2);
     for (uint16_t i = 0; i < tileCount; ++i) {
         preg = Reg::UpdateMask<float>(remaining);
         const uint32_t offset = static_cast<uint32_t>(i) * VF_TILE_FLOATS;
@@ -97,30 +166,25 @@ __simd_vf__ inline void SituActivationVF(__ubuf__ T* gate, __ubuf__ T* up, __ubu
         Reg::LoadAlign<T, Reg::LoadDist::DIST_UNPACK_B16>(packedF, up + offset);
         Reg::Cast<float, T, kTToF32CastTrait>(upF, packedF, preg);
 
-        // gate subchain
-        Reg::Muls(tmpF, gateF, neg2OverBeta, preg);
-        Reg::Exp(tmpF, tmpF, preg);
-        Reg::Adds(tmpF, tmpF, 1.0f, preg);
-        Reg::Duplicate(branchF, beta, preg);
-        Reg::Div(branchF, branchF, tmpF, preg);
-        Reg::Muls(branchF, branchF, 2.0f, preg);
-        Reg::Adds(branchF, branchF, negBeta, preg);
-        Reg::Muls(tmpF, gateF, -1.0f, preg);
-        Reg::Exp(tmpF, tmpF, preg);
-        Reg::Adds(tmpF, tmpF, 1.0f, preg);
-        Reg::Div(branchF, branchF, tmpF, preg);
-        // up subchain
+        // gate subchain: situ_a = (tanh(gate*invBeta) * sigmoid(gate)) * beta
+        Reg::Muls(xF, gateF, invBeta, preg);
+        VFTanhTwoPathVf(workF, xF, x2F, naiveF, tF, oneF, c1F, c2F, cmpMask, preg);
+        Reg::Muls(tF, gateF, -1.0f, preg);
+        Reg::Exp(tF, tF, preg);
+        Reg::Adds(tF, tF, 1.0f, preg);
+        Reg::Div(naiveF, oneF, tF, preg);
+        Reg::Mul(branchF, workF, naiveF, preg);
+        Reg::Muls(branchF, branchF, beta, preg);
+        // up subchain: up' = linearBeta * tanh(up * invLinearBeta)
         if constexpr (!kLinearDisabled) {
-            Reg::Muls(tmpF, upF, neg2OverLinearBeta, preg);
-            Reg::Exp(tmpF, tmpF, preg);
-            Reg::Adds(tmpF, tmpF, 1.0f, preg);
-            Reg::Duplicate(upF, linearBeta, preg);
-            Reg::Div(upF, upF, tmpF, preg);
-            Reg::Muls(upF, upF, 2.0f, preg);
-            Reg::Adds(upF, upF, negLinearBeta, preg);
+            Reg::Muls(xF, upF, invLinearBeta, preg);
+            VFTanhTwoPathVf(workF, xF, x2F, naiveF, tF, oneF, c1F, c2F, cmpMask, preg);
+            Reg::Muls(upF, workF, linearBeta, preg);
+            Reg::Mul(branchF, branchF, upF, preg);
+        } else {
+            // kLinearDisabled: upF keeps the loaded fp32 value (passthrough)
+            Reg::Mul(branchF, branchF, upF, preg);
         }
-        // kLinearDisabled: upF keeps the loaded fp32 value (passthrough)
-        Reg::Mul(branchF, branchF, upF, preg);
 
         // exit: fp32 -> T then packed store
         Reg::Cast<T, float, kF32ToTCastTrait>(packedF, branchF, preg);
@@ -140,9 +204,8 @@ __simd_vf__ inline void SituActivationVF(__ubuf__ T* gate, __ubuf__ T* up, __ubu
 // kLinearDisabled: same TPL caliber as SituActivationVF — up passthrough.
 template <typename T, bool kLinearDisabled>
 __simd_vf__ inline void SituActivationWeightRowVF(__ubuf__ T* gate, __ubuf__ T* up, __ubuf__ T* out, uint32_t elements,
-                                                  uint32_t rowElements, __ubuf__ const float* wRow, float neg2OverBeta,
-                                                  float negBeta, float neg2OverLinearBeta, float negLinearBeta,
-                                                  float beta, float linearBeta)
+                                                  uint32_t rowElements, __ubuf__ const float* wRow, float invBeta,
+                                                  float beta, float invLinearBeta, float linearBeta)
 {
     static constexpr Reg::CastTrait kF32ToTCastTrait = {Reg::RegLayout::ZERO, Reg::SatMode::SAT,
                                                         Reg::MaskMergeMode::ZEROING, RoundMode::CAST_RINT};
@@ -159,10 +222,21 @@ __simd_vf__ inline void SituActivationWeightRowVF(__ubuf__ T* gate, __ubuf__ T* 
     const int32_t rows = static_cast<int32_t>(elements / rowsEpr);
     Reg::RegTensor<float> gateF;
     Reg::RegTensor<float> upF;
-    Reg::RegTensor<float> tmpF;
+    Reg::RegTensor<float> xF;
+    Reg::RegTensor<float> x2F;
+    Reg::RegTensor<float> workF;
+    Reg::RegTensor<float> naiveF;
+    Reg::RegTensor<float> tF;
+    Reg::RegTensor<float> oneF;
+    Reg::RegTensor<float> c1F;
+    Reg::RegTensor<float> c2F;
     Reg::RegTensor<float> branchF;
     Reg::RegTensor<T> packedF;
     Reg::MaskReg preg;
+    Reg::MaskReg cmpMask;
+    Reg::Duplicate(oneF, 1.0f);
+    Reg::Duplicate(c1F, kTanhC1);
+    Reg::Duplicate(c2F, kTanhC2);
     for (int32_t r = 0; r < rows; ++r) {
         const float wVal = wRow[r];
         const uint32_t rowOffset = static_cast<uint32_t>(r) * rowsEpr;
@@ -182,30 +256,25 @@ __simd_vf__ inline void SituActivationWeightRowVF(__ubuf__ T* gate, __ubuf__ T* 
             Reg::Cast<float, T, kTToF32CastTrait>(upF, packedF, preg);
 
             // gate subchain (identical to SituActivationVF)
-            Reg::Muls(tmpF, gateF, neg2OverBeta, preg);
-            Reg::Exp(tmpF, tmpF, preg);
-            Reg::Adds(tmpF, tmpF, 1.0f, preg);
-            Reg::Duplicate(branchF, beta, preg);
-            Reg::Div(branchF, branchF, tmpF, preg);
-            Reg::Muls(branchF, branchF, 2.0f, preg);
-            Reg::Adds(branchF, branchF, negBeta, preg);
-            Reg::Muls(tmpF, gateF, -1.0f, preg);
-            Reg::Exp(tmpF, tmpF, preg);
-            Reg::Adds(tmpF, tmpF, 1.0f, preg);
-            Reg::Div(branchF, branchF, tmpF, preg);
+            Reg::Muls(xF, gateF, invBeta, preg);
+            VFTanhTwoPathVf(workF, xF, x2F, naiveF, tF, oneF, c1F, c2F, cmpMask, preg);
+            Reg::Muls(tF, gateF, -1.0f, preg);
+            Reg::Exp(tF, tF, preg);
+            Reg::Adds(tF, tF, 1.0f, preg);
+            Reg::Div(naiveF, oneF, tF, preg);
+            Reg::Mul(branchF, workF, naiveF, preg);
+            Reg::Muls(branchF, branchF, beta, preg);
 
             // up subchain (identical to SituActivationVF)
             if constexpr (!kLinearDisabled) {
-                Reg::Muls(tmpF, upF, neg2OverLinearBeta, preg);
-                Reg::Exp(tmpF, tmpF, preg);
-                Reg::Adds(tmpF, tmpF, 1.0f, preg);
-                Reg::Duplicate(upF, linearBeta, preg);
-                Reg::Div(upF, upF, tmpF, preg);
-                Reg::Muls(upF, upF, 2.0f, preg);
-                Reg::Adds(upF, upF, negLinearBeta, preg);
+                Reg::Muls(xF, upF, invLinearBeta, preg);
+                VFTanhTwoPathVf(workF, xF, x2F, naiveF, tF, oneF, c1F, c2F, cmpMask, preg);
+                Reg::Muls(upF, workF, linearBeta, preg);
+                Reg::Mul(branchF, branchF, upF, preg);
+            } else {
+                // kLinearDisabled: upF keeps the loaded fp32 value (passthrough)
+                Reg::Mul(branchF, branchF, upF, preg);
             }
-            // kLinearDisabled: upF keeps the loaded fp32 value (passthrough)
-            Reg::Mul(branchF, branchF, upF, preg);
 
             Reg::Muls(branchF, branchF, wVal, preg);
 
@@ -416,15 +485,17 @@ private:
         __ubuf__ uint16_t* scaleAddr = (__ubuf__ uint16_t*)scale.GetPhyAddr();
         __ubuf__ int8_t* yAddr = (__ubuf__ int8_t*)y.GetPhyAddr();
 
-        // --- SiTU activation -> act (bf16/fp16), same round-to-input as situ ---
+        // --- SiTU activation -> act (bf16/fp16), two-path tanh caliber ---
         const uint32_t count = static_cast<uint32_t>(kEff * epr_);
-        const float neg2OverBeta = -2.0f / tiling_->beta;
-        const float negBeta = -tiling_->beta;
+        // Plain reciprocal, aligned with situ_mx_quant (axis_last.h:110):
+        // a subnormal beta overflows 1/beta to +-inf, which the two-path
+        // sigmoid branch consumes naturally (exp(-+inf) -> 0/inf, tanh -> +-1);
+        // gate == 0 * inf = NaN falls through to the exit CAST (NaN -> +0).
+        const float invBeta = 1.0f / tiling_->beta;
         // Disabled instance: the up-chain coefficients are compile-time
-        // eliminated (never reach the VF); zeroed here so -2/linearBeta never
-        // produces inf when linear_beta <= 0.
-        const float neg2OverLinearBeta = kLinearDisabled ? 0.0f : -2.0f / tiling_->linearBeta;
-        const float negLinearBeta = kLinearDisabled ? 0.0f : -tiling_->linearBeta;
+        // eliminated (never reach the VF); zeroed here so 1/linearBeta never
+        // divides by zero when linear_beta <= 0.
+        const float invLinearBeta = kLinearDisabled ? 0.0f : 1.0f / tiling_->linearBeta;
         const float linearBetaArg = kLinearDisabled ? 0.0f : tiling_->linearBeta;
         if constexpr (hasWeight) {
             // ONE unified weighted VF for every EPR: per-row tail-masked tiles
@@ -432,16 +503,14 @@ private:
             // fallback; per-row scalars read from the UB staging queue.
             LocalTensor<float> wUb = weightQueue_.DeQue<float>();
             __ubuf__ const float* wUbAddr = (__ubuf__ const float*)wUb.GetPhyAddr();
-            asc_vf_call<SituActivationWeightRowVF<T, kLinearDisabled>>(
-                gate, up, actAddr, count, static_cast<uint32_t>(epr_), wUbAddr, neg2OverBeta, negBeta,
-                neg2OverLinearBeta, negLinearBeta, tiling_->beta, linearBetaArg);
+            asc_vf_call<SituActivationWeightRowVF<T, kLinearDisabled>>(gate, up, actAddr, count,
+                                                                       static_cast<uint32_t>(epr_), wUbAddr, invBeta,
+                                                                       tiling_->beta, invLinearBeta, linearBetaArg);
             weightQueue_.FreeTensor(wUb);
         } else {
-            // no-weight instance: unchanged flat VF (exact recipes 11-param ABI,
-            // bit-identical codegen to the legacy per-row path)
-            asc_vf_call<SituActivationVF<T, kLinearDisabled>>(gate, up, actAddr, count, neg2OverBeta, negBeta,
-                                                              neg2OverLinearBeta, negLinearBeta, tiling_->beta,
-                                                              linearBetaArg);
+            // no-weight instance: flat VF (two-path tanh ABI)
+            asc_vf_call<SituActivationVF<T, kLinearDisabled>>(gate, up, actAddr, count, invBeta, tiling_->beta,
+                                                              invLinearBeta, linearBetaArg);
         }
 
         // --- MXFP8 e4m3 OCP quantization (asc_vf_call, ported from dynamic_mx_quant) ---

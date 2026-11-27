@@ -76,6 +76,59 @@ def _to_torch(t):
     return torch.as_tensor(arr)
 
 
+_TANH_C1 = np.float32(-0.333327681)
+_TANH_C2 = np.float32(0.133152977)
+_TANH_C3 = np.float32(-0.0523039624)
+_TANH_C4 = np.float32(0.0157396831)
+_TANH_THRESHOLD = np.float32(0.6)
+
+
+def _fma32(a, b, c):
+    """IEEE fp32 fused multiply-add emulation: fp64 product of fp32 inputs is
+    exact (<=48 bits); the fp64 sum is exact whenever operand exponents differ
+    by <=5 (Horner's tightly-bounded |x|<=0.6 value domain guarantees this),
+    so the final fp32 cast is the sole rounding — matching hardware
+    FusedMulDstAdd. (Theoretical double-rounding requires an exponent gap >5,
+    unreachable in this polynomial's value range.)"""
+    ad = (
+        a.double()
+        if torch.is_tensor(a)
+        else torch.tensor(float(np.float32(a))).double()
+    )
+    bd = (
+        b.double()
+        if torch.is_tensor(b)
+        else torch.tensor(float(np.float32(b))).double()
+    )
+    cd = (
+        c.double()
+        if torch.is_tensor(c)
+        else torch.tensor(float(np.float32(c))).double()
+    )
+    return (ad * bd + cd).float()
+
+
+def _two_path_tanh(x):
+    """Mirror kernel VFTanhTwoPathVf (tanh.h reference, as in situ_glu /
+    situ_mx_quant): |x| < 0.6 -> degree-9 polynomial, FMA Horner
+    x*(1 + c1*x^2 + c2*x^4 + c3*x^6 + c4*x^8) (bit-exact via _fma32);
+    |x| >= 0.6 -> sigmoid decomposition 2/(1+exp(-2x)) - 1. No cancellation
+    anywhere; the polynomial region is exp-free (replaces the recipes naive
+    exp-subtraction form whose beta-scale cancellation amplified ULP(beta)
+    noise and the hardware Exp approximation at tiny |gate/beta|)."""
+    x2 = x * x
+    p = x2 * _TANH_C4
+    p = p + _TANH_C3
+    p = _fma32(x2, p, _TANH_C2)
+    p = _fma32(x2, p, _TANH_C1)
+    p = p * x2
+    p = _fma32(x, p, x)
+    e = torch.exp(x * np.float32(-2.0))
+    t = np.float32(1.0) / (np.float32(1.0) + e)
+    t = t * np.float32(2.0) - np.float32(1.0)
+    return torch.where(torch.abs(x) >= _TANH_THRESHOLD, t, p)
+
+
 def _reference(x, group_index, beta, linear_beta, activate_left=False, weight=None):
     """Core reference. x: torch tensor on CPU of any rank; returns (y, y_scale)."""
     if not torch.is_tensor(x):
@@ -97,38 +150,56 @@ def _reference(x, group_index, beta, linear_beta, activate_left=False, weight=No
         gate = xf[:, epr:]
         up = xf[:, :epr]
 
-    # Activation mirrors the kernel instruction chain EXACTLY (SituActivationVF):
-    #   tmp = Exp(g * neg2OverBeta); tmp += 1
-    #   branch = beta / tmp; branch *= 2; branch += negBeta     (= 2*beta/(1+e) - beta)
-    #   sig = 1 + Exp(g * -1); branch = branch / sig            (DIV, not mul-recip)
+    # Activation mirrors the kernel instruction chain EXACTLY (SituActivationVF,
+    # two-path tanh caliber aligned with situ_glu / situ_mx_quant, i.e. the
+    # tanh.h reference):
+    #   x = g * invBeta;  tanh = VFTanhTwoPathVf(x):
+    #     |x| < 0.6:  degree-9 polynomial, FMA Horner (bit-exact via _fma32)
+    #     |x| >= 0.6: 2/(1+Exp(-2x)) - 1 (sigmoid decomposition)
+    #   sig = 1/(1+Exp(-g)); situ_a = (tanh * sig) * beta
     # Host scalars are fp32-rounded the same way the kernel computes them:
-    #   neg2OverBeta = fl32(-2.0 / fl32(beta)), negBeta = -fl32(beta)
-    # （sane 数据下与代数形态 beta*(2/(1+e)-1) 逐位一致；病态区间 |v|<<beta 的消除
-    #  放大下指令序形态才与设备同源——200 例门槛分型验证）
+    #   invBeta = SafeReciprocal(fl32(beta)) (clamped to +-FLOAT_MAX for
+    #   subnormal beta, preventing 0 * inf -> NaN)
+    # This replaces the recipes naive exp-subtraction form 2*beta/(1+e)-beta,
+    # whose beta-scale cancellation amplified ULP(beta) noise and the hardware
+    # Exp approximation into visible divergence at tiny |gate| (200-case menkan
+    # threshold-classification evidence: 44 FAILs, all in extreme beta x
+    # tiny-gate). The two-path form has no cancellation anywhere and the
+    # polynomial region (|x| < 0.6) is exp-free.
     # KNOWN LIMITATION: torch.exp is correctly rounded while the device Exp
-    # instruction is a hardware approximation; for inputs whose fp32 activation
-    # lands within a few e-8 of an e4m3 rounding midpoint (verified example:
-    # bench case c06/c07 element [25,553]) the exit cast can round one code
-    # apart. Both the port and the recipes original produce the SAME byte on
-    # device, so such elements are expected CPU golden vs NPU divergences.
+    # instruction is a hardware approximation; exp survives only in the tanh
+    # sigmoid region (|x| >= 0.6, tanh saturated — error impact negligible)
+    # and in sigmoid(gate) (~1e-7, unamplified). Residual divergence is
+    # boundary-straddle lottery only (expected CPU golden vs NPU divergences).
     b32 = np.float32(beta)
-    neg2OverBeta = np.float32(-2.0) / b32
-    negBeta = -b32
-    gt = 1.0 + torch.exp(gate * float(neg2OverBeta))
-    gb = (torch.full_like(gate, float(b32)) / gt * 2.0) + float(negBeta)
-    gb = gb / (1.0 + torch.exp(gate * -1.0))
+    # Plain reciprocal (kernel-aligned, situ_mx_quant caliber): subnormal beta
+    # overflows 1/beta to +-inf -> two-path sigmoid branch consumes it
+    # (tanh -> +-1); gate == 0 * inf = NaN -> exit cast NaN -> +0 (modeled
+    # below by nan_to_num).
+    with np.errstate(all="ignore"):
+        inv_beta = np.float32(1.0) / b32
+    tanh_g = _two_path_tanh(gate * float(inv_beta))
+    sig_g = np.float32(1.0) / (np.float32(1.0) + torch.exp(gate * np.float32(-1.0)))
+    # 硬件 FTZ 口径（onboard 实证）：除法产生的次正规结果在 NPU 被冲刷为 0。
+    # rangebound 用例 up=-inf × gate≈-87.5 时：exp(87.5)=1.0e38 有限 → CPU 得次正规
+    # sigmoid 9.98e-39 → act = tiny*(-inf) = +inf → 饱和 448；设备冲 0 →
+    # act = 0*(-inf) = NaN → CAST_RINT+SAT 的 NaN→+0。逐位对齐须同样冲刷
+    # 绝对值 < 2^-126（fp32 最小正规数）的次正规。
+    sig_g = torch.where(
+        sig_g.abs() < np.float32(1.17549435e-38), torch.zeros_like(sig_g), sig_g
+    )
+    gb = (tanh_g * sig_g) * float(b32)
 
     # linear_beta <= 0 disables the up-branch tanh soft-clamp: u = up
     # passthrough (kernel TPL_LINEAR_DISABLED caliber). Enabled path mirrors
-    # the kernel: ub = fl32(lb)/(1+Exp(u*neg2OverLb))*2 + (-fl32(lb))
+    # the kernel: ub = linearBeta * VFTanhTwoPathVf(up * invLinearBeta)
     if linear_beta <= 0:
         ub = up.reshape(rows, epr)
     else:
         a32 = np.float32(linear_beta)
-        neg2OverAlpha = np.float32(-2.0) / a32
-        negAlpha = -a32
-        ut = 1.0 + torch.exp(up * float(neg2OverAlpha))
-        ub = (torch.full_like(up, float(a32)) / ut * 2.0) + float(negAlpha)
+        with np.errstate(all="ignore"):
+            inv_alpha = np.float32(1.0) / a32
+        ub = _two_path_tanh(up * float(inv_alpha)) * float(a32)
 
     # weight scale is applied in fp32 BEFORE the single exit rounding to T
     act_f32 = gb.reshape(rows, epr) * ub.reshape(rows, epr)
@@ -250,14 +321,77 @@ def customize_inputs(x, weight, groupIndex=None, *unused_attrs, **kwargs):
     return x, weight, arr
 
 
-def _pre_compare_mask_scale_pad(y=None, scale=None, *rest):
-    """判比前豁免奇 gc 的 y_scale 行尾 pad 字节。
+_E8M0_BIAS = 127
+_OFF_RTOL = 2.0**-2  # 与 y 侧 isclose 同口径（e4m3 两次独立舍入上界）
+_OFF_ATOL = 2.0**-6  # 几个 subnormal 步长，豁免 0<->次正规翻转
+_OFF_GROUP_BAD_MAX = 0.125  # 组内超差元素比例上限（真踩线 0~2/32，伪 ±1 全组）
 
-    算子契约：scaleColNum = gc 偶数化，kernel 仅写每行前 gc 字节，行尾 gap
-    字节保留输出 buffer 初值——该初值随执行环境而异（TTK kernel 模式实测
-    0x7F、GE 为分配器残留），任何固定建模都只对单一 harness 成立。此处将
-    设备/golden 两侧的该字节同置 0，使判比与 buffer 预填解耦。gc 从 y 末维
-    推得（epr = y.shape[-1] -> gc = epr/32）；偶 gc 无 pad，原样返回。
+
+def _payload_f32(t):
+    """e4m3 payload -> 展平 float32 numpy（torch / ml_dtypes numpy 双路径）。"""
+    if isinstance(t, torch.Tensor):
+        return t.detach().cpu().reshape(-1).float().numpy()
+    return np.asarray(t).reshape(-1).astype(np.float32)
+
+
+def _group_dequant_equiv(y, y_g, s_dev_u8, s_gold_u8, gc, epr):
+    """逐组反量化等价校验（② 豁免的成因判据）。
+
+    对每个 (row, group) 槽位计算两侧反量化值 payload·2^(E-127) 并按 y 侧
+    同口径容差比对；返回 (rows, gc) bool——该组超差元素比例 <= 1/8 时认为
+    等价（真踩线 payload 配套差 2 倍、乘积两侧都 ≈ act；伪 ±1 的 y 逐位
+    不动、乘积差 2 倍全组超差）。e8m0 无 0 值表示、全字节合法，无需特判。
+    """
+    try:
+
+        def _to_np_u8(t):
+            if isinstance(t, torch.Tensor):
+                return t.detach().cpu().numpy()
+            return np.asarray(t)
+
+        rows = s_dev_u8.shape[0]
+        s_dev_np, s_gold_np = _to_np_u8(s_dev_u8), _to_np_u8(s_gold_u8)
+        p_dev = _payload_f32(y).reshape(rows, gc, 32).astype(np.float64)
+        p_gold = _payload_f32(y_g).reshape(rows, gc, 32).astype(np.float64)
+        f_dev = np.exp2(s_dev_np[:, :gc].astype(np.float64) - _E8M0_BIAS)
+        f_gold = np.exp2(s_gold_np[:, :gc].astype(np.float64) - _E8M0_BIAS)
+        v_dev = p_dev * f_dev[:, :, None]
+        v_gold = p_gold * f_gold[:, :, None]
+        bad = np.abs(v_dev - v_gold) > _OFF_ATOL + _OFF_RTOL * np.maximum(
+            np.abs(v_dev), np.abs(v_gold)
+        )
+        return bad.mean(axis=2) <= _OFF_GROUP_BAD_MAX
+    except Exception:
+        # 校验失败（形状/dtype 异常）时保守返回 False——不豁免，交由
+        # binary_equal 判比器处置（宁可误杀不可放水）
+        return np.zeros(s_dev_u8[:, :gc].shape, dtype=bool)
+
+
+def _pre_compare_mask_scale_pad(y=None, scale=None, *rest):
+    """判比前豁免两类已声明的 y_scale 非契约差异（家族先例：clipped_swiglu
+    的 _pre_compare_mask_invalid_rows 同款模式——判比器只看真正该比的东西）。
+
+    ① 奇 gc 行尾 pad 字节：算子契约 scaleColNum = gc 偶数化，kernel 仅写每行
+    前 gc 字节，行尾 gap 字节保留输出 buffer 初值——该初值随执行环境而异
+    （TTK kernel 模式实测 0x7F、GE 为分配器残留），任何固定建模都只对单一
+    harness 成立。两侧该字节同置 0，使判比与 buffer 预填解耦。gc 从 y 末维
+    推得（epr = y.shape[-1] -> gc = epr/32）；偶 gc 无 pad。
+
+    ② amax 骑 2^k 边界的 ±1 指数差（KNOWN LIMITATION 的判比侧豁免，带成因
+    校验）：sigmoid(gate) 链路 exp 在 NPU 为硬件近似指令、CPU golden 为精确
+    舍入，~1e-7 无放大噪声进入组 amax——当某组 amax 恰落在 2 的幂分界 ±1e-7
+    内时两侧 e8m0 记档差 1。e8m0 被 TTK _BIN_DTYPES 类别强制逐位判比，容差
+    不可声明，故在此豁免。豁免条件（PR#16059 检视意见修正——仅字节差 ±1
+    是症状不是成因，须校验组级反量化等价以区分真踩线与"y 不动 scale 偏"
+    的伪 ±1）：
+      真踩线：payload 配套差 2 倍（payload = act/scale），两侧反量化值
+              payload·2^E 都 ≈ act → 组内超差元素 0~2/32 → 豁免
+      伪 ±1：y 逐位相同、scale 整体偏 1 → 反量化值差 2 倍 → 组内 32/32
+              全超差 → 不豁免（"y 不变 + 有效 scale 整体偏 1"必须失败）
+    判比口径与 y 侧同源：RTOL=2^-2（e4m3 两次独立舍入的相对差上界）、
+    ATOL=2^-6（几个 subnormal 步长，避免 0↔次正规翻转误伤）、组内超差
+    ≤ 1/8（真踩线与伪 ±1 之间隔 8 倍，阈值不敏感）。
+
     契约：入参 (y, y_scale, y_golden, y_scale_golden)，返回同长度序列。
     """
     if y is None or scale is None or len(rest) < 2:
@@ -269,23 +403,57 @@ def _pre_compare_mask_scale_pad(y=None, scale=None, *rest):
         return None
     gc = epr // _GROUP
     scn = gc + (gc & 1)
-    if scn == gc:
-        return [y, scale, y_g, s_g]
 
-    def _mask(arr):
-        # 判比缓冲区为只读，生成掩膜后的可写副本返回（pre_compare 契约：
-        # 返回变换序列，原地改写不可行）
+    def _u8_np(arr):
+        """统一转 numpy u8 (rows, scn) 视图（torch / numpy 双路径）。
+
+        判比算术全部在 numpy 域进行——TTK 判比实测设备侧与 golden 侧类型可
+        不同（geir: dev=numpy(ml_dtypes)、golden=torch(float8)），按设备侧
+        单一类型选分支会在还原段对 torch dtype 调 numpy view 而炸（外层
+        except 吞掉后连 ① pad 掩膜一并丢失）。"""
         if isinstance(arr, torch.Tensor):
-            u8 = arr.detach().view(torch.uint8).clone().reshape(-1, scn)
-            u8[:, gc:] = 0
-            return u8.reshape(arr.shape).view(arr.dtype)
-        a = np.asarray(arr)
-        u8 = np.ascontiguousarray(a.view(np.uint8)).reshape(-1, scn).copy()
-        u8[:, gc:] = 0
-        return u8.reshape(a.shape).view(a.dtype)
+            return arr.detach().view(torch.uint8).reshape(-1, scn).numpy().copy()
+        return np.array(np.asarray(arr).view(np.uint8).reshape(-1, scn), copy=True)
 
     try:
-        scale_m, s_g_m = _mask(scale), _mask(s_g)
+        s_dev_m = _u8_np(scale)
+        s_gold_m = _u8_np(s_g)
+        if s_dev_m.shape != s_gold_m.shape:
+            return None
+        # ① pad 掩膜（numpy 域）
+        if scn != gc:
+            s_dev_m[:, gc:] = 0
+            s_gold_m[:, gc:] = 0
+        # ② 逐位差 == ±1 且组级反量化等价的槽位：同置为 golden 值。
+        # 仅字节差 ±1 是症状（真踩线与伪 ±1 共有），成因校验按组对比
+        # 反量化值 payload·2^E——真踩线两侧都 ≈ act（payload 配套补偿），
+        # 伪 ±1（y 不动 scale 偏）差 2 倍全组超差，不豁免。
+        diff = np.asarray(s_dev_m, dtype=np.int64) - np.asarray(
+            s_gold_m, dtype=np.int64
+        )
+        off_by_one = np.abs(diff) == 1
+        if off_by_one.any() and gc > 0:
+            # ② 独立兜底：成因校验异常时退化为"不豁免"（返回 False 矩阵），
+            # ① 的 pad 掩膜不受影响——奇 gc 场景 off_by_one 为 (rows, scn)、
+            # 校验结果为 (rows, gc)，须按前 gc 列对齐后按位与
+            try:
+                equiv = _group_dequant_equiv(y, y_g, s_dev_m, s_gold_m, gc, epr)
+                merged = np.zeros_like(off_by_one)
+                merged[:, :gc] = off_by_one[:, :gc] & equiv
+                off_by_one = merged
+            except Exception:
+                off_by_one = np.zeros_like(off_by_one)
+        if off_by_one.any():
+            s_dev_m[off_by_one] = s_gold_m[off_by_one]
+        # 还原形状与 dtype：按各自来源类型恢复（dev/golden 类型可不同）
+        if isinstance(scale, torch.Tensor):
+            scale_m = torch.from_numpy(s_dev_m).reshape(scale.shape).view(scale.dtype)
+        else:
+            scale_m = s_dev_m.reshape(scale.shape).view(scale.dtype)
+        if isinstance(s_g, torch.Tensor):
+            s_g_m = torch.from_numpy(s_gold_m).reshape(s_g.shape).view(s_g.dtype)
+        else:
+            s_g_m = s_gold_m.reshape(s_g.shape).view(s_g.dtype)
     except Exception:
         return None
     return [y, scale_m, y_g, s_g_m]
@@ -341,12 +509,16 @@ class AclnnSituGluGroupQuantSpec:
         )
         return [y, mx]
 
-    # 逐位复刻参考（与原 recipes 算子 22 case 字节对拍验证）：量化输出按位比对，
-    # 不走 mix_tolerance 的 Promote 升精度 golden（bf16->fp32 会在 amax 指数
-    # 边界引入假差异，weight 逐 token 缩放下被放大）。
+    # 逐位复刻参考（与原 recipes 算子 22 case 字节对拍验证）；判比口径：
+    # e4m3fn 用 close（rtol=2^-2 吸收 ±1 码骑线元素，ptol=1e-3 容忍 0.1%
+    # 失配——两路口径下正常区间实测逐位一致，此容差仅兜底边界彩票）；
+    # e8m0 声明 close 但被 TTK _BIN_DTYPES 类别强制忽略，实际仍逐位
+    # binary_equal（声明保留作口径文档）。不走 mix_tolerance 的 Promote
+    # 升精度 golden（bf16->fp32 会在 amax 指数边界引入假差异，weight 逐
+    # token 缩放下被放大）。
     tolerance = {
-        "float8_e4m3fn": {"standard": "binary_equal"},
-        "float8_e8m0": {"standard": "binary_equal"},
+        "float8_e4m3fn": {"standard": "close", "rtol": 2**-2, "ptol": 1e-3},
+        "float8_e8m0": {"standard": "close"},
     }
     customize_inputs = customize_inputs
     pre_compare = staticmethod(_pre_compare_mask_scale_pad)
@@ -401,7 +573,7 @@ class SituGluGroupQuantE2ESpec(AclnnSituGluGroupQuantSpec):
             groupListType=group_list_type,
         )
 
-    # 判据与掩膜与 aclnn 同源（e4m3/e8m0 binary_equal + 奇 gc pad 掩膜）
+    # 判据与掩膜与 aclnn 同源（继承上方 close 口径 + 奇 gc pad 掩膜）
     tolerance = AclnnSituGluGroupQuantSpec.tolerance
     pre_compare = staticmethod(_pre_compare_mask_scale_pad)
     customize_inputs = staticmethod(customize_inputs_e2e)

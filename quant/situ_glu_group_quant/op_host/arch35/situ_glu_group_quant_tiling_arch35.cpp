@@ -65,8 +65,9 @@ constexpr int64_t MIN_TILE_COLS = 128;
 // K-row batching (performance dimension, no tiling-key change): amortize the
 // per-row copy-descriptor / VF-call / queue-cycle fixed costs when EPR is
 // small. Gated to the region where the per-row path measurably under-performs
-// a 2-op chain (EPR <= 1024); larger EPR keeps the proven per-row pipeline.
-constexpr int64_t K_BATCH_EPR_MAX = 1024;
+// the K-batch pipeline (EPR <= 2048, widened from 1024 after the two-path
+// tanh register-ization); larger EPR keeps the proven per-row pipeline.
+constexpr int64_t K_BATCH_EPR_MAX = 2048;
 // Loose guard only (NOT a tuning knob): K itself is UB-budget driven — the
 // same "fill as much as fits" philosophy as situ_glu (ubMaxBatch) and
 // dynamic_mx_quant (ubFactor). Prevents pathological blockCount sizes only.
@@ -434,7 +435,7 @@ ge::graphStatus SituGluGroupQuantRegbaseTiling::CalculateTiling()
     // Odd gc (scaleColNum = gc+1): K-batching is allowed too — the per-batch
     // scale copy-out uses the per-row Compact block path (1-byte-granularity
     // strides, swiglu_mx_quant caliber) instead of the flat contiguous copy.
-    // UB budget note: within the K-batch region (EPR <= 1024, gc <= 32) the
+    // UB budget note: within the K-batch region (EPR <= 2048, gc <= 64) the
     // 128-lane alignment absorbs the +1 tail byte — align(gc+1,128) ==
     // align(gc,128) — so the InitBuffer ledger and this budget are unchanged.
     // hasWeight does not disable batching — weights ride a dedicated UB queue

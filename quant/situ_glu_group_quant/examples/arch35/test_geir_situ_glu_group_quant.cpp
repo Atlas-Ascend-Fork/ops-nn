@@ -159,14 +159,35 @@ void CpuSituGluGroupQuant(const std::vector<uint16_t>& xBf16, int64_t totalRows,
     }
     validRows = std::min(validRows, totalRows);
 
-    auto SituBranch = [beta](float g) {
-        float tanhResult = beta * (2.0f / (1.0f + std::exp(-2.0f * g / beta)) - 1.0f);
+    // Two-path tanh (tanh.h reference, mirrors VFTanhTwoPathVf; aligned with
+    // test_aclnn example). Horner uses fmaf() to mirror the kernel
+    // FusedMulDstAdd single-rounding order.
+    struct TwoPathTanh {
+        float operator()(float x) const
+        {
+            const float c1 = -0.333327681f, c2 = 0.133152977f;
+            const float c3 = -0.0523039624f, c4 = 0.0157396831f;
+            float x2 = x * x;
+            float p = x2 * c4;
+            p = p + c3;
+            p = fmaf(x2, p, c2);
+            p = fmaf(x2, p, c1);
+            p = p * x2;
+            p = fmaf(x, p, x);
+            float naive = 2.0f / (1.0f + std::exp(-2.0f * x)) - 1.0f;
+            return std::fabs(x) >= 0.6f ? naive : p;
+        }
+    } twoPathTanh;
+    auto SituBranch = [beta, &twoPathTanh](float g) {
+        float x = g / beta; // plain division: subnormal beta -> +-inf, sigmoid branch consumes
+        float tanhResult = twoPathTanh(x);
         float sigmoidResult = 1.0f / (1.0f + std::exp(-g));
-        return tanhResult * sigmoidResult;
+        if (std::fabs(sigmoidResult) < 1.17549435e-38f) {
+            sigmoidResult = 0.0f; // hardware FTZ: flush subnormal sigmoid results
+        }
+        return (tanhResult * sigmoidResult) * beta;
     };
-    auto UpBranch = [linearBeta](float u) {
-        return linearBeta * (2.0f / (1.0f + std::exp(-2.0f * u / linearBeta)) - 1.0f);
-    };
+    auto UpBranch = [linearBeta, &twoPathTanh](float u) { return twoPathTanh(u / linearBeta) * linearBeta; };
 
     for (int64_t r = 0; r < validRows; r++) {
         std::vector<float> act(epr);
@@ -359,11 +380,10 @@ int main()
 
     int failed = 0;
     // Case 1: 2 experts x 4 rows, all rows valid, EPR=128 (safe range)
-    failed += (RunGraphCase(session, 0, 8, 128, {4, 4}, 1.0f, 2.0f, false,
-                            "GR1: 2 experts x4 rows, EPR=128, hp=false") != SUCCESS);
+    failed += (RunGraphCase(session, 0, 8, 128, {4, 4}, 1.0f, 2.0f, "GR1: 2 experts x4 rows, EPR=128") != SUCCESS);
     // Case 2: zero-token expert + padding rows (5/8 valid), hp=true
-    failed += (RunGraphCase(session, 1, 8, 128, {2, 0, 3}, 0.5f, 1.5f, true,
-                            "GR2: zero-token expert + padding rows, hp=true") != SUCCESS);
+    failed += (RunGraphCase(session, 1, 8, 128, {2, 0, 3}, 0.5f, 1.5f, "GR2: zero-token expert + padding rows") !=
+               SUCCESS);
 
     delete session;
     ge::GEFinalize();

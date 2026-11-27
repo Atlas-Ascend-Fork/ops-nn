@@ -188,11 +188,17 @@ float E8M0ToFloat(uint8_t e8m0)
 
 // ==================== CPU Reference (recipes SituGluGroupQuant semantics) ====================
 //
-// Activation (fp32, exp/Div direct, matching the ported SituActivationVF):
+// Activation (fp32, two-path tanh matching SituActivationVF, tanh.h caliber):
 //   gate = x[row, c]            (FIRST half; activate_left is forced on grouped)
 //   up   = x[row, c + EPR]      (second half)
-//   gateBranch = beta * (2/(1+exp(-2*gate/beta)) - 1) * sigmoid(gate)
-//   upBranch   = linearBeta * (2/(1+exp(-2*up/linearBeta)) - 1)
+//   x = gate/beta (plain 1/beta — subnormal beta gives +-inf, sigmoid branch
+//   consumes it; gate=0*inf=NaN falls to the exit cast as +0)
+//   TwoPathTanh(x): |x| < 0.6 -> x*(1+c1*x^2+c2*x^4+c3*x^6+c4*x^8)
+//                            -> x*(1+c1*x^2+c2*x^4+c3*x^6+c4*x^8) (Horner, FMA order)
+//                   |x| >= 0.6 -> 2/(1+exp(-2x)) - 1
+//   gateBranch = (TwoPathTanh(gate/beta) * sigmoid(gate)) * beta
+//   upBranch   = TwoPathTanh(up/linearBeta) * linearBeta
+//   sigmoid subnormal results (< 2^-126) are flushed to 0 (hardware FTZ)
 //   act = bf16(gateBranch * upBranch)   (act buffer is always bf16 on device)
 //   NOTE: pure fp32 activation chain with a single exit rounding — the
 //   intermediate branch round-trips were removed with high_precision in
@@ -218,14 +224,34 @@ void CpuSituGluGroupQuant(const std::vector<uint16_t>& xBf16, int64_t totalRows,
     }
     validRows = std::min(validRows, totalRows);
 
-    auto SituBranch = [beta](float g) {
-        float tanhResult = beta * (2.0f / (1.0f + std::exp(-2.0f * g / beta)) - 1.0f);
+    // Two-path tanh (tanh.h reference, mirrors VFTanhTwoPathVf). Horner uses
+    // explicit fmaf() to mirror the kernel FusedMulDstAdd single-rounding order.
+    struct TwoPathTanh {
+        float operator()(float x) const
+        {
+            const float c1 = -0.333327681f, c2 = 0.133152977f;
+            const float c3 = -0.0523039624f, c4 = 0.0157396831f;
+            float x2 = x * x;
+            float p = x2 * c4;
+            p = p + c3;
+            p = fmaf(x2, p, c2);
+            p = fmaf(x2, p, c1);
+            p = p * x2;
+            p = fmaf(x, p, x);
+            float naive = 2.0f / (1.0f + std::exp(-2.0f * x)) - 1.0f;
+            return std::fabs(x) >= 0.6f ? naive : p;
+        }
+    } twoPathTanh;
+    auto SituBranch = [beta, &twoPathTanh](float g) {
+        float x = g / beta; // plain division: subnormal beta -> +-inf, sigmoid branch consumes
+        float tanhResult = twoPathTanh(x);
         float sigmoidResult = 1.0f / (1.0f + std::exp(-g));
-        return tanhResult * sigmoidResult;
+        if (std::fabs(sigmoidResult) < 1.17549435e-38f) {
+            sigmoidResult = 0.0f; // hardware FTZ: flush subnormal sigmoid results
+        }
+        return (tanhResult * sigmoidResult) * beta;
     };
-    auto UpBranch = [linearBeta](float u) {
-        return linearBeta * (2.0f / (1.0f + std::exp(-2.0f * u / linearBeta)) - 1.0f);
-    };
+    auto UpBranch = [linearBeta, &twoPathTanh](float u) { return twoPathTanh(u / linearBeta) * linearBeta; };
 
     for (int64_t r = 0; r < validRows; r++) {
         std::vector<float> act(epr);

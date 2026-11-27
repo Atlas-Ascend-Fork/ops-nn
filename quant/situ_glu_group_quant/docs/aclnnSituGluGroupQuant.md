@@ -69,7 +69,7 @@
 
 ## 函数原型
 
-每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用"aclnnSituGluGroupQuantGetWorkspaceSize"接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用"aclnnSituGluGroupQuant"接口执行计算。
+每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnSituGluGroupQuantGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnSituGluGroupQuant”接口执行计算。
 
 ```cpp
 aclnnStatus aclnnSituGluGroupQuantGetWorkspaceSize(
@@ -159,7 +159,7 @@ aclnnStatus aclnnSituGluGroupQuant(
       <td>beta（double）</td>
       <td>输入</td>
       <td>gate支路的SiTU激活参数。</td>
-      <td>必须大于0。建议取值在[2^-10, 2^10]范围内：极大beta配合小幅度输入时，激活链的浮点大数相消会使结果退化为0（指令序实现口径，与上游实现逐位一致）。</td>
+      <td>必须大于0。建议取值在[2^-10, 2^10]范围内。tanh采用两路实现（与situ_glu/situ_mx_quant算子及标准tanh.h参考同口径）：|gate/beta| &lt; 0.6用9阶多项式（无exp、无相消），≥0.6用sigmoid分解（饱和区）——不存在“极大beta配合小幅度输入时结果退化为0”的病态区间。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -169,7 +169,7 @@ aclnnStatus aclnnSituGluGroupQuant(
       <td>linearBeta（double）</td>
       <td>输入</td>
       <td>up支路的软限幅参数。</td>
-      <td>≤0禁用软限幅（up直通），>0启用（up幅度钳位在 ±linearBeta）。建议取值在[2^-10, 2^10]范围内（同beta的相消精度边界）。</td>
+      <td>≤0禁用软限幅（up直通），>0启用（up幅度钳位在 ±linearBeta）。建议取值在[2^-10, 2^10]范围内。tanh同beta采用两路实现，无相消精度边界。</td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
