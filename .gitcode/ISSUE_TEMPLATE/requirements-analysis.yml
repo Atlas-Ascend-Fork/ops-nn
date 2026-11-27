@@ -1,0 +1,95 @@
+name: Requirements-Analysis|需求分析
+description: 当您需要新增一个算子，或为已有算子补充需求规格时，请使用此模板。
+title: "[Requirements-Analysis|需求分析]: "
+labels: ["requirements-analysis"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sending a requirement! Please fill in the following template to help quickly analyze your requirement.
+        提交前请先搜索已有 Issue，确认没有重复需求；不确定的内容请写「未知」并说明原因，不要留空。
+  - type: textarea
+    attributes:
+      label: Operator Information / 算子基本信息 (Mandatory / 必填)
+      description: 请提供算子名称与类别，便于快速定位、检索
+      placeholder: |
+        - 算子名称：如 RmsNorm
+        - 算子类别：基础算子 / 融合算子 / 其他
+        - 关联模型或论文：如 LLaMA 系列、arXiv:1910.07467
+        - 优先级：高（阻塞使用）/ 中（有替代方案）/ 低（长期规划）
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Background / 需求背景 (Mandatory / 必填)
+      description: 请描述使用场景、所属模型或网络结构、当前痛点，以及不实现该算子的影响；请勿填写客户名称、内部项目代号等不宜公开的信息
+      placeholder: |
+        - 使用场景：
+        - 所属模型 / 网络结构：
+        - 当前痛点：
+        - 不实现的后果：
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Operator Formula / 算子公式 (Mandatory / 必填)
+      description: 请给出数学定义，写清输入、输出与每一步计算；如有公开实现请附链接，并说明与之的差异（累加顺序、dtype 提升、边界值处理等）
+      placeholder: |
+        - 数学定义：
+        - 输入：
+        - 输出：
+        - 参考实现：
+        - 与参考实现的差异：
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Interface Definition / 接口定义 (Mandatory / 必填)
+      description: 请给出框架对应算子与期望的接口签名、参数说明；如果只需要框架层可用，填写框架对应算子即可，aclnn 签名可由维护者补充
+      placeholder: |
+        - 框架对应算子：如 torch.nn.functional.rms_norm、ONNX RMSNormalization
+        - 接口名：
+        - 参数说明（参数 / 方向 / 类型 / 形状约束 / 说明）：
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Constraints / 约束 (Mandatory / 必填)
+      description: 请给出功能与规格边界，没有的项写「无」
+      placeholder: |
+        - dtype 支持：
+        - shape 约束：
+        - 目标平台：如 Ascend 910B
+        - 框架与版本：
+        - 精度要求：
+        - 性能要求：
+        - 兼容性要求：
+        - 其他约束与限制：
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Acceptance Criteria / 验收标准 (Optional / 选填)
+      description: 请描述如何判定该需求已被满足，包括覆盖场景、比对基准与阈值、测试数据来源
+      placeholder: |
+        - 功能覆盖场景：
+        - 精度比对基准与阈值：
+        - 性能测试环境与目标值：
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Dependencies and Deliverables / 依赖与交付 (Optional / 选填)
+      description: 请说明该需求涉及的组件与交付要求，便于评估工作量
+      placeholder: |
+        - 涉及组件：kernel / tiling / 算子原型 / aclnn 接口 / infershape / 图模式插件 / 框架适配
+        - 新增依赖：
+        - 文档要求：
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Special notes / 备注 (Optional / 选填)
+      description: 补充其他您认为需要提供的信息
+    validations:
+      required: false
