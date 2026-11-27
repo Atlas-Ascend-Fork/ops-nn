@@ -25,7 +25,7 @@
 
 ## Function
 
-Computes logits from input self, and performs backward propagation of [BCELoss](../../../loss/sigmoid_cross_entropy_with_logits_v2/docs/aclnnBinaryCrossEntropyWithLogits.md) with respect to target using the obtained values and the label value target.
+Computes logits from input self, and performs backward propagation of [BCELoss](../../../loss/sigmoid_cross_entropy_with_logits_v2/docs/aclnnBinaryCrossEntropyWithLogits_en.md) with respect to target using the obtained values and the label value target.
 
 ## Function Prototype
 
