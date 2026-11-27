@@ -14,6 +14,7 @@
  *        input_size为const且out_backprop为静态shape时，input_size推导的dx经attr正推需与out_backprop的H/W一致
  */
 
+#include "base/err_mgr.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "gtest/gtest.h"
@@ -54,6 +55,7 @@ static gert::KernelRunContextHolder BuildConv2DBackpropInputContext(
     gert::StorageShape output_shape = {{}, {}};
     gert::InferShapeContextFaker faker;
     faker.NodeIoNum(3, 1)
+        .SetOpType("Conv2DBackpropInput")
         .IrInstanceNum({1, 1, 1})
         .NodeInputTd(0, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeInputTd(1, ge::DT_FLOAT16, filter_format, filter_format)
@@ -94,6 +96,8 @@ static ge::graphStatus RunConv2DBackpropInputInferShape(std::unique_ptr<uint8_t[
 TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyFilterNegativeHFail)
 {
     ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DBackpropInput"), nullptr);
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
     std::unique_ptr<uint8_t[]> tensor_holder;
     gert::StorageShape filter_shape = {{32, 64, -1, 3}, {32, 64, -1, 3}};
     gert::StorageShape dedy_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
@@ -118,12 +122,19 @@ TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyFilterNegat
 
 TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyFilterUnknownRankFail)
 {
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
     std::unique_ptr<uint8_t[]> tensor_holder;
     gert::StorageShape filter_shape = {{-2}, {-2}};
     gert::StorageShape dedy_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
     EXPECT_EQ(RunConv2DBackpropInputInferShape(tensor_holder, true, {2, 32, 32, 32}, filter_shape, ge::FORMAT_NCHW,
                                                dedy_shape),
               ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0015"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter filter of Conv2DBackpropInput"), std::string::npos) << message;
 }
 
 TEST_F(Conv2DBackpropInputRuntimeInferShape, constInputSizeStaticDedyFilterPositiveSuccess)

@@ -1462,7 +1462,10 @@ bool Conv3DDWV2BasicBlockTilingArch35::PrintInputsAttrs(conv_bp_v2_kernel::TConv
     OP_CHECK_IF(attrs == nullptr, OP_LOGE(opName_, "get attrs from context fail."), return false);
     const auto groups = attrs->GetAttrPointer<int64_t>(GROUPS_INDEX);       // groups idx 3
     const auto enableHf32 = attrs->GetAttrPointer<bool>(ENABLE_HF32_INDEX); // enable_hf32 idx 5
-    OP_CHECK_IF(groups == nullptr, OP_LOGE(opName_, "get groups from context fail."), return false);
+    OP_CHECK_IF(groups == nullptr,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "groups", "nullptr",
+                                                      "The attribute must exist in the tiling context."),
+                return false);
 
     OP_LOGD(opName_, "Attrs stride: %s, pads: %s, dilation: %s, groups: %ld, enable_hf32: %d.",
             DebugString(stridesShape).c_str(), DebugString(padsShape).c_str(), DebugString(dilationsShape).c_str(),

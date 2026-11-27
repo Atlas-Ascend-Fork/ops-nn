@@ -15,6 +15,8 @@
 #include <string>
 #include <vector>
 
+#include "graph/utils/type_utils.h"
+
 namespace ops {
 using namespace ge;
 using namespace ge::es;
@@ -52,14 +54,16 @@ bool DepthwiseDfFusionPass::GetResizeDepthwiseFilterShape(std::vector<int64_t>& 
     const auto& oriShape = filterDesc.GetShape().GetDims();
     ge::Format format = filterDesc.GetOriginFormat();
     if (oriShape.size() != FILTER_DIM_EXPECT) {
-        OP_LOGE(GetNodeType().GetString(), "filter dim only supports 4 dims, got %zu.", oriShape.size());
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(GetNodeType().GetString(), "filter", std::to_string(oriShape.size()),
+                                                  "The filter shape must have 4 dimensions.");
         return false;
     }
     // 格式未知时不抛异常，走下方NCHW默认分支外的失败路径
     auto dimIt = FORMAT_TO_NCHW_DIM_MAP.find(format);
     OP_CHECK_IF(dimIt == FORMAT_TO_NCHW_DIM_MAP.end(),
-                OP_LOGE(GetNodeType().GetString(), "filter format %d not support, only NCHW/HWCN.",
-                        static_cast<int32_t>(format)),
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(GetNodeType().GetString(), "filter",
+                                                       TypeUtils::FormatToSerialString(format),
+                                                       "Only NCHW and HWCN are supported."),
                 return false);
     const auto& dimVec = dimIt->second;
     if (format == ge::FORMAT_NCHW) {
@@ -89,9 +93,11 @@ bool DepthwiseDfFusionPass::ValidateFilterShapePositive()
     const TensorDesc& filterDesc = isDynamic ? input1Desc : input0Desc;
     auto filterOriShapeDims = filterDesc.GetOriginShape().GetDims();
     for (auto filterDim : filterOriShapeDims) {
-        OP_CHECK_IF(filterDim <= 0,
-                    OP_LOGE(GetNodeType().GetString(), "%ld in filter shape should be positive.", filterDim),
-                    return false);
+        OP_CHECK_IF(
+            filterDim <= 0,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(GetNodeType().GetString(), "filter", std::to_string(filterDim),
+                                                  "All dimensions of the filter shape must be positive."),
+            return false);
     }
     return true;
 }
@@ -106,10 +112,10 @@ bool DepthwiseDfFusionPass::ValidateArch35Descs(const bool isInputSizeConst)
     // input_size为非const时out_backprop支持-1/-2
     OP_CHECK_IF((dedyDims != static_cast<size_t>(GRAD_OUTPUT_DIM) && !isUnknownRankDedy) ||
                     (isUnknownRankDedy && isInputSizeConst),
-                OP_LOGE(GetNodeType().GetString(),
-                        "out_backprop dims should be 4, and [-2] is not supported when "
-                        "input_size is const, but got dims=%zu",
-                        dedyDims),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    GetNodeType().GetString(), "out_backprop", std::to_string(dedyDims),
+                    "The out_backprop shape must have 4 dimensions, and [-2] is not supported when input_size is "
+                    "const."),
                 return false);
     ge::Format gradOutputFormat = dedyDesc.GetOriginFormat();
     ge::Format outputFormat = outputDesc.GetOriginFormat();
@@ -163,8 +169,9 @@ bool DepthwiseDfFusionPass::MeetRequirements(const GNode& matchedNode)
     const TensorDesc& filterDesc = isDynamic ? input1Desc : input0Desc;
     ge::Format originFormat = filterDesc.GetOriginFormat();
     OP_CHECK_IF(FORMAT_TO_NCHW_DIM_MAP.find(originFormat) == FORMAT_TO_NCHW_DIM_MAP.end(),
-                OP_LOGE(GetNodeType().GetString(), "filter origin format only supports NCHW or HWCN, got %d",
-                        static_cast<int>(originFormat)),
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(GetNodeType().GetString(), "filter",
+                                                       TypeUtils::FormatToSerialString(originFormat),
+                                                       "Only NCHW and HWCN are supported."),
                 return false);
     OP_CHECK_IF(!ValidateFilterDesc(matchedNode), OP_LOGD(GetNodeType().GetString(), "ValidateFilterDesc failed"),
                 return false);

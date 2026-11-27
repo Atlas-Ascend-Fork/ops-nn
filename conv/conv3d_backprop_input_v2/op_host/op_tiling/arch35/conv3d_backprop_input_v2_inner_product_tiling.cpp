@@ -2826,7 +2826,8 @@ bool Conv3DDXV2InnerProductTiling::UpdateIsBiasFullLoad(L1TilingParams& l1Params
         l1Params.isBiasFullLoad = 0U;
         OP_LOGD(opName_, "biasSize: %lu, BT_BUFFER_SIZE: %lu, isBiasFullLoad: false", biasSize, BT_BUFFER_SIZE);
         if (hasBiasFlag_ && IsArchAfter35(context_)) {
-            OP_LOGE(opName_, "bias size exceeds BT buffer limit, not support");
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName_, "bias", "size exceeds BT buffer limit",
+                                                  "The bias size exceeds the BT buffer limit and is not supported.");
             return false;
         }
     } else {

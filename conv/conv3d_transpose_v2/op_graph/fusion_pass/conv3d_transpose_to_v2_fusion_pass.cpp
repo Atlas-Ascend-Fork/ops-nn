@@ -14,6 +14,7 @@
 #include <cstring>
 
 #include "es_nn_ops.h"
+#include "graph/utils/type_utils.h"
 #include "log/log.h"
 #include "register/register_custom_pass.h"
 
@@ -143,19 +144,34 @@ bool Conv3DTransposeToV2FusionPass::CheckDtypeSupported()
     auto filterDtype = input2Desc.GetDataType();
     auto yDtype = outputDesc.GetDataType();
 
-    OP_CHECK_IF(xDtype == DT_HIFLOAT8 || xDtype == DT_FLOAT8_E4M3FN,
-                OP_LOGE(GetNodeType().GetString(), "x dtype is not supported"), return false);
+    OP_CHECK_IF(
+        xDtype == DT_HIFLOAT8 || xDtype == DT_FLOAT8_E4M3FN,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(GetNodeType().GetString(), "x", TypeUtils::DataTypeToSerialString(xDtype),
+                                              "HIFLOAT8 and FLOAT8_E4M3FN are not supported."),
+        return false);
     OP_CHECK_IF(filterDtype == DT_HIFLOAT8 || filterDtype == DT_FLOAT8_E4M3FN,
-                OP_LOGE(GetNodeType().GetString(), "filter dtype is not supported"), return false);
-    OP_CHECK_IF(yDtype == DT_HIFLOAT8 || yDtype == DT_FLOAT8_E4M3FN,
-                OP_LOGE(GetNodeType().GetString(), "y dtype is not supported"), return false);
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(GetNodeType().GetString(), "filter",
+                                                      TypeUtils::DataTypeToSerialString(filterDtype),
+                                                      "HIFLOAT8 and FLOAT8_E4M3FN are not supported."),
+                return false);
+    OP_CHECK_IF(
+        yDtype == DT_HIFLOAT8 || yDtype == DT_FLOAT8_E4M3FN,
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(GetNodeType().GetString(), "y", TypeUtils::DataTypeToSerialString(yDtype),
+                                              "HIFLOAT8 and FLOAT8_E4M3FN are not supported."),
+        return false);
 
     if (hasBias) {
         auto biasDtype = biasDesc.GetDataType();
         OP_CHECK_IF(biasDtype != DT_FLOAT16 && biasDtype != DT_BF16 && biasDtype != DT_FLOAT,
-                    OP_LOGE(GetNodeType().GetString(), "bias dtype is not supported"), return false);
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(GetNodeType().GetString(), "bias",
+                                                          TypeUtils::DataTypeToSerialString(biasDtype),
+                                                          "The bias dtype must be float16, bfloat16 or float32."),
+                    return false);
         OP_CHECK_IF(biasDtype != filterDtype && biasDtype != DT_FLOAT,
-                    OP_LOGE(GetNodeType().GetString(), "bias dtype must match filter dtype or be float32"),
+                    OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(GetNodeType().GetString(), "bias",
+                                                          TypeUtils::DataTypeToSerialString(biasDtype),
+                                                          "The bias dtype must be the same as the filter dtype or "
+                                                          "float32."),
                     return false);
     }
 

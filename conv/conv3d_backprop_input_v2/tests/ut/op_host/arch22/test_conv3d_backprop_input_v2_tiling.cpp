@@ -1312,10 +1312,10 @@ TEST(FrameworkAttrsContract, InputImplMode)
     const auto errors = error_message::GetErrMgrRawErrorMessages();
     ASSERT_EQ(errors.size(), 1U);
     ASSERT_NE(errors[0].error_id, nullptr);
-    EXPECT_STREQ(errors[0].error_id.get(), "EZ9999");
+    EXPECT_STREQ(errors[0].error_id.get(), "EZ0026");
     ASSERT_NE(errors[0].error_message, nullptr);
     const std::string message(errors[0].error_message.get());
-    EXPECT_NE(message.find("GetImplMode"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter impl_mode of Conv3DBackpropInputV2"), std::string::npos) << message;
     EXPECT_NE(message.find("ComputeNodeInfo"), std::string::npos) << message;
     EXPECT_NE(message.find("RuntimeAttrs"), std::string::npos) << message;
     EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
@@ -1334,10 +1334,10 @@ TEST(FrameworkAttrsContract, InputTranspose)
     const auto errors = error_message::GetErrMgrRawErrorMessages();
     ASSERT_EQ(errors.size(), 1U);
     ASSERT_NE(errors[0].error_id, nullptr);
-    EXPECT_STREQ(errors[0].error_id.get(), "EZ9999");
+    EXPECT_STREQ(errors[0].error_id.get(), "EZ0026");
     ASSERT_NE(errors[0].error_message, nullptr);
     const std::string message(errors[0].error_message.get());
-    EXPECT_NE(message.find("CheckTranspose"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter output_padding of Conv3DTranspose"), std::string::npos) << message;
     EXPECT_NE(message.find("ComputeNodeInfo"), std::string::npos) << message;
     EXPECT_NE(message.find("RuntimeAttrs"), std::string::npos) << message;
     EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());

@@ -66,10 +66,10 @@ static ge::graphStatus CheckOutBackpropShapeForConv2DBackpropFilter(gert::InferS
     const int64_t outBackpropH = outBackpropShape->GetDim(hIndex);
     const int64_t outBackpropW = outBackpropShape->GetDim(wIndex);
     if (outBackpropH < 0 || outBackpropW < 0) {
-        OP_LOGE(context->GetNodeName(),
-                "out_backprop shape h = %ld, w = %ld should be positive when filter_size is const and x shape is "
-                "static.",
-                outBackpropH, outBackpropW);
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            context->GetNodeName(), "out_backprop",
+            "h=" + std::to_string(outBackpropH) + ", w=" + std::to_string(outBackpropW),
+            "The out_backprop shape h and w must be positive when filter_size is const and x shape is static.");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

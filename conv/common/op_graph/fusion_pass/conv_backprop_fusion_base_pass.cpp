@@ -130,8 +130,9 @@ bool ConvBackpropFusionBasePass::Update2DInputDesc(ge::TensorDesc& inputDesc)
     auto inputShape = inputDesc.GetShape();
     OP_CHECK_IF(inputShape.GetDimNum() != INPUT_2D_DIM &&
                     (inputShape.GetDims().size() != UNKNOWN_RANK_DIM || inputShape.GetDim(0) != UNKNOWN_RANK_DIM_VALUE),
-                OP_LOGE(GetNodeType().GetString(), "input shape must have 4 dimensions or shape is [-2], but got %zu.",
-                        inputShape.GetDims().size()),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(GetNodeType().GetString(), "input",
+                                                          std::to_string(inputShape.GetDims().size()),
+                                                          "The input shape must have 4 dimensions or be [-2]."),
                 return false);
 
     if (inputShape.GetDims().size() == UNKNOWN_RANK_DIM) {

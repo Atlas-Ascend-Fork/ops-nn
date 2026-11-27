@@ -76,8 +76,9 @@ static bool GetConv3DXShapeForTranspose(const InferShapeContext* context, Format
         shapes.iw = x_shape->GetDim(idx++);
         shapes.ic = x_shape->GetDim(idx++);
     } else {
-        OP_LOGE(context->GetNodeName(), "The format of input x not support format %s.",
-                ge::TypeUtils::FormatToAscendString(x_format).GetString());
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "x",
+                                               ge::TypeUtils::FormatToAscendString(x_format).GetString(),
+                                               "Only NCDHW and NDHWC are supported.");
         return false;
     }
 
@@ -119,8 +120,9 @@ static bool GetConv3DFilterShapeForTranspose(const InferShapeContext* context, C
         shapes.kc = filter_shape->GetDim(idx++);
         shapes.kn = filter_shape->GetDim(idx++);
     } else {
-        OP_LOGE(context->GetNodeName(), "The format of input filter not support format %s.",
-                ge::TypeUtils::FormatToAscendString(filter_format).GetString());
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "filter",
+                                               ge::TypeUtils::FormatToAscendString(filter_format).GetString(),
+                                               "Only NCDHW, NDHWC and DHWCN are supported.");
         return false;
     }
 
@@ -144,9 +146,14 @@ static bool GetConv3DTransposeAttrs(const InferShapeContext* context, Format x_f
                 return false);
     OP_CHECK_IF(strides_list->GetSize() != kConv3dDimSizeLimit || dilations_list->GetSize() != kConv3dDimSizeLimit ||
                     output_padding_list->GetSize() != kConv3dDimSizeLimit || pads_list->GetSize() != 6,
-                OP_LOGE(context->GetNodeName(),
-                        "strides/dilations/output_padding size should be 5 and pads size should be 6 when input_size "
-                        "is all-zero placeholder."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "strides, dilations, output_padding, pads",
+                    "strides=" + std::to_string(strides_list->GetSize()) +
+                        ", dilations=" + std::to_string(dilations_list->GetSize()) +
+                        ", output_padding=" + std::to_string(output_padding_list->GetSize()) +
+                        ", pads=" + std::to_string(pads_list->GetSize()),
+                    "The sizes of strides, dilations and output_padding must be 5, and the size of pads must be 6, "
+                    "when input_size is an all-zero placeholder."),
                 return false);
 
     const auto strides = static_cast<const int64_t*>(strides_list->GetData());
@@ -179,8 +186,13 @@ static bool GetConv3DTransposeAttrs(const InferShapeContext* context, Format x_f
     attrs.groups = *groups;
     OP_CHECK_IF(attrs.strd <= 0 || attrs.strh <= 0 || attrs.strw <= 0 || attrs.dild <= 0 || attrs.dilh <= 0 ||
                     attrs.dilw <= 0 || attrs.groups <= 0,
-                OP_LOGE(context->GetNodeName(),
-                        "strides, dilations and groups should be positive when input_size is all-zero placeholder."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "strides, dilations, groups",
+                    "stride_d=" + std::to_string(attrs.strd) + ", stride_h=" + std::to_string(attrs.strh) +
+                        ", stride_w=" + std::to_string(attrs.strw) + ", dilation_d=" + std::to_string(attrs.dild) +
+                        ", dilation_h=" + std::to_string(attrs.dilh) + ", dilation_w=" + std::to_string(attrs.dilw) +
+                        ", groups=" + std::to_string(attrs.groups),
+                    "strides, dilations and groups must be positive when input_size is an all-zero placeholder."),
                 return false);
 
     // pads布局为[head, tail, up, down, left, right]，与1.0 kConv3dPadHeadIdx等下标一致
@@ -239,8 +251,13 @@ static ge::graphStatus FixZeroPlaceholderShape(gert::InferShapeContext* context,
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(shapes.in <= 0 || shapes.id <= 0 || shapes.ih <= 0 || shapes.iw <= 0 || shapes.kc <= 0 ||
                     shapes.kd <= 0 || shapes.kh <= 0 || shapes.kw <= 0,
-                OP_LOGE(context->GetNodeName(),
-                        "x shape and filter shape should be positive when input_size is all-zero placeholder."),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context->GetNodeName(), "x, filter",
+                    "x(N=" + std::to_string(shapes.in) + ", D=" + std::to_string(shapes.id) +
+                        ", H=" + std::to_string(shapes.ih) + ", W=" + std::to_string(shapes.iw) +
+                        "), filter(C=" + std::to_string(shapes.kc) + ", D=" + std::to_string(shapes.kd) +
+                        ", H=" + std::to_string(shapes.kh) + ", W=" + std::to_string(shapes.kw) + ")",
+                    "The x and filter shape dimensions must be positive when input_size is an all-zero placeholder."),
                 return ge::GRAPH_FAILED);
 
     int64_t output_d = attrs.strd * (shapes.id - 1) + output_padding[0] + ((shapes.kd - 1) * attrs.dild + 1) -
@@ -270,8 +287,9 @@ static ge::graphStatus FixZeroPlaceholderShape(gert::InferShapeContext* context,
         y_shape->AppendDim(output_w);
         y_shape->AppendDim(shapes.kc * attrs.groups);
     } else {
-        OP_LOGE(context->GetNodeName(), "The format of output y not support format %s.",
-                ge::TypeUtils::FormatToAscendString(x_format).GetString());
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(context->GetNodeName(), "y",
+                                               ge::TypeUtils::FormatToAscendString(x_format).GetString(),
+                                               "Only NCDHW and NDHWC are supported.");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;

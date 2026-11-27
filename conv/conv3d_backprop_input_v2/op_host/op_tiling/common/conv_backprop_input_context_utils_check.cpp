@@ -67,8 +67,10 @@ bool GetImplMode(Conv3dBpInputV2RunInfo& runInfoV2, const char* opName, const ge
 
     auto attrs = context->GetAttrs();
     OP_CHECK_IF(attrs == nullptr,
-                OP_LOGE(opName, "GetImplMode: missing RuntimeAttrs in framework tiling context;"
-                                " ComputeNodeInfo must be initialized before attribute access."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    opName, "impl_mode", "nullptr",
+                    "RuntimeAttrs is missing in the framework tiling context; ComputeNodeInfo must be initialized "
+                    "before attribute access."),
                 return false);
     auto inputDesc = context->GetInputDesc(OUT_BACKPROP_INDEX);
     OP_CHECK_IF(inputDesc == nullptr, OP_LOGE_WITH_INVALID_INPUT(opName, "out_backprop"), return false);
@@ -783,8 +785,10 @@ bool CheckTranspose(const char* opName, const gert::TilingContext* context)
 {
     auto attrs = context->GetAttrs();
     OP_CHECK_IF(attrs == nullptr,
-                OP_LOGE(opName, "CheckTranspose: missing RuntimeAttrs in framework tiling context;"
-                                " ComputeNodeInfo must be initialized before attribute access."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    opName, "output_padding", "nullptr",
+                    "RuntimeAttrs is missing in the framework tiling context; ComputeNodeInfo must be initialized "
+                    "before attribute access."),
                 return false);
 
     auto outputPadding = attrs->GetAttrPointer<gert::ContinuousVector>(OUTPUT_PADDING_INDEX);

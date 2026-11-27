@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "base/err_mgr.h"
 #include "platform/platform_info.h"
 #include "register/register_custom_pass.h"
 #include "ge/compliant_node_builder.h"
@@ -30,6 +31,28 @@ namespace {
 constexpr int64_t AI_CORE_CNT = 64;
 constexpr int64_t FILTER_SIZE_DIM = 4;
 int64_t DEFAULT_IMPL_MODE = 0x1;
+
+// ErrorManager 是进程级单例：用例开头初始化并读取一次清空容器，避免其它用例遗留的首错串扰。
+void InitErrMgr()
+{
+    // 锚定 opbase log.cpp.o：预定义码注册表（REG_FORMAT_ERROR_MSG）随该符号链接进本测试二进制。
+    (void)Ops::Base::ToString(ge::DT_FLOAT);
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+}
+
+// 错误路径公共断言：首错报文含预期预定义码与片段，且容器已被清空。
+void ExpectFirstError(const std::string& expectCode, const std::string& expectFragment)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_GE(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_STREQ(errors[0].error_id.get(), expectCode.c_str());
+    ASSERT_NE(errors[0].error_message, nullptr);
+    const std::string message(errors[0].error_message.get());
+    EXPECT_NE(message.find(expectFragment), std::string::npos) << message;
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
 
 void SetPlatform(const std::string& soc)
 {
@@ -439,6 +462,7 @@ TEST_F(DepthwiseDwMulFusionPassTest, groupsMinBoundarySuccess)
 
 TEST_F(DepthwiseDwMulFusionPassTest, invalidFilterDimFail)
 {
+    InitErrMgr();
     auto builder = EsGraphBuilder("invalidFilterDimFail");
     auto x = builder.CreateInput(0, "x", DT_FLOAT16, FORMAT_NCHW, {2, 32, 16, 16});
     auto outBackprop = builder.CreateInput(1, "out_backprop", DT_FLOAT16, FORMAT_NCHW, {2, 32, 16, 16});
@@ -452,10 +476,30 @@ TEST_F(DepthwiseDwMulFusionPassTest, invalidFilterDimFail)
     ops::DepthwiseDwMulFusionPass pass({AscendString("DepthwiseConv2DBackpropFilterD")});
     EXPECT_NE(pass.Run(graph, ctx), SUCCESS);
     EXPECT_FALSE(CheckNodeExists(graph, "Conv2DBackpropFilterD"));
+    ExpectFirstError("EZ0015", "Parameter filter of DepthwiseDwMulFusionPass");
+}
+TEST_F(DepthwiseDwMulFusionPassTest, filterNonPositiveDimFail)
+{
+    InitErrMgr();
+    auto builder = EsGraphBuilder("filterNonPositiveDimFail");
+    auto x = builder.CreateInput(0, "x", DT_FLOAT16, FORMAT_NCHW, {2, 32, 16, 16});
+    auto outBackprop = builder.CreateInput(1, "out_backprop", DT_FLOAT16, FORMAT_NCHW, {2, 32, 16, 16});
+
+    auto y = CreateDepthwiseConv2DBpFilterDNode(builder, "DepthwiseConv2DBackpropFilterD", x, outBackprop, {1, 1, 2, 2},
+                                                {0, 0, 1, 1}, {1, 1, 1, 1}, 32, "NCHW", DT_FLOAT16, {32, 1, 3, 0},
+                                                FORMAT_NCHW);
+
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::DepthwiseDwMulFusionPass pass({AscendString("DepthwiseConv2DBackpropFilterD")});
+    EXPECT_NE(pass.Run(graph, ctx), SUCCESS);
+    EXPECT_FALSE(CheckNodeExists(graph, "Conv2DBackpropFilterD"));
+    ExpectFirstError("EZ0009", "Parameter filter of DepthwiseDwMulFusionPass");
 }
 
 TEST_F(DepthwiseDwMulFusionPassTest, invalidFilterFormatFail)
 {
+    InitErrMgr();
     auto builder = EsGraphBuilder("invalidFilterFormatFail");
     auto x = builder.CreateInput(0, "x", DT_FLOAT16, FORMAT_NCHW, {2, 32, 16, 16});
     auto outBackprop = builder.CreateInput(1, "out_backprop", DT_FLOAT16, FORMAT_NCHW, {2, 32, 16, 16});
@@ -469,6 +513,7 @@ TEST_F(DepthwiseDwMulFusionPassTest, invalidFilterFormatFail)
     ops::DepthwiseDwMulFusionPass pass({AscendString("DepthwiseConv2DBackpropFilterD")});
     EXPECT_EQ(pass.Run(graph, ctx), GRAPH_NOT_CHANGED);
     EXPECT_FALSE(CheckNodeExists(graph, "Conv2DBackpropFilterD"));
+    ExpectFirstError("EZ0035", "Parameter filter of DepthwiseDwMulFusionPass");
 }
 
 TEST_F(DepthwiseDwMulFusionPassTest, fromDepthwisePropagatedSuccess)

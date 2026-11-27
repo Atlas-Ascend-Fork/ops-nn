@@ -69,9 +69,10 @@ static ge::graphStatus CheckFilterShapeForConv2DBackpropInput(gert::InferShapeCo
                 CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get filter tensor desc."),
                 return ge::GRAPH_FAILED);
     if (Ops::Base::IsUnknownRank(*filterShape)) {
-        OP_LOGE(context->GetNodeName(),
-                "filter shape [-2] should be 4 dims and h, w should be positive when input_size is const and "
-                "out_backprop shape is static.");
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            context->GetNodeName(), "filter", std::to_string(filterShape->GetDimNum()),
+            "The filter shape [-2] must have 4 dimensions and its h and w must be positive when input_size is const "
+            "and out_backprop shape is static.");
         return ge::GRAPH_FAILED;
     }
     size_t hIndex = 0;
@@ -125,10 +126,9 @@ static ge::graphStatus CheckFilterShapeForConv2DBackpropInput(gert::InferShapeCo
     const int64_t dyWNew = (dxW + pads[kPadLeftIdx] + pads[kPadRightIdx] - kernelW) / strideW + 1;
     if (dyHNew != dyH || dyWNew != dyW) {
         if (filterH < 0 || filterW < 0) {
-            OP_LOGE(context->GetNodeName(),
-                    "filter shape h = %ld, w = %ld should be positive when input_size is const and out_backprop shape "
-                    "is static.",
-                    filterH, filterW);
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                context->GetNodeName(), "filter", "h=" + std::to_string(filterH) + ", w=" + std::to_string(filterW),
+                "The filter shape h and w must be positive when input_size is const and out_backprop shape is static.");
         } else {
             OP_LOGE(context->GetNodeName(),
                     "the output Hout=%ld or Wout=%ld is not equal with the Hout'=%ld or Wout'=%ld which is calculated "

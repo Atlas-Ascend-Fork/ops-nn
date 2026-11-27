@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "base/err_mgr.h"
 #include "kernel_run_context_facker.h"
 #include "conv/common/op_host/op_tiling/conv_math_util.h"
 #include "conv/common/op_host/op_tiling/conv_platform_util.h"
@@ -243,6 +244,60 @@ TEST_F(ConvCommonUtilsTest, DebugUtilTensorInfoAndAttrVector)
     EXPECT_EQ(GetAttrVector(context, 0, 4, "strides"), std::vector<int64_t>({1, 1, 2, 2}));
     EXPECT_TRUE(GetAttrVector(context, 0, 3, "strides").empty());
     EXPECT_TRUE(GetAttrVector(context, 5, 4, "pads").empty());
+}
+
+// GetAttrVector错误路径：attr不存在上报EZ0026，attr列表长度不符上报EZ0009
+TEST_F(ConvCommonUtilsTest, DebugUtilGetAttrVectorErrorCodes)
+{
+    // 锚定 opbase log.cpp.o：预定义码注册表（REG_FORMAT_ERROR_MSG）随该符号链接进本测试二进制。
+    (void)Ops::Base::ToString(ge::DT_FLOAT);
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    gert::StorageShape xShape = {{1, 16, 16, 16}, {1, 16, 16, 16}};
+    gert::StorageShape yShape = {{1, 16, 14, 14}, {1, 16, 14, 14}};
+    int32_t compileInfo = 0;
+    fe::PlatFormInfos platformInfo;
+    platformInfo.Init();
+    auto tilingDataPtr = gert::TilingData::CreateCap(1024);
+    auto workspaceHolder = gert::ContinuousVector::Create<size_t>(1024);
+    auto wsSize = reinterpret_cast<gert::ContinuousVector*>(workspaceHolder.get());
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType("Conv2DV2")
+                      .NodeIoNum(1, 1)
+                      .IrInstanceNum({1})
+                      .InputShapes({&xShape})
+                      .OutputShapes({&yShape})
+                      .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeOutputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
+                      .NodeAttrs({{"strides", Ops::NN::AnyValue::CreateFrom<std::vector<int64_t>>({1, 1, 2, 2})}})
+                      .CompileInfo(&compileInfo)
+                      .PlatformInfo(reinterpret_cast<char*>(&platformInfo))
+                      .TilingData(tilingDataPtr.get())
+                      .Workspace(wsSize)
+                      .Build();
+    auto context = holder.GetContext<gert::TilingContext>();
+
+    // attr不存在：EZ0026 + "Parameter pads"
+    (void)error_message::GetErrMgrRawErrorMessages();
+    EXPECT_TRUE(GetAttrVector(context, 5, 4, "pads").empty());
+    auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_STREQ(errors[0].error_id.get(), "EZ0026");
+    ASSERT_NE(errors[0].error_message, nullptr);
+    EXPECT_NE(std::string(errors[0].error_message.get()).find("Parameter pads of Conv2DV2"), std::string::npos)
+        << errors[0].error_message.get();
+
+    // 列表长度不符：EZ0009 + "Parameter strides"
+    (void)error_message::GetErrMgrRawErrorMessages();
+    EXPECT_TRUE(GetAttrVector(context, 0, 3, "strides").empty());
+    errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_EQ(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_STREQ(errors[0].error_id.get(), "EZ0009");
+    ASSERT_NE(errors[0].error_message, nullptr);
+    EXPECT_NE(std::string(errors[0].error_message.get()).find("Parameter strides of Conv2DV2"), std::string::npos)
+        << errors[0].error_message.get();
 }
 
 TEST_F(ConvCommonUtilsTest, NumBlocksDecisionLoad3D)

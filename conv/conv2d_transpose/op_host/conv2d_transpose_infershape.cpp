@@ -85,9 +85,10 @@ static ge::graphStatus CheckFilterShapeForConv2DTranspose(gert::InferShapeContex
                 CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get filter tensor desc."),
                 return ge::GRAPH_FAILED);
     if (Ops::Base::IsUnknownRank(*filterShape)) {
-        OP_LOGE(context->GetNodeName(),
-                "filter shape [-2] should be 4 dims and h, w should be positive when input_size is const and x shape "
-                "is static.");
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            context->GetNodeName(), "filter", std::to_string(filterShape->GetDimNum()),
+            "The filter shape [-2] must have 4 dimensions and its h and w must be positive when input_size is const "
+            "and x shape is static.");
         return ge::GRAPH_FAILED;
     }
     size_t hIndex = 0;
@@ -99,9 +100,9 @@ static ge::graphStatus CheckFilterShapeForConv2DTranspose(gert::InferShapeContex
     const int64_t filterH = filterShape->GetDim(hIndex);
     const int64_t filterW = filterShape->GetDim(wIndex);
     if (filterH < 0 || filterW < 0) {
-        OP_LOGE(context->GetNodeName(),
-                "filter shape h = %ld, w = %ld should be positive when input_size is const and x shape is static.",
-                filterH, filterW);
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+            context->GetNodeName(), "filter", "h=" + std::to_string(filterH) + ", w=" + std::to_string(filterW),
+            "The filter shape h and w must be positive when input_size is const and x shape is static.");
         return ge::GRAPH_FAILED;
     }
     return ge::GRAPH_SUCCESS;
@@ -133,9 +134,11 @@ static ge::graphStatus FixZeroPlaceholderShape(gert::InferShapeContext* context)
     Conv2DFormatPos filterPos;
     OP_CHECK_IF(!GetConv2DFormatPos(xDesc->GetOriginFormat(), xPos) ||
                     !GetConv2DFormatPos(filterDesc->GetOriginFormat(), filterPos),
-                OP_LOGE(context->GetNodeName(), "x format %s and filter format %s only support NCHW, NHWC or HWCN.",
-                        ge::TypeUtils::FormatToAscendString(xDesc->GetOriginFormat()).GetString(),
-                        ge::TypeUtils::FormatToAscendString(filterDesc->GetOriginFormat()).GetString()),
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+                    context->GetNodeName(), "x, filter",
+                    std::string(ge::TypeUtils::FormatToAscendString(xDesc->GetOriginFormat()).GetString()) + ", " +
+                        ge::TypeUtils::FormatToAscendString(filterDesc->GetOriginFormat()).GetString(),
+                    "Only NCHW, NHWC and HWCN are supported."),
                 return ge::GRAPH_FAILED);
     const int64_t xN = xShape->GetDim(xPos.n);
     const int64_t xH = xShape->GetDim(xPos.h);
@@ -144,8 +147,12 @@ static ge::graphStatus FixZeroPlaceholderShape(gert::InferShapeContext* context)
     const int64_t filterH = filterShape->GetDim(filterPos.h);
     const int64_t filterW = filterShape->GetDim(filterPos.w);
     OP_CHECK_IF(xN <= 0 || xH <= 0 || xW <= 0 || filterC <= 0 || filterH <= 0 || filterW <= 0,
-                OP_LOGE(context->GetNodeName(),
-                        "x shape and filter shape should be positive when input_size is all-zero placeholder."),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                    context->GetNodeName(), "x, filter",
+                    "x(N=" + std::to_string(xN) + ", H=" + std::to_string(xH) + ", W=" + std::to_string(xW) +
+                        "), filter(C=" + std::to_string(filterC) + ", H=" + std::to_string(filterH) +
+                        ", W=" + std::to_string(filterW) + ")",
+                    "The x and filter shape dimensions must be positive when input_size is an all-zero placeholder."),
                 return ge::GRAPH_FAILED);
 
     const auto runtimeAttrs = context->GetAttrs();
@@ -160,13 +167,17 @@ static ge::graphStatus FixZeroPlaceholderShape(gert::InferShapeContext* context)
                     outputPaddingList == nullptr || groups == nullptr,
                 CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get strides/pads/dilations/groups attrs."),
                 return ge::GRAPH_FAILED);
-    OP_CHECK_IF(stridesList->GetSize() != kConv2dAttrListLen || padsList->GetSize() != kConv2dAttrListLen ||
-                    dilationsList->GetSize() != kConv2dAttrListLen ||
-                    outputPaddingList->GetSize() != kConv2dAttrListLen,
-                OP_LOGE(context->GetNodeName(),
-                        "strides/pads/dilations/output_padding size should be 4 when input_size is all-zero "
-                        "placeholder."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        stridesList->GetSize() != kConv2dAttrListLen || padsList->GetSize() != kConv2dAttrListLen ||
+            dilationsList->GetSize() != kConv2dAttrListLen || outputPaddingList->GetSize() != kConv2dAttrListLen,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "strides, pads, dilations, output_padding",
+            "strides=" + std::to_string(stridesList->GetSize()) + ", pads=" + std::to_string(padsList->GetSize()) +
+                ", dilations=" + std::to_string(dilationsList->GetSize()) +
+                ", output_padding=" + std::to_string(outputPaddingList->GetSize()),
+            "The sizes of strides, pads, dilations and output_padding must be 4 when input_size is an "
+            "all-zero placeholder."),
+        return ge::GRAPH_FAILED);
     const auto strides = static_cast<const int64_t*>(stridesList->GetData());
     const auto pads = static_cast<const int64_t*>(padsList->GetData());
     const auto dilations = static_cast<const int64_t*>(dilationsList->GetData());
@@ -178,8 +189,12 @@ static ge::graphStatus FixZeroPlaceholderShape(gert::InferShapeContext* context)
     const int64_t outputPaddingH = outputPadding[xPos.h];
     const int64_t outputPaddingW = outputPadding[xPos.w];
     OP_CHECK_IF(strideH <= 0 || strideW <= 0 || dilationH <= 0 || dilationW <= 0 || *groups <= 0,
-                OP_LOGE(context->GetNodeName(),
-                        "strides, dilations and groups should be positive when input_size is all-zero placeholder."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "strides, dilations, groups",
+                    "stride_h=" + std::to_string(strideH) + ", stride_w=" + std::to_string(strideW) +
+                        ", dilation_h=" + std::to_string(dilationH) + ", dilation_w=" + std::to_string(dilationW) +
+                        ", groups=" + std::to_string(*groups),
+                    "strides, dilations and groups must be positive when input_size is an all-zero placeholder."),
                 return ge::GRAPH_FAILED);
 
     int64_t outputH = 0;

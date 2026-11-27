@@ -16,6 +16,7 @@
  *        onnx插件合成的input_size为{0,0,0,0}全0占位符时，按ONNX语义重算输出shape
  */
 
+#include "base/err_mgr.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "gtest/gtest.h"
@@ -38,6 +39,7 @@ static gert::KernelRunContextHolder BuildConv2DTransposeContext(
     gert::StorageShape output_shape = {{}, {}};
     gert::InferShapeContextFaker faker;
     faker.NodeIoNum(3, 1)
+        .SetOpType("Conv2DTranspose")
         .IrInstanceNum({1, 1, 1})
         .NodeInputTd(0, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
@@ -74,32 +76,53 @@ static ge::graphStatus RunConv2DTransposeInferShape(std::unique_ptr<uint8_t[]>& 
 TEST_F(Conv2DTransposeRuntimeInferShape, constInputSizeStaticXFilterNegativeHFail)
 {
     ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DTranspose"), nullptr);
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
     std::unique_ptr<uint8_t[]> tensor_holder;
     gert::StorageShape x_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
     gert::StorageShape filter_shape = {{32, 64, 3, -1}, {32, 64, 3, -1}};
     EXPECT_EQ(
         RunConv2DTransposeInferShape(tensor_holder, true, {2, 32, 32, 32}, x_shape, filter_shape, ge::FORMAT_NCHW),
         ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0015"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter filter of Conv2DTranspose"), std::string::npos) << message;
 }
 
 TEST_F(Conv2DTransposeRuntimeInferShape, constInputSizeStaticXFilterNegativeHFhwcFail)
 {
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
     std::unique_ptr<uint8_t[]> tensor_holder;
     gert::StorageShape x_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
     gert::StorageShape filter_shape = {{-1, 3, 64, 32}, {-1, 3, 64, 32}};
     EXPECT_EQ(
         RunConv2DTransposeInferShape(tensor_holder, true, {2, 32, 32, 32}, x_shape, filter_shape, ge::FORMAT_HWCN),
         ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0015"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter filter of Conv2DTranspose"), std::string::npos) << message;
 }
 
 TEST_F(Conv2DTransposeRuntimeInferShape, constInputSizeStaticXFilterUnknownRankFail)
 {
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
     std::unique_ptr<uint8_t[]> tensor_holder;
     gert::StorageShape x_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
     gert::StorageShape filter_shape = {{-2}, {-2}};
     EXPECT_EQ(
         RunConv2DTransposeInferShape(tensor_holder, true, {2, 32, 32, 32}, x_shape, filter_shape, ge::FORMAT_NCHW),
         ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0015"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter filter of Conv2DTranspose"), std::string::npos) << message;
 }
 
 TEST_F(Conv2DTransposeRuntimeInferShape, constInputSizeStaticXFilterPositiveSuccess)
@@ -156,6 +179,7 @@ static gert::KernelRunContextHolder BuildConv2DTransposePlaceholderContext(
 
     gert::InferShapeContextFaker faker;
     faker.NodeIoNum(3, 1)
+        .SetOpType("Conv2DTranspose")
         .IrInstanceNum({1, 1, 1})
         .NodeInputTd(0, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeInputTd(1, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
@@ -257,6 +281,81 @@ TEST_F(Conv2DTransposeRuntimeInferShape, zeroPlaceholderNegativeOutputFail)
 }
 
 // input_size const不可见(动态图)时，y的C维=filter的C维*groups，其余维度保持-1交运行时推导
+// 占位符路径：filter格式不在支持范围时上报EZ0035
+TEST_F(Conv2DTransposeRuntimeInferShape, zeroPlaceholderFilterFormatFail)
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
+    gert::StorageShape filter_shape = {{32, 64, 3, 3}, {32, 64, 3, 3}};
+    EXPECT_EQ(RunConv2DTransposePlaceholderInferShape(tensor_holder, x_shape, filter_shape, ge::FORMAT_ND, {1, 1, 1, 1},
+                                                      {0, 0, 0, 0}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}),
+              ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0035"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter x, filter of Conv2DTranspose"), std::string::npos) << message;
+}
+
+// 占位符路径：x或filter的维度非正时上报EZ0015
+TEST_F(Conv2DTransposeRuntimeInferShape, zeroPlaceholderNonPositiveXFail)
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{2, 64, 0, 16}, {2, 64, 0, 16}};
+    gert::StorageShape filter_shape = {{32, 64, 3, 3}, {32, 64, 3, 3}};
+    EXPECT_EQ(
+        RunConv2DTransposePlaceholderInferShape(tensor_holder, x_shape, filter_shape, ge::FORMAT_NCHW, {1, 1, 1, 1},
+                                                {0, 0, 0, 0}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}),
+        ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0015"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter x, filter of Conv2DTranspose"), std::string::npos) << message;
+}
+
+// 占位符路径：strides/pads/dilations/output_padding列表长度非4时上报EZ0026
+TEST_F(Conv2DTransposeRuntimeInferShape, zeroPlaceholderAttrListSizeFail)
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
+    gert::StorageShape filter_shape = {{32, 64, 3, 3}, {32, 64, 3, 3}};
+    EXPECT_EQ(RunConv2DTransposePlaceholderInferShape(tensor_holder, x_shape, filter_shape, ge::FORMAT_NCHW, {1, 1, 1},
+                                                      {0, 0, 0, 0}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}),
+              ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0026"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter strides, pads, dilations, output_padding of Conv2DTranspose"), std::string::npos)
+        << message;
+}
+
+// 占位符路径：strides/dilations/groups非正时上报EZ0026
+TEST_F(Conv2DTransposeRuntimeInferShape, zeroPlaceholderNonPositiveAttrFail)
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{2, 64, 16, 16}, {2, 64, 16, 16}};
+    gert::StorageShape filter_shape = {{32, 64, 3, 3}, {32, 64, 3, 3}};
+    EXPECT_EQ(
+        RunConv2DTransposePlaceholderInferShape(tensor_holder, x_shape, filter_shape, ge::FORMAT_NCHW, {1, 1, 0, 1},
+                                                {0, 0, 0, 0}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}),
+        ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0026"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter strides, dilations, groups of Conv2DTranspose"), std::string::npos) << message;
+}
+
 TEST_F(Conv2DTransposeRuntimeInferShape, dynamicInputSizePartialInferSuccess)
 {
     std::unique_ptr<uint8_t[]> tensor_holder;

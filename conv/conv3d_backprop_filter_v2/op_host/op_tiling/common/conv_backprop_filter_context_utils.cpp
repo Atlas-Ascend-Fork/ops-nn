@@ -121,8 +121,10 @@ bool SetStridesAttr(const gert::TilingContext* context, Conv3dBpFilterV2RunInfo&
     const auto op_name = (context->GetNodeName() == nullptr) ? "nil" : context->GetNodeName();
     const auto attrs = context->GetAttrs();
     OP_CHECK_IF(attrs == nullptr,
-                OP_LOGE(op_name, "SetStridesAttr: missing RuntimeAttrs in framework tiling context;"
-                                 " ComputeNodeInfo must be initialized before attribute access."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    op_name, "strides", "nullptr",
+                    "RuntimeAttrs is missing in the framework tiling context; ComputeNodeInfo must be initialized "
+                    "before attribute access."),
                 return false);
 
     const auto strides = attrs->GetAttrPointer<gert::ContinuousVector>(STRIDES_INDEX);
@@ -176,8 +178,10 @@ static bool ValidateDilationsBasicInfo(const char* op_name, const gert::TilingCo
 {
     const auto attrs = context->GetAttrs();
     OP_CHECK_IF(attrs == nullptr,
-                OP_LOGE(op_name, "ValidateDilationsBasicInfo: missing RuntimeAttrs in framework tiling context;"
-                                 " ComputeNodeInfo must be initialized before attribute access."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    op_name, "dilations", "nullptr",
+                    "RuntimeAttrs is missing in the framework tiling context; ComputeNodeInfo must be initialized "
+                    "before attribute access."),
                 return false);
     dilations = attrs->GetAttrPointer<gert::ContinuousVector>(DIALTIONS_INDEX);
     OP_CHECK_IF(dilations == nullptr, OP_LOGE_WITH_INVALID_INPUT(op_name, "dilations"), return false);
@@ -277,7 +281,10 @@ bool SetOutputPaddingAttr(const gert::TilingContext* context, Conv3dBpFilterV2Ru
                 return true);
 
     const auto attrs = context->GetAttrs();
-    OP_CHECK_IF(attrs == nullptr, OP_LOGE(op_name, "failed to get attrs from context."), return false);
+    OP_CHECK_IF(attrs == nullptr,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(op_name, "attrs", "nullptr",
+                                                      "The attributes must exist in the tiling context."),
+                return false);
 
     // output_padding is OpDef attr at fixed index 6, after enable_hf32(5) and before padding(7)
     const auto outputPadding = attrs->GetAttrPointer<gert::ContinuousVector>(OUTPUT_PADDING_INDEX);
@@ -332,8 +339,10 @@ void SetHf32Flag(const char* op_name, const gert::RuntimeAttrs* attrs, Conv3dBpF
 static bool ValidateGroupsAttr(const char* op_name, const gert::RuntimeAttrs* attrs, int32_t& groups)
 {
     OP_CHECK_IF(attrs == nullptr,
-                OP_LOGE(op_name, "ValidateGroupsAttr: missing RuntimeAttrs in framework tiling context;"
-                                 " ComputeNodeInfo must be initialized before attribute access."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    op_name, "groups", "nullptr",
+                    "RuntimeAttrs is missing in the framework tiling context; ComputeNodeInfo must be initialized "
+                    "before attribute access."),
                 return false);
     const auto groups_attr = attrs->GetAttrPointer<int64_t>(GROUPS_INDEX);
     OP_CHECK_IF(groups_attr == nullptr, OP_LOGE_WITH_INVALID_INPUT(op_name, "groups"), return false);
@@ -850,8 +859,10 @@ bool CheckGradOutputShape(const gert::TilingContext* context, Conv3dBpFilterV2Ru
 static bool ValidatePadsAttr(const char* op_name, const gert::RuntimeAttrs* attrs, const gert::ContinuousVector*& pads)
 {
     OP_CHECK_IF(attrs == nullptr,
-                OP_LOGE(op_name, "ValidatePadsAttr: missing RuntimeAttrs in framework tiling context;"
-                                 " ComputeNodeInfo must be initialized before attribute access."),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    op_name, "pads", "nullptr",
+                    "RuntimeAttrs is missing in the framework tiling context; ComputeNodeInfo must be initialized "
+                    "before attribute access."),
                 return false);
     pads = attrs->GetAttrPointer<gert::ContinuousVector>(PADS_INDEX);
     OP_CHECK_IF(pads == nullptr, CUBE_INNER_ERR_REPORT(op_name, "failed to get pads from context fail."), return false);

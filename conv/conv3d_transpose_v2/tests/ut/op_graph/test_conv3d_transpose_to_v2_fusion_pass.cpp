@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "base/err_mgr.h"
 #include "platform/platform_info.h"
 #include "register/register_custom_pass.h"
 #include "ge/compliant_node_builder.h"
@@ -29,6 +30,28 @@ namespace {
 constexpr int64_t AI_CORE_CNT = 64;
 constexpr int64_t INPUT_SIZE_DIM = 5;
 int64_t DEFAULT_IMPL_MODE = 0x1;
+
+// ErrorManager 是进程级单例：用例开头初始化并读取一次清空容器，避免其它用例遗留的首错串扰。
+void InitErrMgr()
+{
+    // 锚定 opbase log.cpp.o：预定义码注册表（REG_FORMAT_ERROR_MSG）随该符号链接进本测试二进制。
+    (void)Ops::Base::ToString(ge::DT_FLOAT);
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+}
+
+// 错误路径公共断言：首错报文含预期预定义码与片段，且容器已被清空。
+void ExpectFirstError(const std::string& expectCode, const std::string& expectFragment)
+{
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    ASSERT_GE(errors.size(), 1U);
+    ASSERT_NE(errors[0].error_id, nullptr);
+    EXPECT_STREQ(errors[0].error_id.get(), expectCode.c_str());
+    ASSERT_NE(errors[0].error_message, nullptr);
+    const std::string message(errors[0].error_message.get());
+    EXPECT_NE(message.find(expectFragment), std::string::npos) << message;
+    EXPECT_TRUE(error_message::GetErrMgrRawErrorMessages().empty());
+}
 
 void SetPlatform(const std::string& soc)
 {
@@ -511,4 +534,104 @@ TEST_F(Conv3DTransposeToV2FusionPassTest, samePaddingBatchOnlyDynamicPadsKeepSuc
         checked = true;
     }
     EXPECT_TRUE(checked);
+}
+
+// 占位符路径：x为HIFLOAT8时CheckDtypeSupported上报EZ0020(参数x)
+TEST_F(Conv3DTransposeToV2FusionPassTest, xDtypeHifloat8Fail)
+{
+    InitErrMgr();
+    auto builder = es::EsGraphBuilder("xDtypeHifloat8Fail");
+    auto inputSize = builder.CreateInput(0, "input_size", DT_INT32, FORMAT_ND, {INPUT_SIZE_DIM});
+    auto x = builder.CreateInput(1, "x", DT_HIFLOAT8, FORMAT_NCDHW, {2, 32, 16, 16, 16});
+    auto filter = builder.CreateInput(2, "filter", DT_FLOAT16, FORMAT_NCDHW, {32, 64, 3, 3, 3});
+    auto bias = builder.CreateInput(3, "bias", DT_FLOAT16, FORMAT_ND, {64});
+
+    auto y = CreateConv3DTransposeNode(builder, "Conv3DTranspose", inputSize, x, filter, bias, {1, 1, 1, 1, 1},
+                                       {0, 0, 0, 0, 0, 0}, {1, 1, 1, 1, 1}, 1, "NCDHW", DT_FLOAT16, {2, 64, 18, 18, 18},
+                                       FORMAT_NCDHW);
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv3DTransposeToV2FusionPass pass({AscendString("Conv3DTranspose")});
+    EXPECT_NE(pass.Run(graph, ctx), SUCCESS);
+    ExpectFirstError("EZ0020", "Parameter x of Conv3DTransposeToV2FusionPass");
+}
+
+// 占位符路径：filter为HIFLOAT8时CheckDtypeSupported上报EZ0020(参数filter)
+TEST_F(Conv3DTransposeToV2FusionPassTest, filterDtypeHifloat8Fail)
+{
+    InitErrMgr();
+    auto builder = es::EsGraphBuilder("filterDtypeHifloat8Fail");
+    auto inputSize = builder.CreateInput(0, "input_size", DT_INT32, FORMAT_ND, {INPUT_SIZE_DIM});
+    auto x = builder.CreateInput(1, "x", DT_FLOAT16, FORMAT_NCDHW, {2, 32, 16, 16, 16});
+    auto filter = builder.CreateInput(2, "filter", DT_HIFLOAT8, FORMAT_NCDHW, {32, 64, 3, 3, 3});
+    auto bias = builder.CreateInput(3, "bias", DT_FLOAT16, FORMAT_ND, {64});
+
+    auto y = CreateConv3DTransposeNode(builder, "Conv3DTranspose", inputSize, x, filter, bias, {1, 1, 1, 1, 1},
+                                       {0, 0, 0, 0, 0, 0}, {1, 1, 1, 1, 1}, 1, "NCDHW", DT_FLOAT16, {2, 64, 18, 18, 18},
+                                       FORMAT_NCDHW);
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv3DTransposeToV2FusionPass pass({AscendString("Conv3DTranspose")});
+    EXPECT_NE(pass.Run(graph, ctx), SUCCESS);
+    ExpectFirstError("EZ0020", "Parameter filter of Conv3DTransposeToV2FusionPass");
+}
+
+// 占位符路径：y为HIFLOAT8时CheckDtypeSupported上报EZ0020(参数y)
+TEST_F(Conv3DTransposeToV2FusionPassTest, yDtypeHifloat8Fail)
+{
+    InitErrMgr();
+    auto builder = es::EsGraphBuilder("yDtypeHifloat8Fail");
+    auto inputSize = builder.CreateInput(0, "input_size", DT_INT32, FORMAT_ND, {INPUT_SIZE_DIM});
+    auto x = builder.CreateInput(1, "x", DT_FLOAT16, FORMAT_NCDHW, {2, 32, 16, 16, 16});
+    auto filter = builder.CreateInput(2, "filter", DT_FLOAT16, FORMAT_NCDHW, {32, 64, 3, 3, 3});
+    auto bias = builder.CreateInput(3, "bias", DT_FLOAT16, FORMAT_ND, {64});
+
+    auto y = CreateConv3DTransposeNode(builder, "Conv3DTranspose", inputSize, x, filter, bias, {1, 1, 1, 1, 1},
+                                       {0, 0, 0, 0, 0, 0}, {1, 1, 1, 1, 1}, 1, "NCDHW", DT_HIFLOAT8,
+                                       {2, 64, 18, 18, 18}, FORMAT_NCDHW);
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv3DTransposeToV2FusionPass pass({AscendString("Conv3DTranspose")});
+    EXPECT_NE(pass.Run(graph, ctx), SUCCESS);
+    ExpectFirstError("EZ0020", "Parameter y of Conv3DTransposeToV2FusionPass");
+}
+
+// 占位符路径：bias dtype不在{fp16,bf16,fp32}范围内时上报EZ0020(参数bias)
+TEST_F(Conv3DTransposeToV2FusionPassTest, biasDtypeInvalidFail)
+{
+    InitErrMgr();
+    auto builder = es::EsGraphBuilder("biasDtypeInvalidFail");
+    auto inputSize = builder.CreateInput(0, "input_size", DT_INT32, FORMAT_ND, {INPUT_SIZE_DIM});
+    auto x = builder.CreateInput(1, "x", DT_FLOAT16, FORMAT_NCDHW, {2, 32, 16, 16, 16});
+    auto filter = builder.CreateInput(2, "filter", DT_FLOAT16, FORMAT_NCDHW, {32, 64, 3, 3, 3});
+    auto bias = builder.CreateInput(3, "bias", DT_INT32, FORMAT_ND, {64});
+
+    auto y = CreateConv3DTransposeNode(builder, "Conv3DTranspose", inputSize, x, filter, bias, {1, 1, 1, 1, 1},
+                                       {0, 0, 0, 0, 0, 0}, {1, 1, 1, 1, 1}, 1, "NCDHW", DT_FLOAT16, {2, 64, 18, 18, 18},
+                                       FORMAT_NCDHW);
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv3DTransposeToV2FusionPass pass({AscendString("Conv3DTranspose")});
+    EXPECT_NE(pass.Run(graph, ctx), SUCCESS);
+    ExpectFirstError("EZ0020", "Parameter bias of Conv3DTransposeToV2FusionPass");
+}
+
+// 占位符路径：bias dtype与filter不一致且非fp32时上报EZ0020(参数bias)
+TEST_F(Conv3DTransposeToV2FusionPassTest, biasDtypeMismatchFail)
+{
+    InitErrMgr();
+    auto builder = es::EsGraphBuilder("biasDtypeMismatchFail");
+    auto inputSize = builder.CreateInput(0, "input_size", DT_INT32, FORMAT_ND, {INPUT_SIZE_DIM});
+    auto x = builder.CreateInput(1, "x", DT_FLOAT16, FORMAT_NCDHW, {2, 32, 16, 16, 16});
+    auto filter = builder.CreateInput(2, "filter", DT_FLOAT16, FORMAT_NCDHW, {32, 64, 3, 3, 3});
+    auto bias = builder.CreateInput(3, "bias", DT_BF16, FORMAT_ND, {64});
+
+    auto y = CreateConv3DTransposeNode(builder, "Conv3DTranspose", inputSize, x, filter, bias, {1, 1, 1, 1, 1},
+                                       {0, 0, 0, 0, 0, 0}, {1, 1, 1, 1, 1}, 1, "NCDHW", DT_FLOAT16, {2, 64, 18, 18, 18},
+                                       FORMAT_NCDHW);
+    std::shared_ptr<Graph> graph = builder.BuildAndReset({y});
+    CustomPassContext ctx;
+    ops::Conv3DTransposeToV2FusionPass pass({AscendString("Conv3DTranspose")});
+    EXPECT_NE(pass.Run(graph, ctx), SUCCESS);
+    ExpectFirstError("EZ0020", "Parameter bias of Conv3DTransposeToV2FusionPass");
 }

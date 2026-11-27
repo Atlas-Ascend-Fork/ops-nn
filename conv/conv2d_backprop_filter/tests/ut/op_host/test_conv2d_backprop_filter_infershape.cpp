@@ -14,6 +14,7 @@
  *        filter_size为const且x为静态shape时，out_backprop的H/W维度不支持-1
  */
 
+#include "base/err_mgr.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "gtest/gtest.h"
@@ -37,6 +38,7 @@ static gert::KernelRunContextHolder BuildConv2DBackpropFilterContext(
     gert::StorageShape output_shape = {{}, {}};
     gert::InferShapeContextFaker faker;
     faker.NodeIoNum(3, 1)
+        .SetOpType("Conv2DBackpropFilter")
         .IrInstanceNum({1, 1, 1})
         .NodeInputTd(0, ge::DT_FLOAT16, ge::FORMAT_NCHW, ge::FORMAT_NCHW)
         .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
@@ -83,12 +85,19 @@ static ge::graphStatus RunConv2DBackpropFilterInferShape(std::unique_ptr<uint8_t
 TEST_F(Conv2DBackpropFilterRuntimeInferShape, constFilterSizeStaticXOutBackpropNegativeHFail)
 {
     ASSERT_NE(gert::OpImplRegistry::GetInstance().GetOpImpl("Conv2DBackpropFilter"), nullptr);
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
     std::unique_ptr<uint8_t[]> tensor_holder;
     gert::StorageShape x_shape = {{2, 32, 16, 16}, {2, 32, 16, 16}};
     gert::StorageShape dedy_shape = {{2, 64, -1, 16}, {2, 64, -1, 16}};
     EXPECT_EQ(
         RunConv2DBackpropFilterInferShape(tensor_holder, true, {64, 32, 3, 3}, x_shape, dedy_shape, ge::FORMAT_NCHW),
         ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0015"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter out_backprop of Conv2DBackpropFilter"), std::string::npos) << message;
 }
 
 TEST_F(Conv2DBackpropFilterRuntimeInferShape, constFilterSizeStaticXOutBackpropAllNegativeFail)

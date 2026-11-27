@@ -14,6 +14,7 @@
  *        的占位符修正：onnx/torch适配层合成的input_size为全0占位符时，按反卷积公式重算输出shape
  */
 
+#include "base/err_mgr.h"
 #include "exe_graph/runtime/storage_format.h"
 #include "exe_graph/runtime/storage_shape.h"
 #include "gtest/gtest.h"
@@ -51,6 +52,7 @@ static gert::KernelRunContextHolder BuildConv3DTransposePlaceholderContext(
 
     gert::InferShapeContextFaker faker;
     faker.NodeIoNum(3, 1)
+        .SetOpType("Conv3DTranspose")
         .IrInstanceNum({1, 1, 1})
         .NodeInputTd(0, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeInputTd(1, ge::DT_FLOAT16, x_format, x_format)
@@ -170,6 +172,102 @@ TEST_F(Conv3DTransposeRuntimeInferShape, zeroPlaceholderNonPositiveOutputFail)
                                                       ge::FORMAT_NCDHW, {1, 1, 1, 1, 1}, {3, 3, 1, 1, 1, 1},
                                                       {1, 1, 1, 1, 1}, {0, 0, 0, 0, 0}),
               ge::GRAPH_FAILED);
+}
+
+// 占位符路径：x格式不在支持范围(NCDHW/NDHWC)时上报EZ0035
+TEST_F(Conv3DTransposeRuntimeInferShape, zeroPlaceholderXFormatFail)
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{2, 16, 4, 8, 8}, {2, 16, 4, 8, 8}};
+    gert::StorageShape filter_shape = {{8, 16, 3, 3, 3}, {8, 16, 3, 3, 3}};
+    EXPECT_EQ(
+        RunConv3DTransposePlaceholderInferShape(tensor_holder, x_shape, filter_shape, ge::FORMAT_ND, ge::FORMAT_NCDHW,
+                                                {1, 1, 1, 1, 1}, {0, 0, 0, 0, 0, 0}, {1, 1, 1, 1, 1}, {0, 0, 0, 0, 0}),
+        ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0035"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter x of Conv3DTranspose"), std::string::npos) << message;
+}
+
+// 占位符路径：filter格式不在支持范围(NCDHW/NDHWC/DHWCN)时上报EZ0035
+TEST_F(Conv3DTransposeRuntimeInferShape, zeroPlaceholderFilterFormatFail)
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{2, 16, 4, 8, 8}, {2, 16, 4, 8, 8}};
+    gert::StorageShape filter_shape = {{8, 16, 3, 3, 3}, {8, 16, 3, 3, 3}};
+    EXPECT_EQ(
+        RunConv3DTransposePlaceholderInferShape(tensor_holder, x_shape, filter_shape, ge::FORMAT_NCDHW, ge::FORMAT_ND,
+                                                {1, 1, 1, 1, 1}, {0, 0, 0, 0, 0, 0}, {1, 1, 1, 1, 1}, {0, 0, 0, 0, 0}),
+        ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0035"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter filter of Conv3DTranspose"), std::string::npos) << message;
+}
+
+// 占位符路径：strides/dilations/output_padding列表长度非5或pads长度非6时上报EZ0026
+TEST_F(Conv3DTransposeRuntimeInferShape, zeroPlaceholderAttrListSizeFail)
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{2, 16, 4, 8, 8}, {2, 16, 4, 8, 8}};
+    gert::StorageShape filter_shape = {{8, 16, 3, 3, 3}, {8, 16, 3, 3, 3}};
+    EXPECT_EQ(RunConv3DTransposePlaceholderInferShape(tensor_holder, x_shape, filter_shape, ge::FORMAT_NCDHW,
+                                                      ge::FORMAT_NCDHW, {1, 1, 1, 1}, {0, 0, 0, 0, 0, 0},
+                                                      {1, 1, 1, 1, 1}, {0, 0, 0, 0, 0}),
+              ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0026"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter strides, dilations, output_padding, pads of Conv3DTranspose"), std::string::npos)
+        << message;
+}
+
+// 占位符路径：strides/dilations/groups非正时上报EZ0026
+TEST_F(Conv3DTransposeRuntimeInferShape, zeroPlaceholderNonPositiveAttrFail)
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{2, 16, 4, 8, 8}, {2, 16, 4, 8, 8}};
+    gert::StorageShape filter_shape = {{8, 16, 3, 3, 3}, {8, 16, 3, 3, 3}};
+    EXPECT_EQ(RunConv3DTransposePlaceholderInferShape(tensor_holder, x_shape, filter_shape, ge::FORMAT_NCDHW,
+                                                      ge::FORMAT_NCDHW, {1, 1, 1, 0, 1}, {0, 0, 0, 0, 0, 0},
+                                                      {1, 1, 1, 1, 1}, {0, 0, 0, 0, 0}),
+              ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0026"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter strides, dilations, groups of Conv3DTranspose"), std::string::npos) << message;
+}
+
+// 占位符路径：x或filter的维度非正时上报EZ0015
+TEST_F(Conv3DTransposeRuntimeInferShape, zeroPlaceholderNonPositiveXFail)
+{
+    (void)error_message::ErrMgrInit(error_message::ErrorMessageMode::INTERNAL_MODE);
+    (void)error_message::GetErrMgrRawErrorMessages();
+    std::unique_ptr<uint8_t[]> tensor_holder;
+    gert::StorageShape x_shape = {{2, 16, 0, 8, 8}, {2, 16, 0, 8, 8}};
+    gert::StorageShape filter_shape = {{8, 16, 3, 3, 3}, {8, 16, 3, 3, 3}};
+    EXPECT_EQ(RunConv3DTransposePlaceholderInferShape(tensor_holder, x_shape, filter_shape, ge::FORMAT_NCDHW,
+                                                      ge::FORMAT_NCDHW, {1, 1, 1, 1, 1}, {0, 0, 0, 0, 0, 0},
+                                                      {1, 1, 1, 1, 1}, {0, 0, 0, 0, 0}),
+              ge::GRAPH_FAILED);
+    auto errMsg = error_message::GetErrMgrErrorMessage();
+    ASSERT_NE(errMsg, nullptr);
+    const std::string message = errMsg.get();
+    EXPECT_NE(message.find("EZ0015"), std::string::npos) << message;
+    EXPECT_NE(message.find("Parameter x, filter of Conv3DTranspose"), std::string::npos) << message;
 }
 
 // 占位符修正：真实非全0的const input_size不受影响，直接采信const值

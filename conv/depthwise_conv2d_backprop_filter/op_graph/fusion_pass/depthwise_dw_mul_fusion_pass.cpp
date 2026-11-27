@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include "graph/utils/type_utils.h"
+
 namespace ops {
 using namespace ge;
 using namespace ge::es;
@@ -57,7 +59,8 @@ bool DepthwiseDwMulFusionPass::GetResizeDepthwiseFilterShape(std::vector<int64_t
     ge::Format format = outputDesc.GetOriginFormat();
     std::vector<int64_t> oriShape = outputDesc.GetShape().GetDims();
     if (oriShape.size() != FILTER_DIM_EXPECT) {
-        OP_LOGE(GetNodeType().GetString(), "filter dim only supports 4 dims, got %zu.", oriShape.size());
+        OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(GetNodeType().GetString(), "filter", std::to_string(oriShape.size()),
+                                                  "The filter shape must have 4 dimensions.");
         return false;
     }
     if (format == ge::FORMAT_NCHW) {
@@ -81,13 +84,17 @@ bool DepthwiseDwMulFusionPass::ValidateFilterDesc(const GNode& matchedNode)
     }
 
     OP_CHECK_IF(filterSize.size() != FILTER_DIM_EXPECT,
-                OP_LOGE(GetNodeType().GetString(), "filter dim only supports 4 dims, got %zu.", filterSize.size()),
+                OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(GetNodeType().GetString(), "filter",
+                                                          std::to_string(filterSize.size()),
+                                                          "The filter shape must have 4 dimensions."),
                 return false);
     if (isArchAfter35) {
         for (auto filterDim : filterSize) {
-            OP_CHECK_IF(filterDim <= 0,
-                        OP_LOGE(GetNodeType().GetString(), "%ld in filter shape should be positive.", filterDim),
-                        return false);
+            OP_CHECK_IF(
+                filterDim <= 0,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(GetNodeType().GetString(), "filter", std::to_string(filterDim),
+                                                      "All dimensions of the filter shape must be positive."),
+                return false);
         }
     }
 
@@ -131,8 +138,9 @@ bool DepthwiseDwMulFusionPass::MeetRequirements(const GNode& matchedNode)
                 return false);
     ge::Format originFormat = outputDesc.GetOriginFormat();
     OP_CHECK_IF(originFormat != ge::FORMAT_NCHW && originFormat != ge::FORMAT_HWCN,
-                OP_LOGE(GetNodeType().GetString(), "filter origin format only supports NCHW or HWCN, got %d",
-                        static_cast<int>(originFormat)),
+                OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(GetNodeType().GetString(), "filter",
+                                                       TypeUtils::FormatToSerialString(originFormat),
+                                                       "Only NCHW and HWCN are supported."),
                 return false);
     OP_LOGD(GetNodeType().GetString(), "MeetRequirements passed");
     return true;

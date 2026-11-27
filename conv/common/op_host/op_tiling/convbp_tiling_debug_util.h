@@ -84,9 +84,15 @@ inline std::vector<int64_t> GetAttrVector(const gert::TilingContext* context, in
     auto attrs = context->GetAttrs();
     OP_CHECK_IF(attrs == nullptr, OP_LOGE(context->GetNodeName(), "get attrs from context fail."), return {});
     const auto attr = attrs->GetAttrPointer<gert::ContinuousVector>(attrIndex);
-    OP_CHECK_IF(attr == nullptr, OP_LOGE(context->GetNodeName(), "get %s from context fail.", attrName), return {});
-    OP_CHECK_IF(attr->GetSize() != static_cast<size_t>(expectedSize),
-                OP_LOGE(context->GetNodeName(), "%s of context dim len is invalid.", attrName), return {});
+    OP_CHECK_IF(attr == nullptr,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), attrName, "nullptr",
+                                                      "The attribute must exist in the tiling context."),
+                return {});
+    OP_CHECK_IF(
+        attr->GetSize() != static_cast<size_t>(expectedSize),
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), attrName, std::to_string(attr->GetSize()),
+                                              "The attribute size must be " + std::to_string(expectedSize) + "."),
+        return {});
 
     const auto data = static_cast<const int64_t*>(attr->GetData());
     return std::vector<int64_t>(data, data + expectedSize);
