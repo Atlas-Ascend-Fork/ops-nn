@@ -118,7 +118,7 @@ aclnnStatus aclnnNLLLossBackward(
         <td>self（aclTensor*）</td>
         <td>输入</td>
         <td>输入aclTensor。</td>
-        <td>数据类型与出参out的数据类型一致，shape与出参out的shape一致。<ul><li>shape为(N,C)或者(C)，其中N表示batch size，C表示类别数。</li><li>当target的shape为(N)时，self的shape需为(N,C)。</li><li>当target的shape为()时，self的shape需为(C)。</li></ul></td>
+        <td>数据类型与出参out的数据类型一致，shape与出参out的shape一致。<ul><li>shape为(N,C)或者(C)，其中N表示batch size，C表示类别数。</li><li>当target的shape为(N)时，self的shape需为(N,C)。</li><li>当target的shape为()，self的shape需为(C)。</li><li>空Tensor支持：当self为空Tensor（元素总数为0，含零长度维）时，接口在入参校验通过后直接返回成功，workspaceSize为0，不执行计算，out内容保持不变。</li></ul></td>
         <td>FLOAT、FLOAT16、BFLOAT16</td>
         <td>ND</td>
         <td>-</td>
@@ -148,7 +148,7 @@ aclnnStatus aclnnNLLLossBackward(
         <td>reduction（int64_t）</td>
         <td>输入</td>
         <td>指定损失函数的计算方式。</td>
-        <td><ul>支持0(none)|1(mean)|2(sum)。<li>'none'表示不应用缩减</li><li>'mean'表示输出的总和将除以输出中的元素数</li><li>'sum'表示输出将被求和</li></ul></td>
+        <td><ul>支持0(none)|1(mean)|2(sum)。<li>'none'表示不应用缩减</li><li>'mean'表示输出的总和将除以权重之和totalWeight（即Σw_{y_n}）</li><li>'sum'表示输出将被求和</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>
@@ -159,7 +159,7 @@ aclnnStatus aclnnNLLLossBackward(
         <td>输入</td>
          <td>指定一个被忽略且不影响输入梯度的目标值。
         </td>
-        <td>-</td>
+        <td><ul><li>取值可为任意int64值：target中等于该值的元素不参与梯度计算（对应输出位置为0）。</li><li>当该值不在[0, C-1]范围内时，不会忽略任何target元素。</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>
@@ -179,7 +179,7 @@ aclnnStatus aclnnNLLLossBackward(
         <td>out（aclTensor*）</td>
         <td>输出</td>
         <td>公式中的out。</td>
-        <td>shape与self相同。</td>
+        <td><ul><li>shape与self相同，数据类型与self一致。</li><li>返回语义：接口执行成功返回ACLNN_SUCCESS，计算结果写入out；当self为空Tensor时接口返回成功且out内容保持不变。</li></ul></td>
         <td>数据类型和self一致。</td>
         <td>ND</td>
         <td>-</td>
@@ -229,18 +229,36 @@ aclnnStatus aclnnNLLLossBackward(
       <tr>
       <td>ACLNN_ERR_PARAM_NULLPTR</td>
       <td>161001</td>
-      <td>传入的gradOutput、self、target、weight、out、totalWeight为空指针。</td>
+      <td>传入的gradOutput、self、target、weight、totalWeight或out是空指针。</td>
       </tr>
       <tr>
-      <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="4">161002</td>
-      <td> gradOutput、self、target、weight、totalWeight的数据类型不在支持的范围之内。</td>
+      <td rowspan="10">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="10">161002</td>
+      <td> gradOutput、self、target、weight、totalWeight或out的数据类型不在支持的范围之内。</td>
       </tr>
       <tr>
-      <td>gradOutput、self、weight、totalWeight的数据类型不一致。</td>
+      <td>gradOutput、self、weight、totalWeight、out的数据类型不一致。</td>
       </tr>
-       <tr>
-      <td>gradOutput、self、weight、out、totalWeight的shape不正确。</td>
+      <tr>
+      <td>self非1D或2D tensor。</td>
+      </tr>
+      <tr>
+      <td>target非0D或1D tensor。</td>
+      </tr>
+      <tr>
+      <td>target与self的第0维shape不匹配（self为(C,)且target为()的场景除外）。</td>
+      </tr>
+      <tr>
+      <td>weight的元素个数不是C。</td>
+      </tr>
+      <tr>
+      <td>totalWeight的元素个数不是1。</td>
+      </tr>
+      <tr>
+      <td>gradOutput的shape不正确：reduction为0且self为2D时，gradOutput需为(N)；其它场景gradOutput需为单元素tensor。</td>
+      </tr>
+      <tr>
+      <td>out的shape与self不一致。</td>
       </tr>
       <tr>
       <td> reduction值不在0~2范围之内。</td>
@@ -295,6 +313,8 @@ aclnnStatus aclnnNLLLossBackward(
 
 - 确定性计算：
     - aclnnNLLLossBackward默认确定性实现。
+- self支持的维度边界为1D (C,)或2D (N, C)，其它维度返回错误。
+- 数据格式仅支持ND。
 
 ## 调用示例
 

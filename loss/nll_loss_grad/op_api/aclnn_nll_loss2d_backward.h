@@ -28,17 +28,20 @@ extern "C" {
  * device侧的aclTensor，shape为三维（第一维是N）或者一维（且元素个数为1），数据类型支持FLOAT、FLOAT16、BFLOAT16。
  * 支持[非连续的Tensor](#)，数据格式支持ND（[参考](#)）。
  * @param [in] self：npu device侧的aclTensor，shape为四维，第一维是N表示batch
- * size，第二维是C表示类别，数据类型支持FLOAT、FLOAT16。 支持[非连续的Tensor](#)，数据格式支持ND（[参考](#)）。
+ * size，第二维是C表示类别，数据类型支持FLOAT、FLOAT16、BFLOAT16。
+ * 支持[非连续的Tensor](#)，数据格式支持ND（[参考](#)）。
  * @param [in] target：npu device侧的aclTensor，表示真实标签，shape为三维，第一维是N，其中每个元素的取值范围是[0, C -
- * 1]，数据类型支持INT64、UINT8。 支持[非连续的Tensor](#)，数据格式支持ND（[参考](#)）。
- * @param [in] weight：npu device侧的aclTensor，表示各个类别的权重，shape为(C, )，数据类型支持FLOAT、FLOAT16。
+ * 1]，数据类型支持INT64、UINT8、INT32。 支持[非连续的Tensor](#)，数据格式支持ND（[参考](#)）。
+ * @param [in] weight：npu device侧的aclTensor，表示各个类别的权重，shape为(C, )，数据类型支持FLOAT、FLOAT16、BFLOAT16。
  * 支持[非连续的Tensor](#)，数据格式支持ND（[参考](#)）。
  * @param [in] reduction：host侧的int64_t，指定要应用到输出的缩减。支持 0('none') | 1('mean') | 2('sum')。
  * 'none' 表示不应用减少，'mean' 表示输出的总和将除以输出中的元素数，'sum' 表示输出将被求和。
- * @param [in] ignoreIndex：host侧的int64_t，指定一个被忽略且不影响输入梯度的目标值。
+ * @param [in]
+ * ignoreIndex：host侧的int64_t，指定一个被忽略且不影响输入梯度的目标值，取值可为任意int64值；target中等于该值的元素不参与梯度计算。
  * @param [in] totalWeight：npu
- * device侧的aclTensor，数据类型支持FLOAT、FLOAT16，且数据类型为与weight相同，shape为(1，)，数据格式支持ND（[参考](#)）。
- * @param [out] out：npu device侧的aclTensor，shape与self相同。支持[非连续的Tensor](#)，数据格式支持ND（[参考](#)）。
+ * device侧的aclTensor，数据类型支持FLOAT、FLOAT16、BFLOAT16，且数据类型为与weight相同，shape为(1，)，数据格式支持ND（[参考](#)）。
+ * @param [out] out：npu
+ * device侧的aclTensor，shape与self相同，数据类型与self一致。支持[非连续的Tensor](#)，数据格式支持ND（[参考](#)）。
  * @param [out] workspaceSize: 返回用户需要在npu device侧申请的workspace大小。
  * @param [out] executor: 返回op执行器，包含算子计算流程。
  * @return aclnnStatus: 返回状态码。

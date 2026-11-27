@@ -93,7 +93,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
         <td>self (aclTensor*)</td>
         <td>Input</td>
         <td>Input aclTensor.</td>
-        <td><ul><li>The shape is 4D, for example [N,C,H,W]. The first dimension N indicates the batch size, and the second dimension C indicates the number of classes.</li><li>The shape of the 0th, 2nd, and 3rd dimensions of self must be consistent with that of the 0th, 1st, and 2nd dimensions of target; otherwise, false is returned.</li></ul></td>
+        <td><ul><li>The shape is 4D. The first dimension N indicates the batch size, and the second dimension C indicates the number of classes.</li><li>The H and W dimensions must be positive integers.</li><li>The shape of the 0th, 2nd, and 3rd dimensions of self must be consistent with that of the 0th, 1st, and 2nd dimensions of target; otherwise, an error is returned.</li><li>Empty tensor support: when self is an empty tensor (with zero elements, including zero-length dimensions), the API returns success directly after input validation, with workspaceSize set to 0, performs no computation, and leaves the out content unchanged.</li></ul></td>
         <td>FLOAT, FLOAT16, BFLOAT16</td>
         <td>ND</td>
         <td>-</td>
@@ -123,7 +123,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
         <td>reduction(int64_t)</td>
         <td>Input</td>
         <td>Specifies the reduction to apply to the output.</td>
-        <td><ul>Supported values: 0(none)|1(mean)|2(sum).<li>'none' means no reduction is applied</li><li>'mean' means the sum of the output is divided by the total weight (totalWeight, that is, the sum of weights computed from target, weight, and ignoreIndex)</li><li>'sum' means the output is summed</li><li>When reduction is 0, target and gradOutput must have consistent shapes. Otherwise, false is returned.</li></ul></td>
+        <td><ul>Supported values: 0(none)|1(mean)|2(sum).<li>'none' means no reduction is applied</li><li>'mean' means the sum of the output is divided by the sum of weights totalWeight (i.e. Σw_{y_n})</li><li>'sum' means the output is summed</li><li>When reduction is 0, target and gradOutput must have consistent shapes. Otherwise, an error is returned.</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>
@@ -134,7 +134,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
         <td>Input</td>
          <td>Specifies a target value to be ignored. The value does not affect the input gradient.
         </td>
-        <td>-</td>
+        <td><ul><li>The value can be any int64 value: elements in target equal to this value do not participate in the gradient computation (the corresponding output positions are 0).</li><li>When the value is not within [0, C-1], no target element is ignored.</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>
@@ -143,7 +143,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
           <tr>
         <td>totalWeight (aclTensor*)</td>
         <td>Input</td>
-        <td>-</td>
+        <td>totalWeight in the formula.</td>
         <td>totalWeight is an input. When reduction is mean, the caller must pass in the sum of weights calculated based on target, weight, and ignoreIndex; when reduction is set to other values, this parameter is not involved in the computation.</td>
         <td>Data type is the same as that of weight.</td>
         <td>ND</td>
@@ -153,8 +153,8 @@ aclnnStatus aclnnNLLLoss2dBackward(
       <tr>
         <td>out (aclTensor*)</td>
         <td>Output</td>
-        <td>-</td>
-        <td>Shape is the same as that of self.</td>
+        <td>The out in the formula.</td>
+        <td><ul><li>Shape is the same as that of self, and the data type is consistent with that of self.</li><li>Return semantics: the API returns ACLNN_SUCCESS on successful execution and the computation result is written to out; when self is an empty tensor, the API returns success and the out content remains unchanged.</li></ul></td>
         <td>Data type is consistent with that of self.</td>
         <td>ND</td>
         <td>-</td>
@@ -207,8 +207,8 @@ aclnnStatus aclnnNLLLoss2dBackward(
       <td>gradOutput, self, target, weight, totalWeight, or out is a null pointer.</td>
       </tr>
       <tr>
-      <td rowspan="9">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="9">161002</td>
+      <td rowspan="10">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="10">161002</td>
       <td> The data type of gradOutput, self, target, weight, totalWeight, or out is not within the supported range.</td>
       </tr>
       <tr>
@@ -231,6 +231,9 @@ aclnnStatus aclnnNLLLoss2dBackward(
       </tr>
       <tr>
       <td>When reduction is not none, the number of dimensions of gradOutput is greater than 1 or the number of elements is not 1.</td>
+      </tr>
+      <tr>
+      <td>The shape of out is inconsistent with self.</td>
       </tr>
       <tr>
       <td>The value of reduction is not in the range 0-2.</td>
@@ -285,6 +288,8 @@ aclnnStatus aclnnNLLLoss2dBackward(
 
 - Deterministic computation:
     - aclnnNLLLoss2dBackward defaults to a deterministic implementation.
+- self supports ranks of 4D (N, C, H, W) only; other ranks return an error; when self is 4D, the H and W dimensions must be positive integers.
+- Only the ND data format is supported.
 
 ## Example
 

@@ -25,19 +25,21 @@ extern "C" {
  * 算子功能：负对数似然损失函数的反向传播。
  *
  * @param [in] gradOutput: npu
- * device侧的aclTensor，shape为(N,)或者为(1,)，数据类型支持FLOAT。支持非连续的Tensor，数据格式支持ND。
+ * device侧的aclTensor，shape为(N,)、()或元素个数为1的(1,)，数据类型支持FLOAT、FLOAT16、BFLOAT16。支持非连续的Tensor，数据格式支持ND。
  * @param [in] self: npu device侧的aclTensor，shape为(N,C)或者(C,)，其中N表示batch
- * size，C表示类别数。数据类型支持FLOAT。支持非连续的Tensor, 数据格式支持ND。
- * @param [in] target: npu device侧的aclTensor，表示真实标签，shape为(N,) 或者(1,)，其中每个元素的取值范围是[0, C - 1]。
- * 数据类型支持INT64，UINT8 ，支持非连续的Tensor， 数据格式支持ND。
+ * size，C表示类别数。数据类型支持FLOAT、FLOAT16、BFLOAT16。支持非连续的Tensor, 数据格式支持ND。
+ * @param [in] target: npu device侧的aclTensor，表示真实标签，shape为(N,)或者()，其中每个元素的取值范围是[0, C - 1]。
+ * 数据类型支持INT64、UINT8、INT32，支持非连续的Tensor， 数据格式支持ND。
  * @param [in] weight: npu
- * device侧的aclTensor，表示各个类别的权重，shape为(C,)。数据类型支持FLOAT。支持非连续的Tensor，数据格式支持ND。
+ * device侧的aclTensor，表示各个类别的权重，shape为(C,)。数据类型支持FLOAT、FLOAT16、BFLOAT16。支持非连续的Tensor，数据格式支持ND。
  * @param [in] reduction: host侧的int64_t，指定损失函数的计算方式，支持 0('none') | 1('mean') | 2('sum')。
  * 'none' 表示不应用减少，'mean' 表示输出的总和将除以输出中的元素数，'sum' 表示输出将被求和。
- * @param [in] ignoreIndex: host侧的int64_t，指定一个被忽略且不影响输入梯度的目标值。
+ * @param [in] ignoreIndex:
+ * host侧的int64_t，指定一个被忽略且不影响输入梯度的目标值，取值可为任意int64值；target中等于该值的元素不参与梯度计算。
  * @param [in] totalWeight: npu
- * device侧的aclTensor，shape为(1,)，数据类型支持FLOAT。且数据类型为与weight相同。数据格式支持ND。
- * @param [in] out: npu device侧的aclTensor。shape需要与self一致。支持非连续的Tensor，数据格式支持ND。
+ * device侧的aclTensor，shape为(1,)，数据类型支持FLOAT、FLOAT16、BFLOAT16。且数据类型为与weight相同。数据格式支持ND。
+ * @param [in] out: npu
+ * device侧的aclTensor。shape需要与self一致，数据类型与self一致。支持非连续的Tensor，数据格式支持ND。
  * @param [out] workspaceSize: 返回用户需要在npu device侧申请的workspace大小。
  * @param [out] executor: 返回op执行器，包含算子计算流程。
  * @return aclnnStatus: 返回状态码。
