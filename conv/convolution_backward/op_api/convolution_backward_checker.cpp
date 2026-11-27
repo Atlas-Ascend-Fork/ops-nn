@@ -159,6 +159,49 @@ int64_t GetExpectNum(const op::Shape& inputShape, const op::Shape& weightShape, 
     return dimExpect;
 }
 
+// 2D卷积的padding支持4维（上、下、左、右），此时单个维度的padding为上、下（或左、右）之和
+static int64_t GetSpatialPadSize(const aclIntArray* padding, int64_t dimOrder)
+{
+    if (padding == nullptr) {
+        return 0;
+    }
+    if (padding->Size() == CONV2DINPUTDIM) {
+        return dimOrder == 0 ? (*padding)[kPadding4UpIdx] + (*padding)[kPadding4DownIdx] :
+                               (*padding)[kPadding4LeftIdx] + (*padding)[kPadding4RightIdx];
+    }
+    return 2 * (*padding)[dimOrder];
+}
+
+// 2D卷积输出维度的期望值，4维padding按上、下（或左、右）分别求和
+static int64_t GetExpectNumWithSpatialPad(const op::Shape& inputShape, const op::Shape& weightShape,
+                                          const ConvolutionBackwardParams& params, int64_t dimIdx)
+{
+    int64_t dimOrder = dimIdx - 2; // 2: the dim N and C
+    int64_t filterDimDilation = (weightShape[dimIdx] - 1) * (*params.dilation)[dimOrder] + 1;
+    int64_t dimInput = inputShape.GetDim(dimIdx) + GetSpatialPadSize(params.padding, dimOrder) - filterDimDilation;
+    return dimInput / (*params.stride)[dimOrder] + 1;
+}
+
+// 与CheckResolutionGEKernelShape一致，但padding按GetSpatialPadSize的规则求和，避免4维padding下校验偏差
+static bool CheckResolutionGEKernelShapeWithSpatialPad(const op::Shape& inputShape, const op::Shape& weightShape,
+                                                       const ConvolutionBackwardParams& params, int64_t dimIdx)
+{
+    int64_t dimOrder = dimIdx - 2; // 2: the dim N and C
+    int64_t filterDimDilation = (weightShape[dimIdx] - 1) * (*params.dilation)[dimOrder] + 1;
+    int64_t padSize = GetSpatialPadSize(params.padding, dimOrder);
+    int64_t dimInput = inputShape.GetDim(dimIdx) + padSize - filterDimDilation;
+    OP_CHECK(dimInput >= 0,
+             OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                 ACLNN_CONVOLUTION_BACKWARD_NAME, "input, padding",
+                 FormatString("%ld,%ld", inputShape.GetDim(dimIdx), padSize),
+                 FormatString("(in_dim + pad_dim) should be greater than or equal to "
+                              "((weight_shape - 1) * dilation + 1), current in_dim=%ld, pad_dim=%ld, weight_shape=%ld, "
+                              "dilation=%ld",
+                              inputShape.GetDim(dimIdx), padSize, weightShape[dimIdx], (*params.dilation)[dimOrder])),
+             return false);
+    return true;
+}
+
 bool GetExpectValueDHW_95(const ConvolutionBackwardInputTensor& inputTensor, const ConvolutionBackwardParams& params,
                           struct ExpectValue& expectValue, const op::Shape& inputShape, const op::Shape& weightShape)
 {
@@ -938,6 +981,50 @@ bool ConvolutionBackwardChecker::CheckConv2DTransposedShape(const op::Shape& inp
     return true;
 }
 
+bool ConvolutionBackwardChecker::CheckConv1DNonTransposedShape(const op::Shape& inputShape,
+                                                               const op::Shape& weightShape,
+                                                               const op::Shape& gradOutShape)
+{
+    int64_t widthIdx = 2; // NCL
+    if (!CheckResolutionGEKernelShapeWithSpatialPad(inputShape, weightShape, params_, widthIdx)) {
+        return false;
+    }
+    struct ExpectValue expectValue = {};
+    expectValue.woExpect = GetExpectNumWithSpatialPad(inputShape, weightShape, params_, widthIdx);
+    bool expectCheck = expectValue.woExpect == gradOutShape.GetDim(widthIdx);
+    OP_CHECK(expectCheck,
+             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                 ACLNN_CONVOLUTION_BACKWARD_NAME, "gradOutput", op::ToString(gradOutShape).GetString(),
+                 FormatString("shape of gradOutput should equal to [%ld, %ld, %ld]", gradOutShape.GetDim(0),
+                              gradOutShape.GetDim(1), expectValue.woExpect)),
+             return false);
+    return true;
+}
+
+bool ConvolutionBackwardChecker::CheckConv2DNonTransposedShape(const op::Shape& inputShape,
+                                                               const op::Shape& weightShape,
+                                                               const op::Shape& gradOutShape)
+{
+    int64_t heightIdx = 2; // NCHW
+    int64_t widthIdx = 3;  // NCHW
+    if (!CheckResolutionGEKernelShapeWithSpatialPad(inputShape, weightShape, params_, heightIdx) ||
+        !CheckResolutionGEKernelShapeWithSpatialPad(inputShape, weightShape, params_, widthIdx)) {
+        return false;
+    }
+    struct ExpectValue expectValue = {};
+    expectValue.hoExpect = GetExpectNumWithSpatialPad(inputShape, weightShape, params_, heightIdx);
+    expectValue.woExpect = GetExpectNumWithSpatialPad(inputShape, weightShape, params_, widthIdx);
+    bool expectCheck = expectValue.hoExpect == gradOutShape.GetDim(heightIdx) &&
+                       expectValue.woExpect == gradOutShape.GetDim(widthIdx);
+    OP_CHECK(expectCheck,
+             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                 ACLNN_CONVOLUTION_BACKWARD_NAME, "gradOutput", op::ToString(gradOutShape).GetString(),
+                 FormatString("shape of gradOutput should equal to [%ld, %ld, %ld, %ld]", gradOutShape.GetDim(0),
+                              gradOutShape.GetDim(1), expectValue.hoExpect, expectValue.woExpect)),
+             return false);
+    return true;
+}
+
 bool ConvolutionBackwardChecker::CheckConvShapePlus()
 {
     op::Shape inputShape = params_.transposed ? inputTensor_.gradOutput->GetViewShape() :
@@ -952,11 +1039,17 @@ bool ConvolutionBackwardChecker::CheckConvShapePlus()
         }
         return CheckConv3DNonTransposedShape(inputShape, weightShape, gradOutShape);
     }
-    if (inputDim == CONV1DINPUTDIM && params_.transposed) {
-        return CheckConv1DTransposedShape(inputShape, weightShape, gradOutShape);
+    if (inputDim == CONV1DINPUTDIM) {
+        if (params_.transposed) {
+            return CheckConv1DTransposedShape(inputShape, weightShape, gradOutShape);
+        }
+        return CheckConv1DNonTransposedShape(inputShape, weightShape, gradOutShape);
     }
-    if (inputDim == CONV2DINPUTDIM && params_.transposed) {
-        return CheckConv2DTransposedShape(inputShape, weightShape, gradOutShape);
+    if (inputDim == CONV2DINPUTDIM) {
+        if (params_.transposed) {
+            return CheckConv2DTransposedShape(inputShape, weightShape, gradOutShape);
+        }
+        return CheckConv2DNonTransposedShape(inputShape, weightShape, gradOutShape);
     }
     return true;
 }

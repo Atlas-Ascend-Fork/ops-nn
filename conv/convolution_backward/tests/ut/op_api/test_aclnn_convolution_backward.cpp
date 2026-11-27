@@ -2219,6 +2219,293 @@ TEST_F(convolution_backward_test, ascend910B2_test_gradOutput_input_dim_not_equa
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
 
+TEST_F(convolution_backward_test, ascend910B2_test_conv2d_gradOutput_spatial_legal)
+{
+    auto input_tensor_desc = TensorDesc({2, 8, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({8, 8, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({2, 8, 6, 6}, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{8});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = false;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({2, 8, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({8, 8, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
+
+// gradOutput 空间维小于期望值，应在 GetWorkspaceSize 阶段返回 161002
+TEST_F(convolution_backward_test, ascend910B2_test_conv2d_gradOutput_spatial_small_error)
+{
+    auto input_tensor_desc = TensorDesc({2, 8, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({8, 8, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({2, 8, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{8});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = false;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({2, 8, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({8, 8, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// gradOutput 空间维大于期望值，应在 GetWorkspaceSize 阶段返回 161002
+TEST_F(convolution_backward_test, ascend910B2_test_conv2d_gradOutput_spatial_big_error)
+{
+    auto input_tensor_desc = TensorDesc({2, 8, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({8, 8, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({2, 8, 12, 12}, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{8});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = false;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({2, 8, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({8, 8, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// gradOutput 仅 H 维不匹配，应在 GetWorkspaceSize 阶段返回 161002
+TEST_F(convolution_backward_test, ascend910B2_test_conv2d_gradOutput_h_only_error)
+{
+    auto input_tensor_desc = TensorDesc({2, 8, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({8, 8, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({2, 8, 4, 6}, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{8});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = false;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({2, 8, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({8, 8, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// gradOutput 仅 W 维不匹配，应在 GetWorkspaceSize 阶段返回 161002
+TEST_F(convolution_backward_test, ascend910B2_test_conv2d_gradOutput_w_only_error)
+{
+    auto input_tensor_desc = TensorDesc({2, 8, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({8, 8, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({2, 8, 6, 4}, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{8});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = false;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({2, 8, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({8, 8, 3, 3}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// 2D卷积 kernel 大于 padded input（对称padding）时，应在 GetWorkspaceSize 阶段返回 161002
+TEST_F(convolution_backward_test, ascend910B2_test_conv2d_kernel_gt_padded_input_error)
+{
+    auto input_tensor_desc = TensorDesc({2, 8, 2, 2}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({8, 8, 4, 4}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({2, 8, 1, 1}, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{8});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{3, 3});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = false;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({2, 8, 2, 2}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({8, 8, 4, 4}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// 4维padding且kernel大于padded input时，应在 GetWorkspaceSize 阶段返回 161002
+TEST_F(convolution_backward_test, ascend910B2_test_conv2d_4dim_padding_kernel_gt_padded_input_error)
+{
+    auto input_tensor_desc = TensorDesc({2, 8, 1, 1}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto weight_tensor_desc = TensorDesc({8, 8, 5, 5}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto grad_output_tensor_desc = TensorDesc({2, 8, 1, 1}, ACL_FLOAT, ACL_FORMAT_NCHW);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{8});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{3, 3});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{3, 0, 3, 0});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1, 1});
+    bool transposed = false;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0, 0, 0, 0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({2, 8, 1, 1}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradWeight = TensorDesc({8, 8, 5, 5}, ACL_FLOAT, ACL_FORMAT_NCHW);
+    auto gradBias = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// 1D卷积 kernel 大于 padded input 时，应在 GetWorkspaceSize 阶段返回 161002
+TEST_F(convolution_backward_test, ascend910B2_test_conv1d_kernel_gt_padded_input_error)
+{
+    auto input_tensor_desc = TensorDesc({2, 8, 2}, ACL_FLOAT, ACL_FORMAT_NCL);
+    auto weight_tensor_desc = TensorDesc({8, 8, 4}, ACL_FLOAT, ACL_FORMAT_NCL);
+    auto grad_output_tensor_desc = TensorDesc({2, 8, 1}, ACL_FLOAT, ACL_FORMAT_NCL);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{8});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{3});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{0});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1});
+    bool transposed = false;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({2, 8, 2}, ACL_FLOAT, ACL_FORMAT_NCL);
+    auto gradWeight = TensorDesc({8, 8, 4}, ACL_FLOAT, ACL_FORMAT_NCL);
+    auto gradBias = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// 1D 卷积 gradOutput 空间维不匹配，应在 GetWorkspaceSize 阶段返回 161002
+TEST_F(convolution_backward_test, ascend910B2_test_conv1d_gradOutput_spatial_error)
+{
+    auto input_tensor_desc = TensorDesc({2, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCL);
+    auto weight_tensor_desc = TensorDesc({8, 8, 3}, ACL_FLOAT, ACL_FORMAT_NCL);
+    auto grad_output_tensor_desc = TensorDesc({2, 8, 4}, ACL_FLOAT, ACL_FORMAT_NCL);
+
+    auto bias_sizes_desc = IntArrayDesc(vector<int64_t>{8});
+    auto stride_desc = IntArrayDesc(vector<int64_t>{1});
+    auto padding_desc = IntArrayDesc(vector<int64_t>{0});
+    auto dilation_desc = IntArrayDesc(vector<int64_t>{1});
+    bool transposed = false;
+    auto output_padding_desc = IntArrayDesc(vector<int64_t>{0});
+    int groups = 1;
+    auto output_mask = BoolArrayDesc(vector<bool>{true, true, true});
+    auto gradInput = TensorDesc({2, 8, 8}, ACL_FLOAT, ACL_FORMAT_NCL);
+    auto gradWeight = TensorDesc({8, 8, 3}, ACL_FLOAT, ACL_FORMAT_NCL);
+    auto gradBias = TensorDesc({8}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    int8_t cubeMathType = 0;
+
+    auto ut = OP_API_UT(
+        aclnnConvolutionBackward,
+        INPUT(grad_output_tensor_desc, input_tensor_desc, weight_tensor_desc, bias_sizes_desc, stride_desc,
+              padding_desc, dilation_desc, transposed, output_padding_desc, groups, output_mask, cubeMathType),
+        OUTPUT(gradInput, gradWeight, gradBias));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
 TEST_F(convolution_backward_test, ascend910B2_test_empty_tensor_biasSizes_nullptr_error)
 {
     auto input_tensor_desc = TensorDesc({0, 16, 10, 10}, ACL_FLOAT16, ACL_FORMAT_NCHW);
