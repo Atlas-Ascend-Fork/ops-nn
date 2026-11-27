@@ -9,6 +9,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstring>
 #include <string>
 #include <vector>
 #include "tiling_context_faker.h"
@@ -20,6 +21,20 @@
 #include "../../../op_host/situ_glu_grad_tiling.h"
 
 namespace {
+// Mirror of the serialized kernel ABI layout written by SaveToBuffer().
+// The host-side SituGluGradTilingData struct carries per-field reserve buffers, so its
+// sizeof() is much larger than the bytes actually serialized into the tiling buffer.
+struct SituGluGradTilingDataMirror {
+    int64_t coreNumAll;
+    int64_t dimBatchSize;
+    int64_t dim2H;
+    int64_t isLongH;
+    int64_t ubMaxPair;
+    float beta;
+    float linearBeta;
+    int64_t activateLeft;
+};
+
 struct TilingCase {
     const char* name;
     int64_t rows;
@@ -29,6 +44,9 @@ struct TilingCase {
     ge::DataType dtype;
     ge::DataType otherDtype;
     bool success;
+    const char* shortSocVersion;
+    const char* npuArch;
+    int64_t expectedIsLongH;
 };
 class SituGluGradTilingTest : public testing::TestWithParam<TilingCase> {};
 
@@ -47,7 +65,8 @@ TEST_P(SituGluGradTilingTest, ValidatesInputsAndWritesTilingData)
     GetPlatFormInfos(hardware, socInfos, coreSpec, intrinsics);
     fe::PlatFormInfos platform;
     ASSERT_TRUE(platform.Init());
-    std::map<std::string, std::string> version = {{"Short_SoC_version", "Ascend910B"}, {"NpuArch", "2201"}};
+    std::map<std::string, std::string> version = {{"Short_SoC_version", test.shortSocVersion},
+                                                  {"NpuArch", test.npuArch}};
     platform.SetPlatformRes("version", version);
     platform.SetPlatformRes("SoCInfo", socInfos);
     platform.SetPlatformRes("AICoreSpec", coreSpec);
@@ -89,16 +108,28 @@ TEST_P(SituGluGradTilingTest, ValidatesInputsAndWritesTilingData)
     if (test.success) {
         ASSERT_NE(context->GetRawTilingData(), nullptr);
         EXPECT_GT(context->GetRawTilingData()->GetDataSize(), 0U);
+        ASSERT_GE(context->GetRawTilingData()->GetDataSize(), sizeof(SituGluGradTilingDataMirror));
+        SituGluGradTilingDataMirror rawTiling{};
+        std::memcpy(&rawTiling, context->GetRawTilingData()->GetData(), sizeof(rawTiling));
+        EXPECT_EQ(rawTiling.isLongH, test.expectedIsLongH);
     }
 }
 
 INSTANTIATE_TEST_SUITE_P(
     InputValidation, SituGluGradTilingTest,
-    testing::Values(TilingCase{"Valid", 4, 8, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true},
-                    TilingCase{"DimOutOfRange", 4, 8, 4, 2, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
-                    TilingCase{"OddSplit", 4, 7, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
-                    TilingCase{"UnsupportedInputDtype", 4, 8, 4, -1, ge::DT_INT32, ge::DT_INT32, false},
-                    TilingCase{"GradSplitMismatch", 4, 8, 3, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false},
-                    TilingCase{"GradDtypeMismatch", 4, 8, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT, false}),
+    testing::Values(
+        TilingCase{"Valid", 4, 32, 16, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true, "Ascend910B", "2201", 0},
+        TilingCase{"Valid960DTFp32", 4, 32, 16, -1, ge::DT_FLOAT, ge::DT_FLOAT, true, "Ascend960DT", "9201", 0},
+        TilingCase{"Valid960DTFp16", 4, 32, 16, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true, "Ascend960DT", "9201", 0},
+        TilingCase{"Valid960DTBf16", 4, 32, 16, -1, ge::DT_BF16, ge::DT_BF16, true, "Ascend960DT", "9201", 0},
+        TilingCase{"Valid960DTLongHUnalignedFp16", 2, 250, 125, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true, "Ascend960DT",
+                   "9201", 1},
+        TilingCase{"Valid960DTLongHUbLimitFp16", 2, 20000, 10000, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, true,
+                   "Ascend960DT", "9201", 1},
+        TilingCase{"DimOutOfRange", 4, 8, 4, 2, ge::DT_FLOAT16, ge::DT_FLOAT16, false, "Ascend910B", "2201", 0},
+        TilingCase{"OddSplit", 4, 7, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false, "Ascend910B", "2201", 0},
+        TilingCase{"UnsupportedInputDtype", 4, 8, 4, -1, ge::DT_INT32, ge::DT_INT32, false, "Ascend910B", "2201", 0},
+        TilingCase{"GradSplitMismatch", 4, 8, 3, -1, ge::DT_FLOAT16, ge::DT_FLOAT16, false, "Ascend910B", "2201", 0},
+        TilingCase{"GradDtypeMismatch", 4, 8, 4, -1, ge::DT_FLOAT16, ge::DT_FLOAT, false, "Ascend910B", "2201", 0}),
     [](const testing::TestParamInfo<TilingCase>& info) { return info.param.name; });
 } // namespace

@@ -47,9 +47,10 @@ struct SituIsBf16 : std::false_type {};
 template <>
 struct SituIsBf16<bfloat16_t> : std::true_type {};
 
-template <typename T>
+template <typename T, bool LB_POS>
 class SituGluGradBase {
     static constexpr bool kIsFp32 = std::is_same<T, float>::value;
+    // LB_POS selects the linear_beta>0 code path at compile time
 
 public:
     __aicore__ inline SituGluGradBase(TPipe* pipe) { pipe_ = pipe; };
@@ -119,9 +120,9 @@ protected:
     const SituGluGradTilingData* tl_ = nullptr;
 };
 
-template <typename T>
-__aicore__ inline void SituGluGradBase<T>::Init(GM_ADDR gradY, GM_ADDR x, GM_ADDR gradX,
-                                                const SituGluGradTilingData* tilingData)
+template <typename T, bool LB_POS>
+__aicore__ inline void SituGluGradBase<T, LB_POS>::Init(GM_ADDR gradY, GM_ADDR x, GM_ADDR gradX,
+                                                        const SituGluGradTilingData* tilingData)
 {
     tl_ = tilingData;
     dimBatchSize_ = tl_->dimBatchSize;
@@ -130,7 +131,9 @@ __aicore__ inline void SituGluGradBase<T>::Init(GM_ADDR gradY, GM_ADDR x, GM_ADD
     isLongH_ = tl_->isLongH;
     ubMaxPair_ = tl_->ubMaxPair;
     beta_ = tl_->beta;
-    linearBeta_ = tl_->linearBeta;
+    if constexpr (LB_POS) {
+        linearBeta_ = tl_->linearBeta;
+    } // G10: lb<=0 instance never loads linearBeta
     activateLeft_ = tl_->activateLeft;
 
     xQueSpace_ = SWI_FACTOR * AlignBytes(ubMaxPair_ * static_cast<int64_t>(sizeof(T)));
@@ -154,14 +157,14 @@ __aicore__ inline void SituGluGradBase<T>::Init(GM_ADDR gradY, GM_ADDR x, GM_ADD
     }
 }
 
-template <typename T>
-__aicore__ inline int64_t SituGluGradBase<T>::AlignBytes(int64_t number)
+template <typename T, bool LB_POS>
+__aicore__ inline int64_t SituGluGradBase<T, LB_POS>::AlignBytes(int64_t number)
 {
     return (number + BLOCK_SIZE - 1) / BLOCK_SIZE * BLOCK_SIZE;
 }
 
-template <typename T>
-__aicore__ inline void SituGluGradBase<T>::Process()
+template <typename T, bool LB_POS>
+__aicore__ inline void SituGluGradBase<T, LB_POS>::Process()
 {
     if (dimBatchSize_ <= 0 || dim2H_ <= 0) {
         return;
@@ -193,8 +196,8 @@ __aicore__ inline void SituGluGradBase<T>::Process()
     }
 }
 
-template <typename T>
-__aicore__ inline void SituGluGradBase<T>::CalTilingParam()
+template <typename T, bool LB_POS>
+__aicore__ inline void SituGluGradBase<T, LB_POS>::CalTilingParam()
 {
     int64_t coreNum = tl_->coreNumAll;
     if (coreNum <= 0) {
@@ -226,8 +229,8 @@ __aicore__ inline void SituGluGradBase<T>::CalTilingParam()
     }
 }
 
-template <typename T>
-__aicore__ inline void SituGluGradBase<T>::ProcessSingleLoop(int64_t gradYOffset, int64_t xOffset)
+template <typename T, bool LB_POS>
+__aicore__ inline void SituGluGradBase<T, LB_POS>::ProcessSingleLoop(int64_t gradYOffset, int64_t xOffset)
 {
     CopyIn(gradYOffset, xOffset);
     LocalTensor<T> gradYLocal = gradYQueue_.DeQue<T>();
@@ -243,8 +246,8 @@ __aicore__ inline void SituGluGradBase<T>::ProcessSingleLoop(int64_t gradYOffset
     CopyOut(xOffset);
 }
 
-template <typename T>
-__aicore__ inline void SituGluGradBase<T>::CopyIn(int64_t gradYOffset, int64_t xOffset)
+template <typename T, bool LB_POS>
+__aicore__ inline void SituGluGradBase<T, LB_POS>::CopyIn(int64_t gradYOffset, int64_t xOffset)
 {
     LocalTensor<T> gradYLocal = gradYQueue_.AllocTensor<T>();
     LocalTensor<T> xLocal = xQueue_.AllocTensor<T>();
@@ -257,9 +260,9 @@ __aicore__ inline void SituGluGradBase<T>::CopyIn(int64_t gradYOffset, int64_t x
     xQueue_.EnQue(xLocal);
 }
 
-template <typename T>
-__aicore__ inline void SituGluGradBase<T>::CopyInShortH(LocalTensor<T>& gradYLocal, LocalTensor<T>& xLocal,
-                                                        int64_t gradYOffset, int64_t xOffset)
+template <typename T, bool LB_POS>
+__aicore__ inline void SituGluGradBase<T, LB_POS>::CopyInShortH(LocalTensor<T>& gradYLocal, LocalTensor<T>& xLocal,
+                                                                int64_t gradYOffset, int64_t xOffset)
 {
     DataCopyPadParams padParams{false, 0, 0, 0};
     // grad_y: contiguous rows of dimH
@@ -280,9 +283,9 @@ __aicore__ inline void SituGluGradBase<T>::CopyInShortH(LocalTensor<T>& gradYLoc
     DataCopyPad(xLocal[halfOff_], xGm_[xOffset + dimH_], xParams, padParams);
 }
 
-template <typename T>
-__aicore__ inline void SituGluGradBase<T>::CopyInLongH(LocalTensor<T>& gradYLocal, LocalTensor<T>& xLocal,
-                                                       int64_t gradYOffset, int64_t xOffset)
+template <typename T, bool LB_POS>
+__aicore__ inline void SituGluGradBase<T, LB_POS>::CopyInLongH(LocalTensor<T>& gradYLocal, LocalTensor<T>& xLocal,
+                                                               int64_t gradYOffset, int64_t xOffset)
 {
     DataCopyPadParams padParams{false, 0, 0, 0};
     DataCopyParams gradYParams;
@@ -304,13 +307,13 @@ __aicore__ inline void SituGluGradBase<T>::CopyInLongH(LocalTensor<T>& gradYLoca
 // Common backward compute body. All operands are LocalTensor<float>.
 // gate/up: forward gate/up (float). gradY: grad_y (float), reused as scratch.
 // gradGateOut / gradUpOut: final grad_gate / grad_up (float).
-template <typename T>
-__aicore__ inline void SituGluGradBase<T>::GradCore(LocalTensor<float> gate, LocalTensor<float> up,
-                                                    LocalTensor<float> gradY, LocalTensor<float> tmp1,
-                                                    LocalTensor<float> tmp2, LocalTensor<float> tmp3,
-                                                    LocalTensor<float> tmp4, LocalTensor<float> tmp5,
-                                                    LocalTensor<float> gradGateOut, LocalTensor<float> gradUpOut,
-                                                    int64_t n)
+template <typename T, bool LB_POS>
+__aicore__ inline void SituGluGradBase<T, LB_POS>::GradCore(LocalTensor<float> gate, LocalTensor<float> up,
+                                                            LocalTensor<float> gradY, LocalTensor<float> tmp1,
+                                                            LocalTensor<float> tmp2, LocalTensor<float> tmp3,
+                                                            LocalTensor<float> tmp4, LocalTensor<float> tmp5,
+                                                            LocalTensor<float> gradGateOut,
+                                                            LocalTensor<float> gradUpOut, int64_t n)
 {
     // 1. t = tanh(gate / beta)
     Muls(tmp1, gate, 1.0f / beta_, n);
@@ -330,8 +333,8 @@ __aicore__ inline void SituGluGradBase<T>::GradCore(LocalTensor<float> gate, Loc
     PipeBarrier<PIPE_V>();
     // tmp3 = situ_a
 
-    // 4. up_prime
-    if (linearBeta_ > 0.0f) {
+    // 4. up_prime (compile-time branched via LB_POS template param)
+    if constexpr (LB_POS) {
         Muls(tmp4, up, 1.0f / linearBeta_, n);
         PipeBarrier<PIPE_V>();
         Tanh(tmp4, tmp4, n);
@@ -343,7 +346,7 @@ __aicore__ inline void SituGluGradBase<T>::GradCore(LocalTensor<float> gate, Loc
     // else: up_prime = up (use up directly)
 
     // 5. grad_situ_a = grad_y * up_prime
-    if (linearBeta_ > 0.0f) {
+    if constexpr (LB_POS) {
         Mul(tmp5, gradY, tmp4, n);
     } else {
         Mul(tmp5, gradY, up, n);
@@ -392,8 +395,8 @@ __aicore__ inline void SituGluGradBase<T>::GradCore(LocalTensor<float> gate, Loc
     PipeBarrier<PIPE_V>();
     // gradGateOut = grad_gate
 
-    // 8. grad_up
-    if (linearBeta_ > 0.0f) {
+    // 8. grad_up (compile-time branched via LB_POS template param)
+    if constexpr (LB_POS) {
         // t_u = tanh(up / linear_beta) in gradY (reused)
         Muls(gradY, up, 1.0f / linearBeta_, n);
         PipeBarrier<PIPE_V>();
@@ -419,11 +422,11 @@ __aicore__ inline void SituGluGradBase<T>::GradCore(LocalTensor<float> gate, Loc
     // gradUpOut = grad_up
 }
 
-template <typename T>
-__aicore__ inline void SituGluGradBase<T>::Compute(LocalTensor<T>& gradYLocal, LocalTensor<T>& xLocal,
-                                                   LocalTensor<float>& tmp1, LocalTensor<float>& tmp2,
-                                                   LocalTensor<float>& tmp3, LocalTensor<float>& tmp4,
-                                                   LocalTensor<float>& tmp5, LocalTensor<T>& gradXLocal)
+template <typename T, bool LB_POS>
+__aicore__ inline void SituGluGradBase<T, LB_POS>::Compute(LocalTensor<T>& gradYLocal, LocalTensor<T>& xLocal,
+                                                           LocalTensor<float>& tmp1, LocalTensor<float>& tmp2,
+                                                           LocalTensor<float>& tmp3, LocalTensor<float>& tmp4,
+                                                           LocalTensor<float>& tmp5, LocalTensor<T>& gradXLocal)
 {
     int64_t n = pairNum_;
     int64_t gateOff = (activateLeft_ == 1) ? 0 : halfOff_;
@@ -473,8 +476,8 @@ __aicore__ inline void SituGluGradBase<T>::Compute(LocalTensor<T>& gradYLocal, L
     }
 }
 
-template <typename T>
-__aicore__ inline void SituGluGradBase<T>::CopyOut(int64_t xOffset)
+template <typename T, bool LB_POS>
+__aicore__ inline void SituGluGradBase<T, LB_POS>::CopyOut(int64_t xOffset)
 {
     LocalTensor<T> gradXLocal = gradXQueue_.DeQue<T>();
     DataCopyParams params;

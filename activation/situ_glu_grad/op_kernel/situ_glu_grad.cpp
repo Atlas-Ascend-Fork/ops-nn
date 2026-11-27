@@ -25,26 +25,29 @@ extern "C" __global__ __aicore__ void situ_glu_grad(GM_ADDR gradYGM, GM_ADDR xGM
     }
     TPipe pipe;
 #if (ORIG_DTYPE_X == DT_FLOAT)
-    if (TILING_KEY_IS(1)) {
+    if (TILING_KEY_IS(1) || TILING_KEY_IS(2)) {
         GET_TILING_DATA_WITH_STRUCT(SituGluGradTilingData, tilingDataIn, tiling);
         const SituGluGradTilingData* __restrict__ tilingData = &tilingDataIn;
-        SituGluGradOps::SituGluGradBase<float> op(&pipe);
+        constexpr bool lbPos = (TILING_KEY_IS(1));
+        SituGluGradOps::SituGluGradBase<float, lbPos> op(&pipe);
         op.Init(gradYGM, xGM, gradXGM, tilingData);
         op.Process();
     }
 #elif (ORIG_DTYPE_X == DT_FLOAT16)
-    if (TILING_KEY_IS(1)) {
+    if (TILING_KEY_IS(1) || TILING_KEY_IS(2)) {
         GET_TILING_DATA_WITH_STRUCT(SituGluGradTilingData, tilingDataIn, tiling);
         const SituGluGradTilingData* __restrict__ tilingData = &tilingDataIn;
-        SituGluGradOps::SituGluGradBase<half> op(&pipe);
+        constexpr bool lbPos = (TILING_KEY_IS(1));
+        SituGluGradOps::SituGluGradBase<half, lbPos> op(&pipe);
         op.Init(gradYGM, xGM, gradXGM, tilingData);
         op.Process();
     }
 #elif (ORIG_DTYPE_X == DT_BF16)
-    if (TILING_KEY_IS(1)) {
+    if (TILING_KEY_IS(1) || TILING_KEY_IS(2)) {
         GET_TILING_DATA_WITH_STRUCT(SituGluGradTilingData, tilingDataIn, tiling);
         const SituGluGradTilingData* __restrict__ tilingData = &tilingDataIn;
-        SituGluGradOps::SituGluGradBase<bfloat16_t> op(&pipe);
+        constexpr bool lbPos = (TILING_KEY_IS(1));
+        SituGluGradOps::SituGluGradBase<bfloat16_t, lbPos> op(&pipe);
         op.Init(gradYGM, xGM, gradXGM, tilingData);
         op.Process();
     }

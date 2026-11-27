@@ -86,11 +86,12 @@ def situ_glu_grad_cpu(grad_y, x, dim=-1, beta=1.0, linear_beta=0.0, activate_lef
 
 NETWORK_SHAPES = [
     (2, 32),
+    (2, 250),
     (1, 4624, 6144),
     (15908, 3072),
 ]
 
-DTYPES = [torch.float32, torch.float16]
+DTYPES = [torch.float32, torch.float16, torch.bfloat16]
 
 NET_DIM = -1
 NET_BETA = 4.0
@@ -111,9 +112,7 @@ def _make_grad_y_for(x, dim=-1):
     return torch.randn(*y_shape, dtype=torch.float32).to(x.dtype).npu()
 
 
-@pytest.mark.parametrize("shape", NETWORK_SHAPES)
-@pytest.mark.parametrize("dtype", DTYPES)
-def test_situ_glu_grad_network(shape, dtype):
+def _check_situ_glu_grad_case(shape, dtype, activate_left, linear_beta):
     x = _make_x(shape, dtype)
     grad_y = _make_grad_y_for(x, dim=NET_DIM)
     grad_x = cann_ops_nn.situ_glu_grad(
@@ -121,18 +120,43 @@ def test_situ_glu_grad_network(shape, dtype):
         x,
         dim=NET_DIM,
         beta=NET_BETA,
-        linear_beta=NET_LINEAR_BETA,
-        activate_left=NET_ACTIVATE_LEFT,
+        linear_beta=linear_beta,
+        activate_left=activate_left,
     )
     grad_x_cpu = situ_glu_grad_cpu(
         grad_y.cpu(),
         x.cpu(),
         dim=NET_DIM,
         beta=NET_BETA,
-        linear_beta=NET_LINEAR_BETA,
-        activate_left=NET_ACTIVATE_LEFT,
+        linear_beta=linear_beta,
+        activate_left=activate_left,
     )
     assert grad_x.dtype == x.dtype
     compare_results(
         grad_x, grad_x_cpu, dtype, name=f"situ_glu_grad_network_{shape}_{dtype}"
+    )
+
+
+@pytest.mark.parametrize("shape", NETWORK_SHAPES)
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_situ_glu_grad_network(shape, dtype):
+    _check_situ_glu_grad_case(
+        shape,
+        dtype,
+        activate_left=NET_ACTIVATE_LEFT,
+        linear_beta=NET_LINEAR_BETA,
+    )
+
+
+@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize(
+    "activate_left,linear_beta",
+    [(True, 0.0), (False, 0.0), (False, NET_LINEAR_BETA)],
+)
+def test_situ_glu_grad_network_branches(dtype, activate_left, linear_beta):
+    _check_situ_glu_grad_case(
+        (2, 250),
+        dtype,
+        activate_left=activate_left,
+        linear_beta=linear_beta,
     )

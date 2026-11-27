@@ -117,7 +117,7 @@ ge::graphStatus SituGluGradTiling::DoOpTiling()
     if (CountMaxPair() != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
-    tilingKey_ = 1;
+    tilingKey_ = linearBeta_ > 0.0f ? 1 : 2;
     tilingData_.set_coreNumAll(coreNumAll_);
     tilingData_.set_dimBatchSize(dimBatchSize_);
     tilingData_.set_dim2H(dim2H_);
