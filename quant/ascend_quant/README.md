@@ -13,7 +13,7 @@
 
 ## 功能说明
 
-- 算子功能：对输入x进行量化操作，且scale和offset的size需要是x的最后一维或1。
+- 算子功能：对输入x进行量化操作，scale和offset为必选标量属性。
 - 计算公式：
   - sqrtMode为false时，计算公式为:
 
@@ -54,49 +54,49 @@
     </tr>
     <tr>
       <td>scale</td>
-      <td>输入</td>
+      <td>必选属性</td>
       <td>待进行ascend_quant计算的入参，公式中的scale。</td>
       <td>FLOAT</td>
-      <td>ND</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>offset</td>
-      <td>输入</td>
+      <td>必选属性</td>
       <td>待进行ascend_quant计算的入参，公式中的offset。</td>
       <td>FLOAT</td>
-      <td>ND</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>sqrt_mode</td>
-      <td>输入</td>
+      <td>可选属性</td>
       <td>待进行ascend_quant计算的入参，公式中的sqrt_mode。</td>
       <td>BOOL</td>
-      <td>ND</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>round_mode</td>
-      <td>输入</td>
+      <td>可选属性</td>
       <td>待进行ascend_quant计算的入参，公式中的round_mode。</td>
       <td>STRING</td>
-      <td>ND</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>dst_type</td>
-      <td>输入</td>
+      <td>可选属性</td>
       <td>待进行ascend_quant计算的入参，公式中的dst_type。</td>
-      <td>INT8</td>
-      <td>ND</td>
+      <td>INT32</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>y</td>
       <td>输出</td>
       <td>待进行ascend_quant计算的出参，公式中的y。</td>
-      <td>INT8、INT4、HIFLOAT8</td>
+      <td>INT8、INT4、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN</td>
       <td>ND</td>
     </tr>
   </tbody></table>
 
-- <term>Ascend 950PR&950DT系列产品 </term>：数据类型支持FLOAT32、FLOAT16。
+- <term>Ascend 950PR&950DT系列产品 </term>：输入数据类型支持FLOAT32、FLOAT16；输出支持INT8、INT4、HIFLOAT8、FLOAT8_E5M2、FLOAT8_E4M3FN。
 
 ## 约束说明
 

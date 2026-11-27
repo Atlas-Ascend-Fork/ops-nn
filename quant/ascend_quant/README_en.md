@@ -15,7 +15,7 @@ English | [简体中文](./README.md)
 
 ## Function
 
-- Operator function: Performs quantization on the input x, and the sizes of scale and offset need to be the last dimension of x or 1.
+- Operator function: Performs quantization on input x, where scale and offset are required scalar attributes.
 - Formula:
   - When sqrtMode is false, the computation formula is:
 
@@ -56,49 +56,49 @@ English | [简体中文](./README.md)
     </tr>
     <tr>
       <td>scale</td>
-      <td>Input</td>
+      <td>Required attribute</td>
       <td>Input parameter for the ascend_quant computation, corresponding to scale in the formula.</td>
       <td>FLOAT</td>
-      <td>ND</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>offset</td>
-      <td>Input</td>
+      <td>Required attribute</td>
       <td>Input parameter for the ascend_quant computation, corresponding to offset in the formula.</td>
       <td>FLOAT</td>
-      <td>ND</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>sqrt_mode</td>
-      <td>Input</td>
+      <td>Optional attribute</td>
       <td>Input parameter for the ascend_quant computation, corresponding to sqrt_mode in the formula.</td>
       <td>BOOL</td>
-      <td>ND</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>round_mode</td>
-      <td>Input</td>
+      <td>Optional attribute</td>
       <td>Input parameter for the ascend_quant computation, corresponding to round_mode in the formula.</td>
       <td>STRING</td>
-      <td>ND</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>dst_type</td>
-      <td>Input</td>
+      <td>Optional attribute</td>
       <td>Input parameter for the ascend_quant computation, corresponding to dst_type in the formula.</td>
-      <td>INT8</td>
-      <td>ND</td>
+      <td>INT32</td>
+      <td>-</td>
     </tr>
     <tr>
       <td>y</td>
       <td>Output</td>
       <td>Output parameter of the ascend_quant computation, corresponding to y in the formula.</td>
-      <td>INT8, INT4, HIFLOAT8</td>
+      <td>INT8, INT4, HIFLOAT8, FLOAT8_E5M2, FLOAT8_E4M3FN</td>
       <td>ND</td>
     </tr>
   </tbody></table>
 
-- <term>Ascend 950PR&950DT products </term>: The data types support FLOAT32 and FLOAT16.
+- <term>Ascend 950PR&950DT products </term>: Input data types support FLOAT32 and FLOAT16; output data types support INT8, INT4, HIFLOAT8, FLOAT8_E5M2, and FLOAT8_E4M3FN.
 
 ## Constraints
 
