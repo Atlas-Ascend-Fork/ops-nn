@@ -95,7 +95,7 @@ aclnnStatus aclnnMatmulCompress(
     <tr>
       <td>weight</td>
       <td>输入</td>
-      <td>表示压缩后的矩阵乘的右输入，公式中的矩阵$x2\_unzip$，为通过msModelSlim工具中weight_compression模块压缩后的输入。</td>
+      <td>表示压缩后的矩阵乘的右输入，公式中的矩阵$x2$，为通过msModelSlim工具中weight_compression模块压缩后的输入。</td>
       <td>-</td>
       <td>FLOAT16</td>
       <td>ND</td>
@@ -308,7 +308,7 @@ aclnnStatus aclnnMatmulCompress(
     compressor = Compressor(compress_config, weight_path=weight_path)
 
     compress_weight, compress_index, compress_info = compressor.run()
-    # 压缩后的权重，对应aclnnMatmulCompressGetWorkspaceSize接口的x2
+    # 压缩后的权重，对应aclnnMatmulCompressGetWorkspaceSize接口的weight参数
     compressor.export(compress_weight, './data/weight')
     # 压缩权重的索引，对应aclnnMatmulCompressGetWorkspaceSize接口的compressIndex
     compressor.export(compress_index, './data/index')
@@ -365,7 +365,7 @@ aclnnStatus aclnnMatmulCompress(
     {
         struct stat sBuf;
         int fileStatus = stat(filePath.data(), &sBuf);
-        CHECK_RET(fileStatus == ACL_SUCCESS, LOG_PRINT("Failed to get file %s\n", filePath); return -1);
+        CHECK_RET(fileStatus == ACL_SUCCESS, LOG_PRINT("Failed to get file %s\n", filePath.c_str()); return -1);
 
         std::ifstream file;
         file.open(filePath, std::ios::binary);
@@ -433,7 +433,7 @@ aclnnStatus aclnnMatmulCompress(
       int m = atoi(argv[1]);
       int k = atoi(argv[2]);
       int n = atoi(argv[3]);
-      // wShape是右矩阵压缩后数据的大小
+      // wCompressedSize是右矩阵压缩后数据的大小
       int wCompressedSize = atoi(argv[4]);
       // indexShape是压缩索引数据的大小
       int indexSize = atoi(argv[5]);
@@ -470,7 +470,7 @@ aclnnStatus aclnnMatmulCompress(
       // 创建mat2Compressed aclTensor
       std::string mat2FilePath = rootPath + "weight/weight.dat";
       ret = CreateAclTensor(mat2FilePath, mat2CompressedShape, sizeof(int8_t), &mat2CompressedDeviceAddr,
-                            aclDataType::ACL_FLOAT16, &mat2Compressed);
+                            aclDataType::ACL_INT8, &mat2Compressed);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Create mat2 tensor failed. ERROR: %d\n", ret); return ret);
       // 创建index aclTensor
       std::string indexFilePath = rootPath + "index/weight.dat";
@@ -509,12 +509,12 @@ aclnnStatus aclnnMatmulCompress(
 
       // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
       auto size = GetShapeSize(outputShape);
-      std::vector<float> resultData(size, 0);
+      std::vector<aclFloat16> resultData(size, aclFloatToFloat16(0.0F));
       ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), outputDeviceAddr,
                         size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
       for (int64_t i = 0; i < size; i++) {
-        LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
+        LOG_PRINT("result[%ld] is: %f\n", i, aclFloat16ToFloat(resultData[i]));
       }
 
       // 6. 释放aclTensor和aclScalar，需要根据具体API的接口定义修改

@@ -676,10 +676,10 @@ int main() {
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // Create the alpha aclScalar.
   alpha = aclCreateScalar(&alphaValue,aclDataType::ACL_FLOAT);
-  CHECK_RET(alpha != nullptr, return ret);
+  CHECK_RET(alpha != nullptr, return -1);
   // Create the beta aclScalar.
   beta = aclCreateScalar(&betaValue,aclDataType::ACL_FLOAT);
-  CHECK_RET(beta != nullptr, return ret);
+  CHECK_RET(beta != nullptr, return -1);
   // Create the out aclTensor.
   ret = CreateAclTensor(outHostData, outShape, &outDeviceAddr, aclDataType::ACL_FLOAT, &out);
   CHECK_RET(ret == ACL_SUCCESS, return ret);

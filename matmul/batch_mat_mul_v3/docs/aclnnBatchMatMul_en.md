@@ -415,6 +415,7 @@ int main() {
 
   // 7. Release device resources. Modify it based on the specific API definition.
   aclrtFree(selfDeviceAddr);
+  aclrtFree(mat2DeviceAddr);
   aclrtFree(outDeviceAddr);
   if (workspaceSize > 0) {
     aclrtFree(workspaceAddr);

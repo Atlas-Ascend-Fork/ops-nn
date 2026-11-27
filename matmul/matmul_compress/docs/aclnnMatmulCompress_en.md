@@ -97,7 +97,7 @@ aclnnStatus aclnnMatmulCompress(
     <tr>
       <td>weight</td>
       <td>Input</td>
-      <td>Right input of the compressed matrix multiplication, matrix $x2\_unzip$ in the formula. It is the input compressed by the weight_compression module in the msModelSlim tool.</td>
+      <td>Right input of the compressed matrix multiplication, matrix $x2$ in the formula. It is the input compressed by the weight_compression module in the msModelSlim tool.</td>
       <td>-</td>
       <td>FLOAT16</td>
       <td>ND</td>
@@ -310,7 +310,7 @@ aclnnStatus aclnnMatmulCompress(
     compressor = Compressor(compress_config, weight_path=weight_path)
 
     compress_weight, compress_index, compress_info = compressor.run()
-    # Compressed weight, corresponding to x2 of the aclnnMatmulCompressGetWorkspaceSize API
+    # Compressed weight, corresponding to the weight parameter of aclnnMatmulCompressGetWorkspaceSize
     compressor.export(compress_weight, './data/weight')
     # Index of the compressed weight, corresponding to compressIndex of the aclnnMatmulCompressGetWorkspaceSize API
     compressor.export(compress_index, './data/index')
@@ -367,7 +367,7 @@ aclnnStatus aclnnMatmulCompress(
     {
         struct stat sBuf;
         int fileStatus = stat(filePath.data(), &sBuf);
-        CHECK_RET(fileStatus == ACL_SUCCESS, LOG_PRINT("Failed to get file %s\n", filePath); return -1);
+        CHECK_RET(fileStatus == ACL_SUCCESS, LOG_PRINT("Failed to get file %s\n", filePath.c_str()); return -1);
 
         std::ifstream file;
         file.open(filePath, std::ios::binary);
@@ -435,7 +435,7 @@ aclnnStatus aclnnMatmulCompress(
       int m = atoi(argv[1]);
       int k = atoi(argv[2]);
       int n = atoi(argv[3]);
-      // wShape is the size of the compressed data of the right matrix.
+      // wCompressedSize is the size of the compressed data of the right matrix.
       int wCompressedSize = atoi(argv[4]);
       // indexShape is the size of the compressed index data.
       int indexSize = atoi(argv[5]);
@@ -472,7 +472,7 @@ aclnnStatus aclnnMatmulCompress(
       // Create mat2Compressed aclTensor.
       std::string mat2FilePath = rootPath + "weight/weight.dat";
       ret = CreateAclTensor(mat2FilePath, mat2CompressedShape, sizeof(int8_t), &mat2CompressedDeviceAddr,
-                            aclDataType::ACL_FLOAT16, &mat2Compressed);
+                            aclDataType::ACL_INT8, &mat2Compressed);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("Create mat2 tensor failed. ERROR: %d\n", ret); return ret);
       // Create index aclTensor.
       std::string indexFilePath = rootPath + "index/weight.dat";
@@ -511,12 +511,12 @@ aclnnStatus aclnnMatmulCompress(
 
       // 5. Obtain the output value and copy the result from the device side to the host side. Modify the code based on the specific API definition.
       auto size = GetShapeSize(outputShape);
-      std::vector<float> resultData(size, 0);
+      std::vector<aclFloat16> resultData(size, aclFloatToFloat16(0.0F));
       ret = aclrtMemcpy(resultData.data(), resultData.size() * sizeof(resultData[0]), outputDeviceAddr,
                         size * sizeof(resultData[0]), ACL_MEMCPY_DEVICE_TO_HOST);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("copy result from device to host failed. ERROR: %d\n", ret); return ret);
       for (int64_t i = 0; i < size; i++) {
-        LOG_PRINT("result[%ld] is: %f\n", i, resultData[i]);
+        LOG_PRINT("result[%ld] is: %f\n", i, aclFloat16ToFloat(resultData[i]));
       }
 
       // 6. Release aclTensor and aclScalar. Modify the code based on the specific API definition.
