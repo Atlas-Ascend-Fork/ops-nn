@@ -27,6 +27,14 @@ namespace NsForeachPowScalarAndTensorRegbase {
 using namespace AscendC;
 
 constexpr uint32_t PSAT_VL = VECTOR_REG_WIDTH / sizeof(float);
+// float32 can represent every integer exactly up to 2^24; beyond this every
+// finite float32 is an even integer.  The int32 parity probe below would
+// saturate at INT32_MAX (odd) for larger magnitudes and invert the sign of an
+// overflowed pow(-b, x), so the parity result is masked out from this point on.
+constexpr float PSAT_EXACT_INT_LIMIT = 16777216.0f;
+// ln(FLT_MAX); exp(x) overflows to +Inf only above this.  The old 88.7 clamp
+// turned finite bf16 near-max results (exp(88.71) = 3.36e38) into +Inf.
+constexpr float PSAT_EXP_OVERFLOW = 88.72283935546875f;
 
 constexpr Reg::CastTrait PSAT_CAST_STORAGE_TO_FLOAT = {
     Reg::RegLayout::ZERO,
@@ -146,6 +154,14 @@ __aicore__ inline void PsatDetectInteger(Reg::RegTensor<float, Reg::RegTraitNumO
     Reg::Compare<float, CMPMODE::EQ>(intMask, back, xf, mask);
 }
 
+__aicore__ inline void PsatDetectLargeExponent(Reg::RegTensor<float, Reg::RegTraitNumOne>& xf, Reg::MaskReg& mask,
+                                               Reg::RegTensor<float, Reg::RegTraitNumOne>& absReg,
+                                               Reg::MaskReg& largeMask)
+{
+    Reg::Abs(absReg, xf, mask);
+    Reg::Compares<float, CMPMODE::GE>(largeMask, absReg, PSAT_EXACT_INT_LIMIT, mask);
+}
+
 __aicore__ inline void PsatDetectOdd(Reg::RegTensor<int32_t, Reg::RegTraitNumOne>& xi,
                                      Reg::RegTensor<int32_t, Reg::RegTraitNumOne>& andReg,
                                      Reg::RegTensor<int32_t, Reg::RegTraitNumOne>& one, Reg::MaskReg& mask,
@@ -179,6 +195,7 @@ __aicore__ inline void PsatFloatVF(__ubuf__ T* inAddr, __ubuf__ T* outAddr, floa
         Reg::MaskReg oddMask;
         Reg::MaskReg selMask;
         Reg::MaskReg negMask;
+        Reg::MaskReg largeMask;
         if constexpr (MODE == PSAT_BASE_POS || MODE == PSAT_BASE_NEG) {
             uint32_t fullRemain = PSAT_VL;
             Reg::MaskReg fullMask = Reg::UpdateMask<float, Reg::RegTraitNumOne>(fullRemain);
@@ -204,7 +221,11 @@ __aicore__ inline void PsatFloatVF(__ubuf__ T* inAddr, __ubuf__ T* outAddr, floa
                 Reg::Select(yf, tmp, yf, selMask);
             } else if constexpr (MODE == PSAT_BASE_NEG_ONE) {
                 PsatDetectInteger(xf, mask, xi, back, intMask);
+                PsatDetectLargeExponent(xf, mask, back, largeMask);
+                Reg::Or(intMask, intMask, largeMask, mask);
                 PsatDetectOdd(xi, andReg, one, mask, oddMask);
+                Reg::Compares<float, CMPMODE::LT>(selMask, back, PSAT_EXACT_INT_LIMIT, mask);
+                Reg::And(oddMask, oddMask, selMask, mask);
                 Reg::Duplicate(yf, nanValue, mask);
                 Reg::Duplicate(tmp, 1.0f, mask);
                 Reg::Select(yf, tmp, yf, intMask);
@@ -222,18 +243,22 @@ __aicore__ inline void PsatFloatVF(__ubuf__ T* inAddr, __ubuf__ T* outAddr, floa
                 Reg::Compares<float, CMPMODE::LT>(selMask, tmp, -87.3f, mask);
                 Reg::Duplicate(back, 0.0f, mask);
                 Reg::Select(yf, back, yf, selMask);
-                Reg::Compares<float, CMPMODE::GT>(selMask, tmp, 88.7f, mask);
+                Reg::Compares<float, CMPMODE::GT>(selMask, tmp, PSAT_EXP_OVERFLOW, mask);
                 Reg::Duplicate(back, infValue, mask);
                 Reg::Select(yf, back, yf, selMask);
             } else if constexpr (MODE == PSAT_BASE_NEG) {
                 PsatDetectInteger(xf, mask, xi, back, intMask);
+                PsatDetectLargeExponent(xf, mask, back, largeMask);
+                Reg::Or(intMask, intMask, largeMask, mask);
                 PsatDetectOdd(xi, andReg, one, mask, oddMask);
+                Reg::Compares<float, CMPMODE::LT>(selMask, back, PSAT_EXACT_INT_LIMIT, mask);
+                Reg::And(oddMask, oddMask, selMask, mask);
                 Reg::Mul(tmp, xf, lnReg, mask);
                 Reg::Exp<float, &PSAT_EXP_MODE>(yf, tmp, mask);
                 Reg::Compares<float, CMPMODE::LT>(selMask, tmp, -87.3f, mask);
                 Reg::Duplicate(back, 0.0f, mask);
                 Reg::Select(yf, back, yf, selMask);
-                Reg::Compares<float, CMPMODE::GT>(selMask, tmp, 88.7f, mask);
+                Reg::Compares<float, CMPMODE::GT>(selMask, tmp, PSAT_EXP_OVERFLOW, mask);
                 Reg::Duplicate(back, infValue, mask);
                 Reg::Select(yf, back, yf, selMask);
                 // integer exponent: +/- |b|^x; non-integer: NaN.
