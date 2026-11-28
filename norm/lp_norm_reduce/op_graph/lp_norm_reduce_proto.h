@@ -25,7 +25,8 @@ namespace ge {
  * x: A ND tensor of type float16, bfloat16, float32.
  *
  * @par Attributes:
- * @li p: An optional int, "inf" or "-inf", default value is 2, p >= 0.
+ * @li p: An optional int, default value is 2. Non-negative values other than 2147483647 select a finite order;
+ *     2147483647 denotes +inf and -2147483648 denotes -inf. Other negative values are invalid.
  * @li axes: ListInt, an optional attribute, indicates dimensions over which to compute the norm.
  * Default is {}, meaning all axes will be computed.
  * @li keepdim: An optional bool. If set to true, the reduced dimensions are retained in the result
