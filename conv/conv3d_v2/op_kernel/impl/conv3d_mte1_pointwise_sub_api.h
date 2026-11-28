@@ -41,8 +41,8 @@ public:
 
     __aicore__ inline void SetM(uint64_t m)
     {
-        // m是对齐到了BLOCK_L0_N
-        currentML0_ = m;
+        // Load2D consumes whole BLOCK_L0_N fractals for pointwise L0A.
+        currentML0_ = AlignB(m, BLOCK_L0_N);
         numML0Block_ = currentML0_ / BLOCK_L0_N;
         currentMAL1 = IsMTail() ? alignMAL1Tail : self_->ctx.conv3dTiling->mAL1;
     }

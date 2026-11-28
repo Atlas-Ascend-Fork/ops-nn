@@ -36,6 +36,7 @@ public:
         aL1Tools_ = aL1Tools;
     }
 
+    // M-mode Load3D accepts the real tail; aligning it can cross the L0A tile boundary.
     __aicore__ inline void SetM(uint64_t m) { currentML0_ = m; }
 
     __aicore__ inline void LoadAL0()

@@ -35,7 +35,7 @@ public:
         aL1Tools_ = aL1Tools;
     }
 
-    __aicore__ inline void SetM(uint64_t m) { currentML0_ = m; }
+    __aicore__ inline void SetM(uint64_t m) { currentML0_ = AlignB(m, BLOCK_L0_N); }
 
     __aicore__ inline void LoadAL0()
     {

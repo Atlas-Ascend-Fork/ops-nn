@@ -693,7 +693,7 @@ struct Iterate {
             self->ctx.cl0 = self->ctx.queueCL0.template AllocTensor<typename Intf::L0cT>();
         }
 
-        self->ctx.loadAL0Ins.SetM(AlignB(m, BLOCK_L0_N));
+        self->ctx.loadAL0Ins.SetM(m);
         self->ctx.loadBL0Ins.SetN(AlignB(n, BLOCK_L0_M));
         if constexpr (Intf::formatType == conv::ConvFormat::NCDHW) {
             self->ctx.madIns.SetMN(AlignB(n, BLOCK_L0_M), AlignB(m, BLOCK_L0_N));
