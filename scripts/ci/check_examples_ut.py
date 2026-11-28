@@ -114,25 +114,31 @@ def is_arch35_only_examples(examples_dir: str) -> bool:
 # aclnn接口声明：CMakeLists中ACLNNTYPE取aclnn/aclnn_inner视为暴露aclnn接口
 ACLNN_TYPE_RE = re.compile(r"ACLNNTYPE\s+aclnn(_inner)?\b")
 
+# ACLNNTYPE声明实际只出现在算子根与op_host层级的CMakeLists（op_api/op_graph/op_kernel系
+# 均无ACLNNTYPE声明，op_kernel系只会声明aclnn_exclude/no_need_aclnn），故仅扫描这两层
+ACLNN_CMAKE_DIRS = ("", "op_host")
+
 
 def has_aclnn_entry(op_path: str) -> bool:
     """判断算子是否暴露aclnn接口（examples检测前置条件）。
 
-    op_api目录存在aclnn_*文件，或CMakeLists声明ACLNNTYPE aclnn/aclnn_inner视为有aclnn入口；
-    两者皆无的算子不扫描examples。
+    op_api目录存在aclnn_*文件，或CMakeLists（算子根/op_host等层级）声明
+    ACLNNTYPE aclnn/aclnn_inner视为有aclnn入口；两者皆无的算子不扫描examples。
     """
     op_api_dir = os.path.join(op_path, "op_api")
     if os.path.isdir(op_api_dir):
         for entry in os.listdir(op_api_dir):
             if entry.startswith("aclnn_"):
                 return True
-    try:
-        with open(
-            os.path.join(op_path, "CMakeLists.txt"), encoding="utf-8", errors="ignore"
-        ) as file:
-            return bool(ACLNN_TYPE_RE.search(file.read()))
-    except OSError:
-        return False
+    for sub_dir in ACLNN_CMAKE_DIRS:
+        cmake = os.path.join(op_path, sub_dir, "CMakeLists.txt")
+        try:
+            with open(cmake, encoding="utf-8", errors="ignore") as file:
+                if ACLNN_TYPE_RE.search(file.read()):
+                    return True
+        except OSError:
+            continue
+    return False
 
 
 def check_op(op_path: str) -> Optional[OpIssue]:
