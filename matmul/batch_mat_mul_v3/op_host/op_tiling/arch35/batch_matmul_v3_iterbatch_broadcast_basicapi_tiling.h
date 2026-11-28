@@ -34,7 +34,7 @@ protected:
 
     ge::graphStatus GetTilingData(TilingResult& tiling) const override;
 
-    bool IsContiguousStride(StrideIndexPairs& strideIndexPairs) const;
+    bool IsContiguousStride(const StrideIndexPairs& strideIndexPairs) const;
 
     bool IsInputNonContiguous(uint32_t inputIdx) const;
 

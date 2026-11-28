@@ -13,6 +13,7 @@
  * \brief FusedMatMul tiling entry.
  */
 #include "fused_mat_mul_tiling.h"
+#include <algorithm>
 
 #include "fused_mat_mul_tiling_advanced.h"
 #include "fused_mat_mul_common.h"

@@ -40,9 +40,9 @@ bool BatchMatMulV3AswAL1FullLoadBasicTiling::IsCapable()
                          (args_.bType == ge::DT_FLOAT16 || args_.bType == ge::DT_BF16) &&
                          (args_.cType == ge::DT_FLOAT16 || args_.cType == ge::DT_BF16 || args_.cType == ge::DT_FLOAT);
     if ((!isSupportType) && args_.bFormat == ge::FORMAT_FRACTAL_NZ) {
-        OP_LOGE_FOR_INVALID_FORMAT(
-            args_.opName, "mat2", Ops::Base::ToString(args_.bFormat).c_str(),
-            Ops::NN::FormatString("%s when the dtype of %s is %s", "ND", "input", "FP32").c_str());
+        // IsCapable 为探针层，不掌握最终结论，不做正式首报；仅调试日志并返回不匹配
+        OP_LOGD(args_.opName, "mat2 is FRACTAL_NZ while dtype %s is not supported by this strategy",
+                Ops::Base::ToString(args_.bType).c_str());
         return false;
     }
     if (batchInfo_->batchA > 1UL) { // matrix A should not have batch when AL1FullLoad

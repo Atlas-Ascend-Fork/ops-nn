@@ -56,7 +56,11 @@ inline ge::graphStatus GenSimplifiedKey(gert::TilingContext* context, ge::char_t
     }
 
     std::string simpleKeyTemp = "";
-    strcat_s(simplifiedKey, DEST_MAX, "diy,");
+    errno_t prefixErr = strcat_s(simplifiedKey, DEST_MAX, "diy,");
+    if (prefixErr != 0) {
+        CUBE_INNER_ERR_REPORT(context->GetNodeName(), "strcat_s prefix failed with error code %d.", prefixErr);
+        return ge::GRAPH_FAILED;
+    }
     simpleKeyTemp.append(std::to_string(x1Formate))
         .append("/")
         .append(std::to_string(x2Format))

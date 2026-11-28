@@ -95,8 +95,8 @@ ge::graphStatus FusedMatMulBatchAswBasicApiTiling::GetTilingDataProcess(FusedMat
 
     const auto* alpha = attrs->GetAttrPointer<float>(ATTR_ALPHA_IDX);
     const auto* beta = attrs->GetAttrPointer<float>(ATTR_BETA_IDX);
-    tilingData.alpha = alpha == nullptr ? 1.0F : *alpha;
-    tilingData.beta = beta == nullptr ? 1.0F : *beta;
+    tilingData.alpha = alpha == nullptr ? DEFAULT_ALPHA : *alpha;
+    tilingData.beta = beta == nullptr ? DEFAULT_BETA : *beta;
     return ge::GRAPH_SUCCESS;
 }
 

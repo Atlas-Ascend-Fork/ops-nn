@@ -39,7 +39,7 @@ protected:
     ge::graphStatus GetTilingData(TilingResult& tiling) const override;
 
 private:
-    uint64_t c0Size_{16};
+    uint64_t c0Size_{16}; // C0 分形块含 16 个元素，需按 dtype 重新计算：BLOCK_BYTE_SIZE / dtypeSize
     uint64_t alignMValue_{0};
     uint64_t alignNValue_{0};
     uint64_t alignKValue_{0};

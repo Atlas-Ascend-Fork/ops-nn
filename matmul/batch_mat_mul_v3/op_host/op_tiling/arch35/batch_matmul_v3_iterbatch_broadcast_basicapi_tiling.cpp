@@ -28,7 +28,7 @@ MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3IterBatchBroadcastBasicA
 MM_REGISTER_TILING_TEMPLATE(BatchMatMulV3, BatchMatMulV3IterBatchBroadcastBasicApiTiling, DAV_9202,
                             ITER_BATCH_BROADCAST_BASICAPI);
 
-bool BatchMatMulV3IterBatchBroadcastBasicApiTiling::IsContiguousStride(StrideIndexPairs& strideIndexPairs) const
+bool BatchMatMulV3IterBatchBroadcastBasicApiTiling::IsContiguousStride(const StrideIndexPairs& strideIndexPairs) const
 {
     int64_t expectStride = 1;
     for (auto it = strideIndexPairs.rbegin(); it != strideIndexPairs.rend(); it++) {
@@ -59,7 +59,14 @@ bool BatchMatMulV3IterBatchBroadcastBasicApiTiling::IsInputNonContiguous(uint32_
         return false;
     }
     auto strides = context_->GetInputStride(inputIdx);
-    auto viewShape = context_->GetInputShape(inputIdx)->GetOriginShape();
+    if (strides == nullptr) {
+        return false;
+    }
+    auto inputShape = context_->GetInputShape(inputIdx);
+    if (inputShape == nullptr) {
+        return false;
+    }
+    auto viewShape = inputShape->GetOriginShape();
     int64_t dimNum = strides->GetDimNum();
     StrideIndexPairs pairs;
     pairs.reserve(dimNum);
@@ -359,7 +366,7 @@ ge::graphStatus BatchMatMulV3IterBatchBroadcastBasicApiTiling::DoOpTiling()
     OP_LOGI(args_.opName,
             "In IterBatchBroadcastBasicApi module, iterBatchL0A=%lu, iterBatchL0B=%lu, iterBatchL0C=%lu, "
             "iterBatchL1=%lu, runInfo_.iterBatchL0=%lu, runInfo_.iterBatchL1=%lu, "
-            "runInfo_.baseM=%lu, runInfo_.baseN=%lu, broadcastAxisA=%u, broadcastAxisB=%u",
+            "runInfo_.baseM=%lu, runInfo_.baseN=%lu, broadcastAxisA=%lu, broadcastAxisB=%lu",
             iterBatchL0A_, iterBatchL0B_, iterBatchL0C_, iterBatchL1_, runInfo_.iterBatchL0, runInfo_.iterBatchL1,
             runInfo_.baseM, runInfo_.baseN, broadcastAxisA_, broadcastAxisB_);
     return ge::GRAPH_SUCCESS;

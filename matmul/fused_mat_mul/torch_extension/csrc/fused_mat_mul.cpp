@@ -25,15 +25,32 @@ constexpr int64_t X_DIM = 2;
 constexpr size_t FUSED_TYPE_ARRAY_SIZE = 100;
 constexpr int8_t USE_FP32_ADD = 4;
 
-aclScalar* CreateOptionalFloatScalar(const c10::optional<double>& value)
+// 可选 alpha/beta 标量三态：
+//   NOT_PROVIDED —— 用户未传该参数，scalar 为 nullptr（aclnnFusedMatmulV2 按默认 1.0 处理）；
+//   OK           —— 创建成功，scalar 持有合法的 aclScalar*（调用方负责释放）；
+//   FAILED       —— 用户传入了参数但 aclCreateScalar 创建失败，必须显式报错终止，
+//                   不得把 nullptr 当"未传参"静默降级，否则 alpha/beta 会变成 1.0。
+struct OptionalScalar {
+    enum class Status { NOT_PROVIDED, OK, FAILED };
+    Status status = Status::NOT_PROVIDED;
+    aclScalar* scalar = nullptr; // 仅 status == OK 时有效
+};
+
+OptionalScalar CreateOptionalFloatScalar(const c10::optional<double>& value)
 {
     if (!value.has_value()) {
-        return nullptr;
+        return {OptionalScalar::Status::NOT_PROVIDED, nullptr};
     }
     static const auto aclCreateScalar = GET_OP_API_FUNC(CreateScalar);
-    TORCH_CHECK(aclCreateScalar != nullptr, "aclCreateScalar is not available");
+    if (aclCreateScalar == nullptr) {
+        return {OptionalScalar::Status::FAILED, nullptr};
+    }
     float scalarValue = static_cast<float>(value.value());
-    return aclCreateScalar(&scalarValue, ACL_FLOAT);
+    aclScalar* scalar = aclCreateScalar(&scalarValue, ACL_FLOAT);
+    if (scalar == nullptr) {
+        return {OptionalScalar::Status::FAILED, nullptr};
+    }
+    return {OptionalScalar::Status::OK, scalar};
 }
 
 bool NeedFusedAddMulHighPrecision(const at::Tensor& x, const at::Tensor& x2, const c10::optional<at::Tensor>& x3,
@@ -105,8 +122,22 @@ at::Tensor fused_matmul(const at::Tensor& x, const at::Tensor& x2, const c10::op
     if (NeedFusedAddMulHighPrecision(x, x2, x3, fusedOpType)) {
         aclCubeMathType = USE_FP32_ADD;
     }
-    auto alphaScalar = CreateOptionalFloatScalar(alpha);
-    auto betaScalar = CreateOptionalFloatScalar(beta);
+    OptionalScalar alphaResult = CreateOptionalFloatScalar(alpha);
+    if (alphaResult.status == OptionalScalar::Status::FAILED) {
+        TORCH_CHECK(false, "failed to create aclScalar for alpha");
+    }
+    OptionalScalar betaResult = CreateOptionalFloatScalar(beta);
+    if (betaResult.status == OptionalScalar::Status::FAILED) {
+        // 进入 ACLNN_CMD 前失败：先释放已创建的 alpha scalar，避免泄漏
+        static const auto aclDestroyScalar = GET_OP_API_FUNC(DestroyScalar);
+        if (alphaResult.scalar != nullptr && aclDestroyScalar != nullptr) {
+            aclDestroyScalar(alphaResult.scalar);
+        }
+        TORCH_CHECK(false, "failed to create aclScalar for beta");
+    }
+    aclScalar* alphaScalar = alphaResult.status == OptionalScalar::Status::OK ? alphaResult.scalar : nullptr;
+    aclScalar* betaScalar = betaResult.status == OptionalScalar::Status::OK ? betaResult.scalar : nullptr;
+    // ACLNN_CMD 已通过 ReleaseConvertTypes 释放 aclScalar*，调用方不再释放（避免重复释放）
     ACLNN_CMD(aclnnFusedMatmulV2, x, x2, bias, x3, alphaScalar, betaScalar, fusedOpTypeString, aclCubeMathType, y);
     return y;
 }

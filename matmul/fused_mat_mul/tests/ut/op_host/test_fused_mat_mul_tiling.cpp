@@ -118,6 +118,8 @@ struct TilingTestParam {
     int64_t inner_precise = 0;
     bool has_x3 = true;
     bool zero_aic = false;
+    // 非 scale_add/sigmoid 时 alpha/beta 应被忽略（tilingData 保持默认 1.0）。
+    bool expect_default_scale = false;
 };
 
 class FusedMatMulTilingRuntime : public testing::TestWithParam<TilingTestParam> {
@@ -267,6 +269,13 @@ static void TestOneParamCase(const TilingTestParam& param)
         const auto* fusedTilingData = reinterpret_cast<const FusedMatMulTilingData*>(raw_tiling_data->GetData());
         EXPECT_FLOAT_EQ(fusedTilingData->alpha, param.alpha);
         EXPECT_FLOAT_EQ(fusedTilingData->beta, param.beta);
+    }
+    if (param.expect_default_scale) {
+        // 非 scale_add/sigmoid：alpha/beta 不被消费，tilingData 保持默认 1.0（告警路径生效）。
+        ASSERT_GE(raw_tiling_data->GetDataSize(), sizeof(FusedMatMulTilingData));
+        const auto* fusedTilingData = reinterpret_cast<const FusedMatMulTilingData*>(raw_tiling_data->GetData());
+        EXPECT_FLOAT_EQ(fusedTilingData->alpha, 1.0F);
+        EXPECT_FLOAT_EQ(fusedTilingData->beta, 1.0F);
     }
     if (param.workspace_size != static_cast<size_t>(-1)) {
         ASSERT_EQ(tiling_context->GetWorkspaceNum(), 1);
@@ -2013,6 +2022,53 @@ static TilingTestParam dav3510_cases_params[] = {
      ge::DT_FLOAT,
      ge::DT_FLOAT,
      ge::DT_FLOAT},
+    // 非 scale_add/sigmoid：alpha/beta≠1 被忽略（仅告警），tilingData 保持默认 1.0。
+    {"FusedMatMul_dav3510_bmm_aswt_relu_scale_ignored",
+     "FusedMatMul",
+     "relu",
+     R"({"_pattern": "BatchMatMul", "attrs":{"transpose_a":true,"transpose_b":false, "offset_x":0, "enable_hf32": 1},
+      "binary_attrs":{"bias_flag":false, "nd_flag":true, "split_k_flag":false, "zero_flag":false, "weight_nz": false, "l2_size":134217728},"binary_mode_flag":true,
+      "block_dim":{"CORE_NUM":32, "vector_core_cnt": 64},"corerect_range_flag":null,"dynamic_mode":"dynamic_mkn", "fused_double_operand_num": 0,
+      "hardware_info": {"BT_SIZE": 4096, "load3d_constraints": "unknown", "Intrinsic_fix_pipe_l0c2out": true, "Intrinsic_data_move_l12ub": false, "Intrinsic_data_move_l0c2ub": false, "Intrinsic_data_move_l12bt": true, "Intrinsic_data_move_out2l1_nd2nz": true, "UB_SIZE": 253952, "L2_SIZE": 134217728, "L1_SIZE": 524288, "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 262144, "CORE_NUM": 32, "vector_core_cnt": 64, "npuArch": "dav3510" },
+      "format_a":"ND","format_b":"ND","repo_range":{},"repo_seeds":{}})",
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     ge::FORMAT_ND,
+     true,
+     false,
+     0,
+     false,
+     false,
+     {82, 22, 16559, 21},
+     {82, 22, 16559, 9},
+     {82, 22, 21, 9},
+     {82, 22, 16559, 21},
+     {82, 22, 16559, 9},
+     {82, 22, 21, 9},
+     false,
+     0,
+     0,
+     32,
+     352322578UL,
+     "32 21 9 16559 32 16 512 32 16 256 16559 1 1 1 1 0 0 33686528 0 32 1 1 0 1 1024 1804 1 1065353216 1065353216 ",
+     ge::DT_FLOAT,
+     ge::DT_FLOAT,
+     ge::DT_FLOAT,
+     ge::GRAPH_SUCCESS,
+     static_cast<size_t>(-1),
+     {},
+     {},
+     2.0F,
+     0.5F,
+     false,
+     {},
+     0,
+     true,
+     false,
+     true},
     {"FusedMatMul_dav3510_bmm_aswt_add",
      "FusedMatMul",
      "add",

@@ -50,7 +50,8 @@ ge::graphStatus BatchMatMulV3ToMulTiling::DoOpTiling()
     uint64_t batchNumLastRoundTail = b % (batchNum * usedCoreNum) % batchNumLastRound;
     if (batchNumLastRoundTail == 0UL) {
         batchNumLastRoundTail = batchNumLastRound;
-        lastCoreNum -= 1UL;
+        // 防止 lastCoreNum==0 时 0-1 无符号下界回绕
+        lastCoreNum = (lastCoreNum == 0UL) ? (usedCoreNum - 1UL) : (lastCoreNum - 1UL);
     }
 
     runInfo_.bmmToMulInfo.m = m;

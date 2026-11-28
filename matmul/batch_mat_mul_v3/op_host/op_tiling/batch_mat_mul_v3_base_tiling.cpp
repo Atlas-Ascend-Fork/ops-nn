@@ -38,6 +38,7 @@ namespace batch_mat_mul_v3 {
 const std::vector<uint64_t> SUPPORT_ND2NZ_GM2L0_WITHOUT32B = {64, 96, 128, 160, 192, 224, 256, 384};
 constexpr uint64_t BLOCK_CUBE = 16;
 constexpr uint64_t NO_BATCH_SHAPE_DIM = 2;
+constexpr uint32_t BATCH_MODE_SCHEDULE = 1U; // 使用 SyncAll 的 Kernel 所需 BATCH_MODE_SCHEDULE
 
 template <typename ShapeT>
 static inline uint64_t GetBatchAxisFromEnd(const ShapeT& shape, size_t dims, size_t fromEnd)
@@ -45,13 +46,9 @@ static inline uint64_t GetBatchAxisFromEnd(const ShapeT& shape, size_t dims, siz
     return dims >= fromEnd ? static_cast<uint64_t>(shape.GetDim(dims - fromEnd)) : 1UL;
 }
 constexpr uint64_t ND_NZ_DIM_DIFF = 2;
-constexpr uint64_t ALIGNMENT_32 = 32;
 constexpr uint64_t DEFAULT_SIZE = 32;
 constexpr uint64_t ND2NZ_ON_THE_FLY_LIMIT = 65535;
-constexpr uint64_t LAST_DIM = 1;
-constexpr uint64_t LAST_SECOND_DIM = 2;
 constexpr uint64_t NUM_TWO = 2;
-constexpr uint64_t NUM_ONE = 1;
 constexpr uint64_t N_ALIGNED = 16;
 constexpr uint64_t BLOCK_BYTE_SIZE = 32;
 constexpr uint64_t CACHELINE = 512;
@@ -67,7 +64,6 @@ constexpr double TAIL_CONFLICT_RATIO = 0.5;
 constexpr uint64_t MAX_INT32_VALUE = 2147483647uL;
 constexpr uint64_t VECTOR_DIM_THRESHOLD = 3;
 constexpr uint64_t VECTOR_ALIGN_NUM = 64;
-constexpr uint64_t VECTOR_BUFFER_MULTIPLIER = 24 * 4;
 
 static inline uint64_t LastPower2(uint64_t n)
 {
@@ -89,6 +85,9 @@ static inline uint64_t NextPower2(uint64_t n)
 ge::graphStatus BatchMatmulV3BaseTiling::GetShapeAttrsInfo() // 检查输入属性是否支持
 {
     auto ret = MatmulV3BaseTiling::GetShapeAttrsInfo();
+    if (ret != ge::GRAPH_SUCCESS) {
+        return ret;
+    }
     if (!GetBatchInfo()) {
         return ge::GRAPH_FAILED;
     }
@@ -116,6 +115,7 @@ bool BatchMatmulV3BaseTiling::GetBatchInfo()
         cDims = context_->GetOutputShape(0)->GetStorageShape().GetDimNum() - ND_NZ_DIM_DIFF;
     }
     // Host a0..a5 = tensor dim0..dim5 (pad 1 if missing). Blob mapping is in SetBatchDimInfo.
+    // 轴偏移 8..3 为从末尾倒数第 8..3 维：batchA0 为最外层 batch 维，batchA5 为最内层（倒数第 3 维，后两维为 M/K）
     batchInfo_.batchA0 = GetBatchAxisFromEnd(aShape, aDims, 8);
     batchInfo_.batchA1 = GetBatchAxisFromEnd(aShape, aDims, 7);
     batchInfo_.batchA2 = GetBatchAxisFromEnd(aShape, aDims, 6);
@@ -223,7 +223,7 @@ void BatchMatmulV3BaseTiling::MergeBatchAndMAxis()
     if (batchInfo_.batchB == 1 && !args_.isATrans) {
         // when BatchB == 1, adjust M = batchA * M, batchA = 1
         if (batchInfo_.batchA * args_.mValue > MAX_INT32_VALUE) {
-            OP_LOGI("BatchMatMulV3", "m value will exceed int32 max value after merge axis, stop merging !");
+            OP_LOGI(args_.opName, "m value will exceed int32 max value after merge axis, stop merging !");
             return;
         }
         args_.mValue = batchInfo_.batchA * args_.mValue;
@@ -551,6 +551,11 @@ void BatchMatmulV3BaseTiling::DoCommonTiling()
     uint64_t baseM = runInfo_.baseM;
     uint64_t baseN = runInfo_.baseN;
     uint64_t baseK = runInfo_.baseK;
+    // K 轴为 0 的合法空 tensor：baseK 为 0 会导致后续 baseK 除法除零（SIGFPE），置为 1 兜底
+    if (baseK == 0UL) {
+        baseK = 1UL;
+        runInfo_.baseK = baseK;
+    }
     constexpr uint64_t reserveSize = 256;
     uint64_t totalL1Size = compileInfo_.l1Size + reserveSize; // 256B为预留给rpc使用，单算子不涉及
     if (args_.hasBias) {
@@ -1140,13 +1145,23 @@ bool BatchMatmulV3BaseTiling::CalcVectorShapeInfo(VectorShapeInfo& shapeInfo) co
 bool BatchMatmulV3BaseTiling::CalcVectorCoreParams(const VectorShapeInfo& shapeInfo, VectorCoreParams& coreParams) const
 {
     auto platformInfoptr = context_->GetPlatformInfo();
+    if (platformInfoptr == nullptr) {
+        return false;
+    }
+    // coreNumber 来自 GetCoreNumAiv()，查询失败为 0 时 CeilDiv 会除零
+    if (shapeInfo.coreNumber == 0) {
+        return false;
+    }
     auto ascendplatformInfo = platform_ascendc::PlatformAscendC(platformInfoptr);
 
     coreParams.coreData = ops::CeilDiv(shapeInfo.batchSize, shapeInfo.coreNumber);
     coreParams.coreData = ops::CeilAlign(coreParams.coreData, VECTOR_ALIGN_NUM);
 
-    uint64_t totalUbBytes;
+    uint64_t totalUbBytes = 0;
     ascendplatformInfo.GetCoreMemSize(platform_ascendc::CoreMemType::UB, totalUbBytes);
+    if (totalUbBytes == 0) {
+        return false;
+    }
     constexpr uint64_t kAlignmentSize = 32;
     coreParams.alignedDimSizeLast = ops::CeilAlign(shapeInfo.dimSizeLast * aDtypeSize_, kAlignmentSize) / aDtypeSize_;
     const uint64_t perRowUbCost = 4 * coreParams.alignedDimSizeLast * aDtypeSize_ + aDtypeSize_;
@@ -1359,9 +1374,13 @@ ge::graphStatus BatchMatmulV3BaseTiling::PostTiling()
     }
     context_->GetRawTilingData()->SetDataSize(tilingDataSize);
     if (isVectorMode_) {
-        context_->SetBlockDim(bmmTilingData_.vectorTilingInfo.coreNumber);
+        if (context_->SetBlockDim(bmmTilingData_.vectorTilingInfo.coreNumber) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
     } else {
-        context_->SetBlockDim(compileInfo_.aicNum);
+        if (context_->SetBlockDim(compileInfo_.aicNum) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
     }
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(context_->GetPlatformInfo());
     auto npuArch = ascendcPlatform.GetCurNpuArch();
@@ -1371,13 +1390,17 @@ ge::graphStatus BatchMatmulV3BaseTiling::PostTiling()
         (tilingEnable_.tilingEnableLoadMode == TilingEnableLoadMode::BASE) &&
         (tilingEnable_.tilingEnableMultiBatchOut == TilingEnableMultiBatchOut::IS_FALSE) &&
         (tilingEnable_.tilingEnableMixNd2Nz == TilingEnableMixNd2Nz::IS_TRUE)) {
-        context_->SetScheduleMode(1); // BatchMatMulUnalignedKernel kernel use SyncAll()
+        if (context_->SetScheduleMode(BATCH_MODE_SCHEDULE) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
     }
     if ((tilingEnable_.tilingEnableMultiBatchL1FullLoad == TilingEnableMultiBatchL1FullLoad::IS_FALSE) &&
         (tilingEnable_.tilingEnableMultiBatch == TilingEnableMultiBatch::IS_TRUE) &&
         (tilingEnable_.tilingEnableLoadMode == TilingEnableLoadMode::BASE) &&
         (tilingEnable_.tilingEnableMixNd2Nz == TilingEnableMixNd2Nz::IS_TRUE)) {
-        context_->SetScheduleMode(1); // BatchMatMulUnalignedMultiBatchKernel kernel use SyncAll()
+        if (context_->SetScheduleMode(BATCH_MODE_SCHEDULE) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
     }
     if ((tilingEnable_.tilingEnableMultiBatchL1FullLoad == TilingEnableMultiBatchL1FullLoad::IS_FALSE) &&
         (tilingEnable_.tilingEnableMultiBatch == TilingEnableMultiBatch::IS_TRUE) &&

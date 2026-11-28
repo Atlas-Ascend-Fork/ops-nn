@@ -146,20 +146,24 @@ static bool CheckFormat(const aclTensor* x1, const aclTensor* x2, const aclTenso
 {
     if (x1->GetStorageFormat() == Format::FORMAT_FRACTAL_NZ || x2->GetStorageFormat() == Format::FORMAT_FRACTAL_NZ ||
         y->GetStorageFormat() == Format::FORMAT_FRACTAL_NZ) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "x1, x2 and y do not support FRACTAL_NZ format");
+        OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+            "aclnnFusedMatmul", "x1, x2, y", "FRACTAL_NZ",
+            "The storage formats of x1, x2 and y must be ND; FRACTAL_NZ is not supported");
         return false;
     }
 
     if (bias != nullptr) {
         if (bias->GetStorageFormat() == Format::FORMAT_FRACTAL_NZ) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "bias does not support FRACTAL_NZ format");
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON("aclnnFusedMatmul", "bias", "FRACTAL_NZ",
+                                                   "The format of bias must be ND; FRACTAL_NZ is not supported");
             return false;
         }
     }
 
     if (x3 != nullptr) {
         if (x3->GetStorageFormat() == Format::FORMAT_FRACTAL_NZ) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "x3 does not support FRACTAL_NZ format");
+            OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON("aclnnFusedMatmul", "x3", "FRACTAL_NZ",
+                                                   "The format of x3 must be ND; FRACTAL_NZ is not supported");
             return false;
         }
     }
@@ -362,7 +366,7 @@ static inline bool CheckShape(const aclTensor* x1, const aclTensor* x2, const ac
     // Relu can use a shared x2 by merging all x1 batch axes into M; other rank mismatches remain unsupported.
     if (x2->GetViewShape().GetDimNum() != x1->GetViewShape().GetDimNum() && !canMergeBatch) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "x1 dimension and x2 dimension should be the same, but x1 dimension is %d, x2 dimension is %d.",
+                "x1 dimension and x2 dimension should be the same, but x1 dimension is %zu, x2 dimension is %zu.",
                 x1->GetViewShape().GetDimNum(), x2->GetViewShape().GetDimNum());
         return false;
     }
@@ -370,7 +374,7 @@ static inline bool CheckShape(const aclTensor* x1, const aclTensor* x2, const ac
     // A shared x2 may add leading size-1 batch axes to y after standard MatMul broadcasting.
     if (y->GetViewShape().GetDimNum() != x1->GetViewShape().GetDimNum() && !canMergeBatch) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID,
-                "x1 dimension and y dimension should be the same, but x1 dimension is %d, y dimension is %d.",
+                "x1 dimension and y dimension should be the same, but x1 dimension is %zu, y dimension is %zu.",
                 x1->GetViewShape().GetDimNum(), y->GetViewShape().GetDimNum());
         return false;
     }
@@ -546,11 +550,11 @@ static const aclTensor* BuildSplitMatmulOp(const aclTensor* x1, const aclTensor*
                                            const aclTensor* y, bool is2D, int8_t cubeMathType, aclOpExecutor* executor)
 {
     if (is2D) {
-        OP_LOGI("FusedMatMul split to MatmulCommonProcess.");
+        OP_LOGI("split to MatmulCommonProcess.");
         MmOpInfo splitMmOpInfo;
         return MatmulCommonProcess(x1, x2, bias, y, cubeMathType, splitMmOpInfo, executor, false, true);
     }
-    OP_LOGI("FusedMatMul split to ExecBmmOpWithBiasV2.");
+    OP_LOGI("split to ExecBmmOpWithBiasV2.");
     return ExecBmmOpWithBiasV2(x1, x2, bias, y, cubeMathType, executor);
 }
 

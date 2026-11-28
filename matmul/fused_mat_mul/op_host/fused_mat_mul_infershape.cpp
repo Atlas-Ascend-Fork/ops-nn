@@ -15,6 +15,7 @@
 #include "error_util.h"
 #include "log/log.h"
 #include "common/op_host/matmul_common_infershape.h"
+#include "matmul/common/op_host/log_format_util.h"
 #include "runtime/infer_shape_context.h"
 #include "register/op_impl_registry.h"
 #include <algorithm>
@@ -23,7 +24,6 @@ namespace {
 const int kMatMulX1Idx = 0;
 const int kMatMulX2Idx = 1;
 const int kMatMulX3Idx = 2;
-const int kMatmulV2BiasShapeSize = 1;
 const int kMatmulV2MinShapeSize = 2;
 const int kMatmulV2MaxShapeSize = 3;
 const int kMatmulV2ReluMaxShapeSize = 6;
@@ -77,14 +77,17 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
                     inner_precise == nullptr,
                 CUBE_INNER_ERR_REPORT(op_name, "attribute is null"), return ge::GRAPH_FAILED);
     OP_CHECK_IF(*inner_precise != INNER_PRECISE_HIGH_PRECISION && *inner_precise != INNER_PRECISE_HIGH_PERFORMANCE,
-                CUBE_INNER_ERR_REPORT(op_name, "inner_precise only supports 0 or 1"), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(op_name, "inner_precise", std::to_string(*inner_precise).c_str(),
+                                                      "inner_precise only supports 0 or 1"),
+                return ge::GRAPH_FAILED);
 
     // FLOAT storage is legal. A5 aclnn still rejects KEEP_DTYPE FP32; A2/A3 allow it via MatMulV3.
     // OpType合法性校验
     OP_CHECK_IF(!IsInSupportedOpTypes(fused_op_type, kAllSupportedOpTypes),
-                CUBE_INNER_ERR_REPORT(op_name,
-                                      "fusedOpType must be in the type of "
-                                      "''/16cast32/add/mul/gelu_erf/gelu_tanh/relu/quant/relu_quant/scale_add/sigmoid"),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    op_name, "fusedOpType", fused_op_type,
+                    "fusedOpType must be one of "
+                    "''/16cast32/add/mul/gelu_erf/gelu_tanh/relu/quant/relu_quant/scale_add/sigmoid"),
                 return ge::GRAPH_FAILED);
     // 不支持bias的OpType拦截bias
     if (!IsInSupportedOpTypes(fused_op_type, kSupportedBiasOpTypes)) {
@@ -147,7 +150,9 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
     int64_t b_k = shape_x2->GetDim(dim_b - idx_k_b - 1);
 
     OP_CHECK_IF(a_k != b_k,
-                CUBE_INNER_ERR_REPORT(op_name, "The k-axis of x1(%d) and x2(%d) tensors must be the same", a_k, b_k),
+                OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(op_name, "x1, x2",
+                                                       Ops::NN::FormatString("K=%lld, K=%lld", a_k, b_k).c_str(),
+                                                       "The K-axis of x1 and x2 must be the same"),
                 return ge::GRAPH_FAILED);
     OP_CHECK_IF(is_sigmoid && a_k == 0,
                 CUBE_INNER_ERR_REPORT(op_name, "The K-axis of x1 and x2 must be greater than 0 for sigmoid op type"),
@@ -157,8 +162,10 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
         const size_t bias_dim = shape_bias->GetDimNum();
         if (bias_dim == 1) {
             OP_CHECK_IF(b_n != shape_bias->GetDim(0),
-                        CUBE_INNER_ERR_REPORT(op_name, "The n(%d) tensors must be the same bias(%ld,)", b_n,
-                                              shape_bias->GetDim(0)),
+                        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                            op_name, "bias, output",
+                            Ops::NN::FormatString("bias n=%ld, output n=%lld", shape_bias->GetDim(0), b_n).c_str(),
+                            "The n dims of bias and output must be the same"),
                         return ge::GRAPH_FAILED);
         } else if (bias_dim == DIM_SIZE_TWO) {
             OP_CHECK_IF(is_quant_op, CUBE_INNER_ERR_REPORT(op_name, "Only 1D bias is supported for quant/relu_quant"),
@@ -167,11 +174,14 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
                         CUBE_INNER_ERR_REPORT(op_name, "The m(%ld) of bias must be 1", shape_bias->GetDim(0)),
                         return ge::GRAPH_FAILED);
             OP_CHECK_IF(shape_bias->GetDim(1) != b_n,
-                        CUBE_INNER_ERR_REPORT(op_name, "The n(%d) tensors must be the same bias(%ld,)", b_n,
-                                              shape_bias->GetDim(1)),
+                        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                            op_name, "bias, output",
+                            Ops::NN::FormatString("bias n=%ld, output n=%lld", shape_bias->GetDim(1), b_n).c_str(),
+                            "The n dims of bias and output must be the same"),
                         return ge::GRAPH_FAILED);
         } else {
-            OP_LOGD(op_name, "input dim num[%zu] of bias is illegal", bias_dim);
+            OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(op_name, "bias", Ops::NN::FormatString("%zuD", bias_dim).c_str(),
+                                                     "The shape dim of bias must be 1 or 2");
             return ge::GRAPH_FAILED;
         }
     }
@@ -188,8 +198,12 @@ ge::graphStatus InferShapeForFusedMatMul(InferShapeContext* context)
                         CUBE_INNER_ERR_REPORT(op_name, "input dim num[%d] is illegal!", dim_c),
                         return ge::GRAPH_FAILED);
             OP_CHECK_IF(dim_c == kMatmulV2MinShapeSize && (a_m != shape_x3->GetDim(0) || b_n != shape_x3->GetDim(1)),
-                        CUBE_INNER_ERR_REPORT(op_name, "The m(%d), n(%d) tensors must be the same c(%ld, %ld)", a_m,
-                                              b_n, shape_x3->GetDim(0), shape_x3->GetDim(1)),
+                        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                            op_name, "x3, output",
+                            Ops::NN::FormatString("x3=(%ld, %ld), output=(%lld, %lld)", shape_x3->GetDim(0),
+                                                  shape_x3->GetDim(1), a_m, b_n)
+                                .c_str(),
+                            "The m and n dims of x3 and output must be the same"),
                         return ge::GRAPH_FAILED);
             OP_CHECK_IF(dim_c == kMatmulV2MaxShapeSize &&
                             (dim_a != kMatmulV2MaxShapeSize ||

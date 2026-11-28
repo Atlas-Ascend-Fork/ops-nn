@@ -42,6 +42,11 @@ constexpr size_t FUSED_MATMUL_BATCH_MATMUL_DIM_NUM = 3UL;
 constexpr int64_t INNER_PRECISE_HIGH_PRECISION = 0L;
 constexpr int64_t INNER_PRECISE_HIGH_PERFORMANCE = 1L;
 
+// alpha/beta 默认值，来源为算子属性默认值（fused_mat_mul_def.cpp 中 Attr("alpha"/"beta").Float(1.0f)）。
+// tiling 侧统一引用，避免属性默认值调整后判定与日志静默失配。
+constexpr float DEFAULT_ALPHA = 1.0F;
+constexpr float DEFAULT_BETA = 1.0F;
+
 enum class FusedMatmulTrans : std::uint8_t {
     NO_TRANS = F_NO_TRANS,
     A_TRANS = F_A_TRANS,

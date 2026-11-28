@@ -148,8 +148,9 @@ ge::graphStatus FusedMatMulTiling::ValidateInputsNotNull()
 // ====== Phase 3: DetectOptionalInputs (bias + x3, with null-check) ======
 ge::graphStatus FusedMatMulTiling::DetectOptionalInputs()
 {
-    if (context_->GetOptionalInputDesc(INPUT_BIAS_IDX) != nullptr &&
-        context_->GetOptionalInputShape(INPUT_BIAS_IDX)->GetOriginShape().GetDimNum() > 0) {
+    const auto* biasShape = context_->GetOptionalInputShape(INPUT_BIAS_IDX);
+    if (context_->GetOptionalInputDesc(INPUT_BIAS_IDX) != nullptr && biasShape != nullptr &&
+        biasShape->GetOriginShape().GetDimNum() > 0) {
         args_.hasBias = true;
     }
     opType_ = context_->GetAttrs()->GetAttrPointer<char>(ATTR_OP_TYPE_IDX);
@@ -199,6 +200,20 @@ ge::graphStatus FusedMatMulTiling::ValidateOpSpecific()
     OP_TILING_CHECK(innerPrecise_ != INNER_PRECISE_HIGH_PRECISION && innerPrecise_ != INNER_PRECISE_HIGH_PERFORMANCE,
                     CUBE_INNER_ERR_REPORT(args_.opName, "inner_precise only supports 0 or 1"), return ge::GRAPH_FAILED);
 
+    // alpha/beta 仅 scale_add 消费；sigmoid 由其分支单独要求为 1。其余 opType 传入非默认值会被静默丢弃，
+    // 但直接报错会误杀 beta=0 等显式传值的合法调用，降级为告警（不拦截）。
+    {
+        const auto* attrs = context_->GetAttrs();
+        const auto* alpha = attrs != nullptr ? attrs->GetAttrPointer<float>(ATTR_ALPHA_IDX) : nullptr;
+        const auto* beta = attrs != nullptr ? attrs->GetAttrPointer<float>(ATTR_BETA_IDX) : nullptr;
+        const bool nonDefaultScale = (alpha != nullptr && *alpha != DEFAULT_ALPHA) ||
+                                     (beta != nullptr && *beta != DEFAULT_BETA);
+        if (nonDefaultScale && opType_ != "scale_add" && opType_ != "sigmoid") {
+            OP_LOGW(args_.opName, "alpha/beta (%f, %f) are not consumed by fusedOpType=%s and will be ignored",
+                    alpha == nullptr ? DEFAULT_ALPHA : *alpha, beta == nullptr ? DEFAULT_BETA : *beta, opType_.c_str());
+        }
+    }
+
     const auto& aShape = context_->GetInputShape(0)->GetOriginShape();
     const auto& bShape = context_->GetInputShape(1)->GetOriginShape();
 
@@ -230,7 +245,7 @@ ge::graphStatus FusedMatMulTiling::ValidateOpSpecific()
         const auto* attrs = context_->GetAttrs();
         const auto* alpha = attrs->GetAttrPointer<float>(ATTR_ALPHA_IDX);
         const auto* beta = attrs->GetAttrPointer<float>(ATTR_BETA_IDX);
-        OP_TILING_CHECK((alpha != nullptr && *alpha != 1.0F) || (beta != nullptr && *beta != 1.0F),
+        OP_TILING_CHECK((alpha != nullptr && *alpha != DEFAULT_ALPHA) || (beta != nullptr && *beta != DEFAULT_BETA),
                         CUBE_INNER_ERR_REPORT(args_.opName, "alpha and beta must both be 1 for sigmoid op type"),
                         return ge::GRAPH_FAILED);
         OP_TILING_CHECK(

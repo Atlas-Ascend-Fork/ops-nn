@@ -28,6 +28,7 @@
 #include "../../../op_host/op_tiling/arch35/batch_matmul_v3_tiling_key.h"
 #include "../../../op_host/op_tiling/arch35/batch_matmul_v3_iterbatch_tiling.h"
 #include "../../../op_host/op_tiling/arch35/batch_matmul_v3_k_equal_zero_tiling.h"
+#include "../../../op_host/op_tiling/arch35/batch_matmul_v3_matmul2mul_tiling.h"
 
 using namespace std;
 using namespace ge;
@@ -3197,6 +3198,73 @@ TEST_F(DebugTilingTestForMatmulCommon, DebugTilingData_Empty)
 
     string str = Ops::NN::DebugTilingData(context);
     EXPECT_TRUE(str.empty());
+}
+
+class BatchMatMulV3ToMulTilingForTest : public BatchMatMulV3ToMulTiling {
+public:
+    using BatchMatMulV3ToMulTiling::BatchMatMulV3ToMulTiling;
+
+    ge::graphStatus DoOpTilingPublic() { return DoOpTiling(); }
+
+    uint64_t GetLastCoreNum() const { return runInfo_.bmmToMulInfo.lastCoreNum; }
+
+    uint64_t GetBatchNum() const { return runInfo_.bmmToMulInfo.batchNum; }
+};
+
+class BatchMatMulV3ToMulTilingTest : public testing::Test {
+protected:
+    void SetUp() override
+    {
+        holder_ = BuildTilingContext();
+        context_ = holder_.GetContext<gert::TilingContext>();
+        ASSERT_NE(context_, nullptr);
+        compileInfo_.aicNum = 32;
+        compileInfo_.aivNum = 16;
+        compileInfo_.ubSize = 192UL * 1024UL;
+        args_.aFormat = ge::FORMAT_ND;
+        args_.bFormat = ge::FORMAT_ND;
+        args_.aDtypeSize = 2;
+        args_.batchInfo = &batchInfo_;
+    }
+
+    std::unique_ptr<BatchMatMulV3ToMulTilingForTest> CreateTiling()
+    {
+        cfg_ = std::make_unique<MatMulTilingCfg>(false, &compileInfo_, &args_, nullptr);
+        return std::make_unique<BatchMatMulV3ToMulTilingForTest>(context_, *cfg_);
+    }
+
+    gert::KernelRunContextHolder holder_;
+    gert::TilingContext* context_ = nullptr;
+    MatmulV3CompileInfo compileInfo_;
+    MatMulV3Args args_;
+    MatMulV3BatchInfo batchInfo_;
+    std::unique_ptr<MatMulTilingCfg> cfg_;
+};
+
+// lastCoreNum==0 且 batchNumLastRoundTail==0：走 usedCoreNum-1 兜底，避免 uint64 0-1 下界回绕。
+// b=32, aivNum=16 => batchNum=2, lastCoreNum=0, tail=0 => 兜底为 usedCoreNum(16)-1=15。
+TEST_F(BatchMatMulV3ToMulTilingTest, DoOpTiling_LastCoreNumZeroTailUnderflowGuard)
+{
+    args_.mValue = 128;
+    args_.nValue = 128;
+    batchInfo_.batchC = 32;
+    auto tiling = CreateTiling();
+    ASSERT_EQ(tiling->DoOpTilingPublic(), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(tiling->GetBatchNum(), 2UL);
+    EXPECT_EQ(tiling->GetLastCoreNum(), 15UL); // usedCoreNum-1，非 uint64 下界回绕
+}
+
+// lastCoreNum>0 且 batchNumLastRoundTail==0：正常 -1。
+// b=18, aivNum=16 => batchNum=2, lastCoreNum=9, tail=0 => 9-1=8。
+TEST_F(BatchMatMulV3ToMulTilingTest, DoOpTiling_LastCoreNumPositiveMinusOne)
+{
+    args_.mValue = 128;
+    args_.nValue = 128;
+    batchInfo_.batchC = 18;
+    auto tiling = CreateTiling();
+    ASSERT_EQ(tiling->DoOpTilingPublic(), ge::GRAPH_SUCCESS);
+    EXPECT_EQ(tiling->GetBatchNum(), 2UL);
+    EXPECT_EQ(tiling->GetLastCoreNum(), 8UL);
 }
 
 } // namespace
