@@ -135,14 +135,15 @@ inline void GetTilingData(ge::DataType dtype, GluTilingData& tilingData, TilingP
 
 inline ge::graphStatus CheckInputParams(gert::TilingContext* context)
 {
-    auto input = context->GetInputTensor(INPUT_IDX);
+    auto inputShape = context->GetInputShape(INPUT_IDX);
+    auto inputDesc = context->GetInputDesc(INPUT_IDX);
     OP_CHECK_IF(
-        input == nullptr,
+        inputShape == nullptr || inputDesc == nullptr,
         OP_LOGE_WITH_INVALID_INPUT(
             ((context) == nullptr || (context)->GetNodeName() == nullptr ? "glu" : (context)->GetNodeName()), "x"),
         return ge::GRAPH_FAILED);
 
-    auto dtype = context->GetInputDesc(INPUT_IDX)->GetDataType();
+    auto dtype = inputDesc->GetDataType();
 
     OP_CHECK_IF(
         dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16 && dtype != ge::DT_FLOAT,
@@ -155,7 +156,10 @@ inline ge::graphStatus CheckInputParams(gert::TilingContext* context)
 
 inline size_t GetAttrSplitDim(const gert::TilingContext* context)
 {
-    auto input = context->GetInputTensor(INPUT_IDX);
+    auto input = context->GetInputShape(INPUT_IDX);
+    if (input == nullptr) {
+        return SPLIT_ERROR_STATUS;
+    }
     auto inputShape = input->GetStorageShape();
     size_t inputShapeSize = static_cast<int64_t>(inputShape.GetDimNum());
 
@@ -213,7 +217,7 @@ inline ge::graphStatus GetTilingParam(const gert::TilingContext* context, Tiling
     OP_CHECK_IF((splitDim == SPLIT_ERROR_STATUS), OP_LOGE_WITHOUT_REPORT(context, "Get Split Dim Failed."),
                 return ge::GRAPH_FAILED);
 
-    auto inputShape = context->GetInputTensor(INPUT_IDX)->GetStorageShape();
+    auto inputShape = context->GetInputShape(INPUT_IDX)->GetStorageShape();
     int64_t x{1}, y{1}, n{1};
     for (size_t i = 0; i < inputShape.GetDimNum(); i++) {
         if (i < splitDim) {
@@ -232,6 +236,7 @@ inline ge::graphStatus GetTilingParam(const gert::TilingContext* context, Tiling
                 return ge::GRAPH_FAILED);
 
     auto compileInfo = context->GetCompileInfo<GluCompileInfo>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
     tilingParam.x = x;
     tilingParam.ny = ny;
     tilingParam.coreNum = compileInfo->totalCoreNum;
@@ -246,6 +251,7 @@ inline ge::graphStatus GetTilingParam(const gert::TilingContext* context, Tiling
 inline ge::graphStatus RunCommonTiling(gert::TilingContext* context, int64_t commonBufSize, int64_t singleBufSize,
                                        size_t workspaceSize)
 {
+    OP_CHECK_IF(context == nullptr, OP_LOGE("GLU", "context is nullptr."), return ge::GRAPH_FAILED);
     OP_LOGD(context, "RunCommonTiling enter.");
     context->SetScheduleMode(BATCH_MODE);
 

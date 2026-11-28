@@ -425,15 +425,16 @@ static void GetFp32TilingDataAscend310P(GeGluV2TilingData& tilingData, TilingPar
 
 static ge::graphStatus CheckInputParams(gert::TilingContext* context)
 {
-    auto input = context->GetInputTensor(INPUT_IDX);
+    auto inputShape = context->GetInputShape(INPUT_IDX);
+    auto inputDesc = context->GetInputDesc(INPUT_IDX);
     OP_CHECK_IF(
-        input == nullptr,
+        inputShape == nullptr || inputDesc == nullptr,
         OP_LOGE_WITH_INVALID_INPUT(
             ((context) == nullptr || (context)->GetNodeName() == nullptr ? "ge_glu_v2" : (context)->GetNodeName()),
             "x"),
         return ge::GRAPH_FAILED);
 
-    auto dtype = context->GetInputDesc(INPUT_IDX)->GetDataType();
+    auto dtype = inputDesc->GetDataType();
     int32_t typeSize = ge::GetSizeByDataType(dtype);
 
     OP_CHECK_IF(dtype != ge::DT_FLOAT16 && dtype != ge::DT_BF16 && dtype != ge::DT_FLOAT,
@@ -496,7 +497,10 @@ static ge::graphStatus TilingPrepare4GeGluV2(gert::TilingParseContext* context)
 
 static size_t GetAttrSplitDim(const gert::TilingContext* context)
 {
-    auto input = context->GetInputTensor(INPUT_IDX);
+    auto input = context->GetInputShape(INPUT_IDX);
+    if (input == nullptr) {
+        return SPLIT_ERROR_STATUS;
+    }
     auto inputShape = input->GetStorageShape();
     size_t inputShapeSize = static_cast<int64_t>(inputShape.GetDimNum());
 
@@ -511,7 +515,7 @@ static size_t GetAttrSplitDim(const gert::TilingContext* context)
             "EZ1008", (std::vector<const char*>{"opName", "reason"}),
             (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrs is unavailable; check the "
                                                          "operator registration and context construction."}));
-        return ge::GRAPH_FAILED;
+        return SPLIT_ERROR_STATUS;
     };
     auto* attrDim = attrs->GetAttrPointer<int64_t>(ATTR_DIM_INDEX);
     if (attrDim == nullptr) {
@@ -524,7 +528,7 @@ static size_t GetAttrSplitDim(const gert::TilingContext* context)
             "EZ1008", (std::vector<const char*>{"opName", "reason"}),
             (std::vector<const char*>{msgOpName.c_str(), "Tiling framework object attrDim is unavailable; check the "
                                                          "operator registration and context construction."}));
-        return ge::GRAPH_FAILED;
+        return SPLIT_ERROR_STATUS;
     };
     auto splitDim = static_cast<int64_t>(*attrDim);
     OP_LOGD(context, "splitDim is %ld, inputShapeSize is %zu", splitDim, inputShapeSize);
@@ -593,7 +597,7 @@ static ge::graphStatus GetTillingParam(const gert::TilingContext* context, Tilin
     OP_CHECK_IF((splitDim == SPLIT_ERROR_STATUS), OP_LOGE_WITHOUT_REPORT(context, "Get Split Dim Failed."),
                 return ge::GRAPH_FAILED);
 
-    auto inputShape = context->GetInputTensor(INPUT_IDX)->GetStorageShape();
+    auto inputShape = context->GetInputShape(INPUT_IDX)->GetStorageShape();
     // fuse dims
     int64_t x{1}, y{1}, n{1};
     for (size_t i = 0; i < inputShape.GetDimNum(); i++) {
@@ -612,6 +616,7 @@ static ge::graphStatus GetTillingParam(const gert::TilingContext* context, Tilin
         return ge::GRAPH_FAILED);
 
     auto compileInfo = context->GetCompileInfo<GeGluV2CompileInfo>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, compileInfo);
     tilingParam.x = x;
     tilingParam.ny = ny;
     tilingParam.coreNum = compileInfo->totalCoreNum;
@@ -652,6 +657,7 @@ static void GetTillingData(ge::DataType dtype, TilingParam& tilingParam, GeGluV2
 
 static ge::graphStatus Tiling4GeGluV2(gert::TilingContext* context)
 {
+    OP_CHECK_IF(context == nullptr, OP_LOGE("GeGluV2", "context is nullptr."), return ge::GRAPH_FAILED);
     OP_LOGD(context, "Tiling4GeGluV2 enter.");
     context->SetScheduleMode(BATCH_MODE);
     OP_CHECK_IF(CheckInputParams(context) != ge::GRAPH_SUCCESS,
