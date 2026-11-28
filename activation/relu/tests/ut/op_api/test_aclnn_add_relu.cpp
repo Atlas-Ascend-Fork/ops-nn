@@ -480,3 +480,21 @@ TEST_F(l2_add_relu_test, Ascend910_93_case_1)
     // NOTE: actually precision test will be automatically skipped on Ascend910_93.
     ut.TestPrecision();
 }
+// issue #10366/#10372：INT32 promote 且 |alpha|>2^24 时，alpha 不应被 ToFloat 截断到 float32。
+// 修复后 int32 走 ConvertToTensor(alpha, INT32)+Mul+Add 整型精确路径，此处用 alpha=2^24+1 验证。
+TEST_F(l2_add_relu_test, case_int32_large_alpha_precision)
+{
+    auto self_tensor_desc = TensorDesc({4}, ACL_INT32, ACL_FORMAT_ND).ValueRange(0, 1);
+    auto other_tensor_desc = TensorDesc({4}, ACL_INT32, ACL_FORMAT_ND).ValueRange(1, 4);
+    auto out_tensor_desc = TensorDesc(self_tensor_desc).Precision(0.0001, 0.0001);
+    // alpha = 2^24 + 1 = 16777217，INT32 可表示但 float32 不可精确表示
+    auto scalar_desc = ScalarDesc(static_cast<int64_t>(16777217));
+
+    auto ut = OP_API_UT(aclnnAddRelu, INPUT(self_tensor_desc, other_tensor_desc, scalar_desc), OUTPUT(out_tensor_desc));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACL_SUCCESS);
+
+    ut.TestPrecision();
+}

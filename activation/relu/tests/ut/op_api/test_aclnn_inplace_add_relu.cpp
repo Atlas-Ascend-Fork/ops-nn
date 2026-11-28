@@ -331,3 +331,18 @@ TEST_F(l2_inplace_add_relu_test, case_022)
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
+// issue #10373：selfRef shape 不等于 broadcast(selfRef, other) 时应返回 161002（参数非法），
+// 且日志 errno 与返回码同源为 161002（修复前误打 161001）。此处校验返回码为 161002。
+TEST_F(l2_inplace_add_relu_test, case_selfref_shape_mismatch_returns_invalid)
+{
+    auto self_ref_desc = TensorDesc({1, 3}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto other_tensor_desc = TensorDesc({2, 3}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto scalar_desc = ScalarDesc(1.0f);
+
+    auto ut = OP_API_UT(aclnnInplaceAddRelu, INPUT(self_ref_desc, other_tensor_desc, scalar_desc), OUTPUT());
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    // selfRef=[1,3]、other=[2,3]，广播结果 [2,3] != selfRef=[1,3]，应拒绝为参数非法
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
