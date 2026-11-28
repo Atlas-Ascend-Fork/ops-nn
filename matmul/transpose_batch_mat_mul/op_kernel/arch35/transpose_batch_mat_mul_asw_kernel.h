@@ -34,7 +34,7 @@ __aicore__ inline void TBMMTensorKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR biasGM
                                         GM_ADDR workspaceGM, const TransposeBatchMatMulBasicTilingData& tilingData,
                                         int64_t batch = 0)
 {
-    // 定义矩阵的类型和布局
+    // Define the matrix type and layout.
     using AType = A_TYPE;
     using BType = B_TYPE;
     using BiasType = BIAS_TYPE;
@@ -50,18 +50,19 @@ __aicore__ inline void TBMMTensorKernel(GM_ADDR aGM, GM_ADDR bGM, GM_ADDR biasGM
 
     static constexpr bool isFp32 = (AscendC::Std::is_same_v<BType, float>);
     static constexpr bool isNDFormat = !(Blaze::Gemm::IsWeightNz<LayoutB>::value);
-    // 定义scheduler类型
+    // Define the scheduler type.
     using BlockScheduler = Blaze::Gemm::Block::BlockSchedulerMatmulBasic<ProblemShape, FULL_LOAD_MODE, isFp32,
                                                                          isNDFormat>;
+    // Define the MMAD type.
     using DispatchPolicy = Blaze::Gemm::MatmulMultiBlockBasic<
         FULL_LOAD_MODE, FUSED_OP_TYPE, Blaze::Gemm::KernelMmadMultiBlockBasic, NON_CONTIGUOUS_TYPE>;
     using BlockMmad = Blaze::Gemm::Block::BlockMmad<DispatchPolicy, AType, LayoutA, BType, LayoutB, OutType, LayoutC,
                                                     BiasType, LayoutBias>;
 
-    // 定义BlockEpilogue类型
+    // Define the BlockEpilogue type.
     using BlockEpilogue = Blaze::Gemm::Block::BlockEpilogueEmpty;
 
-    // 定义Kernel类型
+    // Define the kernel type.
     using MatmulKernel = Blaze::Gemm::Kernel::GemmUniversal<ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler>;
     using Params = typename MatmulKernel::Params;
     const auto& bmmTiling = tilingData.matMulTilingData;

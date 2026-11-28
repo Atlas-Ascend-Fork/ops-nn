@@ -152,7 +152,9 @@ ge::graphStatus GemmV3BaseTiling::GetPlatformInfo()
         OP_LOGW(context_->GetNodeName(), "platformInfo is null");
         return ge::GRAPH_FAILED;
     }
-    tiling_.GetHardwareInfo();
+    if (tiling_.GetHardwareInfo() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 

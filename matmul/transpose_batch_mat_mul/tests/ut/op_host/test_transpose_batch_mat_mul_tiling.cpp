@@ -692,9 +692,21 @@ TEST(TransposeBatchMatMulCheckScaleTest, ScalePassFp16)
     CheckScaleContext c({2, 128, 256}, {2, 128, 256}, {2, 64, 256}, DT_FLOAT16, 1);
     TransposeBatchMatMulTiling tiling(c.ctx);
     tiling.args_.opName = "TransposeBatchMatMul";
-    // bPerm = [0,1,2], so b = bShape[0] = 2, n = bShape[2] = 256, b*n = 512
-    gert::Shape scaleShape{512, 1};
+    // bPerm = [0,1,2], so b = bShape[0] = 2, n = bShape[2] = 256, b*n = 512.
+    // scale is a rank-1 tensor of length b*n, which is what InferShape also enforces.
+    gert::Shape scaleShape{512};
     EXPECT_EQ(tiling.CheckScale(scaleShape), ge::GRAPH_SUCCESS);
+}
+
+TEST(TransposeBatchMatMulCheckScaleTest, ScaleRejectRankTwo)
+{
+    CheckScaleContext c({2, 128, 256}, {2, 128, 256}, {2, 64, 256}, DT_FLOAT16, 1);
+    TransposeBatchMatMulTiling tiling(c.ctx);
+    tiling.args_.opName = "TransposeBatchMatMul";
+    // A rank-2 scale such as [b*n, 1] does not satisfy the scale shape contract and must be rejected
+    // before GetDim(0) is used.
+    gert::Shape scaleShape{512, 1};
+    EXPECT_EQ(tiling.CheckScale(scaleShape), ge::GRAPH_FAILED);
 }
 
 TEST(TransposeBatchMatMulCheckScaleTest, ScaleBatchSplitFactorNotOne)
@@ -702,7 +714,7 @@ TEST(TransposeBatchMatMulCheckScaleTest, ScaleBatchSplitFactorNotOne)
     CheckScaleContext c({2, 128, 256}, {2, 128, 256}, {2, 64, 256}, DT_FLOAT16, 2);
     TransposeBatchMatMulTiling tiling(c.ctx);
     tiling.args_.opName = "TransposeBatchMatMul";
-    gert::Shape scaleShape{512, 1};
+    gert::Shape scaleShape{512};
     EXPECT_EQ(tiling.CheckScale(scaleShape), ge::GRAPH_FAILED);
 }
 
@@ -712,7 +724,7 @@ TEST(TransposeBatchMatMulCheckScaleTest, ScaleShapeMismatch)
     TransposeBatchMatMulTiling tiling(c.ctx);
     tiling.args_.opName = "TransposeBatchMatMul";
     // b*n = 512, but scale dim0 = 256 -> mismatch
-    gert::Shape scaleShape{256, 1};
+    gert::Shape scaleShape{256};
     EXPECT_EQ(tiling.CheckScale(scaleShape), ge::GRAPH_FAILED);
 }
 
@@ -721,7 +733,7 @@ TEST(TransposeBatchMatMulCheckScaleTest, ScaleNonFp16)
     CheckScaleContext c({2, 128, 256}, {2, 128, 256}, {2, 64, 256}, DT_FLOAT, 1);
     TransposeBatchMatMulTiling tiling(c.ctx);
     tiling.args_.opName = "TransposeBatchMatMul";
-    gert::Shape scaleShape{512, 1};
+    gert::Shape scaleShape{512};
     EXPECT_EQ(tiling.CheckScale(scaleShape), ge::GRAPH_FAILED);
 }
 
@@ -741,7 +753,7 @@ TEST(TransposeBatchMatMulEinsumTilingTest, Destructor)
 TEST(TransposeBatchMatMulGenSimplifiedKeyTest, ContextNull)
 {
     char key[128] = {0};
-    auto ret = optiling::transpose_batch_matmul::GenSimplifiedKey(nullptr, key);
+    auto ret = optiling::transpose_batch_mat_mul::GenSimplifiedKey(nullptr, key);
     EXPECT_EQ(ret, ge::GRAPH_FAILED);
 }
 
@@ -772,7 +784,7 @@ TEST(TransposeBatchMatMulGenSimplifiedKeyTest, KeyNull)
                  .Build();
     auto ctx = holder.GetContext<gert::TilingContext>();
     ASSERT_NE(ctx, nullptr);
-    auto ret = optiling::transpose_batch_matmul::GenSimplifiedKey(ctx, nullptr);
+    auto ret = optiling::transpose_batch_mat_mul::GenSimplifiedKey(ctx, nullptr);
     EXPECT_EQ(ret, ge::GRAPH_FAILED);
 }
 
@@ -1102,6 +1114,20 @@ TEST(TransposeBatchMatMulBaseTilingTest, BiasNNotMatchWithMatchedBatch)
     EXPECT_EQ(tiling.GetShapeAttrsInfo(), ge::GRAPH_FAILED);
 }
 
+// Regression for RED-1: fp32 + permX2=[0,2,1] + N=1024 must not make baseK zero.
+// Before the fix CalcBaseMN produced baseN=1024, maxBaseK=8, FloorAlign(8,16)=0, and
+// DoCommonTiling divided by baseM*baseK (integer division by zero).
+TEST(TransposeBatchMatMulBaseTilingTest, Fp32TransposedX2BaseKNotZero)
+{
+    // perm_x1={0, 1, 2}, perm_x2={0, 2, 1}, perm_y={1, 0, 2}
+    BaseTilingContext c({32, 32, 64}, {32, 1024, 64}, {32, 32, 1024}, DT_FLOAT, {0, 1, 2}, {0, 2, 1}, {1, 0, 2});
+    using namespace optiling::transpose_batch_mat_mul;
+    TransposeBatchMatMulBaseTiling tiling(c.ctx);
+    ASSERT_EQ(tiling.GetShapeAttrsInfo(), ge::GRAPH_SUCCESS);
+    tiling.DoCommonTiling();
+    EXPECT_GT(tiling.runInfo_.baseK, 0UL);
+}
+
 // ================== Einsum mode tiling test ==================
 TEST(TransposeBatchMatMulEinsumTest, DoTilingEinsumMode)
 {
@@ -1208,7 +1234,7 @@ TEST(TransposeBatchMatMulGenSimplifiedKeyTest, ValidKey)
     auto ctx = holder.GetContext<gert::TilingContext>();
     ASSERT_NE(ctx, nullptr);
     char key[128] = {0};
-    auto ret = optiling::transpose_batch_matmul::GenSimplifiedKey(ctx, key);
+    auto ret = optiling::transpose_batch_mat_mul::GenSimplifiedKey(ctx, key);
     EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
 }
 

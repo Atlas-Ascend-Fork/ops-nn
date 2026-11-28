@@ -20,8 +20,6 @@
 #include "error_util.h"
 #include "platform/platform_infos_def.h"
 
-// using namespace optiling::pp_matmul; // todo：使用别的地方定义在pp_matmul的东西
-
 namespace {
 constexpr uint64_t L1_DESCALE_BUFFER_SIZE_MAX = 6144;
 constexpr uint64_t CONST_3 = 3;
@@ -137,13 +135,11 @@ void PpMatmulDefaultTilingData::End(const MatMulInfo& mmInfo, bool isNpuArch2002
     kLoop = CeilDiv(opShape.k, opShape.k0);
 }
 
-void PpMatMulDefault::GetHardwareInfo()
+ge::graphStatus PpMatMulDefault::GetHardwareInfo()
 {
     auto platformInfo = context_->GetPlatformInfo();
-    if (platformInfo == nullptr) {
-        OP_LOGE("[PpMatMul]", "platformInfo is nullptr");
-        return;
-    }
+    OP_TILING_CHECK(platformInfo == nullptr, CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "platformInfo is nullptr"),
+                    return ge::GRAPH_FAILED);
     HardwareInfo hardwareInfo;
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfo);
@@ -156,7 +152,17 @@ void PpMatMulDefault::GetHardwareInfo()
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_A, hardwareInfo.l0aSize);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_B, hardwareInfo.l0bSize);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_C, hardwareInfo.l0cSize);
+    OP_TILING_CHECK(
+        (hardwareInfo.coreNum == 0UL) || (hardwareInfo.l2Size == 0UL) || (hardwareInfo.l1Size == 0UL) ||
+            (hardwareInfo.l0aSize == 0UL) || (hardwareInfo.l0bSize == 0UL) || (hardwareInfo.l0cSize == 0UL),
+        CUBE_INNER_ERR_REPORT(
+            context_->GetNodeName(),
+            "invalid platform info, coreNum:%lu, l2Size:%lu, l1Size:%lu, l0aSize:%lu, l0bSize:%lu, l0cSize:%lu",
+            hardwareInfo.coreNum, hardwareInfo.l2Size, hardwareInfo.l1Size, hardwareInfo.l0aSize, hardwareInfo.l0bSize,
+            hardwareInfo.l0cSize),
+        return ge::GRAPH_FAILED);
     hardwareInfo_ = hardwareInfo;
+    return ge::GRAPH_SUCCESS;
 }
 
 bool PpMatMulDefault::GetMatMulTilingData()
@@ -179,23 +185,23 @@ bool PpMatMulDefault::GetMatMulTilingData()
 
 void PpMatMulDefault::PrintTiling()
 {
-    OP_LOGD(context_->GetNodeName(), "PpMatMul batchSize: %ld.", ppMatmulDefaultTilingData_.opShape.batchSize);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul m: %ld.", ppMatmulDefaultTilingData_.opShape.m);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul k: %ld.", ppMatmulDefaultTilingData_.opShape.k);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul n: %ld.", ppMatmulDefaultTilingData_.opShape.n);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul m0: %ld.", ppMatmulDefaultTilingData_.opShape.m0);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul k0: %ld.", ppMatmulDefaultTilingData_.opShape.k0);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul n0: %ld.", ppMatmulDefaultTilingData_.opShape.n0);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul mLoop: %ld.", ppMatmulDefaultTilingData_.mLoop);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul kLoop: %ld.", ppMatmulDefaultTilingData_.kLoop);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul nLoop: %ld.", ppMatmulDefaultTilingData_.nLoop);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul coreLoop: %ld.", ppMatmulDefaultTilingData_.coreLoop);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul swizzleCount: %ld.", ppMatmulDefaultTilingData_.swizzleCount);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul tilingKey: %d.", ppMatmulDefaultTilingData_.tilingKey);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul blockDim: %ld.", ppMatmulDefaultTilingData_.blockDim);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul swizzleDirect: %ld.", ppMatmulDefaultTilingData_.swizzleDirect);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul splitk: %ld.", ppMatmulDefaultTilingData_.splitk);
-    OP_LOGD(context_->GetNodeName(), "PpMatMul enShuffleK: %ld.", ppMatmulDefaultTilingData_.enShuffleK);
+    OP_LOGD(context_->GetNodeName(), "batchSize: %ld.", ppMatmulDefaultTilingData_.opShape.batchSize);
+    OP_LOGD(context_->GetNodeName(), "m: %ld.", ppMatmulDefaultTilingData_.opShape.m);
+    OP_LOGD(context_->GetNodeName(), "k: %ld.", ppMatmulDefaultTilingData_.opShape.k);
+    OP_LOGD(context_->GetNodeName(), "n: %ld.", ppMatmulDefaultTilingData_.opShape.n);
+    OP_LOGD(context_->GetNodeName(), "m0: %ld.", ppMatmulDefaultTilingData_.opShape.m0);
+    OP_LOGD(context_->GetNodeName(), "k0: %ld.", ppMatmulDefaultTilingData_.opShape.k0);
+    OP_LOGD(context_->GetNodeName(), "n0: %ld.", ppMatmulDefaultTilingData_.opShape.n0);
+    OP_LOGD(context_->GetNodeName(), "mLoop: %ld.", ppMatmulDefaultTilingData_.mLoop);
+    OP_LOGD(context_->GetNodeName(), "kLoop: %ld.", ppMatmulDefaultTilingData_.kLoop);
+    OP_LOGD(context_->GetNodeName(), "nLoop: %ld.", ppMatmulDefaultTilingData_.nLoop);
+    OP_LOGD(context_->GetNodeName(), "coreLoop: %ld.", ppMatmulDefaultTilingData_.coreLoop);
+    OP_LOGD(context_->GetNodeName(), "swizzleCount: %ld.", ppMatmulDefaultTilingData_.swizzleCount);
+    OP_LOGD(context_->GetNodeName(), "tilingKey: %d.", ppMatmulDefaultTilingData_.tilingKey);
+    OP_LOGD(context_->GetNodeName(), "blockDim: %ld.", ppMatmulDefaultTilingData_.blockDim);
+    OP_LOGD(context_->GetNodeName(), "swizzleDirect: %ld.", ppMatmulDefaultTilingData_.swizzleDirect);
+    OP_LOGD(context_->GetNodeName(), "splitk: %ld.", ppMatmulDefaultTilingData_.splitk);
+    OP_LOGD(context_->GetNodeName(), "enShuffleK: %ld.", ppMatmulDefaultTilingData_.enShuffleK);
 }
 
 } // namespace pp_matmul

@@ -27,7 +27,7 @@ public:
     ge::graphStatus DoTiling() override;
 
 protected:
-    ge::graphStatus GetBatchInfo(const gert::TilingContext& context, MatMulV3Args& args,
+    ge::graphStatus GetBatchInfo(const gert::TilingContext& context, const MatMulV3Args& args,
                                  MatMulV3BatchInfo& batchInfo) const;
 
     ge::graphStatus GetShapeAttrsInfo() override;

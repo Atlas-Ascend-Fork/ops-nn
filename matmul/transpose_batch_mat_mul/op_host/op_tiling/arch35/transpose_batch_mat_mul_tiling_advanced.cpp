@@ -15,6 +15,8 @@
 
 #include "transpose_batch_mat_mul_tiling_advanced.h"
 
+#include <limits>
+
 #include "register/op_def_registry.h"
 #include "common/op_host/op_tiling/debug_tiling.h"
 
@@ -30,8 +32,6 @@ namespace {
 using namespace optiling;
 using namespace optiling::transpose_batch_mat_mul_advanced;
 using namespace optiling::matmul_v3_advanced;
-
-constexpr uint64_t ONE_BATCH_DIM = 1UL;
 
 static inline ge::graphStatus TBMMCheckNotNull(const gert::TilingContext* context)
 {
@@ -74,21 +74,41 @@ static inline ge::graphStatus TBMMCheckPermAndShapeDim(const gert::TilingContext
         return ge::GRAPH_FAILED;
     }
     auto attrs = context.GetAttrs();
-    if ((attrs->GetAttrPointer<gert::ContinuousVector>(0)->GetSize() != ALLOW_DIM) ||
-        (attrs->GetAttrPointer<gert::ContinuousVector>(1)->GetSize() != ALLOW_DIM) ||
-        (attrs->GetAttrPointer<gert::ContinuousVector>(NUM_TWO)->GetSize() != ALLOW_DIM)) {
-        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
-            opName, "permX1, permX2, permY",
-            Ops::NN::FormatString("%zu, %zu, %zu", attrs->GetAttrPointer<gert::ContinuousVector>(0)->GetSize(),
-                                  attrs->GetAttrPointer<gert::ContinuousVector>(1)->GetSize(),
-                                  attrs->GetAttrPointer<gert::ContinuousVector>(NUM_TWO)->GetSize())
-                .c_str(),
-            Ops::NN::FormatString("The shape dims of %s must be %d", "permX1, permX2, permY", ALLOW_DIM).c_str());
+    const auto* aPermList = attrs->GetAttrPointer<gert::ContinuousVector>(0);
+    const auto* bPermList = attrs->GetAttrPointer<gert::ContinuousVector>(1);
+    const auto* yPermList = attrs->GetAttrPointer<gert::ContinuousVector>(NUM_TWO);
+    if (aPermList->GetSize() != ALLOW_DIM) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(opName, "permX1", std::to_string(aPermList->GetSize()).c_str(),
+                                     std::to_string(ALLOW_DIM).c_str());
+        return ge::GRAPH_FAILED;
+    }
+    if (bPermList->GetSize() != ALLOW_DIM) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(opName, "permX2", std::to_string(bPermList->GetSize()).c_str(),
+                                     std::to_string(ALLOW_DIM).c_str());
+        return ge::GRAPH_FAILED;
+    }
+    if (yPermList->GetSize() != ALLOW_DIM) {
+        OP_LOGE_FOR_INVALID_LISTSIZE(opName, "permY", std::to_string(yPermList->GetSize()).c_str(),
+                                     std::to_string(ALLOW_DIM).c_str());
         return ge::GRAPH_FAILED;
     }
     const auto* permX1 = static_cast<const int64_t*>(attrs->GetAttrPointer<gert::ContinuousVector>(0)->GetData());
     const auto* permX2 = static_cast<const int64_t*>(attrs->GetAttrPointer<gert::ContinuousVector>(1)->GetData());
     const auto* permY = static_cast<const int64_t*>(attrs->GetAttrPointer<gert::ContinuousVector>(NUM_TWO)->GetData());
+    // The perms below are used as axis indices of the input/output shapes, and CheckScale/bias checks
+    // run after this function, so every element has to be a valid axis index before any lookup. Graph
+    // mode may pass an out-of-range value such as permX2 = {0, 1, 5}; keep this whitelist in sync with
+    // the aclnn entry check (CheckPermLimit).
+    for (size_t permIdx = 0UL; permIdx < ALLOW_DIM; ++permIdx) {
+        if ((permX1[permIdx] < 0L) || (permX1[permIdx] >= ALLOW_DIM) || (permX2[permIdx] < 0L) ||
+            (permX2[permIdx] >= ALLOW_DIM) || (permY[permIdx] < 0L) || (permY[permIdx] >= ALLOW_DIM)) {
+            OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
+                opName, "permX1, permX2, permY",
+                Ops::NN::FormatString("%ld, %ld, %ld", permX1[permIdx], permX2[permIdx], permY[permIdx]).c_str(),
+                Ops::NN::FormatString("Each element of the perms must be within [0, %d]", ALLOW_DIM - 1).c_str());
+            return ge::GRAPH_FAILED;
+        }
+    }
     const bool isBatchFirstY = permY[BATCH_IDX] == 0L && permY[M_IDX] == 1L && permY[N_IDX] == 2L;
     const bool isBatchCenteredX2 = permX2[BATCH_IDX] == 1L && ((permX2[KB_IDX] == 0L && permX2[N_IDX] == 2L) ||
                                                                (permX2[KB_IDX] == 2L && permX2[N_IDX] == 0L));
@@ -142,7 +162,7 @@ static inline void TBMMGetDtype(gert::TilingContext& context, MatMulV3Args& args
     }
     args.aDtypeSize = ge::GetSizeByDataType(args.aType);
     args.bDtypeSize = ge::GetSizeByDataType(args.bType);
-    OP_LOGD(args.opName, "MatMulV3 Hf32 flag is: %d", args.isHf32);
+    OP_LOGD(args.opName, "Hf32 flag is: %d", args.isHf32);
 }
 
 ge::graphStatus IsValidDtype(const MatMulV3Args& args)
@@ -280,8 +300,10 @@ ge::graphStatus TBMMGetShape(const gert::TilingContext& context, MatMulV3Args& a
         return ge::GRAPH_FAILED;
     }
 
-    OP_TILING_CHECK((TBMMGetShapeMKN(aShape, bShape, aPermList, bPermList, args) != ge::GRAPH_SUCCESS),
-                    CUBE_INNER_ERR_REPORT(args.opName, "get m/k/n failed"), return ge::GRAPH_FAILED);
+    if (TBMMGetShapeMKN(aShape, bShape, aPermList, bPermList, args) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(args.opName, "get m/k/n failed");
+        return ge::GRAPH_FAILED;
+    }
 
     if (attrs->GetAttrNum() >= ATTR_NUM) {
         uint32_t batchSplitFactor = std::max(*(attrs->GetAttrPointer<int32_t>(ATTR_NUM - 1)), 1);
@@ -315,8 +337,16 @@ ge::graphStatus TransposeBatchMatMulTiling::GetArgs()
     return TBMMOpSpecificCheck(args_);
 }
 
-ge::graphStatus TransposeBatchMatMulTiling::CheckScale(const gert::Shape& shape_scale) const
+ge::graphStatus TransposeBatchMatMulTiling::CheckScale(const gert::Shape& shapeScale) const
 {
+    // scale is an optional input: its rank has to be validated before any GetDim() access, otherwise a
+    // rank-2 tensor such as [b * n, 1] would be accepted by GetDim(0) and produce an untrustworthy result.
+    if (shapeScale.GetDimNum() != 1UL) {
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(args_.opName, "scale",
+                                                 Ops::NN::FormatString("%zu", shapeScale.GetDimNum()).c_str(),
+                                                 "The ViewShape dim of scale must be 1");
+        return ge::GRAPH_FAILED;
+    }
     const gert::Shape& bShape = context_->GetInputShape(1)->GetOriginShape();
     auto attrs = context_->GetAttrs();
     const gert::ContinuousVector* bPermList = attrs->GetAttrPointer<gert::ContinuousVector>(1);
@@ -334,23 +364,27 @@ ge::graphStatus TransposeBatchMatMulTiling::CheckScale(const gert::Shape& shape_
     const int64_t* bPerm = static_cast<const int64_t*>(bPermList->GetData());
     int64_t n = bShape[bPerm[N_IDX]];
     int64_t b = bShape[bPerm[BATCH_IDX]];
-    if (shape_scale.GetDim(0) != b * n) {
+    OP_TILING_CHECK((b <= 0) || (n <= 0) || (b > std::numeric_limits<int64_t>::max() / n),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        args_.opName, "x2", Ops::Base::ToString(bShape).c_str(),
+                        "The batch-axis and n-axis of x2 must be positive, and their product must not overflow"),
+                    return ge::GRAPH_FAILED);
+    if (shapeScale.GetDim(0) != b * n) {
         OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
-            args_.opName, "scale", Ops::NN::FormatString("%ld", shape_scale.GetDim(0)).c_str(),
+            args_.opName, "scale", Ops::NN::FormatString("%ld", shapeScale.GetDim(0)).c_str(),
             Ops::NN::FormatString("%s of %s must be equal to %s of %s multiplied by %s of %s (%ld)", "Shape[0]",
                                   "scale", "batch-axis", "x2", "n-axis", "x2", b * n)
                 .c_str());
         return ge::GRAPH_FAILED;
     }
-    auto tensor_x1 = context_->GetInputDesc(0);
-    auto tensor_x2 = context_->GetInputDesc(1);
-    ge::DataType dtype_x1 = tensor_x1->GetDataType();
-    ge::DataType dtype_x2 = tensor_x2->GetDataType();
-    if (dtype_x2 != ge::DT_FLOAT16 || dtype_x1 != ge::DT_FLOAT16) {
+    auto tensorX1 = context_->GetInputDesc(0);
+    auto tensorX2 = context_->GetInputDesc(1);
+    ge::DataType dtypeX1 = tensorX1->GetDataType();
+    ge::DataType dtypeX2 = tensorX2->GetDataType();
+    if (dtypeX2 != ge::DT_FLOAT16 || dtypeX1 != ge::DT_FLOAT16) {
         OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             args_.opName, "x1, x2",
-            Ops::NN::FormatString("%s, %s", Ops::Base::ToString(dtype_x1).c_str(),
-                                  Ops::Base::ToString(dtype_x2).c_str())
+            Ops::NN::FormatString("%s, %s", Ops::Base::ToString(dtypeX1).c_str(), Ops::Base::ToString(dtypeX2).c_str())
                 .c_str(),
             Ops::NN::FormatString("When optional parameter %s exists, the dtypes of %s must be %s", "scale", "x1, x2",
                                   "FLOAT16")
@@ -394,11 +428,13 @@ ge::graphStatus TransposeBatchMatMulTiling::CheckArgs()
             return ge::GRAPH_FAILED;
         }
     }
-    const gert::StorageShape* storageShape_scale = context_->GetOptionalInputShape(SCALE_IDX);
-    if (storageShape_scale != nullptr) {
-        const gert::Shape shape_scale = storageShape_scale->GetOriginShape();
-        OP_TILING_CHECK((CheckScale(shape_scale) != ge::GRAPH_SUCCESS),
-                        CUBE_INNER_ERR_REPORT(args_.opName, "scale condition not satisfied"), return ge::GRAPH_FAILED);
+    const gert::StorageShape* storageShapeScale = context_->GetOptionalInputShape(SCALE_IDX);
+    if (storageShapeScale != nullptr) {
+        const gert::Shape shapeScale = storageShapeScale->GetOriginShape();
+        if (CheckScale(shapeScale) != ge::GRAPH_SUCCESS) {
+            OP_LOGE_WITHOUT_REPORT(args_.opName, "scale condition not satisfied");
+            return ge::GRAPH_FAILED;
+        }
     }
     return ge::GRAPH_SUCCESS;
 }
@@ -409,8 +445,10 @@ ge::graphStatus TransposeBatchMatMulTiling::GetShapeAttrsInfo() // TBMM manages 
     OP_TILING_CHECK(args_.opName == nullptr, CUBE_INNER_ERR_REPORT("TransposeBatchMatMul", "get op name invalid"),
                     return ge::GRAPH_FAILED);
     OP_LOGI(args_.opName, "TilingContext: %s", Ops::NN::DebugTilingContext(context_).c_str());
-    OP_TILING_CHECK((CheckArgs() != ge::GRAPH_SUCCESS) || (GetArgs() != ge::GRAPH_SUCCESS),
-                    CUBE_INNER_ERR_REPORT(args_.opName, "invalid context"), return ge::GRAPH_FAILED);
+    if ((CheckArgs() != ge::GRAPH_SUCCESS) || (GetArgs() != ge::GRAPH_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(args_.opName, "CheckArgs or GetArgs failed, see the preceding error log.");
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
@@ -419,16 +457,51 @@ ge::graphStatus TransposeBatchMatMulTiling::DoTiling()
     if (GetShapeAttrsInfo() != ge::GRAPH_SUCCESS) {
         return ge::GRAPH_FAILED;
     }
-    OP_TILING_CHECK((GetBatchInfo(*context_, args_, batchInfo_) != ge::GRAPH_SUCCESS),
-                    CUBE_INNER_ERR_REPORT(args_.opName, "GetBatchInfo failed"), return ge::GRAPH_FAILED);
+    if (GetBatchInfo(*context_, args_, batchInfo_) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(args_.opName, "GetBatchInfo failed");
+        return ge::GRAPH_FAILED;
+    }
     args_.batchInfo = &batchInfo_;
     if (context_->GetOptionalInputShape(SCALE_IDX) != nullptr) {
         args_.hasScale = true;
         OP_LOGI(args_.opName, "Quant function is activated.");
     }
-    MatMulTilingCfg tilingCfg(false, context_->GetCompileInfo(), static_cast<void*>(&args_));
-    OPS_CHECK_NULL_WITH_CONTEXT(context_, tilingCfg.compileInfo);
-    NpuArch npuArch = static_cast<const MatmulV3CompileInfo*>(tilingCfg.compileInfo)->npuArch;
+    const auto* contextCompileInfo = static_cast<const MatmulV3CompileInfo*>(context_->GetCompileInfo());
+    OP_TILING_CHECK(contextCompileInfo == nullptr,
+                    CUBE_INNER_ERR_REPORT(args_.opName, "GetCompileInfo returned nullptr"), return ge::GRAPH_FAILED);
+    MatmulV3CompileInfo compileInfo = *contextCompileInfo;
+    auto* platformInfo = context_->GetPlatformInfo();
+    if (platformInfo != nullptr) {
+        MatmulV3CompileInfo refreshed{};
+        if (InitCompileInfo(platformInfo, &refreshed) == ge::GRAPH_SUCCESS) {
+            auto fillIfMissing = [](uint64_t& dst, uint64_t src) {
+                if (dst == 0UL) {
+                    dst = src;
+                }
+            };
+            fillIfMissing(compileInfo.aicNum, refreshed.aicNum);
+            fillIfMissing(compileInfo.aivNum, refreshed.aivNum);
+            fillIfMissing(compileInfo.ubSize, refreshed.ubSize);
+            fillIfMissing(compileInfo.l1Size, refreshed.l1Size);
+            fillIfMissing(compileInfo.l0ASize, refreshed.l0ASize);
+            fillIfMissing(compileInfo.l0BSize, refreshed.l0BSize);
+            fillIfMissing(compileInfo.l0CSize, refreshed.l0CSize);
+            fillIfMissing(compileInfo.l2Size, refreshed.l2Size);
+            fillIfMissing(compileInfo.btSize, refreshed.btSize);
+        }
+    }
+    OP_TILING_CHECK(
+        (compileInfo.aicNum == 0UL) || (compileInfo.aivNum == 0UL) || (compileInfo.ubSize == 0UL) ||
+            (compileInfo.l1Size == 0UL) || (compileInfo.l0ASize == 0UL) || (compileInfo.l0BSize == 0UL) ||
+            (compileInfo.l0CSize == 0UL) || (compileInfo.l2Size == 0UL),
+        CUBE_INNER_ERR_REPORT(args_.opName,
+                              "invalid platform info, aicNum:%lu, aivNum:%lu, ubSize:%lu, l1Size:%lu, l0ASize:%lu, "
+                              "l0BSize:%lu, l0CSize:%lu, l2Size:%lu",
+                              compileInfo.aicNum, compileInfo.aivNum, compileInfo.ubSize, compileInfo.l1Size,
+                              compileInfo.l0ASize, compileInfo.l0BSize, compileInfo.l0CSize, compileInfo.l2Size),
+        return ge::GRAPH_FAILED);
+    MatMulTilingCfg tilingCfg(false, &compileInfo, static_cast<void*>(&args_));
+    NpuArch npuArch = compileInfo.npuArch;
     MMRegisterCfg registerCfg{"TransposeBatchMatMul", npuArch, strategy::GetTransposeBatchMatMulPriorities(npuArch)};
     return MMTilingRegistry::GetInstance().DoTilingImpl(context_, tilingCfg, registerCfg);
 }

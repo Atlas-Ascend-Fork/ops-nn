@@ -142,6 +142,7 @@ inline static bool CheckDtypeValid(const aclTensor* x1, const aclTensor* x2, con
             Ops::NN::FormatString("The dtype combination of %s must be in the supported combination list",
                                   "x1, x2, scale, out")
                 .c_str());
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "The dtype combination of x1, x2, scale, out is not supported.");
         return false;
     }
     // DTYPE_SUPPORT_LIST_WEIGHTNZ 已覆盖 {fp16,bf16/int8 出} 等组合，且计算图末端由 l0op::Cast 转换到
@@ -393,7 +394,9 @@ inline static aclnnStatus CheckParams(const aclTensor* x1, const aclTensor* x2, 
     const bool hasScaleOrBatchSplit = scale != nullptr || batch_split_factor != 1;
     CHECK_RET(CheckPermLimit(x2, perm_x1, perm_x2, perm_y, hasScaleOrBatchSplit), ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckMathType(x1, x2, cubeMathType), ACLNN_ERR_PARAM_INVALID);
-    CHECK_RET(CheckDtypeValid(x1, x2, scale, out), ACLNN_ERR_PARAM_INVALID);
+    if (!CheckDtypeValid(x1, x2, scale, out)) {
+        return ACLNN_ERR_PARAM_INVALID;
+    }
     CHECK_RET(CheckShapeValid(x1, x2, scale, perm_x1, perm_x2, batch_split_factor, hasScaleOrBatchSplit),
               ACLNN_ERR_PARAM_INVALID);
     CHECK_RET(CheckBias(x1, x2, bias, perm_x2, hasScaleOrBatchSplit), ACLNN_ERR_PARAM_INVALID);
@@ -515,7 +518,9 @@ aclnnStatus aclnnTransposeBatchMatMulGetWorkspaceSize(const aclTensor* x1, const
 
     // 入参检查
     auto ret = CheckParams(x1, x2, bias, scale, out, permX1, permX2, permY, cubeMathType, batchSplitFactor);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
 
     // 空tensor 处理
     if (x1->IsEmpty() || x2->IsEmpty()) {
@@ -571,7 +576,9 @@ aclnnStatus aclnnTransposeBatchMatMulWeightNzGetWorkspaceSize(const aclTensor* x
 
     // 入参检查
     auto ret = CheckParams(x1, x2, bias, scale, out, permX1, permX2, permY, cubeMathType, batchSplitFactor);
-    CHECK_RET(ret == ACLNN_SUCCESS, ret);
+    if (ret != ACLNN_SUCCESS) {
+        return ret;
+    }
 
     // x2 format must be NZ
     if (ge::GetPrimaryFormat(x2->GetStorageFormat()) != Format::FORMAT_FRACTAL_NZ) {

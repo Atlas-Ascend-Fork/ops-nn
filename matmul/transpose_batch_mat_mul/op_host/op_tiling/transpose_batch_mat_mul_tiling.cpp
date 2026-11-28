@@ -36,10 +36,47 @@ namespace optiling {
 
 REGISTER_TILING_TEMPLATE("TransposeBatchMatMul", TransposeBatchMatMulBaseTiling, 0);
 
+static bool IsPlatformHardwareInfoValid(gert::TilingContext* context)
+{
+    if (context == nullptr) {
+        return false;
+    }
+    auto platformInfo = context->GetPlatformInfo();
+    if (platformInfo == nullptr) {
+        return false;
+    }
+    auto platform = platform_ascendc::PlatformAscendC(platformInfo);
+    uint64_t ubSize = 0UL;
+    uint64_t l1Size = 0UL;
+    uint64_t l0aSize = 0UL;
+    uint64_t l0bSize = 0UL;
+    uint64_t l0cSize = 0UL;
+    uint64_t l2Size = 0UL;
+    platform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
+    platform.GetCoreMemSize(platform_ascendc::CoreMemType::L1, l1Size);
+    platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_A, l0aSize);
+    platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_B, l0bSize);
+    platform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_C, l0cSize);
+    platform.GetCoreMemSize(platform_ascendc::CoreMemType::L2, l2Size);
+    // HOST-3: platform parameters must be range-checked before use (unsigned types compare with == 0).
+    // The AIV core count is deliberately not required here: TransposeBatchMatMul only uses the vector
+    // cores in the MIX/ON_THE_FLY scenarios, and the arch35 tiling validates aivNum itself when it
+    // actually consumes it. Requiring a non-zero aivNum at this entry rejected cube-only platforms
+    // that used to tile fine.
+    return (platform.GetCoreNumAic() != 0U) && (ubSize != 0UL) && (l1Size != 0UL) && (l0aSize != 0UL) &&
+           (l0bSize != 0UL) && (l0cSize != 0UL) && (l2Size != 0UL);
+}
+
 static ge::graphStatus TransposeBatchMatMulTilingFunc(gert::TilingContext* context)
 {
+    // The context has to be validated before anything dereferences it: the platform check below reports
+    // through the operator name, so a null context would crash instead of returning GRAPH_FAILED.
     OP_TILING_CHECK(context == nullptr, CUBE_INNER_ERR_REPORT("TransposeBatchMatMul", "context is null"),
                     return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        !IsPlatformHardwareInfoValid(context),
+        CUBE_INNER_ERR_REPORT("TransposeBatchMatMul", "invalid platform info: core number or buffer size is zero"),
+        return ge::GRAPH_FAILED);
     if (IsAdvancedSocVersion(context)) {
         return transpose_batch_mat_mul_advanced::TransposeBatchMatMulTiling(context).DoTiling();
     }
@@ -68,17 +105,14 @@ static ge::graphStatus TilingPrepareForTransposeBatchMatMul(gert::TilingParseCon
     platformInfo->GetPlatformRes("AICoreintrinsicDtypeMap", "Intrinsic_data_move_l12bt", dataMoveL12Bt);
     compileInfoPtr->supportL0c2out = !val.empty();
     compileInfoPtr->supportL12BtBf16 = (dataMoveL12Bt.find("bf16") != std::string::npos);
-    compileInfoPtr->aicNum = ascendcPlatform.GetCoreNumAic();
     compileInfoPtr->socVersion = ascendcPlatform.GetSocVersion();
     compileInfoPtr->npuArch = ascendcPlatform.GetCurNpuArch();
+    // HOST-4: runtime platform parameters (core numbers and on-chip buffer sizes) must be obtained in
+    // the Tiling phase, not cached here. Both tiling paths refresh them at Tiling time:
+    // MatmulV3BaseTiling::InitCompileInfo() during construction for the base path, and the arch35
+    // tiling classes for the advanced path. Only compile-time information is kept in this structure.
     compileInfoPtr->btSize = compileInfoPtr->supportL0c2out ? 1024UL : 0UL;                      // 1024 is btSize
     compileInfoPtr->btSize = compileInfoPtr->supportL12BtBf16 ? 4096UL : compileInfoPtr->btSize; // 4096 is btSize
-    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfoPtr->ubSize);
-    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L1, compileInfoPtr->l1Size);
-    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_A, compileInfoPtr->l0ASize);
-    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_B, compileInfoPtr->l0BSize);
-    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L0_C, compileInfoPtr->l0CSize);
-    ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::L2, compileInfoPtr->l2Size);
 
     TilingPrepareForOpCache(context);
     OP_LOGI(context->GetNodeName(),
@@ -93,5 +127,5 @@ static ge::graphStatus TilingPrepareForTransposeBatchMatMul(gert::TilingParseCon
 IMPL_OP_OPTILING(TransposeBatchMatMul)
     .Tiling(TransposeBatchMatMulTilingFunc)
     .TilingParse<MatmulV3CompileInfo>(TilingPrepareForTransposeBatchMatMul)
-    .GenSimplifiedKey(transpose_batch_matmul::GenSimplifiedKey);
+    .GenSimplifiedKey(transpose_batch_mat_mul::GenSimplifiedKey);
 } // namespace optiling

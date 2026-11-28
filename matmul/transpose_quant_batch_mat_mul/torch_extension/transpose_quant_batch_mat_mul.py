@@ -216,6 +216,22 @@ class TransposeQuantBatchMatMulOpBuilder(OpBuilder):
             default_perm_x1 = [1, 0, 2]
             default_perm_x2 = [0, 1, 2]
 
+            for _name, _perm in (
+                ("perm_x1", perm_x1),
+                ("perm_x2", perm_x2),
+                ("perm_y", perm_y),
+            ):
+                if _perm is None:
+                    continue
+                if len(_perm) != 3:
+                    raise ValueError(
+                        f"{_name} must contain 3 elements, but got {len(_perm)}"
+                    )
+                if any(value < 0 or value > 2 for value in _perm):
+                    raise ValueError(
+                        f"{_name} elements must be in [0, 2], but got {_perm}"
+                    )
+
             perm_x1_real = perm_x1 if perm_x1 is not None else default_perm_x1
             perm_x2_real = perm_x2 if perm_x2 is not None else default_perm_x2
             batch_split_factor_value = (

@@ -91,11 +91,11 @@ static ge::graphStatus RunTqbmmTiling(
     const std::initializer_list<int64_t>& outShape, const std::vector<std::pair<std::string, Ops::NN::AnyValue>>& attrs,
     ge::DataType x1Dtype, ge::DataType x2Dtype, ge::DataType x1ScaleDtype, ge::DataType x2ScaleDtype,
     ge::DataType outDtype, ge::Format x1Format = ge::FORMAT_ND, ge::Format x2Format = ge::FORMAT_ND,
-    const std::string& compileInfo = kTqbmmCompileInfo)
+    const std::string& compileInfo = kTqbmmCompileInfo, const std::initializer_list<int64_t>& x2StorageShape = {})
 {
     const string opType = "TransposeQuantBatchMatMul";
     gert::StorageShape x1S = {x1Shape, x1Shape};
-    gert::StorageShape x2S = {x2Shape, x2Shape};
+    gert::StorageShape x2S = {x2Shape, x2StorageShape.size() == 0 ? x2Shape : x2StorageShape};
     gert::StorageShape x1ScaleS = {x1ScaleShape, x1ScaleShape};
     gert::StorageShape x2ScaleS = {x2ScaleShape, x2ScaleShape};
     std::vector<gert::StorageShape> outputShapes(1, {outShape, outShape});
@@ -1067,9 +1067,10 @@ TEST(TransposeQuantBatchMatMulTilingRuntimeExtra, WeightNzMxFp8TailMerge_dav9201
 TEST(TransposeQuantBatchMatMulTilingRuntimeExtra, WeightNzHifp8Success_0)
 {
     // HIFP8 mode with x2 = FRACTAL_NZ, perm_x2 = [0, 1, 2], fp16 output
-    ge::graphStatus ret = RunTqbmmTiling(
-        {64, 1, 128}, {1, 128, 96}, {1}, {96}, {64, 1, 96}, MakeTqbmmAttrs(0, 1, {1, 0, 2}, {0, 1, 2}, {1, 0, 2}),
-        DT_HIFLOAT8, DT_HIFLOAT8, DT_UINT64, DT_UINT64, DT_FLOAT16, ge::FORMAT_ND, ge::FORMAT_FRACTAL_NZ);
+    ge::graphStatus ret = RunTqbmmTiling({64, 1, 128}, {1, 128, 96}, {1}, {96}, {64, 1, 96},
+                                         MakeTqbmmAttrs(0, 1, {1, 0, 2}, {0, 1, 2}, {1, 0, 2}), DT_HIFLOAT8,
+                                         DT_HIFLOAT8, DT_UINT64, DT_UINT64, DT_FLOAT16, ge::FORMAT_ND,
+                                         ge::FORMAT_FRACTAL_NZ, kTqbmmCompileInfo, {1, 8, 6, 16, 16});
     EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
 }
 
@@ -1079,16 +1080,17 @@ TEST(TransposeQuantBatchMatMulTilingRuntimeExtra, WeightNzHifp8Success_1)
     ge::graphStatus ret = RunTqbmmTiling({777, 118, 512}, {118, 128, 512}, {1}, {128}, {777, 118, 128},
                                          MakeTqbmmAttrs(0, 1, {1, 0, 2}, {0, 2, 1}, {1, 0, 2}), DT_HIFLOAT8,
                                          DT_HIFLOAT8, DT_UINT64, DT_UINT64, DT_BF16, ge::FORMAT_ND,
-                                         ge::FORMAT_FRACTAL_NZ);
+                                         ge::FORMAT_FRACTAL_NZ, kTqbmmCompileInfo, {118, 8, 32, 16, 16});
     EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
 }
 
 TEST(TransposeQuantBatchMatMulTilingRuntimeExtra, WeightNzHifp8OutHifp8Success)
 {
     // HIFP8 mode with x2 = FRACTAL_NZ and HIFLOAT8 (T-C) output, perm_x2 = [0, 1, 2]
-    ge::graphStatus ret = RunTqbmmTiling(
-        {64, 1, 128}, {1, 128, 96}, {1}, {96}, {64, 1, 96}, MakeTqbmmAttrs(0, 1, {1, 0, 2}, {0, 1, 2}, {1, 0, 2}),
-        DT_HIFLOAT8, DT_HIFLOAT8, DT_UINT64, DT_UINT64, DT_HIFLOAT8, ge::FORMAT_ND, ge::FORMAT_FRACTAL_NZ);
+    ge::graphStatus ret = RunTqbmmTiling({64, 1, 128}, {1, 128, 96}, {1}, {96}, {64, 1, 96},
+                                         MakeTqbmmAttrs(0, 1, {1, 0, 2}, {0, 1, 2}, {1, 0, 2}), DT_HIFLOAT8,
+                                         DT_HIFLOAT8, DT_UINT64, DT_UINT64, DT_HIFLOAT8, ge::FORMAT_ND,
+                                         ge::FORMAT_FRACTAL_NZ, kTqbmmCompileInfo, {1, 8, 6, 16, 16});
     EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
 }
 
@@ -1419,7 +1421,7 @@ TEST(TransposeQuantBatchMatMulTilingRuntimeExtra, Hifp8SmallL1DepthAlign)
 TEST(TransposeQuantBatchMatMulGenSimplifiedKeyTest, ContextNull)
 {
     char key[128] = {0};
-    auto ret = optiling::transpose_quant_batch_matmul::GenSimplifiedKey(nullptr, key);
+    auto ret = optiling::transpose_quant_batch_mat_mul_advanced::GenSimplifiedKey(nullptr, key);
     EXPECT_EQ(ret, ge::GRAPH_FAILED);
 }
 
@@ -1459,7 +1461,7 @@ TEST(TransposeQuantBatchMatMulGenSimplifiedKeyTest, KeyNull)
                  .Build();
     auto tiling_context = holder.GetContext<gert::TilingContext>();
     ASSERT_NE(tiling_context, nullptr);
-    auto ret = optiling::transpose_quant_batch_matmul::GenSimplifiedKey(tiling_context, nullptr);
+    auto ret = optiling::transpose_quant_batch_mat_mul_advanced::GenSimplifiedKey(tiling_context, nullptr);
     EXPECT_EQ(ret, ge::GRAPH_FAILED);
 }
 
@@ -1500,7 +1502,7 @@ TEST(TransposeQuantBatchMatMulGenSimplifiedKeyTest, ValidKey)
     auto tiling_context = holder.GetContext<gert::TilingContext>();
     ASSERT_NE(tiling_context, nullptr);
     char key[128] = {0};
-    auto ret = optiling::transpose_quant_batch_matmul::GenSimplifiedKey(tiling_context, key);
+    auto ret = optiling::transpose_quant_batch_mat_mul_advanced::GenSimplifiedKey(tiling_context, key);
     EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
 }
 
@@ -1543,7 +1545,7 @@ TEST(TransposeQuantBatchMatMulGenSimplifiedKeyTest, ValidKeyWithBias)
     auto tiling_context = holder.GetContext<gert::TilingContext>();
     ASSERT_NE(tiling_context, nullptr);
     char key[128] = {0};
-    auto ret = optiling::transpose_quant_batch_matmul::GenSimplifiedKey(tiling_context, key);
+    auto ret = optiling::transpose_quant_batch_mat_mul_advanced::GenSimplifiedKey(tiling_context, key);
     EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
 }
 
@@ -1582,7 +1584,7 @@ TEST(TransposeQuantBatchMatMulGenSimplifiedKeyTest, ValidKeyHifp8)
     auto tiling_context = holder.GetContext<gert::TilingContext>();
     ASSERT_NE(tiling_context, nullptr);
     char key[128] = {0};
-    auto ret = optiling::transpose_quant_batch_matmul::GenSimplifiedKey(tiling_context, key);
+    auto ret = optiling::transpose_quant_batch_mat_mul_advanced::GenSimplifiedKey(tiling_context, key);
     EXPECT_EQ(ret, ge::GRAPH_SUCCESS);
 }
 

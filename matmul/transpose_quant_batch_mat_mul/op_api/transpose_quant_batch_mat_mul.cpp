@@ -31,6 +31,7 @@ const aclTensor* TransposeQuantBatchMatMul(const aclTensor* x1, const aclTensor*
            batchSplitFactor);
     auto outType = static_cast<DataType>(dtype);
     auto out = executor->AllocTensor(outType, Format::FORMAT_ND, Format::FORMAT_ND);
+    OP_CHECK_NULL(out, return nullptr);
     auto ret = INFER_SHAPE(TransposeQuantBatchMatMul, OP_INPUT(x1, x2, bias, x1Scale, x2Scale), OP_OUTPUT(out),
                            OP_ATTR(dtype, groupSize, permX1, permX2, permY, batchSplitFactor));
     OP_CHECK_INFERSHAPE(ret != ACLNN_SUCCESS, return nullptr, "TransposeQuantBatchMatMul InferShape failed.");

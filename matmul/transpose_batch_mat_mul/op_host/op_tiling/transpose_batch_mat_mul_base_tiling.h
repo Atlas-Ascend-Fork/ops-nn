@@ -40,36 +40,23 @@ struct BatchShapeInfo {
     bool biasWithBatch = false;
 };
 
-enum class TilingCalcSelect : uint8_t //选择不同的计算Tiling的方法
-{
-    ALL = 0,
-    COMMON = 1
-};
-
 class TransposeBatchMatMulBaseTiling : public matmul_v3::MatmulV3BaseTiling {
 public:
     explicit TransposeBatchMatMulBaseTiling(gert::TilingContext* context)
         : MatmulV3BaseTiling(context, &tbmmTilingDataSelf_.matmulTiling), tbmmTilingData_(tbmmTilingDataSelf_)
     {}
 
-    TransposeBatchMatMulBaseTiling(gert::TilingContext* context, TBMMTilingData& tbmmTilingData,
-                                   TilingCalcSelect tilingSelect = TilingCalcSelect::COMMON)
-        : MatmulV3BaseTiling(context, &tbmmTilingData.matmulTiling), tbmmTilingData_(tbmmTilingData)
-    {
-        tilingSelect_ = tilingSelect;
-    }
-
     ~TransposeBatchMatMulBaseTiling() override {}
 
 protected:
-    // 2、获取INPUT/OUTPUT/ATTR信息
+    // Get INPUT/OUTPUT/ATTR information
     ge::graphStatus GetShapeAttrsInfo() override;
-    // 4、计算高阶API的TilingData
-    ge::graphStatus DoLibApiTiling() override; // 4
-    // 6、保存Tiling数据
-    ge::graphStatus PostTiling() override; // 6
-    // 7、计算TilingKey
-    uint64_t GetTilingKey() const override; // 7
+    // Calculate TilingData of the high-level API
+    ge::graphStatus DoLibApiTiling() override;
+    // Save tiling data
+    ge::graphStatus PostTiling() override;
+    // Calculate tiling key
+    uint64_t GetTilingKey() const override;
 
     ge::graphStatus CheckArgs() override;
     ge::graphStatus GetArgs() override;
@@ -84,7 +71,6 @@ protected:
     void ResetBasicBlock(uint64_t tempBaseM, uint64_t tempBaseN);
     TBMMTilingData& tbmmTilingData_;
     BatchShapeInfo batchInfo_;
-    TilingCalcSelect tilingSelect_ = TilingCalcSelect::ALL;
 
 private:
     const gert::ContinuousVector* aPermList_ = nullptr;

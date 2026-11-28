@@ -27,14 +27,13 @@ public:
     explicit PpMatMulDefault(gert::TilingContext* context) : context_(context) {}
     virtual ~PpMatMulDefault() = default;
 
-    void GetHardwareInfo();
+    ge::graphStatus GetHardwareInfo();
     bool GetMatMulTilingData();
     void PrintTiling();
     gert::TilingContext* context_ = nullptr;
     MatMulInfo matMulInfo_;
     PpMatmulDefaultTilingData ppMatmulDefaultTilingData_{};
     HardwareInfo hardwareInfo_;
-    uint64_t kernelKey_;
 };
 } // namespace pp_matmul
 } // namespace optiling

@@ -29,7 +29,7 @@ inline int64_t PermDecode(const int64_t* perm, size_t size)
 {
     int64_t trans_ = 0L;
     for (uint32_t i = 0; i < size; i++) {
-        trans_ = trans_ * 10 + perm[i] + 1; // 乘10 移位
+        trans_ = trans_ * 10 + perm[i] + 1; // shift by one decimal digit
     }
     return trans_;
 }

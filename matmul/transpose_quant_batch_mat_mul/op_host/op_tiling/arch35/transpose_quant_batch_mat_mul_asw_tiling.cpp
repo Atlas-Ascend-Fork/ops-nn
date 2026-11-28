@@ -51,7 +51,7 @@ ge::graphStatus TransposeQuantBatchMatMulAswTiling::DoOpTiling()
         runInfo_.baseK = BASIC_BLOCK_K_128_BYTE;
         precisionMode_ = TQBMMPrecisionMode::PRECISION_MODE_MXFP4;
         CalL1Tiling();
-    } else if (IsMxFp8(context_->GetInputDesc(X1_IDX), context_->GetInputDesc(X2_IDX),
+    } else if (IsMXFP8(context_->GetInputDesc(X1_IDX), context_->GetInputDesc(X2_IDX),
                        context_->GetOptionalInputDesc(SCALE_X1_IDX), context_->GetOptionalInputDesc(SCALE_X2_IDX))) {
         precisionMode_ = TQBMMPrecisionMode::PRECISION_MODE_MXFP8;
         if (compileInfo_.npuArch == Ops::Base::DAV_9201) {
@@ -72,15 +72,17 @@ ge::graphStatus TransposeQuantBatchMatMulAswTiling::DoOpTiling()
         precisionMode_ = TQBMMPrecisionMode::PRECISION_MODE_HIFP8;
         if (context_->GetOptionalInputShape(BIAS_IDX) != nullptr &&
             context_->GetOptionalInputDesc(BIAS_IDX)->GetDataType() != ge::DT_FLOAT) {
-            OP_LOGE(args_.opName, "HIFP8 only supports float32 bias, but got dtype %d",
-                    static_cast<int32_t>(context_->GetOptionalInputDesc(BIAS_IDX)->GetDataType()));
+            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                args_.opName, "bias",
+                std::to_string(static_cast<int32_t>(context_->GetOptionalInputDesc(BIAS_IDX)->GetDataType())).c_str(),
+                "float32");
             return ge::GRAPH_FAILED;
         }
         CalL1Tiling();
     } else {
         precisionMode_ = TQBMMPrecisionMode::PRECISION_MODE_FP8;
-        // DAV_9201/DAV_9202 为 fixpipe 1v1（AIC:AIV=1:1），dequant epilogue 需在单个 AIV 的
-        // UB 内同时容纳整块 fp32 L0C 与 scale/bias/输出；先按 UB 预算收敛 baseM，再做 L1 切分。
+        // The 960 series (9201/9202) uses fixpipe 1v1 (AIC:AIV=1:1); the dequant epilogue must fit the entire
+        // fp32 L0C block plus scale/bias/output into one AIV's UB. Shrink baseM by the UB budget before L1 tiling.
         CapBaseMForDequantUb();
         MatMulV3TilingHelper::CalL1Tiling(compileInfo_, args_, runInfo_);
     }
@@ -93,9 +95,8 @@ bool TransposeQuantBatchMatMulAswTiling::IsCapable()
     uint64_t aivToAicRatio = (compileInfo_.npuArch == Ops::Base::DAV_3510) ? NUM_TWO : NUM_ONE;
     if (!IsMicroScaling(context_->GetOptionalInputDesc(SCALE_X1_IDX), context_->GetOptionalInputDesc(SCALE_X2_IDX)) &&
         compileInfo_.aivNum != compileInfo_.aicNum * aivToAicRatio) {
-        OP_LOGE(args_.opName,
-                "TransposeQuantBatchMatMul is only supported for aivNum == aicNum *%lu.aivNum:%llu,aicNum:%llu",
-                aivToAicRatio, compileInfo_.aivNum, compileInfo_.aicNum);
+        OP_LOGE(args_.opName, "aivNum must equal aicNum * %lu (aivNum: %llu, aicNum: %llu).", aivToAicRatio,
+                compileInfo_.aivNum, compileInfo_.aicNum);
         return false;
     }
     return true;
@@ -129,32 +130,33 @@ void TransposeQuantBatchMatMulAswTiling::GetTransposeBatchMatMulInfo()
     }
 }
 
-// DAV_9201/DAV_9202 AIC:AIV 核数比为 1:1（fixpipe 1v1，非 3510 的双 AIV 半 M 切分）：
-// AIC 会把整块 baseM x baseN 的 fp32 L0C 累加器一次 fixpipe 进单个 AIV 的 UB，
-// BlockEpilogueDequant::SetupUbLayout 按该整块预留 UB 空间。若 baseM*baseN*4 超出 UB
-// （如 256x256x4B=256KB > 248KB），UB 布局必然越界。此处按 epilogue 布局逐字节计算 UB 占用，
-// 以 16 为粒度下调 baseM，保证布局可放下；过小则保持不收敛。
+// The 960 series (9201/9202) has an AIC:AIV ratio of 1:1 (fixpipe 1v1, not the dual-AIV half-M split of 3510):
+// AIC fixpipes the entire baseM x baseN fp32 L0C accumulator into a single AIV's UB,
+// and BlockEpilogueDequant::SetupUbLayout reserves UB for that whole block. If baseM*baseN*4 exceeds UB
+// (for example, 256x256x4B=256KB > 248KB), the UB layout overflows. Compute the byte-level UB usage,
+// and reduce baseM in steps of 16 until the layout fits; stop if baseM is already too small.
 void TransposeQuantBatchMatMulAswTiling::CapBaseMForDequantUb()
 {
     if (compileInfo_.npuArch != Ops::Base::DAV_9201 && compileInfo_.npuArch != Ops::Base::DAV_9202) {
         return;
     }
-    // 与 BlockEpilogueDequant::SetupUbLayout（CV=1）一致的预算公式：
+    // Budget formula consistent with BlockEpilogueDequant::SetupUbLayout (CV=1):
     //   L0C  : baseM * align(baseN, 32/sizeof(L0CType)) * sizeof(L0CType)   (FP8 -> fp32, 4B)
-    //   scale: align(baseN*4, 32) + align(baseM*4, 32)                     (x2Scale/x1Scale 均 fp32)
-    //   bias : align(baseN*biasSize, 32)                                   (可选)
+    //   scale: align(baseN*4, 32) + align(baseM*4, 32) (both x1Scale and x2Scale are fp32)
+    //   bias : align(baseN*biasSize, 32) (optional)
     //   out  : 2 * align(ceil(baseM/fp32OutTimes) * align(baseN, 32/ySize) * ySize, 32)
     const uint64_t nAligned = ops::CeilAlign(runInfo_.baseN, BASIC_BLOCK_SIZE_32 / DATA_SIZE_FP32);
     const uint64_t x2ScaleBytes = ops::CeilAlign(runInfo_.baseN * DATA_SIZE_FP32, BASIC_BLOCK_SIZE_32);
-    // bias 运行期 dtype 可能为 bf16/fp16/fp32，统一按 4B 保守估计，最多只会让 baseM 略小。
+    // The runtime bias dtype may be bf16/fp16/fp32; use 4B as a conservative estimate, which only
+    // slightly reduces baseM.
     const uint64_t biasBytes = args_.hasBias ? ops::CeilAlign(runInfo_.baseN * DATA_SIZE_FP32, BASIC_BLOCK_SIZE_32) :
                                                0UL;
     uint64_t outDtypeSize = ge::GetSizeByDataType(args_.cType);
     const bool isFp32Out = outDtypeSize == DATA_SIZE_FP32;
     if (!isFp32Out) {
-        outDtypeSize = 2UL; // FP8 MIX 的 Y 仅支持 fp16/bf16
+        outDtypeSize = DATA_SIZE_FP16_BF16; // FP8 MIX output only supports fp16/bf16
     }
-    const uint64_t fp32OutTimes = isFp32Out ? 4UL : 2UL;
+    const uint64_t fp32OutTimes = isFp32Out ? FP32_OUT_ELEM_TIMES : FP16_BF16_OUT_ELEM_TIMES;
     while (runInfo_.baseM > BASIC_BLOCK_SIZE_16) {
         const uint64_t curBaseM = runInfo_.baseM;
         const uint64_t l0cBytes = curBaseM * nAligned * DATA_SIZE_FP32;
@@ -163,7 +165,8 @@ void TransposeQuantBatchMatMulAswTiling::CapBaseMForDequantUb()
             ops::CeilDiv(curBaseM, fp32OutTimes) * ops::CeilAlign(runInfo_.baseN, BASIC_BLOCK_SIZE_32 / outDtypeSize) *
                 outDtypeSize,
             BASIC_BLOCK_SIZE_32);
-        if (l0cBytes + x2ScaleBytes + x1ScaleBytes + biasBytes + 2UL * outOnceBytes <= compileInfo_.ubSize) {
+        if (l0cBytes + x2ScaleBytes + x1ScaleBytes + biasBytes + UB_OUT_DOUBLE_BUFFER * outOnceBytes <=
+            compileInfo_.ubSize) {
             break;
         }
         runInfo_.baseM -= BASIC_BLOCK_SIZE_16;
@@ -468,11 +471,31 @@ void TransposeQuantBatchMatMulAswTiling::ApplyQbmmMxL1Tiling(const QuantBatchMat
     isMxL1Tiled_ = true;
 }
 
+namespace {
+// RED-4: ge::GetSizeByDataType() returns 0 for dtypes this toolchain does not know (for example
+// Ops::NN::DT_HIFLOAT4_SCALE). A 0 here turns the byte accounting into an unsigned wrap-around, so
+// every size that takes part in the capacity math is checked and a known fallback is used.
+inline uint64_t GetDtypeSizeOrZero(ge::DataType dtype)
+{
+    const int64_t size = ge::GetSizeByDataType(dtype);
+    return size > 0 ? static_cast<uint64_t>(size) : 0UL;
+}
+
+// HIFP4 scale is stored with a 4-byte payload; the dtype id is not resolvable by the toolchain yet.
+constexpr uint64_t HIFP4_SCALE_BYTES = 4UL;
+} // namespace
+
 void TransposeQuantBatchMatMulAswTiling::CalL1Tiling()
 {
     uint64_t leftL1Size = compileInfo_.l1Size;
     if (args_.hasBias) {
-        leftL1Size -= runInfo_.baseN * ge::GetSizeByDataType(args_.biasType);
+        const uint64_t biasDtypeSize = GetDtypeSizeOrZero(args_.biasType);
+        if (biasDtypeSize == 0UL) {
+            OP_LOGE(args_.opName, "unsupported bias dtype %d, size is not resolvable.",
+                    static_cast<int32_t>(args_.biasType));
+            return;
+        }
+        leftL1Size -= runInfo_.baseN * biasDtypeSize;
     }
     const bool isHalfByteData = isMXFP4_ || isHIFP4_;
     uint64_t baseASize = isHalfByteData ? ((runInfo_.baseM * runInfo_.baseK + 1) >> 1) :
@@ -485,14 +508,32 @@ void TransposeQuantBatchMatMulAswTiling::CalL1Tiling()
     uint64_t baseScaleK = isHIFP4_ ? ops::CeilDiv(static_cast<uint64_t>(runInfo_.baseK), HIF4_GROUP_SIZE) :
                                      ops::CeilAlign(ops::CeilDiv(static_cast<uint64_t>(runInfo_.baseK), MX_GROUP_SIZE),
                                                     MXFP_MULTI_BASE_SIZE);
-    uint64_t baseScaleASize = !hasMXScale ? 0 :
-                                            baseScaleK * runInfo_.baseM *
-                                                ge::GetSizeByDataType(
-                                                    context_->GetOptionalInputDesc(SCALE_X1_IDX)->GetDataType());
-    uint64_t baseScaleBSize = !hasMXScale ? 0 :
-                                            baseScaleK * runInfo_.baseN *
-                                                ge::GetSizeByDataType(
-                                                    context_->GetOptionalInputDesc(SCALE_X2_IDX)->GetDataType());
+    // NOTE: x1_scale is an optional input and may be absent (for example in the HIFP8 path), so the scale
+    // descriptors must only be dereferenced when micro scaling is actually in use. HIFP4 always stores its
+    // scale with a 4-byte payload, whose dtype id the toolchain cannot resolve yet.
+    uint64_t scaleX1DtypeSize = 0UL;
+    uint64_t scaleX2DtypeSize = 0UL;
+    if (hasMXScale) {
+        if (isHIFP4_) {
+            scaleX1DtypeSize = HIFP4_SCALE_BYTES;
+            scaleX2DtypeSize = HIFP4_SCALE_BYTES;
+        } else {
+            const auto* x1ScaleDesc = context_->GetOptionalInputDesc(SCALE_X1_IDX);
+            const auto* x2ScaleDesc = context_->GetOptionalInputDesc(SCALE_X2_IDX);
+            if (x1ScaleDesc == nullptr || x2ScaleDesc == nullptr) {
+                OP_LOGE(args_.opName, "scale desc is null while micro scaling is enabled.");
+                return;
+            }
+            scaleX1DtypeSize = GetDtypeSizeOrZero(x1ScaleDesc->GetDataType());
+            scaleX2DtypeSize = GetDtypeSizeOrZero(x2ScaleDesc->GetDataType());
+            if (scaleX1DtypeSize == 0UL || scaleX2DtypeSize == 0UL) {
+                OP_LOGE(args_.opName, "unsupported scale dtype, size is not resolvable.");
+                return;
+            }
+        }
+    }
+    uint64_t baseScaleASize = !hasMXScale ? 0 : baseScaleK * runInfo_.baseM * scaleX1DtypeSize;
+    uint64_t baseScaleBSize = !hasMXScale ? 0 : baseScaleK * runInfo_.baseN * scaleX2DtypeSize;
     uint64_t baseL1Size = baseASize + baseBSize + baseScaleASize + baseScaleBSize;
     uint64_t depthInit = GetDepthA1B1(leftL1Size, baseL1Size, 1UL);
     uint64_t leftL1SizeByDepthInit = leftL1Size - depthInit * (baseL1Size);
@@ -519,36 +560,36 @@ void TransposeQuantBatchMatMulAswTiling::CalScaleFactors(uint64_t baseASize, uin
     uint64_t biasDtypeSize = ge::GetSizeByDataType(args_.biasType);
     uint64_t baseBiasSize = args_.hasBias ? runInfo_.baseN * biasDtypeSize : 0;
 
-    // 计算scaleFactorA, scaleFactorB
-    // 来自K轴的约束
+    // Calculate scaleFactorA and scaleFactorB.
+    // Constraint from the K axis.
     uint32_t scaleFactorAMax = std::min(static_cast<uint32_t>(ops::FloorDiv(MTE2_MIN_LOAD_SIZE_V100, baseScaleASize)),
                                         SCALER_FACTOR_MAX);
     uint32_t scaleFactorBMax = std::min(static_cast<uint32_t>(ops::FloorDiv(MTE2_MIN_LOAD_SIZE_V100, baseScaleBSize)),
                                         SCALER_FACTOR_MAX);
     uint32_t scaleFactorA = static_cast<uint32_t>(args_.kValue) / (runInfo_.stepKa * runInfo_.baseK);
     uint32_t scaleFactorB = static_cast<uint32_t>(args_.kValue) / (runInfo_.stepKb * runInfo_.baseK);
-    scaleFactorA_ = std::max(SCALER_FACTOR_MIN, scaleFactorA);
-    scaleFactorB_ = std::max(SCALER_FACTOR_MIN, scaleFactorB);
-    scaleFactorA_ = std::min(scaleFactorAMax, scaleFactorA);
-    scaleFactorB_ = std::min(scaleFactorBMax, scaleFactorB);
+    scaleFactorA_ = std::min(scaleFactorAMax, std::max(static_cast<uint32_t>(SCALER_FACTOR_MIN), scaleFactorA));
+    scaleFactorB_ = std::min(scaleFactorBMax, std::max(static_cast<uint32_t>(SCALER_FACTOR_MIN), scaleFactorB));
 
-    // 来自L1 size 的约束
-    uint64_t leftL1sie = compileInfo_.l1Size -
-                         (runInfo_.depthA1 * baseASize + runInfo_.depthB1 * baseBSize + baseBiasSize);
-    uint32_t scaleInit = static_cast<uint32_t>(leftL1sie /
+    // Constraint from L1 size.
+    uint64_t leftL1Size = compileInfo_.l1Size -
+                          (runInfo_.depthA1 * baseASize + runInfo_.depthB1 * baseBSize + baseBiasSize);
+    uint32_t scaleInit = static_cast<uint32_t>(leftL1Size /
                                                (runInfo_.depthA1 * baseScaleASize + runInfo_.depthB1 * baseScaleBSize));
     if (scaleFactorA_ <= scaleInit && scaleFactorB_ > scaleInit) {
-        leftL1sie -= (static_cast<uint64_t>(scaleFactorA_) * runInfo_.depthA1 * baseScaleASize);
-        scaleFactorB_ = std::min(static_cast<uint32_t>(leftL1sie / (runInfo_.depthB1 * baseScaleBSize)), scaleFactorB_);
+        leftL1Size -= (static_cast<uint64_t>(scaleFactorA_) * runInfo_.depthA1 * baseScaleASize);
+        scaleFactorB_ = std::min(static_cast<uint32_t>(leftL1Size / (runInfo_.depthB1 * baseScaleBSize)),
+                                 scaleFactorB_);
     } else if (scaleFactorB_ <= scaleInit && scaleFactorA_ > scaleInit) {
-        leftL1sie -= (static_cast<uint64_t>(scaleFactorB_) * runInfo_.depthB1 * baseScaleBSize);
-        scaleFactorA_ = std::min(static_cast<uint32_t>(leftL1sie / (runInfo_.depthA1 * baseScaleASize)), scaleFactorA_);
+        leftL1Size -= (static_cast<uint64_t>(scaleFactorB_) * runInfo_.depthB1 * baseScaleBSize);
+        scaleFactorA_ = std::min(static_cast<uint32_t>(leftL1Size / (runInfo_.depthA1 * baseScaleASize)),
+                                 scaleFactorA_);
     } else if (scaleFactorA_ > scaleInit && scaleFactorB_ > scaleInit) {
-        leftL1sie -= (static_cast<uint64_t>(scaleInit) * runInfo_.depthB1 * baseScaleBSize +
-                      static_cast<uint64_t>(scaleInit) * runInfo_.depthA1 * baseScaleASize);
-        uint32_t scaleASec = std::min(static_cast<uint32_t>(leftL1sie / (runInfo_.depthA1 * baseScaleASize)),
+        leftL1Size -= (static_cast<uint64_t>(scaleInit) * runInfo_.depthB1 * baseScaleBSize +
+                       static_cast<uint64_t>(scaleInit) * runInfo_.depthA1 * baseScaleASize);
+        uint32_t scaleASec = std::min(static_cast<uint32_t>(leftL1Size / (runInfo_.depthA1 * baseScaleASize)),
                                       scaleFactorA_ - scaleInit);
-        uint32_t scaleBSec = std::min(static_cast<uint32_t>(leftL1sie / (runInfo_.depthB1 * baseScaleBSize)),
+        uint32_t scaleBSec = std::min(static_cast<uint32_t>(leftL1Size / (runInfo_.depthB1 * baseScaleBSize)),
                                       scaleFactorB_ - scaleInit);
         scaleFactorA_ = scaleASec >= scaleBSec ? (scaleASec + scaleInit) : scaleInit;
         scaleFactorB_ = scaleASec < scaleBSec ? (scaleBSec + scaleInit) : scaleInit;
@@ -574,8 +615,8 @@ void TransposeQuantBatchMatMulAswTiling::CalStepKs()
     if (runInfo_.stepKb > runInfo_.stepKa) {
         runInfo_.stepKb = ops::FloorAlign(runInfo_.stepKb, runInfo_.stepKa);
     }
-    runInfo_.stepKa = std::min(runInfo_.stepKa, static_cast<uint64_t>(4)); // 限制stepKa最大为4, 防止issue queue阻塞
-    runInfo_.stepKb = std::min(runInfo_.stepKb, static_cast<uint64_t>(4)); // 限制stepKb最大为4, 防止issue queue阻塞
+    runInfo_.stepKa = std::min(runInfo_.stepKa, MAX_STEP_K); // limit stepKa to avoid issue queue blocking
+    runInfo_.stepKb = std::min(runInfo_.stepKb, MAX_STEP_K); // limit stepKb to avoid issue queue blocking
     runInfo_.depthA1 = runInfo_.stepKa * DB_SIZE;
     runInfo_.depthB1 = runInfo_.stepKb * DB_SIZE;
 }
@@ -599,7 +640,7 @@ uint64_t TransposeQuantBatchMatMulAswTiling::GetDepthA1B1(uint64_t leftSize, uin
         }
         depthScale = std::max(depthScale, static_cast<uint64_t>(1));
     } else {
-        constexpr uint64_t index = 2; // 2: depth的值是2的幂
+        constexpr uint64_t index = 2; // 2: depth is a power of two
         depthScale = 1UL;
         while (depthScale * (perDepthSize) < leftSize) {
             depthScale *= index;
@@ -641,9 +682,9 @@ ge::graphStatus TransposeQuantBatchMatMulAswTiling::GetTilingDataProcess(BatchMa
         }
     }
     if (isMxScale) {
-        // DAV_3510 与 DAV_9201/DAV_9202 共用 Blaze MX kernel，两架构都消费 scaleKL1，不可按 npuArch 隔离写入；
-        // 未走 qbmm L1 tiling 时兜底值必须等于 kL1（scaleFactor=1），直接引用基类写入的
-        // tilingData.kL1，避免重复推导公式与基类 kL1 的 min+钳4 定义产生偏差。
+        // 950/960 share the Blaze MX kernel and both consume scaleKL1, so it cannot be written per npuArch.
+        // When qbmm L1 tiling is not used, the fallback must equal kL1 (scaleFactor=1). Reference the value
+        // written by the base class (tilingData.kL1) to avoid divergence from its min-and-clamp-to-4 formula.
         tilingData.scaleKL1 = isMxL1Tiled_ ? scaleKL1_ : tilingData.kL1;
     }
     if (isMxTailWindowed_) {

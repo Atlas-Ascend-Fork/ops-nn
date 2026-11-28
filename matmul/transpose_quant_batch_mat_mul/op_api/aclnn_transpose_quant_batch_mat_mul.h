@@ -17,26 +17,26 @@
 extern "C" {
 #endif
 /**
- * @brief aclnnTransposeQuantBatchMatMul的第一段接口，根据具体的计算流程，计算workspace大小。
+ * @brief First phase of aclnnTransposeQuantBatchMatMul. Computes the workspace size for the given computation flow.
  * @domain aclnn_ops_infer
- * 算子功能：实现TransposeQuantBatchMatMul计算。
- * @param [in] x1: matmul左矩阵，数据类型支持：float8_e4m3fn, float8_e5m2, float4_e2m1（MX量化场景）,
- * hifloat8（HIFP8场景）, int8（INT8 W8A8场景）。
- * @param [in] x2: matmul右矩阵，数据类型支持：float8_e4m3fn, float8_e5m2, float4_e2m1（MX量化场景）,
- * hifloat8（HIFP8场景）, int8（INT8 W8A8场景）。
- * @param [in] bias: 偏置，当前不支持。
- * @param [in] x1Scale: 量化参数中的缩放因子，数据类型支持：float32, float8_e8m0, uint64/int64（HIFP8场景支持）。
- * @param [in] x2Scale: 量化参数中的缩放因子，数据类型支持：float32, float8_e8m0, uint64/int64（HIFP8场景支持）。
- * @param [in] dtype: 输出矩阵的数据类型。数据类型支持：int32。
- * @param [in] groupSize: 输出矩阵的分组大小。数据类型支持：int64。
- * @param [in] permX1: 表示输入x1的转置数组。
- * @param [in] permX2: 表示输入x2的转置数组。
- * @param [in] permY: 表示输入y的转置数组。
- * @param [in] batchSplitFactor: 是否重新拆分shape。数据类型支持：int32。
- * @param [out] out: 计算结果，数据类型：float16, bfloat16, hifloat8（HIFP8场景支持）。
- * @param [out] workspaceSize: 返回需要在npu device侧申请的workspace大小。
- * @param [out] executor: 返回op执行器，包含了算子计算流程。
- * @return aclnnStatus: 返回状态码
+ * Operator: TransposeQuantBatchMatMul.
+ * @param [in] x1: Left matmul matrix. Supported dtypes: float8_e4m3fn, float8_e5m2, float4_e2m1 (MX),
+ * hifloat8 (HIFP8), int8 (INT8 W8A8).
+ * @param [in] x2: Right matmul matrix. Supported dtypes: float8_e4m3fn, float8_e5m2, float4_e2m1 (MX),
+ * hifloat8 (HIFP8), int8 (INT8 W8A8).
+ * @param [in] bias: Bias. Not supported currently.
+ * @param [in] x1Scale: Quantization scale. Supported dtypes: float32, float8_e8m0, uint64/int64 (HIFP8).
+ * @param [in] x2Scale: Quantization scale. Supported dtypes: float32, float8_e8m0, uint64/int64 (HIFP8).
+ * @param [in] dtype: Output matrix dtype. Supported dtype: int32.
+ * @param [in] groupSize: Group size of the output matrix. Supported dtype: int64.
+ * @param [in] permX1: Transpose permutation array of x1.
+ * @param [in] permX2: Transpose permutation array of x2.
+ * @param [in] permY: Transpose permutation array of y.
+ * @param [in] batchSplitFactor: Whether to split the shape again. Supported dtype: int32.
+ * @param [out] out: Result. Supported dtypes: float16, bfloat16, hifloat8 (HIFP8).
+ * @param [out] workspaceSize: Size of the workspace to allocate on the NPU device.
+ * @param [out] executor: Op executor containing the operator computation flow.
+ * @return aclnnStatus: Status code.
  */
 ACLNN_API aclnnStatus aclnnTransposeQuantBatchMatMulGetWorkspaceSize(
     const aclTensor* x1, const aclTensor* x2, const aclTensor* bias, const aclTensor* x1Scale, const aclTensor* x2Scale,
@@ -44,34 +44,33 @@ ACLNN_API aclnnStatus aclnnTransposeQuantBatchMatMulGetWorkspaceSize(
     int32_t batchSplitFactor, aclTensor* out, uint64_t* workspaceSize, aclOpExecutor** executor);
 
 /**
- * @brief aclnnTransposeQuantBatchMatMul的第二段接口，用于执行计算。
+ * @brief Second phase of aclnnTransposeQuantBatchMatMul. Executes the computation.
  */
 ACLNN_API aclnnStatus aclnnTransposeQuantBatchMatMul(void* workspace, uint64_t workspaceSize, aclOpExecutor* executor,
                                                      const aclrtStream stream);
 
 /**
- * @brief aclnnTransposeQuantBatchMatMulWeightNz的第一段接口，根据具体的计算流程，计算workspace大小。
+ * @brief First phase of aclnnTransposeQuantBatchMatMulWeightNz. Computes the workspace size.
  * @domain aclnn_ops_infer
- * 算子功能：实现TransposeQuantBatchMatMulWeightNz计算。
- * @param [in] x1: matmul左矩阵，数据类型支持：float8_e4m3fn, float4_e2m1（MX量化场景）, hifloat8（HIFP8场景）,
- * int8（INT8 W8A8场景）。
- * @param [in] x2: matmul右矩阵，数据类型支持：float8_e4m3fn, float4_e2m1（MX量化场景）, hifloat8（HIFP8场景）,
- * int8（INT8 W8A8场景）。
- * @param [in] bias: 偏置，当前不支持。
- * @param [in] x1Scale: 量化参数中的缩放因子，数据类型支持：float8_e8m0, float32（INT8 W8A8场景）,
- * uint64/int64（HIFP8场景支持）。
- * @param [in] x2Scale: 量化参数中的缩放因子，数据类型支持：float8_e8m0, float32（INT8 W8A8场景）,
- * uint64/int64（HIFP8场景支持）。
- * @param [in] dtype: 输出矩阵的数据类型。数据类型支持：int32。
- * @param [in] groupSize: 输出矩阵的分组大小。数据类型支持：int64。
- * @param [in] permX1: 表示输入x1的转置数组。
- * @param [in] permX2: 表示输入x2的转置数组。
- * @param [in] permY: 表示输入y的转置数组。
- * @param [in] batchSplitFactor: 是否重新拆分shape。数据类型支持：int32。
- * @param [out] out: 计算结果，数据类型：float16, bfloat16, hifloat8（HIFP8场景支持）。
- * @param [out] workspaceSize: 返回需要在npu device侧申请的workspace大小。
- * @param [out] executor: 返回op执行器，包含了算子计算流程。
- * @return aclnnStatus: 返回状态码
+ * Operator: TransposeQuantBatchMatMulWeightNz.
+ * @param [in] x1: Left matmul matrix. Supported dtypes: float8_e4m3fn, float4_e2m1 (MX), hifloat8 (HIFP8), int8
+ * (INT8 W8A8).
+ * @param [in] x2: Right matmul matrix. Supported dtypes: float8_e4m3fn, float4_e2m1 (MX), hifloat8 (HIFP8), int8
+ * (INT8 W8A8).
+ * @param [in] bias: Bias. Not supported currently.
+ * @param [in] x1Scale: Quantization scale. Supported dtypes: float8_e8m0, uint64/int64 (HIFP8), float32 (INT8 W8A8).
+ * Optional in the HIFP8 scenario.
+ * @param [in] x2Scale: Quantization scale. Supported dtypes: float8_e8m0, uint64/int64 (HIFP8), float32 (INT8 W8A8).
+ * @param [in] dtype: Output matrix dtype. Supported dtype: int32.
+ * @param [in] groupSize: Group size of the output matrix. Supported dtype: int64.
+ * @param [in] permX1: Transpose permutation array of x1.
+ * @param [in] permX2: Transpose permutation array of x2.
+ * @param [in] permY: Transpose permutation array of y.
+ * @param [in] batchSplitFactor: Whether to split the shape again. Supported dtype: int32.
+ * @param [out] out: Result. Supported dtypes: float16, bfloat16, hifloat8 (HIFP8).
+ * @param [out] workspaceSize: Size of the workspace to allocate on the NPU device.
+ * @param [out] executor: Op executor containing the operator computation flow.
+ * @return aclnnStatus: Status code.
  */
 ACLNN_API aclnnStatus aclnnTransposeQuantBatchMatMulWeightNzGetWorkspaceSize(
     const aclTensor* x1, const aclTensor* x2, const aclTensor* bias, const aclTensor* x1Scale, const aclTensor* x2Scale,
@@ -79,13 +78,13 @@ ACLNN_API aclnnStatus aclnnTransposeQuantBatchMatMulWeightNzGetWorkspaceSize(
     int32_t batchSplitFactor, aclTensor* out, uint64_t* workspaceSize, aclOpExecutor** executor);
 
 /**
- * @brief aclnnTransposeQuantBatchMatMulWeightNz的第二段接口，用于执行计算。
- * @param [in] workspace: 在npu device侧申请的workspace内存地址。
- * @param [in] workspaceSize: 在npu
- * device侧申请的workspace大小，由第一段接口aclnnTransposeQuantBatchMatMulWeightNzGetWorkspaceSize获取。
- * @param [in] executor: op执行器，包含了算子计算流程。
- * @param [in] stream: acl stream流。
- * @return aclnnStatus: 返回状态码。
+ * @brief Second phase of aclnnTransposeQuantBatchMatMulWeightNz. Executes the computation.
+ * @param [in] workspace: Address of the workspace allocated on the NPU device.
+ * @param [in] workspaceSize: Workspace size on the NPU device, obtained from
+ * aclnnTransposeQuantBatchMatMulWeightNzGetWorkspaceSize.
+ * @param [in] executor: Op executor containing the operator computation flow.
+ * @param [in] stream: ACL stream.
+ * @return aclnnStatus: Status code.
  */
 ACLNN_API aclnnStatus aclnnTransposeQuantBatchMatMulWeightNz(void* workspace, uint64_t workspaceSize,
                                                              aclOpExecutor* executor, const aclrtStream stream);

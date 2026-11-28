@@ -10,15 +10,15 @@
 
 /*!
  * \file transpose_batch_mat_mul_w8a8_tiling.cpp
- * \brief W8A8 分支 host tiling 骨架实现（在原 TransposeBatchMatMul OpType 下）。
+ * \brief Host tiling for the W8A8 branch (under the original TransposeBatchMatMul OpType).
  *
- * 骨架阶段职责：
- *   1. 校验 shape / dtype / perm / batch_split_factor / K-N 对齐 / A2 B*K 上限
- *   2. 填充 TQBMMW8A8TilingData 的问题规模（matmulTiling 字段）+ w8a8* 扩展字段
- *   3. 预留 workspace（ping-pong 2-slot int32 tile）
- *   4. 不计算真正的 Cube matmul tiling（Step C 补齐）
+ * Responsibilities:
+ *   1. Validate shape, dtype, perm, batch_split_factor, K/N alignment, and the A2 B*K limit.
+ *   2. Fill the problem size in TQBMMW8A8TilingData (matmulTiling) and the w8a8* extension fields.
+ *   3. Reserve workspace (ping-pong 2-slot int32 tile).
+ *   4. Only fill the problem size; the Cube matmul tiling is not computed in this path.
  *
- * 决策依据: docs/TBMM_W8A8_A2_A3实现方案_20261010.md Sections 11-14。
+ * Decision reference: docs/TBMM_W8A8_A2_A3_implementation_20261010.md Sections 11-14.
  */
 #include "transpose_batch_mat_mul_w8a8_tiling.h"
 #include "../../op_kernel/transpose_quant_batch_mat_mul_w8a8_tiling_key.h"
@@ -67,9 +67,9 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
     auto name_op = context->GetNodeName();
 
     // --- shape ---
-    // 关键: 用 OriginShape（逻辑 shape），不是 StorageShape。
-    // FRACTAL_NZ 下 x2 的 storage shape 是 [B, N/16, K/32, 16, 32]（INT8 fractal），
-    // rank=5 不是 3。只有 origin shape 保持 [B, K, N]。
+    // Key: use OriginShape (logical shape), not StorageShape.
+    // For FRACTAL_NZ, x2 storage shape is [B, N/16, K/32, 16, 32] (INT8 fractal),
+    // so rank is 5 instead of 3. Only the origin shape keeps [B, K, N].
     auto shape_x1_desc = context->GetInputShape(0);
     auto shape_x2_desc = context->GetInputShape(1);
     // x1_scale / x2_scale are optional IR inputs. GetInputShape returns null for them.
@@ -92,7 +92,8 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
                CUBE_INNER_ERR_REPORT(name_op, "W8A8 scale rank must be 2 (got ts=%zu, cs=%zu)", sts.GetDimNum(),
                                      scs.GetDimNum()),
                return ge::GRAPH_FAILED);
-    // 单维先收窄到 int32，再校验 M*B*K / B*K*N，避免 kernel 32 位乘法溢出。
+    // Narrow each dimension to int32 first, then validate M*B*K / B*K*N to avoid 32-bit
+    // multiplication overflow in the kernel.
     constexpr int64_t INT32_SAFE_MAX = 2147483647LL;
     auto mulOverflow = [](int64_t a, int64_t b) -> bool {
         return a > 0 && b > 0 && a > (std::numeric_limits<int64_t>::max() / b);
@@ -121,7 +122,7 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
     const auto* batch_split_factor = attrs->GetAttrPointer<int32_t>(5);
     W8A8_CHECK(perm_x1 == nullptr || perm_x2 == nullptr || perm_y == nullptr || batch_split_factor == nullptr,
                CUBE_INNER_ERR_REPORT(name_op, "W8A8 attr pointer null"), return ge::GRAPH_FAILED);
-    // perm 长度必须为 3 才能解引用（图模式可能绕过 ACLNN）
+    // perm must contain 3 elements before dereferencing (graph mode may bypass ACLNN).
     W8A8_CHECK(perm_x1->GetSize() != 3 || perm_x2->GetSize() != 3 || perm_y->GetSize() != 3,
                CUBE_INNER_ERR_REPORT(name_op, "W8A8 perm size must be 3 (got x1=%zu, x2=%zu, y=%zu)",
                                      perm_x1->GetSize(), perm_x2->GetSize(), perm_y->GetSize()),
@@ -131,7 +132,7 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
     const auto* py = static_cast<const int64_t*>(perm_y->GetData());
     // K-C only allows perm_x2 [0, 1, 2]: x2 is stored as [B, K, N].
     const bool bTrans = false;
-    // int64 域校验 shape 一致性，再缩窄
+    // Validate shape consistency in the int64 domain, then narrow the values.
     const int64_t M64 = sx1.GetDim(0), B64 = sx1.GetDim(1), K64 = sx1.GetDim(2);
     const int64_t B2_64 = sx2.GetDim(0), K2_64 = sx2.GetDim(bTrans ? 2 : 1), N64 = sx2.GetDim(bTrans ? 1 : 2);
     W8A8_CHECK(B64 != B2_64 || K64 != K2_64,
@@ -165,7 +166,7 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
                CUBE_INNER_ERR_REPORT(name_op, "W8A8 requires batch_split_factor==1 (got %d)", *batch_split_factor),
                return ge::GRAPH_FAILED);
 
-    // --- K/N 对齐 ---
+    // --- K/N alignment ---
     W8A8_CHECK(K % W8A8_INT8_K_ALIGN != 0,
                CUBE_INNER_ERR_REPORT(name_op, "W8A8 requires K %% %u == 0 (K=%u)", W8A8_INT8_K_ALIGN, K),
                return ge::GRAPH_FAILED);
@@ -173,7 +174,7 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
                CUBE_INNER_ERR_REPORT(name_op, "W8A8 requires N %% %u == 0 (N=%u)", W8A8_INT8_N_ALIGN, N),
                return ge::GRAPH_FAILED);
 
-    // --- A2 Nd2NzParams.srcDValue uint16 上限 ---
+    // --- A2 Nd2NzParams.srcDValue uint16 limit ---
     auto platformInfo = context->GetPlatformInfo();
     OP_TILING_CHECK(platformInfo == nullptr, CUBE_INNER_ERR_REPORT(name_op, "W8A8 platform info null"),
                     return ge::GRAPH_FAILED);
@@ -189,17 +190,17 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
                    return ge::GRAPH_FAILED);
     }
 
-    // --- 填 TQBMMW8A8TilingData 的 qbmm 子结构 (QuantBatchMatmulV3TilingData) ---
-    // 策略: 直接按 QBMM pertoken_basic 的字段要求填, 让 kernel 侧的 BmmDequantPertokenBasic
-    // 完全照搬 QBMM 行为 (TBMM delta 已内嵌到 CalcGMOffset/UpdateBatchOffset/epilogue 中).
+    // --- Fill the qbmm sub-structure (QuantBatchMatmulV3TilingData) of TQBMMW8A8TilingData ---
+    // Strategy: fill the fields exactly as QBMM pertoken_basic expects so that BmmDequantPertokenBasic
+    // follows QBMM behavior exactly (the TBMM delta is already embedded in CalcGMOffset/UpdateBatchOffset/epilogue).
     //
-    // TBMM 的 "等效 QBMM" 问题规模:
-    //   QBMM M = TBMM M  (QBMM A[1,M,K], TBMM A[M,B,K] 的 M 维)
+    // Equivalent QBMM problem size for TBMM:
+    //   QBMM M = TBMM M (the M dimension of QBMM A[1,M,K] and TBMM A[M,B,K])
     //   QBMM N = TBMM N
     //   QBMM Ka = TBMM K
     //   QBMM Kb = TBMM K
     //   QBMM batchA = batchB = batchC = TBMM B
-    //   QBMM 的 M 维跨步在 kernel 的 CalcGMOffset 处 ×batch_, Y/pertoken 同理
+    //   QBMM M stride is multiplied by batch_ in CalcGMOffset; the same applies to Y/pertoken.
     auto raw_tiling = context->GetRawTilingData();
     OP_TILING_CHECK(raw_tiling == nullptr, CUBE_INNER_ERR_REPORT(name_op, "W8A8 raw tiling null"),
                     return ge::GRAPH_FAILED);
@@ -327,10 +328,10 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
         }
     }
 
-    // --- 填 tileL2cacheTiling (L2cacheTileParam) ---
+    // --- Fill tileL2cacheTiling (L2cacheTileParam) ---
     auto& l2 = tiling->qbmm.tileL2cacheTiling;
-    l2.mTileCntL2 = 1; // 不切 L2 M
-    l2.nTileCntL2 = 1; // 不切 L2 N
+    l2.mTileCntL2 = 1; // do not tile M in L2
+    l2.nTileCntL2 = 1; // do not tile N in L2
     l2.mTileBlock = mTotalCnt;
     l2.nTileBlock = nTotalCnt;
     l2.calOrder = 0;
@@ -346,7 +347,7 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
     } catch (const std::exception& e) {
         OP_LOGW(name_op, "W8A8 GetLibApiWorkSpaceSize threw '%s'; fallback to 0", e.what());
     }
-    // QBMM pertoken_basic 的 workspace: BUFFER_NUM * usedCoreNum * baseM * baseN * sizeof(int32_t)
+    // workspace for QBMM pertoken_basic: BUFFER_NUM * usedCoreNum * baseM * baseN * sizeof(int32_t)
     // (pertoken_basic.h:190 offsetWorkspaceC_ = BUFFER_NUM * blockIdx * baseM * baseN)
     uint64_t userBytes = static_cast<uint64_t>(2 /*BUFFER_NUM*/) * usedCoreNum * static_cast<uint32_t>(mt.baseM) *
                          static_cast<uint32_t>(mt.baseN) * sizeof(int32_t);
@@ -358,7 +359,7 @@ ge::graphStatus TransposeBatchMatMulW8A8DoTiling(gert::TilingContext* context)
     workspaces[0] = static_cast<size_t>(total);
 
     context->SetBlockDim(usedCoreNum);
-    // tiling_key: W8A8 分支，QUANT_MODE=W8A8 对应 ASCENDC_TPL_SEL 的 MIX_AIC_1_1 变体。
+    // tiling_key: W8A8 branch; QUANT_MODE=W8A8 selects the MIX_AIC_1_1 variant of ASCENDC_TPL_SEL.
     const uint64_t key = GET_TPL_TILING_KEY(static_cast<uint64_t>(TRANSPOSE_BATCH_MAT_MUL_BATCH_SPLIT_FALSE),
                                             static_cast<uint64_t>(TRANSPOSE_BATCH_MAT_MUL_PP_MAT_MUL_EINSUM_MODE_FALSE),
                                             static_cast<uint64_t>(TRANSPOSE_BATCH_MAT_MUL_PERM_X1_1_0_2),

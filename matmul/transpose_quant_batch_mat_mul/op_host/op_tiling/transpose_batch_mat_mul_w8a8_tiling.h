@@ -10,7 +10,7 @@
 
 /*!
  * \file transpose_batch_mat_mul_w8a8_tiling.h
- * \brief W8A8 host tiling 入口与选块。
+ * \brief W8A8 host tiling entry and block selection.
  */
 
 #ifndef TRANSPOSE_BATCH_MAT_MUL_W8A8_TILING_H

@@ -18,9 +18,6 @@
 #include "log/log.h"
 #include "op_host/tiling_key.h"
 #include "error_util.h"
-#include "op_cache_tiling.h"
-#include "runtime_kb_api.h"
-#include "matmul/mat_mul_v3/op_host/op_tiling/matmul_v3_tuning.h"
 #include "matmul/common/op_host/math_util_nn.h"
 #include "matmul/common/op_host/op_tiling/debug_tiling.h"
 #include "platform/platform_infos_def.h"
@@ -82,34 +79,58 @@ ge::graphStatus IsPpMatmulEinsumMode(gert::TilingContext* context)
         return ge::GRAPH_FAILED;
     }
     auto attrs = context->GetAttrs();
+    OP_TILING_CHECK(attrs == nullptr, OP_LOGI(context->GetNodeName(), "attrs is nullptr."), return ge::GRAPH_FAILED);
     auto x1PermList = attrs->GetAttrPointer<gert::ContinuousVector>(INDEX_PERM_X1);
     auto x2PermList = attrs->GetAttrPointer<gert::ContinuousVector>(INDEX_PERM_X2);
-    const int64_t* perm_x1 = static_cast<const int64_t*>(x1PermList->GetData());
-    const int64_t* perm_x2 = static_cast<const int64_t*>(x2PermList->GetData());
-    OP_TILING_CHECK((PermDecode(perm_x1, x1PermList->GetSize()) != 213L),
+    OP_TILING_CHECK(
+        (x1PermList == nullptr) || (x2PermList == nullptr) || (x1PermList->GetData() == nullptr) ||
+            (x2PermList->GetData() == nullptr) || (x1PermList->GetSize() != ALLOW_DIM) ||
+            (x2PermList->GetSize() != ALLOW_DIM),
+        OP_LOGI(context->GetNodeName(), "perm lists are invalid, size must be %zu.", static_cast<size_t>(ALLOW_DIM)),
+        return ge::GRAPH_FAILED);
+    const int64_t* permX1 = static_cast<const int64_t*>(x1PermList->GetData());
+    const int64_t* permX2 = static_cast<const int64_t*>(x2PermList->GetData());
+    auto isValidPerm = [](const int64_t* perm, size_t dim) -> bool {
+        for (size_t i = 0; i < dim; ++i) {
+            if ((perm[i] < 0) || (perm[i] >= static_cast<int64_t>(dim))) {
+                return false;
+            }
+        }
+        return true;
+    };
+    OP_TILING_CHECK(!isValidPerm(permX1, ALLOW_DIM) || !isValidPerm(permX2, ALLOW_DIM),
+                    OP_LOGI(context->GetNodeName(), "perm lists are invalid, each element must be in [0, 2]."),
+                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK((PermDecode(permX1, x1PermList->GetSize()) != 213L),
                     OP_LOGI(context->GetNodeName(), "PpMatmulEinsum only support permA={1,0,2}."),
+                    return ge::GRAPH_FAILED);
+    const int64_t permX2Code = PermDecode(permX2, x2PermList->GetSize());
+    OP_TILING_CHECK((permX2Code != 123L) && (permX2Code != 132L),
+                    OP_LOGI(context->GetNodeName(), "PpMatmulEinsum only support permB={0,1,2} or {0,2,1}."),
                     return ge::GRAPH_FAILED);
     const gert::Shape& x1Shape = context->GetInputShape(0)->GetOriginShape();
     const gert::Shape& x2Shape = context->GetInputShape(1)->GetOriginShape();
-    int64_t Batch = x1Shape[perm_x1[BATCH_IDX]];
-    int64_t K = x1Shape[perm_x1[K_IDX]];
-    if (K >= SUPPORTED_INNER_AXIS || Batch * K >= SUPPORTED_INNER_AXIS) {
+    const size_t x1DimNum = x1Shape.GetDimNum();
+    const size_t x2DimNum = x2Shape.GetDimNum();
+    OP_TILING_CHECK(
+        (x1DimNum != ALLOW_DIM) || (x2DimNum != ALLOW_DIM),
+        OP_LOGI(context->GetNodeName(), "PpMatmulEinsum requires 3-D inputs, got %zu and %zu.", x1DimNum, x2DimNum),
+        return ge::GRAPH_FAILED);
+    const int64_t batch = x1Shape[permX1[BATCH_IDX]];
+    const int64_t k = x1Shape[permX1[K_IDX]];
+    if (k >= SUPPORTED_INNER_AXIS || batch * k >= SUPPORTED_INNER_AXIS) {
         OP_LOGI(context->GetNodeName(), "When K > 65535 or Batch*K > 65535, hit PpMatmulEinsum.");
         return ge::GRAPH_SUCCESS;
     }
-    if (PermDecode(perm_x2, x2PermList->GetSize()) == 132L) {
+    if (permX2Code == 132L) {
         OP_LOGI(context->GetNodeName(), "When PermX2 = [0, 2, 1], hit PpMatmulEinsum.");
         return ge::GRAPH_SUCCESS;
     }
-    const size_t x1DimNum = x1Shape.GetDimNum();
-    const size_t x2DimNum = x2Shape.GetDimNum();
-    if ((x1DimNum == ALLOW_DIM) && (x2DimNum == ALLOW_DIM)) {
-        if ((context->GetInputDesc(0)->GetDataType() == ge::DT_FLOAT) &&
-            (context->GetInputDesc(1)->GetDataType() == ge::DT_FLOAT) &&
-            (context->GetOutputDesc(0)->GetDataType() == ge::DT_FLOAT)) {
-            OP_LOGI(context->GetNodeName(), "When input and output are Fp32, hit PpMatmulEinsum.");
-            return ge::GRAPH_SUCCESS;
-        }
+    if ((context->GetInputDesc(0)->GetDataType() == ge::DT_FLOAT) &&
+        (context->GetInputDesc(1)->GetDataType() == ge::DT_FLOAT) &&
+        (context->GetOutputDesc(0)->GetDataType() == ge::DT_FLOAT)) {
+        OP_LOGI(context->GetNodeName(), "When input and output are Fp32, hit PpMatmulEinsum.");
+        return ge::GRAPH_SUCCESS;
     }
     OP_LOGI(context->GetNodeName(), "Current scenario does not support PpMatmulEinsum.");
     return ge::GRAPH_FAILED;
@@ -141,11 +162,17 @@ ge::graphStatus TransposeBatchMatMulEinsumTiling::DoTiling()
     matMulInfo_.sizeInDtype = ge::GetSizeByDataType(inputDType);
     matMulInfo_.isInt8 = isQuantBatchMatmulV3_;
     matMulInfo_.isQuantBatchMatmulV3 = isQuantBatchMatmulV3_;
-    GetHardwareInfo();
-    OP_TILING_CHECK(!GetMatMulInfo(), CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "GetMatMulInfo failed."),
+    if (GetHardwareInfo() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    if (!GetMatMulInfo()) {
+        return ge::GRAPH_FAILED;
+    }
+    OP_TILING_CHECK(!GetTilingKey(), OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetTilingKey failed"),
                     return ge::GRAPH_FAILED);
-    (void)GetTilingKey();
-    (void)GetMatMulTilingData();
+    OP_TILING_CHECK(!GetMatMulTilingData(),
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "GetMatMulTilingData failed"),
+                    return ge::GRAPH_FAILED);
     // QuantBatchMatmulV3 only reuses the split; its own PostTiling writes tiling key 13.
     if (isQuantBatchMatmulV3_) {
         PrintTiling();
@@ -153,6 +180,8 @@ ge::graphStatus TransposeBatchMatMulEinsumTiling::DoTiling()
     }
     ge::graphStatus ret = PostTiling();
     if (ret != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(), "PpMatmulEinsum PostTiling failed, rc=%d",
+                               static_cast<int32_t>(ret));
         return ret;
     }
     PrintTiling();
@@ -166,14 +195,13 @@ bool TransposeBatchMatMulEinsumTiling::GetMatMulInfo()
         OP_TILING_CHECK(hardwareInfo_.socVersion != platform_ascendc::SocVersion::ASCEND910B,
                         CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "unsupported platform."), return false);
     }
-    size_t indexA = 0;
-    size_t indexB = indexA + static_cast<size_t>(1);
-    size_t idxC = 0;
-    size_t idx = 0;
-    auto inputAStorageShape = isQuantBatchMatmulV3_ ? context_->GetInputShape(indexA)->GetOriginShape() :
-                                                      context_->GetInputShape(indexA)->GetStorageShape();
-    auto outputCStorageShape = isQuantBatchMatmulV3_ ? context_->GetOutputShape(idxC)->GetOriginShape() :
-                                                       context_->GetOutputShape(idxC)->GetStorageShape();
+    constexpr size_t indexA = 0;
+    constexpr size_t indexB = 1;
+    constexpr size_t indexC = 0;
+    const auto inputAStorageShape = isQuantBatchMatmulV3_ ? context_->GetInputShape(indexA)->GetOriginShape() :
+                                                            context_->GetInputShape(indexA)->GetStorageShape();
+    const auto outputCStorageShape = isQuantBatchMatmulV3_ ? context_->GetOutputShape(indexC)->GetOriginShape() :
+                                                             context_->GetOutputShape(indexC)->GetStorageShape();
 
     if (isQuantBatchMatmulV3_) {
         if (inputAStorageShape.GetDimNum() == NO_BATCH_DIM_SUM) {
@@ -183,32 +211,29 @@ bool TransposeBatchMatMulEinsumTiling::GetMatMulInfo()
             matMulInfo_.n = static_cast<uint32_t>(outputCStorageShape[1]);
         } else {
             matMulInfo_.batchSize = static_cast<uint32_t>(inputAStorageShape[0]);
-            ;
             matMulInfo_.m = static_cast<uint32_t>(inputAStorageShape[1]);
             matMulInfo_.k = static_cast<uint32_t>(inputAStorageShape[NO_BATCH_DIM_SUM]);
             matMulInfo_.n = static_cast<uint32_t>(outputCStorageShape[1]);
         }
     } else {
-        matMulInfo_.m = static_cast<uint32_t>(inputAStorageShape[idx]);
-        idx++;
-        matMulInfo_.batchSize = static_cast<uint32_t>(inputAStorageShape[idx]);
-        idx++;
-        matMulInfo_.k = static_cast<uint32_t>(inputAStorageShape[idx]);
-        matMulInfo_.n = static_cast<uint32_t>(outputCStorageShape[idx]);
+        matMulInfo_.m = static_cast<uint32_t>(inputAStorageShape[0]);
+        matMulInfo_.batchSize = static_cast<uint32_t>(inputAStorageShape[1]);
+        matMulInfo_.k = static_cast<uint32_t>(inputAStorageShape[2]);
+        matMulInfo_.n = static_cast<uint32_t>(outputCStorageShape[2]);
     }
     matMulInfo_.dtypeA = context_->GetInputDesc(indexA)->GetDataType();
     matMulInfo_.dtypeB = context_->GetInputDesc(indexB)->GetDataType();
-    matMulInfo_.dtypeC = context_->GetOutputDesc(idxC)->GetDataType();
+    matMulInfo_.dtypeC = context_->GetOutputDesc(indexC)->GetDataType();
 
     auto attrs = context_->GetAttrs();
     OP_TILING_CHECK(attrs == nullptr, CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "attrs is null."), return false);
 
     if (isQuantBatchMatmulV3_) {
-        // QBmm attrs: [0] dtype, [1] transpose_x1, [2] transpose_x2. Not TBMM perm lists.
-        constexpr size_t INDEX_ATTR_TRANS_A = 1;
-        constexpr size_t INDEX_ATTR_TRANS_B = 2;
-        auto transposeX1Ptr = attrs->GetAttrPointer<bool>(INDEX_ATTR_TRANS_A);
-        auto transposeX2Ptr = attrs->GetAttrPointer<bool>(INDEX_ATTR_TRANS_B);
+        // QBMM attrs: [0] dtype, [1] transpose_x1, [2] transpose_x2, not TBMM perm lists.
+        constexpr size_t indexAttrTransA = 1;
+        constexpr size_t indexAttrTransB = 2;
+        auto transposeX1Ptr = attrs->GetAttrPointer<bool>(indexAttrTransA);
+        auto transposeX2Ptr = attrs->GetAttrPointer<bool>(indexAttrTransB);
         matMulInfo_.transA = (transposeX1Ptr != nullptr && *transposeX1Ptr) ? 1UL : 0UL;
         matMulInfo_.transB = (transposeX2Ptr != nullptr && *transposeX2Ptr) ? 1UL : 0UL;
         return true;
@@ -221,12 +246,12 @@ bool TransposeBatchMatMulEinsumTiling::GetMatMulInfo()
 
     bPermList_ = attrs->GetAttrPointer<gert::ContinuousVector>(1);
     OP_TILING_CHECK((bPermList_ == nullptr || bPermList_->GetData() == nullptr),
-                    CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "perm_x2 is null."), return false);
+                    CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "permX2 is null."), return false);
 
-    const int64_t* perm_x2 = reinterpret_cast<const int64_t*>(bPermList_->GetData());
-    // 2 是 permList 的字典序, 2 -> [1,0,2]
+    const int64_t* permX2 = static_cast<const int64_t*>(bPermList_->GetData());
+    // 2 is the lexicographic code of permList, 2 -> [1,0,2].
     matMulInfo_.transA = 2;
-    matMulInfo_.transB = PermDecode(perm_x2, bPermList_->GetSize()) == 123L ? 0 : 1;
+    matMulInfo_.transB = PermDecode(permX2, bPermList_->GetSize()) == 123L ? 0 : 1;
     return true;
 }
 
@@ -265,19 +290,27 @@ ge::graphStatus TransposeBatchMatMulEinsumTiling::PostTiling()
     tilingData.splitk = ppMatmulDefaultTilingData_.splitk;
     tilingData.enShuffleK = static_cast<uint32_t>(!GetCloseKShiftFlag(context_));
 
-    OP_TILING_CHECK(context_ == nullptr, CUBE_INNER_ERR_REPORT("TbmmEinsum", "context is null"),
+    OP_TILING_CHECK(context_ == nullptr, CUBE_INNER_ERR_REPORT("TransposeBatchMatMulEinsum", "context is null"),
                     return ge::GRAPH_FAILED);
     size_t sysWorkspaceSize = static_cast<size_t>(24 * 1024 * 1024); // 24M same as ppmatmul tiling
     size_t* currentWorkSpace = context_->GetWorkspaceSizes(1);
+    OP_TILING_CHECK(currentWorkSpace == nullptr,
+                    CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "GetWorkspaceSizes(1) returned nullptr"),
+                    return ge::GRAPH_FAILED);
     currentWorkSpace[0] = sysWorkspaceSize;
 
-    errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
-                           static_cast<void*>(&tilingData), tilingDataSize);
+    gert::TilingData* rawTilingData = context_->GetRawTilingData();
+    OP_TILING_CHECK(rawTilingData == nullptr,
+                    CUBE_INNER_ERR_REPORT(context_->GetNodeName(), "GetRawTilingData returned nullptr"),
+                    return ge::GRAPH_FAILED);
+    errno_t ret = memcpy_s(rawTilingData->GetData(), rawTilingData->GetCapacity(), static_cast<void*>(&tilingData),
+                           tilingDataSize);
     if (ret != EOK) {
-        OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret=%d", ret);
+        OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret=%d, requiredBytes=%zu, availableBytes=%zu", ret,
+                tilingDataSize, rawTilingData->GetCapacity());
         return ge::GRAPH_FAILED;
     }
-    context_->GetRawTilingData()->SetDataSize(tilingDataSize);
+    rawTilingData->SetDataSize(tilingDataSize);
     context_->SetTilingKey(ppMatmulDefaultTilingData_.tilingKey);
     context_->SetBlockDim(ppMatmulDefaultTilingData_.blockDim);
     return ge::GRAPH_SUCCESS;

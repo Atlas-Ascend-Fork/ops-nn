@@ -89,13 +89,13 @@ constexpr int64_t kMaxBatchKnThreshold = 65536;
 constexpr int32_t kTargetVersionNum = 90100000;
 constexpr int64_t kPattern2InnerAxisLimit = 65536;
 
-// 3D shape 索引：x1=[batch, M, K], x2=[batch, K, N]，K 和 N 都在 index 2，
-// kKDimIdx 用于 x1，kNDimIdx 用于 x2，语义不同但值相同。
+// 3-D shape indices: x1=[batch, M, K], x2=[batch, K, N]; both K and N are at index 2,
+// kKDimIdx is used for x1 and kNDimIdx for x2; they have different semantics but the same value.
 constexpr int32_t kBatchDimIdx = 0;
 constexpr int32_t kMDimIdx = 1;
 constexpr int32_t kKDimIdx = 2;
 constexpr int32_t kNDimIdx = 2;
-// 4D shape 索引（Pattern2）：x1=(B2,B1,1,K), x2=(1,B1,K,N) 或 (1,B1,N,K)
+// 4-D shape indices (Pattern2): x1=(B2,B1,1,K), x2=(1,B1,K,N) or (1,B1,N,K).
 constexpr int32_t kPattern2B2DimIdx = 0;
 constexpr int32_t kPattern2B1DimIdx = 1;
 constexpr int32_t kPattern2DummyDimIdx = 2;
@@ -227,7 +227,7 @@ bool CheckReshapeNode(const GNodePtr& reshapeNode)
     return true;
 }
 
-// 检测是否可以走入matmultomul模版
+// Check whether the matmultomul template can be used.
 bool CheckShapeEqualToMul(const fe::PlatformInfo& platformInfo, uint64_t dtypeSize,
                           const std::vector<int64_t>& inputShapeX1, const std::vector<int64_t>& inputShapeX2)
 {
@@ -260,7 +260,7 @@ bool CheckShapeEqualToMul(const fe::PlatformInfo& platformInfo, uint64_t dtypeSi
     return inputN % (kBlockSize256 / dtypeSize) != 0UL;
 }
 
-// 检测是否可以走入iterbatch模版
+// Check whether the iterbatch template can be used.
 bool CheckIterBatchMatmul(const fe::PlatformInfo& platformInfo, uint64_t dtypeSize,
                           const std::vector<int64_t>& inputShapeX1, const std::vector<int64_t>& inputShapeX2)
 {
@@ -315,7 +315,7 @@ bool CheckIterBatchMatmul(const fe::PlatformInfo& platformInfo, uint64_t dtypeSi
     return true;
 }
 
-// 检测是否可以走入优化模版
+// Check whether the optimized template can be used.
 bool CheckOptimizedBatch(const GNode& bmmNode)
 {
     fe::PlatformInfo platformInfo;
@@ -540,14 +540,16 @@ bool CheckBatchMatMulNodePattern1(const GNode& bmmNode, GNodePtr& transNode1, in
         int64_t inputN = inputShapeX2[kNDimIdx];
         bool isFp32 = x1Desc.GetDataType() == ge::DT_FLOAT && x1Desc.GetDataType() == x2Desc.GetDataType() &&
                       x1Desc.GetDataType() == outputDesc.GetDataType();
-        // supportKN: K 和 N 都 128 对齐且 batch 小于阈值，满足基础条件
-        // fp32 且有 transNode1（A 被 transpose）时强制放宽，因为 transpose 后的 A 走不同 TBE 模板
+        // supportKN: K and N are both 128-aligned and batch is below the threshold.
+        // Relax the constraint for fp32 with transNode1 (A transposed) because transposed A uses a
+        // different TBE template.
         bool supportKN = inputK % kKNAlignValue == 0 && inputN % kKNAlignValue == 0 && batch < kMaxBatchKnThreshold;
         if (isFp32 && transNode1 != nullptr) {
             supportKN = true;
         }
-        // supportTransNode1: KN 对齐 + batch*K < 阈值 → 保留 transNode1
-        // notSupportTransNode1: KN 对齐但 batch*K >= 阈值（L1 放不下）→ 丢弃 transNode1，让 A 不做 transpose
+        // supportTransNode1: KN aligned + batch*K < threshold -> keep transNode1.
+        // notSupportTransNode1: KN aligned but batch*K >= threshold (does not fit in L1) ->
+        // drop transNode1 and keep A untransposed.
         bool supportTransNode1 = supportKN && batch * inputK < kMaxBatchKnThreshold && batch < kMaxBatchKnThreshold;
         bool notSupportTransNode1 = supportKN && batch * inputK >= kMaxBatchKnThreshold &&
                                     inputK < kMaxBatchKnThreshold;
@@ -557,9 +559,9 @@ bool CheckBatchMatMulNodePattern1(const GNode& bmmNode, GNodePtr& transNode1, in
         FUSION_PASS_CHECK(!(supportTransNode1 || notSupportTransNode1),
                           OPS_LOG_W(kPassName, "bmm node's shape does not support fusion"), return false);
     } else {
-        // dav_3510/350 平台不需要 KN 对齐检查，而是走 CheckOptimizedBatch 判断是否可走 matmultomul 或 iterbatch
-        // 优化模板。 transNode1 必须为 null（dav_3510/350 上 A 的 transpose 由 TBE 内部处理，不需要外挂 transpose
-        // 节点）。
+        // dav_3510/350 platforms skip the KN alignment check and use CheckOptimizedBatch to select
+        // matmultomul or iterbatch.
+        // Optimized template. transNode1 must be null (on dav_3510/350, A transpose is handled inside TBE).
         FUSION_PASS_CHECK(transNode1 == nullptr && CheckOptimizedBatch(bmmNode),
                           OPS_LOG_W(kPassName, "bmm node's shape does not support fusion."), return false);
     }
@@ -603,8 +605,9 @@ bool CheckBatchMatMulNodePattern2(const GNode& bmmNode, TensorDesc& x1Desc, Tens
     return true;
 }
 
-// Pattern2 处理 4D 输入：x1=(B2,B1,1,K), x2=(1,B1,K,N) 或 (1,B1,N,K)。
-// 校验 dummy 维（x1[2]==1, x2[0]==1）和 B1 一致性，以及 x1 最后一维 K 等于 x2 的 K 或 N 维。
+// Pattern2 handles 4-D inputs: x1=(B2,B1,1,K), x2=(1,B1,K,N) or (1,B1,N,K).
+// Validate the dummy dimensions (x1[2]==1, x2[0]==1), B1 consistency, and that the last dim of x1
+// equals the K or N dim of x2.
 bool CheckPattern2Limit(const GNode& bmmNode)
 {
     TensorDesc x1Desc;
@@ -641,8 +644,8 @@ bool CheckPattern2Limit(const GNode& bmmNode)
 
 // ==================== Pattern1 Fusion ====================
 
-// 返回 false = transNode1 的 perm 是 {0,2,1} 即 A trans，不支持此 pattern
-// 返回 true = 可以继续，transNode2 不符合则丢弃
+// Return false when transNode1 has perm {0,2,1} (A is transposed); this pattern is not supported.
+// Return true to continue; transNode2 is dropped if it does not match.
 bool CheckBmmTransposePattern1(GNodePtr& transNode1, GNodePtr& transNode2)
 {
     if (CheckTransposeNode(transNode1, kPerm021)) {
@@ -655,9 +658,9 @@ bool CheckBmmTransposePattern1(GNodePtr& transNode1, GNodePtr& transNode2)
     return true;
 }
 
-// 收集 Pattern1 周围的 Transpose 节点：
-// transNode2 仅在 dav_3510/350 平台保留（B 的 transpose 在非 dav_3510/350 上不融合）；
-// transNode1 输出有多个消费者时丢弃（不能安全移除）。
+// Collect Transpose nodes around Pattern1:
+// transNode2 is kept only on dav_3510/350 (B transpose is not fused on other platforms).
+// Drop transNode1 when its output has multiple consumers (it cannot be removed safely).
 Status CollectTransposeNodesPattern1(const GNode& bmmNode, GNodePtr& transNode1, GNodePtr& transNode2,
                                      GNodePtr& transNode3)
 {
@@ -720,10 +723,10 @@ Status CreateAndSetupTbmmNodePattern1(const GraphPtr& graph, const GNode& bmmNod
     FUSION_PASS_CHECK(tbmmNode.UpdateOutputDesc(0, tbmmOutputDesc) != GRAPH_SUCCESS,
                       OPS_LOG_E(kPassName, "Update tbmm output desc failed."), return FAILED);
 
-    // 默认 perm: x1={0,1,2}(不 trans), x2={0,1,2}(不 trans), y={1,0,2}(输出 trans)。
-    // 有 transNode1 → permX1={1,0,2}（A 的 transpose 合并到 TBMM 的 perm_x1）
-    // 有 transNode2 → permX2={0,2,1}（B 的 transpose 合并到 TBMM 的 perm_x2）
-    // 外部 Transpose 节点被消除，其语义转移到 TBMM 的 perm 属性中。
+    // Default perms: x1={0,1,2} (no transpose), x2={0,1,2} (no transpose), y={1,0,2} (output transposed).
+    // With transNode1 -> permX1={1,0,2} (A transpose is merged into the TBMM perm_x1).
+    // With transNode2 -> permX2={0,2,1} (B transpose is merged into the TBMM perm_x2).
+    // The external Transpose node is removed and its semantics are moved to the TBMM perm attributes.
     TbmmPerms perms = {kPerm012, kPerm012, kPerm102};
     if (transNode1 != nullptr) {
         perms.permX1 = kPerm102;
@@ -791,10 +794,10 @@ Status RelinkTbmmInputEdgesPattern1(const GraphPtr& graph, GNode& bmmNode, const
     return SUCCESS;
 }
 
-// batch 拆分场景：transNode3 后面有 reshape→reshape→transNode4 链，
-// 用于将 batch 拆分后的输出恢复为原始 shape。
-// 用 transNode4 的输出 desc 更新 tbmm 输出，将 transNode4 的下游边迁移到 tbmm，
-// 然后移除 transNode3、reshapeNode1、reshapeNode2、transNode4。
+// Batch split case: transNode3 is followed by a reshape -> reshape -> transNode4 chain,
+// which restores the split output to the original shape.
+// Update the TBMM output desc with transNode4's output desc and move transNode4's consumers to TBMM,
+// then remove transNode3, reshapeNode1, reshapeNode2, and transNode4.
 Status ProcessBatchSplitPattern1(const GraphPtr& graph, GNode& tbmmNode, const GNodePtr& transNode3)
 {
     auto reshapeNode1 = GetOutputNode(*transNode3, 0);
@@ -888,7 +891,7 @@ Status DoFusionPattern1(const GraphPtr& graph, GNode& bmmNode, CustomPassContext
                                                      batchSplitFactor, tbmmNode) != SUCCESS,
                       OPS_LOG_E(kPassName, "CreateAndSetupTbmmNode failed."), return FAILED);
 
-    // 必须在删除旧节点之前上报融合结果，因为 ReportFuse 要求 nodesBeforeFuse 中的节点仍属于当前图
+    // Report the fusion result before deleting old nodes because ReportFuse requires them to still belong to the graph.
     ReportFusionPattern1(bmmNode, transNode1, transNode2, transNode3, tbmmNode, passContext);
 
     FUSION_PASS_CHECK(RelinkTbmmInputEdgesPattern1(graph, bmmNode, transNode1, transNode2, tbmmNode) != SUCCESS,
@@ -1021,10 +1024,10 @@ Status DoFusionPattern2(const GraphPtr& graph, GNode& bmmNode, CustomPassContext
     auto shapeX1 = x1Desc.GetShape().GetDims();
     auto shapeX2 = x2Desc.GetShape().GetDims();
     auto shapeY = outputDesc.GetShape().GetDims();
-    // 将 4D 输入 reshape 为 3D 送入 TBMM：
-    // x1: (B2,B1,1,K) → (B2,B1,K)，去掉 dummy 维
-    // x2: (1,B1,K,N) → (B1,K,N) 或 (1,B1,N,K) → (B1,N,K)，去掉 B2=1 维
-    // y: (B2,B1,N) → 保持 3D，融合后通过 reshape3Node 恢复为原始 4D shape
+    // Reshape 4-D inputs to 3-D before feeding them to TBMM:
+    // x1: (B2,B1,1,K) -> (B2,B1,K), removing the dummy dim
+    // x2: (1,B1,K,N) -> (B1,K,N) or (1,B1,N,K) -> (B1,N,K), removing the B2=1 dim
+    // y: (B2,B1,N) stays 3-D and is restored to the original 4-D shape by reshape3Node after fusion
     std::vector<int64_t> tbmmShapeX1 = {shapeX1[kPattern2B2DimIdx], shapeX1[kPattern2B1DimIdx],
                                         shapeX1[kPattern2LastDimIdx]};
     std::vector<int64_t> tbmmShapeX2 = {shapeX2[kPattern2B1DimIdx], shapeX2[kPattern2DummyDimIdx],
@@ -1149,8 +1152,9 @@ Status BatchMatMul2TransposeBatchMatMulFusionPass::Run(GraphPtr& graph, CustomPa
     return changed ? SUCCESS : GRAPH_NOT_CHANGED;
 }
 
-// 满足目标版本时用 kCompatibleInherited（InferShape 前执行，与旧框架一致），
-// 不满足时降级到 kAfterInferShape，保证旧版本 CANN 兼容性。
+// Use kCompatibleInherited when the target version supports it (runs before InferShape,
+// consistent with the legacy framework),
+// otherwise fall back to kAfterInferShape for CANN compatibility.
 #if GE_COMPILER_VERSION_NUM >= 90100000
 REG_FUSION_PASS(BatchMatMul2TransposeBatchMatMulFusionPass)
     .Stage(IsTargetVersion() ? CustomPassStage::kCompatibleInherited : CustomPassStage::kAfterInferShape);

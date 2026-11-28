@@ -17,7 +17,8 @@
 #include "op_common/op_host/util/op_arch_helper.h"
 
 namespace ops {
-// HIFP4 类型(DT_HIFLOAT4/DT_HIFLOAT4_SCALE)仅 CANN 9.3.0 及以上支持，旧版本 ops info 校验不识别该枚举值
+// HIFP4 types (DT_HIFLOAT4/DT_HIFLOAT4_SCALE) require CANN 9.3.0 or later; older ops info
+// validation does not recognize them.
 #if defined(METADEF_VERSION_NUM) && METADEF_VERSION_NUM >= 90300000
 #define TQBMM_HIF4_DATA , Ops::NN::DT_HIFLOAT4, Ops::NN::DT_HIFLOAT4
 #define TQBMM_HIF4_BIAS , ge::DT_FLOAT, ge::DT_FLOAT
@@ -31,7 +32,7 @@ namespace ops {
 #define TQBMM_HIF4_Y
 #define TQBMM_HIF4_FMT
 #endif
-// INT8 W8A8 只挂 A2/A3 的 OpAICoreConfig，不得并进上面的 A5 共用列表。
+// INT8 W8A8 is registered only in the A2/A3 OpAICoreConfig and must not be merged into the shared A5 list.
 #define TQBMM_W8A8_X1 ge::DT_INT8, ge::DT_INT8
 #define TQBMM_W8A8_X2 ge::DT_INT8, ge::DT_INT8
 #define TQBMM_W8A8_F32 ge::DT_FLOAT, ge::DT_FLOAT

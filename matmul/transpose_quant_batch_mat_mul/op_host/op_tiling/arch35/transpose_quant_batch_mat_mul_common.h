@@ -63,6 +63,11 @@ constexpr uint32_t SCALER_FACTOR_DEFAULT = 1;
 constexpr uint64_t MXFP_DIVISOR_SIZE = 64;
 constexpr uint64_t MXFP_MULTI_BASE_SIZE = 2;
 constexpr uint64_t MTE2_MIN_LOAD_SIZE_V100 = 32768;
+constexpr uint64_t DATA_SIZE_FP16_BF16 = 2UL;
+constexpr uint64_t FP32_OUT_ELEM_TIMES = 4UL;
+constexpr uint64_t FP16_BF16_OUT_ELEM_TIMES = 2UL;
+constexpr uint64_t UB_OUT_DOUBLE_BUFFER = 2UL;
+constexpr uint64_t MAX_STEP_K = 4UL;
 constexpr uint32_t BASIC_BLOCK_SIZE_512 = 512;
 constexpr uint32_t BASIC_BLOCK_SIZE_256 = 256;
 constexpr uint64_t MX_GROUP_SIZE = 32;
@@ -81,7 +86,7 @@ bool inline IsMicroScaling(const gert::CompileTimeTensorDesc* x1Scale, const ger
     return x1Scale->GetDataType() == ge::DT_FLOAT8_E8M0 && x2Scale->GetDataType() == ge::DT_FLOAT8_E8M0;
 }
 
-bool inline IsMxFp8(const gert::CompileTimeTensorDesc* x1, const gert::CompileTimeTensorDesc* x2,
+bool inline IsMXFP8(const gert::CompileTimeTensorDesc* x1, const gert::CompileTimeTensorDesc* x2,
                     const gert::CompileTimeTensorDesc* x1Scale, const gert::CompileTimeTensorDesc* x2Scale)
 {
     if (x1 == nullptr || x2 == nullptr || x1Scale == nullptr || x2Scale == nullptr) {

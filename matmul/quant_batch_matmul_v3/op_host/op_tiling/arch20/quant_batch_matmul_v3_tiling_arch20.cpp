@@ -171,7 +171,9 @@ ge::graphStatus QuantBatchMatmulPertokenArch20::DoTiling()
     OP_TILING_CHECK(context_ == nullptr, OP_LOGE("Arch20Pertoken: ", "context is nullptr"), return false);
     params_.isPertokenArch20 = true;
     params_.isInt8 = true;
-    tiling_.GetHardwareInfo();
+    if (tiling_.GetHardwareInfo() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     OP_TILING_CHECK(GetShapeAttrsInfo() != ge::GRAPH_SUCCESS,
                     OP_LOGE_WITHOUT_REPORT("Arch20Pertoken: ", "GetShapeAttrsInfo failed."), return ge::GRAPH_FAILED);
     if (!tiling_.GetMatMulTilingData()) {

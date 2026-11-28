@@ -37,12 +37,12 @@ ge::graphStatus InferDataTypeForTransposeBatchMatMul(gert::InferDataTypeContext*
     const ge::DataType x2Dtype = context->GetInputDataType(1);
     OP_CHECK_IF(!IsTransposeBatchMatMulInputDtype(x1Dtype) || !IsTransposeBatchMatMulInputDtype(x2Dtype),
                 CUBE_INNER_ERR_REPORT(context->GetNodeName(), "input dtype not support"), return ge::GRAPH_FAILED);
-    // def中x1/x2各组合始终成对同dtype
+    // x1 and x2 always have the same dtype in every registered combination.
     OP_CHECK_IF(x1Dtype != x2Dtype,
                 CUBE_INNER_ERR_REPORT(context->GetNodeName(), "x1 dtype should be same as x2 dtype"),
                 return ge::GRAPH_FAILED);
 
-    // scale仅允许int64/uint64(def声明),存在时y固定为int8(量化输出)
+    // scale supports only int64/uint64 (per the op definition); when present, y is int8 (quantized output).
     const ge::DataType scaleDtype = context->GetOptionalInputDataType(kTransposeBatchMatMulScaleIdx);
     ge::DataType yDtype = x1Dtype;
     if (scaleDtype != ge::DT_UNDEFINED) {

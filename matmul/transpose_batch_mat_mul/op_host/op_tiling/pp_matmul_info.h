@@ -26,9 +26,9 @@ namespace pp_matmul {
 struct MatMulInfo {
     const char* opName = nullptr;
     uint64_t batchSize{0};
-    uint64_t m{0}; // 实际输入的 m
-    uint64_t n{0}; // 实际输入的 n
-    uint64_t k{0}; // 实际输入的 k
+    uint64_t m{0}; // Actual input m
+    uint64_t n{0}; // Actual input n
+    uint64_t k{0}; // Actual input k
     ge::DataType dtypeA = ge::DT_FLOAT16;
     ge::DataType dtypeB = ge::DT_FLOAT16;
     ge::DataType dtypeC = ge::DT_FLOAT16;
@@ -37,12 +37,11 @@ struct MatMulInfo {
     ge::Format formatC = ge::FORMAT_ND;
     uint64_t transA{0};
     uint64_t transB{0};
-    bool biasFlag{0}; // false: 0, true: 1
+    bool biasFlag{0}; // false: 0, true: 1, used by matmul_compress
     bool isInt8{0};
     bool isQuantBatchMatmulV3{0};
     bool isPertokenArch20{0};
     float sizeInDtype{0};
-    float sizeOutDtype{0};
     bool isCompress{0};
     uint32_t tilingK{0};
     uint32_t tilingN{0};

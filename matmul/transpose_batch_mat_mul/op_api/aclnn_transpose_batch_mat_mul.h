@@ -19,22 +19,22 @@ extern "C" {
 #endif
 
 /**
- * @brief aclnnTransposeBatchMatMul的第一段接口，根据具体的计算流程，计算workspace大小。
+ * @brief First phase of aclnnTransposeBatchMatMul. Computes the workspace size for the given computation flow.
  * @domain aclnn_ops_infer
- * 算子功能：实现TransposeBatchMatMul算子和Quant的融合算子，TransposeBatchMatMul可支持参数为int8。
- * @param [in] x1: matmul左矩阵，数据类型支持：float16、float32、bfloat16。
- * @param [in] x2: matmul右矩阵，数据类型支持：float16、float32、bfloat16。
- * @param [in] bias: 偏置，当前不支持。
- * @param [in] scale: 量化参数中的缩放因子，数据类型支持：int64、uint64。
- * @param [in] permX1: 表示输入x1的shape。
- * @param [in] permX2: 表示输入x2的shape。
- * @param [in] permY: 表示输入y的shape。
- * @param [in] cubeMathType: 用于指定Cube单元的计算逻辑，Host侧的整型。数据类型支持：int8。
- * @param [in] batchSplitFactor: 是否重新拆分shape。数据类型支持：int32。
- * @param [out] out: 计算结果，数据类型：float32，float16, bfloat16，int8。
- * @param [out] workspaceSize: 返回需要在npu device侧申请的workspace大小。
- * @param [out] executor: 返回op执行器，包含了算子计算流程。
- * @return aclnnStatus: 返回状态码
+ * Operator: fused TransposeBatchMatMul and Quant; TransposeBatchMatMul supports int8 parameters.
+ * @param [in] x1: Left matmul matrix. Supported dtypes: float16, float32, bfloat16.
+ * @param [in] x2: Right matmul matrix. Supported dtypes: float16, float32, bfloat16.
+ * @param [in] bias: Bias. Not supported currently.
+ * @param [in] scale: Quantization scale. Supported dtypes: int64, uint64.
+ * @param [in] permX1: Permutation applied to the shape of x1.
+ * @param [in] permX2: Permutation applied to the shape of x2.
+ * @param [in] permY: Permutation applied to the shape of y.
+ * @param [in] cubeMathType: Cube unit computation mode as a host integer. Supported dtype: int8.
+ * @param [in] batchSplitFactor: Whether to split the shape again. Supported dtype: int32.
+ * @param [out] out: Result. Supported dtypes: float32, float16, bfloat16, int8.
+ * @param [out] workspaceSize: Size of the workspace to allocate on the NPU device.
+ * @param [out] executor: Op executor containing the operator computation flow.
+ * @return aclnnStatus: Status code.
  */
 ACLNN_API aclnnStatus aclnnTransposeBatchMatMulGetWorkspaceSize(const aclTensor* x1, const aclTensor* x2,
                                                                 const aclTensor* bias, const aclTensor* scale,
@@ -44,28 +44,28 @@ ACLNN_API aclnnStatus aclnnTransposeBatchMatMulGetWorkspaceSize(const aclTensor*
                                                                 uint64_t* workspaceSize, aclOpExecutor** executor);
 
 /**
- * @brief aclnnTransposeBatchMatMul的第二段接口，用于执行计算。
+ * @brief Second phase of aclnnTransposeBatchMatMul. Executes the computation.
  */
 ACLNN_API aclnnStatus aclnnTransposeBatchMatMul(void* workspace, uint64_t workspaceSize, aclOpExecutor* executor,
                                                 const aclrtStream stream);
 
 /**
- * @brief aclnnTransposeBatchMatMulWeightNz的第一段接口，根据具体的计算流程，计算workspace大小。
+ * @brief First phase of aclnnTransposeBatchMatMulWeightNz. Computes the workspace size for the given computation flow.
  * @domain aclnn_ops_infer
- * 算子功能：相对于aclnnTransposeBatchMatMul, mat2为NZ格式。
- * @param [in] x1: matmul左矩阵，数据类型支持：float16、bfloat16。数据格式支持ND。
- * @param [in] x2: matmul右矩阵，数据类型支持：float16、bfloat16。数据格式支持NZ。
- * @param [in] bias: 偏置，当前不支持。
- * @param [in] scale: 量化参数中的缩放因子，数据类型支持：int64、uint64。
- * @param [in] permX1: 表示输入x1的shape。
- * @param [in] permX2: 表示输入x2的shape。
- * @param [in] permY: 表示输入y的shape。
- * @param [in] cubeMathType: 用于指定Cube单元的计算逻辑，Host侧的整型。数据类型支持：int8。
- * @param [in] batchSplitFactor: 是否重新拆分shape。数据类型支持：int32。
- * @param [out] out: 计算结果，数据类型：float16, bfloat16。数据格式支持ND。
- * @param [out] workspaceSize: 返回需要在npu device侧申请的workspace大小。
- * @param [out] executor: 返回op执行器，包含了算子计算流程。
- * @return aclnnStatus: 返回状态码
+ * Operator: same as aclnnTransposeBatchMatMul, but mat2 is in NZ format.
+ * @param [in] x1: Left matmul matrix. Supported dtypes: float16, bfloat16. Format: ND.
+ * @param [in] x2: Right matmul matrix. Supported dtypes: float16, bfloat16. Format: NZ.
+ * @param [in] bias: Bias. Not supported currently.
+ * @param [in] scale: Quantization scale. Supported dtypes: int64, uint64.
+ * @param [in] permX1: Permutation applied to the shape of x1.
+ * @param [in] permX2: Permutation applied to the shape of x2.
+ * @param [in] permY: Permutation applied to the shape of y.
+ * @param [in] cubeMathType: Cube unit computation mode as a host integer. Supported dtype: int8.
+ * @param [in] batchSplitFactor: Whether to split the shape again. Supported dtype: int32.
+ * @param [out] out: Result. Supported dtypes: float16, bfloat16. Format: ND.
+ * @param [out] workspaceSize: Size of the workspace to allocate on the NPU device.
+ * @param [out] executor: Op executor containing the operator computation flow.
+ * @return aclnnStatus: Status code.
  */
 ACLNN_API aclnnStatus aclnnTransposeBatchMatMulWeightNzGetWorkspaceSize(
     const aclTensor* x1, const aclTensor* x2, const aclTensor* bias, const aclTensor* scale, const aclIntArray* permX1,
@@ -73,13 +73,13 @@ ACLNN_API aclnnStatus aclnnTransposeBatchMatMulWeightNzGetWorkspaceSize(
     aclTensor* out, uint64_t* workspaceSize, aclOpExecutor** executor);
 
 /**
- * @brief aclnnTransposeBatchMatMulWeightNz的第二段接口，用于执行计算。
- * @param [in] workspace: 在npu device侧申请的workspace内存地址。
- * @param [in] workspaceSize: 在npu
- * device侧申请的workspace大小，由第一段接口aclnnTransposeBatchMatMulWeightNzGetWorkspaceSize获取。
- * @param [in] executor: op执行器，包含了算子计算流程。
- * @param [in] stream: acl stream流。
- * @return aclnnStatus: 返回状态码。
+ * @brief Second phase of aclnnTransposeBatchMatMulWeightNz. Executes the computation.
+ * @param [in] workspace: Address of the workspace allocated on the NPU device.
+ * @param [in] workspaceSize: Workspace size on the NPU device, obtained from
+ * aclnnTransposeBatchMatMulWeightNzGetWorkspaceSize.
+ * @param [in] executor: Op executor containing the operator computation flow.
+ * @param [in] stream: ACL stream.
+ * @return aclnnStatus: Status code.
  */
 ACLNN_API aclnnStatus aclnnTransposeBatchMatMulWeightNz(void* workspace, uint64_t workspaceSize,
                                                         aclOpExecutor* executor, const aclrtStream stream);

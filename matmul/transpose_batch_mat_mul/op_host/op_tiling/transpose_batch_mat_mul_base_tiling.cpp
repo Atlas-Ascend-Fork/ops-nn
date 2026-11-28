@@ -12,15 +12,15 @@
  * \file transpose_batch_mat_mul_base_tiling.cpp
  * \brief
  */
+#include <string>
+
 #include "transpose_batch_mat_mul_base_tiling.h"
 #include "util/math_util.h"
 #include "log/log.h"
 #include "op_host/tiling_key.h"
 #include "error_util.h"
-#include "op_cache_tiling.h"
-#include "runtime_kb_api.h"
-#include "matmul/mat_mul_v3/op_host/op_tiling/matmul_v3_tuning.h"
 #include "matmul/common/op_host/math_util_nn.h"
+#include "matmul/common/op_host/log_format_util.h"
 #include "matmul/common/op_host/op_tiling/debug_tiling.h"
 #include "platform/platform_infos_def.h"
 #include "graph/utils/type_utils.h"
@@ -47,9 +47,18 @@ constexpr uint64_t THREE_BATCH_SHAPE_DIM = 5;
 constexpr uint64_t FOUR_BATCH_SHAPE_DIM = 6;
 constexpr uint64_t DEFAULT_SIZE = 32;
 constexpr uint64_t NUM_TWO = 2;
+constexpr uint64_t BASIC_BLOCK_SIZE_32 = 32;
 constexpr uint64_t BASIC_BLOCK_SIZE_128 = 128;
 constexpr uint64_t BASIC_BLOCK_SIZE_256 = 256;
-constexpr int64_t kSupportedInnerAxis = 65536;
+constexpr uint64_t BASE_N_MAX = 512;
+constexpr uint64_t BASE_BLOCK_MAX_SIZE = 1024;
+constexpr uint64_t L0_BASE_BLOCK_MAX_BYTES = 2048;
+constexpr uint64_t L0_MN_MAX_BYTES = 32768;
+constexpr double CORE_UTILIZATION_THRESHOLD = 0.6;
+constexpr int64_t SUPPORTED_INNER_AXIS = 65536;
+constexpr uint64_t PERM_X1_1_0_2_CODE = 213UL;
+constexpr uint64_t PERM_0_1_2_CODE = 123UL;
+constexpr uint64_t PERM_0_2_1_CODE = 132UL;
 } // namespace
 
 namespace optiling {
@@ -62,12 +71,12 @@ T GetAlignNumWithDataType(T size, ge::DataType dtype)
 
 static inline uint64_t LastPower2(uint64_t n)
 {
-    n |= n >> 1;  // 前2位为1
-    n |= n >> 2;  // 前4位为1
-    n |= n >> 4;  // 前8位为1
-    n |= n >> 8;  // 前16位为1
-    n |= n >> 16; // 前32位为1
-    n |= n >> 32; // 前64位为1
+    n |= n >> 1;  // spread the highest set bit to 2 bits
+    n |= n >> 2;  // spread the highest set bit to 4 bits
+    n |= n >> 4;  // spread the highest set bit to 8 bits
+    n |= n >> 8;  // spread the highest set bit to 16 bits
+    n |= n >> 16; // spread the highest set bit to 32 bits
+    n |= n >> 32; // spread the highest set bit to 64 bits
     return (n & ~(n >> 1));
 }
 
@@ -77,14 +86,30 @@ static inline uint64_t NextPower2(uint64_t n)
     return (n == lastPower2) ? lastPower2 : (lastPower2 << 1);
 }
 
-ge::graphStatus TransposeBatchMatMulBaseTiling::GetShapeAttrsInfo() // 检查输入属性是否支持
+static inline bool IsValidPermList(const gert::ContinuousVector* permList)
+{
+    if ((permList == nullptr) || (permList->GetData() == nullptr) || (permList->GetSize() != ALLOW_DIM)) {
+        return false;
+    }
+    const int64_t* perm = static_cast<const int64_t*>(permList->GetData());
+    for (size_t i = 0; i < ALLOW_DIM; ++i) {
+        if ((perm[i] < 0) || (perm[i] >= static_cast<int64_t>(ALLOW_DIM))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+ge::graphStatus TransposeBatchMatMulBaseTiling::GetShapeAttrsInfo() // check whether the input attributes are supported
 {
     args_.opName = context_->GetNodeName();
     OP_TILING_CHECK(args_.opName == nullptr, CUBE_INNER_ERR_REPORT("TransposeBatchMatMul", "get op name invalid"),
                     return ge::GRAPH_FAILED);
     OP_LOGI(args_.opName, "TilingContext: %s", Ops::NN::DebugTilingContext(context_).c_str());
-    OP_TILING_CHECK((CheckArgs() != ge::GRAPH_SUCCESS) || (GetArgs() != ge::GRAPH_SUCCESS),
-                    CUBE_INNER_ERR_REPORT(args_.opName, "invalid context"), return ge::GRAPH_FAILED);
+    if ((CheckArgs() != ge::GRAPH_SUCCESS) || (GetArgs() != ge::GRAPH_SUCCESS)) {
+        OP_LOGE_WITHOUT_REPORT(args_.opName, "CheckArgs or GetArgs failed, see the preceding error log.");
+        return ge::GRAPH_FAILED;
+    }
     return ge::GRAPH_SUCCESS;
 }
 
@@ -139,17 +164,19 @@ static void CalcBaseMN(uint64_t& baseM, uint64_t& baseN, const matmul_v3::Matmul
     // step 1: calc baseM
     auto getBestBaseM = [dtypeSize, divisor](bool transX1, uint64_t m, uint64_t n, uint64_t k) -> uint64_t {
         if (!transX1) {
-            // 防止baseK太小,限制baseM最大为2048B, k大于32时进一步限制为1024B
-            uint64_t maxM = k >= 32UL ? 1024UL : 2048UL;
+            // Limit baseM to 2048B to avoid a too-small baseK; when k > 32, limit it to 1024B.
+            uint64_t maxM = k >= BASIC_BLOCK_SIZE_32 ? BASE_BLOCK_MAX_SIZE : L0_BASE_BLOCK_MAX_BYTES;
             maxM /= (dtypeSize * divisor);
             uint64_t mTimes = ops::CeilDiv(m, maxM);
             uint64_t singleTimeM = ops::CeilDiv(m, mTimes);
             return ops::CeilAlign(singleTimeM, BLOCK_CUBE);
         }
-        uint64_t nCalc = std::min(n, 512UL);                             // baseN大小不会超过512
-        uint64_t minBaseM = std::max(32768UL / dtypeSize / nCalc, 32UL); // 最小32, n小时限制baseM*n>=32768B(经验值)
-        uint64_t maxBaseM = std::min(NextPower2(m), (2048UL / dtypeSize / divisor)); // L0限制最大2048B, fp16尝试1024B
-        uint64_t bestBaseM = std::max(maxBaseM, 16UL);                               // 最小16
+        // baseN does not exceed 512. At least 32; keep baseM*n >= 32768B when n is small.
+        const uint64_t nCalc = std::min(n, BASE_N_MAX);
+        const uint64_t minBaseM = std::max(L0_MN_MAX_BYTES / dtypeSize / nCalc, BASIC_BLOCK_SIZE_32);
+        // L0 limit is 2048B; try 1024B for fp16. At least 16.
+        const uint64_t maxBaseM = std::min(NextPower2(m), (L0_BASE_BLOCK_MAX_BYTES / dtypeSize / divisor));
+        uint64_t bestBaseM = std::max(maxBaseM, BLOCK_CUBE);
         for (uint64_t candidate = bestBaseM; candidate >= minBaseM; candidate >>= uint64_t(1)) {
             if (m % candidate == uint64_t(0)) {
                 break;
@@ -163,10 +190,12 @@ static void CalcBaseMN(uint64_t& baseM, uint64_t& baseN, const matmul_v3::Matmul
     baseM = getBestBaseM(args.isATrans, args.mValue, args.nValue, args.kValue);
     // step 2: calc baseN
     auto getBestBaseN = [dtypeSize, baseM, divisor](bool transX2, uint64_t n, uint64_t k) -> uint64_t {
-        uint64_t minBaseN = std::max(std::min(32768UL / dtypeSize / baseM, 512UL / dtypeSize), 32UL); // 32768
-        // 最大2048，k为内轴且大于32时取1024
-        uint64_t maxBaseN = (transX2 && k >= 32UL) ? 1024UL : 2048UL / dtypeSize / divisor;
-        uint64_t bestBaseN = std::max(std::min(NextPower2(n), maxBaseN), 16UL); // 同时最小设为16
+        const uint64_t minBaseN = std::max(std::min(L0_MN_MAX_BYTES / dtypeSize / baseM, BASE_N_MAX / dtypeSize),
+                                           BASIC_BLOCK_SIZE_32);
+        const uint64_t dtypeBaseNMax = L0_BASE_BLOCK_MAX_BYTES / dtypeSize;
+        const uint64_t maxBaseN = (transX2 && k >= BASIC_BLOCK_SIZE_32) ? std::min(BASE_BLOCK_MAX_SIZE, dtypeBaseNMax) :
+                                                                          dtypeBaseNMax / divisor;
+        uint64_t bestBaseN = std::max(std::min(NextPower2(n), maxBaseN), BLOCK_CUBE);
         for (uint64_t candidate = bestBaseN; candidate >= minBaseN; candidate >>= uint64_t(1)) {
             if (n % candidate == uint64_t(0)) {
                 break;
@@ -175,7 +204,7 @@ static void CalcBaseMN(uint64_t& baseM, uint64_t& baseN, const matmul_v3::Matmul
                 bestBaseN = candidate;
             }
         }
-        return std::min(LastPower2(32768UL / baseM), bestBaseN); // L0C大小限制baseM * baseN <= 32768;
+        return std::min(LastPower2(L0_MN_MAX_BYTES / baseM), bestBaseN); // L0C limits baseM * baseN <= 32768
     };
     baseN = getBestBaseN(args.isBTrans, args.nValue, args.kValue);
 }
@@ -199,7 +228,8 @@ static void TuneBaseMN(matmul_v3::MatmulV3RunInfo& runInfo, const matmul_v3::Mat
         return static_cast<double>(cnt) / ops::CeilAlign(cnt, aicNum);
     };
     double oriCoreUtil = getCoreUtilization(oriBaseM, oriBaseN);
-    if ((oriCoreUtil < 0.6) && (getCoreUtilization(newBaseM, newBaseN) > oriCoreUtil)) { // 0.6为经验值
+    // CORE_UTILIZATION_THRESHOLD is an empirical value.
+    if ((oriCoreUtil < CORE_UTILIZATION_THRESHOLD) && (getCoreUtilization(newBaseM, newBaseN) > oriCoreUtil)) {
         oriBaseM = newBaseM;
         oriBaseN = newBaseN;
         return;
@@ -230,8 +260,9 @@ static void TuneBaseMKN(matmul_v3::MatmulV3RunInfo& runInfo, const matmul_v3::Ma
     }
 
     TuneBaseMN(runInfo, args, batchC, aicNum);
-    uint64_t maxBaseK = 32768UL / GetSizeByDataType(args.aType) / std::max(baseM, baseN); // L0AB大小限制32768B
-    baseK = std::min(ops::FloorAlign(maxBaseK, BLOCK_CUBE), ops::CeilAlign(args.kValue, BLOCK_CUBE));
+    uint64_t maxBaseK = L0_MN_MAX_BYTES / GetSizeByDataType(args.aType) / std::max(baseM, baseN); // L0AB limit
+    baseK = std::max(std::min(ops::FloorAlign(maxBaseK, BLOCK_CUBE), ops::CeilAlign(args.kValue, BLOCK_CUBE)),
+                     BLOCK_CUBE);
     OP_LOGD(args.opName, "after DoCommonTiling baseM, baseN, baseK[%lu, %lu, %lu]", baseM, baseN, baseK);
 }
 
@@ -309,21 +340,27 @@ void TransposeBatchMatMulBaseTiling::DoCommonTiling()
     uint64_t baseM = runInfo_.baseM;
     uint64_t baseN = runInfo_.baseN;
     uint64_t baseK = runInfo_.baseK;
-    constexpr uint64_t reserveSize = 256;
-    bool hasQuant = context_->GetOptionalInputShape(3) != nullptr; // scale 为第3入参
-    uint64_t totalL1Size = compileInfo_.l1Size + reserveSize;      // 256B为预留给rpc使用，单算子不涉及
+    OP_TILING_CHECK(
+        (baseM == 0UL) || (baseN == 0UL) || (baseK == 0UL),
+        CUBE_INNER_ERR_REPORT(args_.opName, "invalid base block, baseM:%lu, baseN:%lu, baseK:%lu", baseM, baseN, baseK),
+        return);
+    constexpr uint64_t l1ReservedBytes = 256;
+    constexpr uint64_t maxBaseNWithBias = 256;
+    constexpr uint64_t l1BiasTableBytes = 1024;
+    constexpr uint64_t l1DepthAlign = 4;
+    bool hasQuant = context_->GetOptionalInputShape(3) != nullptr; // scale is the 3rd input
+    uint64_t totalL1Size = compileInfo_.l1Size + l1ReservedBytes;  // 256B is reserved for rpc, not used here
     if (hasQuant) {
         totalL1Size -= cBatchDimAll_ * args_.nValue * sizeof(uint64_t);
-        OP_LOGI("tbmm", "Quant function is activated.");
+        OP_LOGI(args_.opName, "Quant function is activated.");
     }
     if (args_.hasBias) {
-        totalL1Size -= reserveSize * 4;       // 1024: 256 * 4, biasTable 空间
-        baseN = std::min(reserveSize, baseN); // 带bias， baseN最大值为256
+        totalL1Size -= l1BiasTableBytes;
+        baseN = std::min(maxBaseNWithBias, baseN); // baseN must not exceed 256 when bias exists
     }
-    // DB后FP32下，L1可以存65536个数值
-    uint64_t depthA1 = (totalL1Size / NUM_TWO / aDtypeSize_ / (baseM * baseK) / uint64_t(4)) * uint64_t(4);
-    // DB后FP32下，L1可以存65536个数值
-    uint64_t depthB1 = (totalL1Size / NUM_TWO / aDtypeSize_ / (baseN * baseK) / uint64_t(4)) * uint64_t(4);
+    // With double buffering, L1 can store 65536 fp32 elements.
+    uint64_t depthA1 = (totalL1Size / NUM_TWO / aDtypeSize_ / (baseM * baseK) / l1DepthAlign) * l1DepthAlign;
+    uint64_t depthB1 = (totalL1Size / NUM_TWO / aDtypeSize_ / (baseN * baseK) / l1DepthAlign) * l1DepthAlign;
     depthA1 = std::max(NUM_TWO, depthA1);
     depthB1 = std::max(NUM_TWO, depthB1);
     uint64_t stepKa = depthA1 / NUM_TWO;
@@ -351,10 +388,10 @@ void TransposeBatchMatMulBaseTiling::DoCommonTiling()
     uint64_t ppMatmulMode = 0;
     uint64_t permX1 = 0;
     uint64_t permX2 = 0;
-    if (transA_ == 213UL) {
-        // 2 是 permList 的字典序, 2 -> [1,0,2]
+    if (transA_ == PERM_X1_1_0_2_CODE) {
+        // 2 is the lexicographic code of permList, 2 -> [1,0,2].
         permX1 = 2;
-    } else if (transA_ == 123UL) {
+    } else if (transA_ == PERM_0_1_2_CODE) {
         permX1 = 0;
     }
     tilingKey_ = GET_TPL_TILING_KEY(batchSplitMode, ppMatmulMode, permX1, permX2, );
@@ -389,7 +426,8 @@ ge::graphStatus TransposeBatchMatMulBaseTiling::PostTiling()
     errno_t ret = memcpy_s(context_->GetRawTilingData()->GetData(), context_->GetRawTilingData()->GetCapacity(),
                            static_cast<void*>(&tbmmTilingData_), tilingDataSize);
     if (ret != EOK) {
-        OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret=%d", ret);
+        OP_LOGE(context_->GetNodeName(), "memcpy_s failed, ret=%d, requiredBytes=%zu, availableBytes=%zu", ret,
+                tilingDataSize, context_->GetRawTilingData()->GetCapacity());
         return ge::GRAPH_FAILED;
     }
     context_->GetRawTilingData()->SetDataSize(tilingDataSize);
@@ -415,22 +453,31 @@ ge::graphStatus TransposeBatchMatMulBaseTiling::CheckArgs()
     OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputDesc(idx));
     OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetInputShape(idx));
     idx++;
-    if (context_->GetOptionalInputShape(BIAS_IDX) != nullptr) { // bias是第2入参
+    if (context_->GetOptionalInputShape(BIAS_IDX) != nullptr) { // bias is input index 2
         args_.hasBias = true;
         if (context_->GetOptionalInputDesc(BIAS_IDX) == nullptr) {
             OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context_->GetNodeName(), "bias", "bias cannot be empty");
             return ge::GRAPH_FAILED;
         }
     }
-    auto* shape_scale = context_->GetOptionalInputShape(SCALE_IDX);
-    if (shape_scale != nullptr) {
-        OP_TILING_CHECK(shape_scale->GetShape().GetDim(0) >= kSupportedInnerAxis,
-                        CUBE_INNER_ERR_REPORT(args_.opName, "batch * n should be less than 65536."),
+    auto* shapeScale = context_->GetOptionalInputShape(SCALE_IDX);
+    if (shapeScale != nullptr) {
+        const gert::Shape& scaleShape = shapeScale->GetShape();
+        OP_TILING_CHECK(scaleShape.GetDimNum() == 0,
+                        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(args_.opName, "scale", "0",
+                                                                 "The shape dim of scale must be greater than 0"),
                         return ge::GRAPH_FAILED);
+        OP_TILING_CHECK(
+            scaleShape.GetDim(0) >= SUPPORTED_INNER_AXIS,
+            OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                args_.opName, "scale", std::to_string(scaleShape.GetDim(0)).c_str(),
+                Ops::NN::FormatString("The first dimension of %s must be less than %ld", "scale", SUPPORTED_INNER_AXIS)
+                    .c_str()),
+            return ge::GRAPH_FAILED);
     }
     if (attrs->GetAttrNum() >= ATTR_NUM) {
         OPS_CHECK_NULL_WITH_CONTEXT(context_,
-                                    attrs->GetAttrPointer<bool>(ATTR_NUM - 2)); // 检查倒数第2个属性
+                                    attrs->GetAttrPointer<bool>(ATTR_NUM - 2)); // check the second-to-last attribute
         OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs->GetAttrPointer<int32_t>(ATTR_NUM - 1));
     }
     OPS_CHECK_NULL_WITH_CONTEXT(context_, context_->GetOutputDesc(0));
@@ -468,10 +515,20 @@ static ge::graphStatus OpSpecificCheck(const optiling::matmul_v3::MatmulV3Args& 
 {
     // format check
     OP_TILING_CHECK((args.aFormat == ge::FORMAT_FRACTAL_NZ) || (args.outFormat == ge::FORMAT_FRACTAL_NZ),
-                    CUBE_INNER_ERR_REPORT(args.opName, "invalid input/output format"), return ge::GRAPH_FAILED);
+                    OP_LOGE_FOR_INVALID_FORMATS_WITH_REASON(
+                        args.opName, "x1, y",
+                        Ops::NN::FormatString("%s, %s", ge::TypeUtils::FormatToSerialString(args.aFormat).c_str(),
+                                              ge::TypeUtils::FormatToSerialString(args.outFormat).c_str())
+                            .c_str(),
+                        Ops::NN::FormatString("The formats of %s must be %s", "x1, y", "ND").c_str()),
+                    return ge::GRAPH_FAILED);
 
     OP_TILING_CHECK((args.bFormat == ge::FORMAT_FRACTAL_NZ) && args.hasBias,
-                    CUBE_INNER_ERR_REPORT(args.opName, "Not support weightNZ, when has bias."),
+                    OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(args.opName, "x2", "FRACTAL_NZ",
+                                                           Ops::NN::FormatString("When optional parameter %s exists, "
+                                                                                 "the format of %s cannot be %s",
+                                                                                 "bias", "x2", "FRACTAL_NZ")
+                                                               .c_str()),
                     return ge::GRAPH_FAILED);
     // dtype check
     std::vector<ge::DataType> dtype = {args.aType, args.bType, args.cType};
@@ -524,29 +581,31 @@ static ge::graphStatus OpSpecificCheck(const optiling::matmul_v3::MatmulV3Args& 
 
 ge::graphStatus TransposeBatchMatMulBaseTiling::GetShapeMKN(const gert::Shape& aShape, const gert::Shape& bShape)
 {
-    int64_t m = aShape[M_IDX];
-    int64_t kA = aShape[KA_IDX];
-    int64_t kB = bShape[KB_IDX];
-    int64_t n = bShape[N_IDX];
+    const int64_t* aPerm = static_cast<const int64_t*>(aPermList_->GetData());
+    const int64_t* bPerm = static_cast<const int64_t*>(bPermList_->GetData());
+    const int64_t m = aShape[aPerm[M_IDX]];
+    const int64_t kA = aShape[aPerm[KA_IDX]];
+    const int64_t kB = bShape[bPerm[KB_IDX]];
+    const int64_t n = bShape[bPerm[N_IDX]];
+    args_.isATrans = aPerm[M_IDX] > aPerm[KA_IDX];
+    args_.isBTrans = bPerm[KB_IDX] > bPerm[N_IDX];
 
-    if (aPermList_ != nullptr && aPermList_->GetSize() == ALLOW_DIM) {
-        const int64_t* aPerm = reinterpret_cast<const int64_t*>(aPermList_->GetData());
-        m = aShape[aPerm[M_IDX]];
-        kA = aShape[aPerm[KA_IDX]];
-        args_.isATrans = aPerm[M_IDX] > aPerm[KA_IDX];
-    }
-    if (bPermList_ != nullptr && bPermList_->GetSize() == ALLOW_DIM) {
-        const int64_t* bPerm = reinterpret_cast<const int64_t*>(bPermList_->GetData());
-        kB = bShape[bPerm[KB_IDX]];
-        n = bShape[bPerm[N_IDX]];
-        args_.isBTrans = bPerm[KB_IDX] > bPerm[N_IDX];
-    }
-    OP_TILING_CHECK(kA != kB, CUBE_INNER_ERR_REPORT(args_.opName, "unequal input kDim values"),
-                    return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        kA != kB,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            args_.opName, "x1, x2",
+            Ops::NN::FormatString("%s, %s", Ops::Base::ToString(aShape).c_str(), Ops::Base::ToString(bShape).c_str())
+                .c_str(),
+            "The k-axis of x1 and x2 must be equal"),
+        return ge::GRAPH_FAILED);
 
     auto isValidDimValue = [](int64_t dim) -> bool { return (dim > 0) && (dim <= INT32_MAX); };
     if (!isValidDimValue(m) || !isValidDimValue(kA) || !isValidDimValue(n)) {
-        OP_LOGE(args_.opName, "illegal value: m[%ld], k[%ld], n[%ld]", m, kA, n);
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            args_.opName, "x1, x2",
+            Ops::NN::FormatString("%s, %s", Ops::Base::ToString(aShape).c_str(), Ops::Base::ToString(bShape).c_str())
+                .c_str(),
+            Ops::NN::FormatString("m, k and n of %s must be within the range (0, INT32_MAX]", "x1, x2").c_str());
         return ge::GRAPH_FAILED;
     }
     args_.mValue = static_cast<uint64_t>(m);
@@ -559,18 +618,26 @@ ge::graphStatus TransposeBatchMatMulBaseTiling::GetShapeMKN(const gert::Shape& a
 
 ge::graphStatus TransposeBatchMatMulBaseTiling::GetShapeBatch(const gert::Shape& aShape, const gert::Shape& bShape)
 {
-    int64_t batchA = aShape[BATCH_IDX];
-    int64_t batchB = bShape[BATCH_IDX];
-    if (aPermList_ != nullptr && aPermList_->GetSize() == ALLOW_DIM) {
-        const int64_t* aPerm = reinterpret_cast<const int64_t*>(aPermList_->GetData());
-        batchA = aShape[aPerm[BATCH_IDX]];
-    }
-    if (bPermList_ != nullptr && bPermList_->GetSize() == ALLOW_DIM) {
-        const int64_t* bPerm = reinterpret_cast<const int64_t*>(bPermList_->GetData());
-        batchB = bShape[bPerm[BATCH_IDX]];
-    }
-    OP_TILING_CHECK(batchA != batchB, CUBE_INNER_ERR_REPORT(args_.opName, "unequal input batchDim values"),
-                    return ge::GRAPH_FAILED);
+    const int64_t* aPerm = static_cast<const int64_t*>(aPermList_->GetData());
+    const int64_t* bPerm = static_cast<const int64_t*>(bPermList_->GetData());
+    const int64_t batchA = aShape[aPerm[BATCH_IDX]];
+    const int64_t batchB = bShape[bPerm[BATCH_IDX]];
+    OP_TILING_CHECK(
+        (batchA <= 0) || (batchB <= 0),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            args_.opName, "x1, x2",
+            Ops::NN::FormatString("%s, %s", Ops::Base::ToString(aShape).c_str(), Ops::Base::ToString(bShape).c_str())
+                .c_str(),
+            "The batch-axis of x1 and x2 must be positive"),
+        return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        batchA != batchB,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            args_.opName, "x1, x2",
+            Ops::NN::FormatString("%s, %s", Ops::Base::ToString(aShape).c_str(), Ops::Base::ToString(bShape).c_str())
+                .c_str(),
+            "The batch-axis of x1 and x2 must be equal"),
+        return ge::GRAPH_FAILED);
     batchInfo_.batchA3 = batchA;
     batchInfo_.batchB3 = batchA;
     batchInfo_.batchC3 = batchA;
@@ -584,7 +651,11 @@ ge::graphStatus TransposeBatchMatMulBaseTiling::GetShapeBias()
 {
     if (args_.hasBias) {
         const gert::Shape& biasShape = context_->GetInputShape(BIAS_IDX)->GetOriginShape();
-        const int64_t biasValue = biasShape[biasShape.GetDimNum() - 1];
+        OP_TILING_CHECK(biasShape.GetDimNum() == 0,
+                        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(args_.opName, "bias", "0",
+                                                                 "The shape dim of bias must be greater than 0"),
+                        return ge::GRAPH_FAILED);
+        const int64_t biasValue = biasShape.GetDim(biasShape.GetDimNum() - 1);
         if (args_.nOriValue != static_cast<uint64_t>(biasValue)) {
             const std::string reason = "The current value is not within the valid range. The valid range is [" +
                                        std::to_string(args_.nOriValue) + ", " + std::to_string(args_.nOriValue) + "]";
@@ -606,8 +677,12 @@ ge::graphStatus TransposeBatchMatMulBaseTiling::GetShape()
     const size_t aDimNum = aShape.GetDimNum();
     const size_t bDimNum = bShape.GetDimNum();
     const size_t cDimNum = cShape.GetDimNum();
-    OP_TILING_CHECK((aDimNum != ALLOW_DIM) || (bDimNum != ALLOW_DIM) || (cDimNum != ALLOW_DIM),
-                    CUBE_INNER_ERR_REPORT(args_.opName, "invalid input/output dim num"), return ge::GRAPH_FAILED);
+    OP_TILING_CHECK(
+        (aDimNum != ALLOW_DIM) || (bDimNum != ALLOW_DIM) || (cDimNum != ALLOW_DIM),
+        OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+            args_.opName, "x1, x2, y", Ops::NN::FormatString("%zu, %zu, %zu", aDimNum, bDimNum, cDimNum).c_str(),
+            Ops::NN::FormatString("The shape dims of %s must be %zu", "x1, x2, y", ALLOW_DIM).c_str()),
+        return ge::GRAPH_FAILED);
 
     auto attrs = context_->GetAttrs();
     OPS_CHECK_NULL_WITH_CONTEXT(context_, attrs);
@@ -616,46 +691,66 @@ ge::graphStatus TransposeBatchMatMulBaseTiling::GetShape()
     bPermList_ = attrs->GetAttrPointer<gert::ContinuousVector>(idx++);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, aPermList_);
     OPS_CHECK_NULL_WITH_CONTEXT(context_, bPermList_);
+    OP_TILING_CHECK(
+        !IsValidPermList(aPermList_) || !IsValidPermList(bPermList_),
+        OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(args_.opName, "permX1, permX2", "invalid perm list",
+                                               "Each perm must have 3 elements and each element must be in [0, 2]"),
+        return ge::GRAPH_FAILED);
 
-    OP_TILING_CHECK(GetShapeMKN(aShape, bShape) != ge::GRAPH_SUCCESS,
-                    CUBE_INNER_ERR_REPORT(args_.opName, "get m/k/n failed"), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(GetShapeBatch(aShape, bShape) != ge::GRAPH_SUCCESS,
-                    CUBE_INNER_ERR_REPORT(args_.opName, "get batch failed"), return ge::GRAPH_FAILED);
-    OP_TILING_CHECK(GetShapeBias() != ge::GRAPH_SUCCESS, CUBE_INNER_ERR_REPORT(args_.opName, "get bias failed"),
-                    return ge::GRAPH_FAILED);
-
-    // 通过transA 传递perm， 将 perm 转成整数， 为避免零出现perm每位加一， 例 {1,0,2}  加一-> {2,1,3} -> 213
-    const int64_t* perm_x1 = reinterpret_cast<const int64_t*>(aPermList_->GetData());
-    transA_ = 0UL;
-    for (uint32_t i = 0; i < aPermList_->GetSize(); i++) {
-        transA_ = transA_ * 10 + perm_x1[i] + 1; // 乘10 移位
+    if (GetShapeMKN(aShape, bShape) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(args_.opName, "get m/k/n failed");
+        return ge::GRAPH_FAILED;
     }
-    const int64_t* perm_x2 = reinterpret_cast<const int64_t*>(bPermList_->GetData());
-    transB_ = 0UL;
-    for (uint32_t i = 0; i < bPermList_->GetSize(); i++) {
-        transB_ = transB_ * 10 + perm_x2[i] + 1; // 乘10 移位
+    if (GetShapeBatch(aShape, bShape) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(args_.opName, "get batch failed");
+        return ge::GRAPH_FAILED;
     }
-    OP_LOGI(args_.opName, "transA: %lu, transB: %lu", transA_, transB_);
-
-    uint64_t input_batch = batchInfo_.batchC;
-    uint64_t input_k = args_.kValue;
-    uint64_t input_n = args_.nValue;
-    bool support_batch_m = true;
-
-    if (transA_ == 213UL) {                                  // 213 指的是 {1,0,2} 转置
-        support_batch_m = (input_batch * input_k < 65536UL); // 65536 随路ND2NZ转换上限
-    } else if (transA_ == 123UL) {                           // 123 指的是 {0,1,2} 转置
-        support_batch_m = (input_k < 65536UL);               // 65536 随路ND2NZ转换上限
-    } else {
-        OP_LOGE(args_.opName, "perm is not supported");
+    if (GetShapeBias() != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(args_.opName, "get bias failed");
         return ge::GRAPH_FAILED;
     }
 
+    // Pass perm through transA/transB. Encode each element as value + 1 to avoid leading zeros,
+    // for example {1, 0, 2} becomes {2, 1, 3} and then 213.
+    const int64_t* permX1 = static_cast<const int64_t*>(aPermList_->GetData());
+    transA_ = 0UL;
+    for (uint32_t i = 0; i < aPermList_->GetSize(); i++) {
+        transA_ = transA_ * 10 + permX1[i] + 1; // shift by one decimal digit
+    }
+    const int64_t* permX2 = static_cast<const int64_t*>(bPermList_->GetData());
+    transB_ = 0UL;
+    for (uint32_t i = 0; i < bPermList_->GetSize(); i++) {
+        transB_ = transB_ * 10 + permX2[i] + 1; // shift by one decimal digit
+    }
+    OP_LOGI(args_.opName, "transA: %lu, transB: %lu", transA_, transB_);
+
+    uint64_t inputBatch = batchInfo_.batchC;
+    uint64_t inputK = args_.kValue;
+    uint64_t inputN = args_.nValue;
+    bool supportBatchM = true;
+
+    if (transA_ == PERM_X1_1_0_2_CODE) {
+        supportBatchM = (inputBatch * inputK < SUPPORTED_INNER_AXIS);
+    } else if (transA_ == PERM_0_1_2_CODE) {
+        supportBatchM = (inputK < SUPPORTED_INNER_AXIS);
+    } else {
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            args_.opName, "permX1", Ops::NN::FormatString("%lu", transA_).c_str(),
+            Ops::NN::FormatString("The value of %s must be %s", "permX1", "{[1,0,2], [0,1,2]}").c_str());
+        return ge::GRAPH_FAILED;
+    }
+    OP_TILING_CHECK((transB_ != PERM_0_1_2_CODE) && (transB_ != PERM_0_2_1_CODE),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        args_.opName, "permX2", Ops::NN::FormatString("%lu", transB_).c_str(),
+                        Ops::NN::FormatString("The value of %s must be %s", "permX2", "{[0,1,2], [0,2,1]}").c_str()),
+                    return ge::GRAPH_FAILED);
+
     OP_TILING_CHECK(
-        !support_batch_m,
-        CUBE_INNER_ERR_REPORT(args_.opName,
-                              "only support shape inner axis < 65536, input shape b, m, n, k = %lu, %lu, %lu, %lu.",
-                              input_batch, args_.mValue, input_n, input_k),
+        !supportBatchM,
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            args_.opName, "x1, x2",
+            Ops::NN::FormatString("b, m, n, k = %lu, %lu, %lu, %lu", inputBatch, args_.mValue, inputN, inputK).c_str(),
+            Ops::NN::FormatString("The inner axis of %s must be less than %ld", "x1", SUPPORTED_INNER_AXIS).c_str()),
         return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
@@ -668,13 +763,21 @@ ge::graphStatus TransposeBatchMatMulBaseTiling::GetArgs()
     if (context_->GetAttrs()->GetAttrNum() >= ATTR_NUM) {
         batchSplitFactor_ = std::max(*(context_->GetAttrs()->GetAttrPointer<int32_t>(ATTR_NUM - 1)), 1);
     }
-    OP_TILING_CHECK((GetShape() != ge::GRAPH_SUCCESS), CUBE_INNER_ERR_REPORT(args_.opName, "get shape failed"),
-                    return ge::GRAPH_FAILED);
-    OP_TILING_CHECK((OpSpecificCheck(args_) != ge::GRAPH_SUCCESS),
-                    CUBE_INNER_ERR_REPORT(args_.opName, "format and dtype check failed"), return ge::GRAPH_FAILED);
+    if (GetShape() != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(args_.opName, "get shape failed");
+        return ge::GRAPH_FAILED;
+    }
+    if (OpSpecificCheck(args_) != ge::GRAPH_SUCCESS) {
+        OP_LOGE_WITHOUT_REPORT(args_.opName, "format and dtype check failed");
+        return ge::GRAPH_FAILED;
+    }
     OP_TILING_CHECK(
-        (args_.bFormat == ge::FORMAT_FRACTAL_NZ) && ((transA_ != 213UL) || (transB_ != 123UL) || batchSplitFactor_ > 1),
-        CUBE_INNER_ERR_REPORT(args_.opName, "The current attrs does not support weightNZ."), return ge::GRAPH_FAILED);
+        (args_.bFormat == ge::FORMAT_FRACTAL_NZ) &&
+            ((transA_ != PERM_X1_1_0_2_CODE) || (transB_ != PERM_0_1_2_CODE) || batchSplitFactor_ > 1),
+        OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(
+            args_.opName, "x2", "FRACTAL_NZ",
+            "When x2 is FRACTAL_NZ, perm_x1, perm_x2 and batch_split_factor must be [1,0,2], [0,1,2] and 1"),
+        return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 

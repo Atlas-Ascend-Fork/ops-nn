@@ -180,7 +180,7 @@ __aicore__ inline void TransposeBatchMatMulKernel<A_TYPE, B_TYPE, C_TYPE, BIAS_T
 {
     for (uint64_t j = 0; j < block_.params_.realRound; ++j) {
         if (block_.params_.rowOrder == 0) {
-            block_.UpdateBasicIndex(j, mTileIndex, nTileIndex); // 使能错位分核更新Index
+            block_.UpdateBasicIndex(j, mTileIndex, nTileIndex); // update the index with staggered core assignment
         }
         if (block_.params_.index < block_.params_.totalTileCnt) {
             block_.UpdateBlockParams(mTileIndex, nTileIndex);
@@ -197,7 +197,7 @@ __aicore__ inline void TransposeBatchMatMulKernel<A_TYPE, B_TYPE, C_TYPE, BIAS_T
             }
             mm_.IterateAll(cGlobal_[block_.offset_.offsetC]);
         }
-        // 行/列优先走这
+        // Row/column-major paths.
         block_.UpdateBlockIndex();
     }
 }

@@ -1024,6 +1024,7 @@ TEST_F(Dav9201PingpongProbe, UsesExplicitL0TilePlanForMultiRoundCases)
     auto& cube = tiling.tilingData_.matmulTiling;
     cube.baseM = cube.baseN = 128U;
     cube.kBL1 = 256U;
+    cube.dbL0C = optiling::qmmv3_tiling_const::DOUBLE_BUFFER_NUM;
     tiling.compileInfo_.l0aSize = tiling.compileInfo_.l0bSize = 64UL * 1024UL;
     tiling.compileInfo_.l0cSize = 256UL * 1024UL;
     cube.dbL0C = 1U;

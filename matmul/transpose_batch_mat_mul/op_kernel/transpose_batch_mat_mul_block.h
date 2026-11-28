@@ -70,7 +70,7 @@ __aicore__ inline void TransposeBatchMatMulBlock::Init(const void* tilingData)
 
     InitBatchCount<C_TYPE>();
 
-    // 默认使用行优先
+    // Use row-major by default.
     params_.rowOrder = ROW_FIRST;
     params_.mCntUse = params_.batchCnt * params_.mCnt;
     params_.nCntUse = params_.nCnt;
@@ -80,7 +80,7 @@ __aicore__ inline void TransposeBatchMatMulBlock::Init(const void* tilingData)
     params_.nCntTail = params_.nTileCnt;
     params_.totalTileCnt = params_.mTileCnt * params_.nTileCnt;
 
-    // 使能L2cache
+    // Enable L2 cache.
     InitL2Cache();
     if (params_.preCoreNum == 0) {
         params_.preCoreNum = tbmmTilingData_->multiBatchInfo.batchUsedCoreNum;
@@ -93,7 +93,7 @@ __aicore__ inline void TransposeBatchMatMulBlock::Init(const void* tilingData)
     params_.alignedOriN = MMV3DivCeil(tbmmTilingData_->matmulTiling.matmulTiling.N, params_.c0Size) * params_.c0Size;
     params_.alignedKaSize = MMV3DivCeil(tbmmTilingData_->matmulTiling.matmulTiling.Ka, params_.c0Size) * params_.c0Size;
     params_.alignedKbSize = MMV3DivCeil(tbmmTilingData_->matmulTiling.matmulTiling.Kb, ALIGNED_H) * ALIGNED_H;
-    // A B矩阵都是对齐矩阵
+    // Both A and B matrices are aligned.
     if constexpr (A_TYPE::isTrans) {
         params_.alignedOriM = MMV3DivCeil(tbmmTilingData_->matmulTiling.matmulTiling.M, params_.c0Size) *
                               params_.c0Size;
@@ -131,23 +131,23 @@ __aicore__ inline void TransposeBatchMatMulBlock::InitBatchCount()
     params_.batchCnt = params_.batchC1 * params_.batchC2 * params_.batchC3 * params_.batchC4;
     params_.mCnt = MMV3DivCeil(
         tbmmTilingData_->matmulTiling.matmulTiling.M,
-        static_cast<uint64_t>(tbmmTilingData_->matmulTiling.matmulTiling.singleCoreM)); // m方向上分多少个base块
+        static_cast<uint64_t>(tbmmTilingData_->matmulTiling.matmulTiling.singleCoreM)); // number of base blocks in M
     params_.nCnt = MMV3DivCeil(
         tbmmTilingData_->matmulTiling.matmulTiling.N,
-        static_cast<uint64_t>(tbmmTilingData_->matmulTiling.matmulTiling.singleCoreN)); // n方向上分多少个base块
-    params_.index = 0; // 当前block_idx的起始基本块Index，这个idex是按照先循环N，再循环M的次序
+        static_cast<uint64_t>(tbmmTilingData_->matmulTiling.matmulTiling.singleCoreN)); // number of base blocks in N
+    params_.index = 0; // start base-block index of the current block_idx; N is iterated before M
     params_.nBaseTail = tbmmTilingData_->matmulTiling.matmulTiling.N -
                         (params_.nCnt - 1) *
-                            tbmmTilingData_->matmulTiling.matmulTiling.singleCoreN; // n方向上的baseN尾块
+                            tbmmTilingData_->matmulTiling.matmulTiling.singleCoreN; // baseN tail block in N
     params_.mBaseTail = tbmmTilingData_->matmulTiling.matmulTiling.M -
                         (params_.mCnt - 1) *
-                            tbmmTilingData_->matmulTiling.matmulTiling.singleCoreM; // m方向上的baseM尾块
-    params_.totalCnt = params_.batchCnt * params_.mCnt * params_.nCnt;              // 所有的基本块个数
+                            tbmmTilingData_->matmulTiling.matmulTiling.singleCoreM; // baseM tail block in M
+    params_.totalCnt = params_.batchCnt * params_.mCnt * params_.nCnt;              // total number of base blocks
     params_.round = (params_.totalCnt + tbmmTilingData_->multiBatchInfo.batchUsedCoreNum - 1) /
-                    tbmmTilingData_->multiBatchInfo.batchUsedCoreNum; // 每一个core最大做base块计算的次数
-    params_.realRound = 0;                                            // 单核做多少次base块计算
-    params_.preCoreNum = params_.totalCnt %
-                         tbmmTilingData_->multiBatchInfo.batchUsedCoreNum; // 从0core开始有多少个core会多做一次base块
+                    tbmmTilingData_->multiBatchInfo.batchUsedCoreNum; // max base-block iterations per core
+    params_.realRound = 0;                                            // base-block iterations on one core
+    // number of cores that do one extra base block
+    params_.preCoreNum = params_.totalCnt % tbmmTilingData_->multiBatchInfo.batchUsedCoreNum;
     params_.blockIdxStart = 0;
     params_.blockIdxEnd = 0;
     params_.preTotalBlock = 0;
@@ -156,16 +156,16 @@ __aicore__ inline void TransposeBatchMatMulBlock::InitBatchCount()
 __aicore__ inline void TransposeBatchMatMulBlock::InitL2Cache()
 {
     const L2cacheTilePara& tilingL2 = tbmmTilingData_->matmulTiling.tileL2cacheTiling;
-    params_.mTileCntL2 = static_cast<uint64_t>(tilingL2.mTileCntL2); // M 方向上Tile份数
-    params_.nTileCntL2 = static_cast<uint64_t>(tilingL2.nTileCntL2); // N 方向上Tile份数
+    params_.mTileCntL2 = static_cast<uint64_t>(tilingL2.mTileCntL2); // number of tiles in M
+    params_.nTileCntL2 = static_cast<uint64_t>(tilingL2.nTileCntL2); // number of tiles in N
     params_.enableL2Cache = ((params_.mTileCntL2 > 1) || (params_.nTileCntL2 > 1));
     if (params_.enableL2Cache) {
-        params_.mTileCnt = tilingL2.mTileBlock; // 每份mTile包含的base块个数
-        params_.nTileCnt = tilingL2.nTileBlock; // 每份nTile包含的base块个数
+        params_.mTileCnt = tilingL2.mTileBlock; // number of base blocks in each mTile
+        params_.nTileCnt = tilingL2.nTileBlock; // number of base blocks in each nTile
         params_.totalTileCnt = params_.mTileCnt * params_.nTileCnt;
-        params_.mCntTail = params_.mCnt - (params_.mTileCnt *
-                                           (MMV3DivCeil(params_.mCnt, params_.mTileCnt) - 1)); // M方向上mtile尾块的个数
-        params_.nCntTail = params_.nCnt - (params_.nTileCntL2 - 1) * params_.nTileCnt; // N方向nTile尾块base块个数
+        // number of mTile tail blocks in M
+        params_.mCntTail = params_.mCnt - (params_.mTileCnt * (MMV3DivCeil(params_.mCnt, params_.mTileCnt) - 1));
+        params_.nCntTail = params_.nCnt - (params_.nTileCntL2 - 1) * params_.nTileCnt; // base blocks in the nTile tail
         params_.mCntUse = params_.mTileCnt;
         params_.nCntUse = params_.nTileCnt;
         params_.rowOrder = 0;
@@ -175,13 +175,14 @@ __aicore__ inline void TransposeBatchMatMulBlock::InitL2Cache()
 __aicore__ inline void TransposeBatchMatMulBlock::InitBlockIndex()
 {
     if (indexInit_) {                                // ND
-        params_.blockIdxStart = params_.blockIdxEnd; // 开始运算时，首核的索引
+        params_.blockIdxStart = params_.blockIdxEnd; // index of the first core at the start of computation
     } else {
-        params_.blockIdxStart = 0; // 第一次调用初始化为 0
+        params_.blockIdxStart = 0; // initialized to 0 on the first call
         indexInit_ = true;
     }
+    // index of the last core at the end of computation
     params_.blockIdxEnd = (params_.blockIdxStart + params_.preCoreNum) %
-                          tbmmTilingData_->matmulTiling.matmulTiling.usedCoreNum; // 结束运算时，尾核的索引
+                          tbmmTilingData_->matmulTiling.matmulTiling.usedCoreNum;
     if (params_.rowOrder == 0) {
         uint64_t indexStart = params_.blockIdxStart;
         uint64_t indexEnd = params_.blockIdxEnd;
@@ -209,7 +210,7 @@ __aicore__ inline void TransposeBatchMatMulBlock::InitBlockIndex()
                 params_.index = params_.preTotalBlock / params_.mCnt +
                                 params_.preTotalBlock % params_.mCnt * params_.nCnt;
             }
-            params_.realRound = params_.round; // 前面preCoreNum个core会多做一次
+            params_.realRound = params_.round; // the first preCoreNum cores do one extra iteration
         } else {
             if (params_.rowOrder == ROW_FIRST) {
                 params_.index = GetBlockIdx() * (params_.round - 1) + params_.preCoreNum;
@@ -218,7 +219,7 @@ __aicore__ inline void TransposeBatchMatMulBlock::InitBlockIndex()
                 params_.index = params_.preTotalBlock / params_.mCnt +
                                 params_.preTotalBlock % params_.mCnt * params_.nCnt;
             }
-            params_.realRound = params_.round - 1; // 后面的core会少做一次
+            params_.realRound = params_.round - 1; // the remaining cores do one fewer iteration
         }
     }
 }
@@ -242,25 +243,25 @@ __aicore__ inline void TransposeBatchMatMulBlock::UpdateBlockParams(uint64_t mTi
 {
     if (!(params_.enableL2Cache)) {
         if ((params_.index + 1) % (params_.mCnt * params_.nCnt) == 0) {
-            // 最后一块是尾块
+            // The last block is the tail block.
             params_.singleCoreM = params_.mBaseTail;
             params_.singleCoreN = params_.nBaseTail;
         } else if (((params_.index + 1) % (params_.mCnt * params_.nCnt)) > ((params_.mCnt - 1) * params_.nCnt)) {
-            // M方向尾块
+            // M tail block
             params_.singleCoreM = params_.mBaseTail;
             params_.singleCoreN = tbmmTilingData_->matmulTiling.matmulTiling.singleCoreN;
         } else if ((params_.index + 1) % params_.nCnt == 0) {
-            // N方向尾块
+            // N tail block
             params_.singleCoreM = tbmmTilingData_->matmulTiling.matmulTiling.singleCoreM;
             params_.singleCoreN = params_.nBaseTail;
         } else {
-            // 对齐整块
+            // Align to a full block.
             params_.singleCoreM = tbmmTilingData_->matmulTiling.matmulTiling.singleCoreM;
             params_.singleCoreN = tbmmTilingData_->matmulTiling.matmulTiling.singleCoreN;
         }
     } else {
-        // 当前mTile在batch内，还原到单batch内index
-        // batch内M方向尾Tile块的尾Tile行取baseTail；N按nTileCnt进行计算是否取baseTail
+        // Restore the index of the current mTile within a single batch.
+        // For the M tail tile within a batch, take baseTail rows; for N, decide baseTail usage by nTileCnt.
         if (batchLastFlag_ && (nTileIndex == (params_.nTileCntL2 - 1)) &&
             (params_.index == (params_.totalTileCnt - 1))) {
             params_.singleCoreM = params_.mBaseTail;
@@ -280,9 +281,9 @@ __aicore__ inline void TransposeBatchMatMulBlock::UpdateBlockParams(uint64_t mTi
 
 __aicore__ inline void TransposeBatchMatMulBlock::UpdateBlockCnt(uint64_t bmTileIndex, uint64_t nTileIndex)
 {
-    // 当前Tile切分不跨Batch
-    // 计算偏移时每一个Tile块的起始偏移是无需区分尾块场景的，跨batch用M计算偏移，batch内用singcoreM计算
-    uint32_t batchTileCnt = CeilDiv(params_.mCnt, params_.mTileCnt); // mCnt > 0 mtileCnt > 0 无等于0场景
+    // Current tile split does not cross batches.
+    // Tile start offsets do not distinguish tail cases; use M across batches and singleCoreM within a batch.
+    uint32_t batchTileCnt = CeilDiv(params_.mCnt, params_.mTileCnt); // mCnt > 0 and mTileCnt > 0
     uint64_t curBatchCnt = bmTileIndex / batchTileCnt;
     uint64_t curBatchTileIdx = bmTileIndex % batchTileCnt;
     params_.mTileAddrOffset = curBatchCnt * tbmmTilingData_->matmulTiling.matmulTiling.M +
@@ -318,19 +319,19 @@ __aicore__ inline void TransposeBatchMatMulBlock::UpdateBlockCnt(uint64_t bmTile
 __aicore__ inline void TransposeBatchMatMulBlock::UpdateBlockParams()
 {
     if ((params_.index + 1) % (params_.mCnt * params_.nCnt) == 0) {
-        // 最后一块是尾块
+        // The last block is the tail block.
         params_.singleCoreM = params_.mBaseTail;
         params_.singleCoreN = params_.nBaseTail;
     } else if ((params_.index + 1) % (params_.mCnt * params_.nCnt) > (params_.mCnt - 1) * params_.nCnt) {
-        // m方向尾块
+        // M tail block
         params_.singleCoreM = params_.mBaseTail;
         params_.singleCoreN = tbmmTilingData_->matmulTiling.matmulTiling.singleCoreN;
     } else if ((params_.index + 1) % params_.nCnt == 0) {
-        // n方向尾块
+        // N tail block
         params_.singleCoreM = tbmmTilingData_->matmulTiling.matmulTiling.singleCoreM;
         params_.singleCoreN = params_.nBaseTail;
     } else {
-        // 对齐整块
+        // Align to a full block.
         params_.singleCoreM = tbmmTilingData_->matmulTiling.matmulTiling.singleCoreM;
         params_.singleCoreN = tbmmTilingData_->matmulTiling.matmulTiling.singleCoreN;
     }
@@ -339,13 +340,13 @@ __aicore__ inline void TransposeBatchMatMulBlock::UpdateBlockParams()
 template <class A_TYPE, class B_TYPE, class C_TYPE, class BIAS_TYPE, int MODE>
 __aicore__ inline void TransposeBatchMatMulBlock::CalcGMOffset(uint64_t mTileIndex, uint64_t nTileIndex)
 {
-    // batch, M 合轴 处理 index
+    // Combine batch and M axes to compute the index.
     uint64_t bmTileStartIndex = params_.mTileAddrOffset /
                                 static_cast<uint64_t>(tbmmTilingData_->matmulTiling.matmulTiling.M);
     uint64_t tileInnerMIndex = params_.index / (params_.nCntUse * params_.mCnt);
     uint64_t totalBmTileIndex = bmTileStartIndex + tileInnerMIndex;
 
-    // batch维度合并到M轴一起使用，先解析再重新计算
+    // Merge the batch dimension into the M axis; parse first, then recompute.
     uint64_t batchC1Index = totalBmTileIndex / (params_.batchC2 * params_.batchC3 * params_.batchC4);
     uint64_t batchC2Index = totalBmTileIndex % (params_.batchC2 * params_.batchC3 * params_.batchC4) /
                             (params_.batchC3 * params_.batchC4);
@@ -353,7 +354,7 @@ __aicore__ inline void TransposeBatchMatMulBlock::CalcGMOffset(uint64_t mTileInd
     uint64_t batchC4Index = totalBmTileIndex % params_.batchC4;
     uint64_t batchCIndex = totalBmTileIndex;
 
-    // Tile 内 mIndex
+    // mIndex within the tile
     uint64_t mCntIndex = (params_.index / params_.nCntUse) % params_.mCnt;
     uint64_t nCntIndex = params_.index % params_.nCntUse;
     uint64_t mInnerBatchOffset = params_.mTileAddrOffset %

@@ -123,7 +123,9 @@ ge::graphStatus MatmulCompressTilingBase::DoTiling()
     auto inputDType = context_->GetInputDesc(0)->GetDataType();
     params_.sizeInDtype = ge::GetSizeByDataType(inputDType);
     ;
-    tiling_.GetHardwareInfo();
+    if (tiling_.GetHardwareInfo() != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
     if (!(GetMatMulInfo() && GetTilingKey())) {
         return ge::GRAPH_FAILED;
     }

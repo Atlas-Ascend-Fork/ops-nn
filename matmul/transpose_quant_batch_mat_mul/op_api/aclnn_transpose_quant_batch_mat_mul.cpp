@@ -26,12 +26,8 @@
 #include "aclnn_kernels/cast.h"
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/transpose.h"
-#include "level0/dot.h"
-#include "level0/fill.h"
 #include "matmul/common/op_host/op_api/matmul.h"
-#include "aclnn_kernels/reshape.h"
 #include "aclnn_kernels/transdata.h"
-#include "level0/unsqueeze.h"
 #include "transpose_quant_batch_mat_mul.h"
 
 #include "matmul/common/op_host/op_api/cube_util.h"
@@ -42,8 +38,8 @@ using namespace std;
 using namespace op;
 using namespace Ops::NN;
 
-// 支持的类型组合：{x1, x2, x1Scale, x2Scale}
-// x1Scale 仅在 HIFP8 场景可省略，省略时用 DT_UNDEFINED 占位
+// Supported dtype combinations: {x1, x2, x1Scale, x2Scale}
+// x1Scale is optional only in HIFP8 mode; DT_UNDEFINED is used as a placeholder when omitted.
 static const std::vector<std::vector<op::DataType>> X_SCALE_DTYPE_SUPPORT_LIST = {
     // FP8
     {DataType::DT_FLOAT8_E5M2, DataType::DT_FLOAT8_E5M2, DataType::DT_FLOAT, DataType::DT_FLOAT},
@@ -54,7 +50,7 @@ static const std::vector<std::vector<op::DataType>> X_SCALE_DTYPE_SUPPORT_LIST =
     {DataType::DT_FLOAT8_E4M3FN, DataType::DT_FLOAT8_E4M3FN, DataType::DT_FLOAT8_E8M0, DataType::DT_FLOAT8_E8M0},
     // MXFP4
     {DataType::DT_FLOAT4_E2M1, DataType::DT_FLOAT4_E2M1, DataType::DT_FLOAT8_E8M0, DataType::DT_FLOAT8_E8M0},
-    // HIFP8（x1Scale 可选）
+    // HIFP8 (x1Scale is optional)
     {DataType::DT_HIFLOAT8, DataType::DT_HIFLOAT8, DataType::DT_UINT64, DataType::DT_UINT64},
     {DataType::DT_HIFLOAT8, DataType::DT_HIFLOAT8, DataType::DT_UNDEFINED, DataType::DT_UINT64},
     // HIFP4
@@ -109,64 +105,47 @@ inline static bool CheckNotNull(const aclTensor* x1, const aclTensor* x2, const 
                                 const aclTensor* x1Scale, const aclTensor* x2Scale, const aclIntArray* permX1,
                                 const aclIntArray* permX2, const aclIntArray* permY)
 {
-    OP_CHECK(x1 != nullptr,
-             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                 OP_NAME, "x1", "nullptr", Ops::NN::FormatString("The value of %s cannot be %s", "x1", "null").c_str()),
-             return false);
-    OP_CHECK(x2 != nullptr,
-             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                 OP_NAME, "x2", "nullptr", Ops::NN::FormatString("The value of %s cannot be %s", "x2", "null").c_str()),
-             return false);
-    // hifp8 场景, 支持x1Scale为空
+    OP_CHECK(x1 != nullptr, OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "x1"), return false);
+    OP_CHECK(x2 != nullptr, OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "x2"), return false);
+    // HIFP8 mode allows x1Scale to be null.
     if (!IsHIFP8(x1, x2)) {
-        OP_CHECK(x1Scale != nullptr,
-                 OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                     OP_NAME, "x1Scale", "nullptr",
-                     Ops::NN::FormatString("The value of %s cannot be %s", "x1Scale", "null").c_str()),
-                 return false);
+        OP_CHECK(x1Scale != nullptr, OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "x1Scale"), return false);
     }
-    OP_CHECK(x2Scale != nullptr,
-             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                 OP_NAME, "x2Scale", "nullptr",
-                 Ops::NN::FormatString("The value of %s cannot be %s", "x2Scale", "null").c_str()),
-             return false);
-    OP_CHECK(permX1 != nullptr,
-             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                 OP_NAME, "permX1", "nullptr",
-                 Ops::NN::FormatString("The value of %s cannot be %s", "permX1", "null").c_str()),
-             return false);
-    OP_CHECK(permX2 != nullptr,
-             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                 OP_NAME, "permX2", "nullptr",
-                 Ops::NN::FormatString("The value of %s cannot be %s", "permX2", "null").c_str()),
-             return false);
-    OP_CHECK(permY != nullptr,
-             OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-                 OP_NAME, "permY", "nullptr",
-                 Ops::NN::FormatString("The value of %s cannot be %s", "permY", "null").c_str()),
-             return false);
-    OP_CHECK(
-        out != nullptr,
-        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            OP_NAME, "out", "nullptr", Ops::NN::FormatString("The value of %s cannot be %s", "out", "null").c_str()),
-        return false);
+    OP_CHECK(x2Scale != nullptr, OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "x2Scale"), return false);
+    OP_CHECK(permX1 != nullptr, OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "permX1"), return false);
+    OP_CHECK(permX2 != nullptr, OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "permX2"), return false);
+    OP_CHECK(permY != nullptr, OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "permY"), return false);
+    OP_CHECK(out != nullptr, OP_LOGE_WITH_INVALID_INPUT(OP_NAME, "out"), return false);
     return true;
+}
+
+static inline op::DataType NormalizeScaleDtype(const aclTensor* scale)
+{
+    if (scale == nullptr) {
+        return op::DataType::DT_UNDEFINED;
+    }
+    return scale->GetDataType() == op::DataType::DT_INT64 ? op::DataType::DT_UINT64 : scale->GetDataType();
+}
+
+static const aclTensor* ProcessScaleDtype(const aclTensor* scale, aclOpExecutor* executor)
+{
+    if (scale == nullptr || scale->GetDataType() != op::DataType::DT_INT64) {
+        return scale;
+    }
+    auto* view = executor->CreateView(scale, scale->GetViewShape(), scale->GetViewOffset());
+    if (view == nullptr) {
+        return nullptr;
+    }
+    view->SetDataType(op::DataType::DT_UINT64);
+    return view;
 }
 
 inline static bool CheckDtypeValid(const aclTensor* x1, const aclTensor* x2, const aclTensor* x1Scale,
                                    const aclTensor* x2Scale, const aclTensor* out, int32_t dtype)
 {
-    // HIFP8 场景：INT64 scale 统一转换为 UINT64 后再做类型组合校验
-    if (x1Scale != nullptr && x1Scale->GetDataType() == op::DataType::DT_INT64) {
-        (void)const_cast<aclTensor*>(x1Scale)->SetDataType(op::DataType::DT_UINT64);
-    }
-    if (x2Scale->GetDataType() == op::DataType::DT_INT64) {
-        (void)const_cast<aclTensor*>(x2Scale)->SetDataType(op::DataType::DT_UINT64);
-    }
-    // x1/x2/x1Scale/x2Scale 需满足固定组合，x1Scale 未传入时按 DT_UNDEFINED 参与匹配
-    std::vector<op::DataType> dtypeComb = {x1->GetDataType(), x2->GetDataType(),
-                                           x1Scale == nullptr ? op::DataType::DT_UNDEFINED : x1Scale->GetDataType(),
-                                           x2Scale->GetDataType()};
+    // HIFP8: INT64 scales follow the UINT64 contract and are handled as views without modifying caller tensors.
+    std::vector<op::DataType> dtypeComb = {x1->GetDataType(), x2->GetDataType(), NormalizeScaleDtype(x1Scale),
+                                           NormalizeScaleDtype(x2Scale)};
     bool isDtypeCombSupported = false;
     for (const auto& supportedComb : X_SCALE_DTYPE_SUPPORT_LIST) {
         if (std::equal(dtypeComb.begin(), dtypeComb.end(), supportedComb.begin())) {
@@ -175,7 +154,7 @@ inline static bool CheckDtypeValid(const aclTensor* x1, const aclTensor* x2, con
         }
     }
     if (!isDtypeCombSupported) {
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
             OP_NAME, "x1, x2, x1Scale, x2Scale",
             Ops::NN::FormatString("x1[%s], x2[%s], x1Scale[%s], x2Scale[%s]",
                                   op::ToString(x1->GetDataType()).GetString(),
@@ -188,7 +167,8 @@ inline static bool CheckDtypeValid(const aclTensor* x1, const aclTensor* x2, con
                 .c_str());
         return false;
     }
-    // A2/A3 INT8 W8A8 二进制只注册了 BF16。FP16 能通过下面的通用列表，但选 bin 时才会失败。
+    // A2/A3 INT8 W8A8 binaries register BF16 only. FP16 passes the generic list below but fails
+    // during binary selection.
     if (x1->GetDataType() == DataType::DT_INT8 && x2->GetDataType() == DataType::DT_INT8) {
         if (out->GetDataType() != DataType::DT_BF16 || dtype != static_cast<int32_t>(DataType::DT_BF16)) {
             OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
@@ -226,7 +206,7 @@ inline static bool CheckDtypeValid(const aclTensor* x1, const aclTensor* x2, con
     return true;
 }
 
-inline static bool CheckScalex1Valid(const aclTensor* x1Scale, int64_t batch, int64_t m, int64_t numGroup, bool isMxFp,
+inline static bool CheckScalex1Valid(const aclTensor* x1Scale, int64_t batch, int64_t m, int64_t numGroup, bool isMXFP8,
                                      bool isHIFP8, bool isHIFP4 = false)
 {
     OP_LOGD("X1Scale %s", op::ToString(x1Scale->GetViewShape()).GetString());
@@ -252,7 +232,7 @@ inline static bool CheckScalex1Valid(const aclTensor* x1Scale, int64_t batch, in
         return true;
     }
     if (isHIFP8) {
-        // hifp8场景，x1scale可选传入，若传入则其shape必须为[1]
+        // In HIFP8 mode, x1Scale is optional; when provided, its shape must be [1].
         if (dimTensorScale != EXPECTED_SCALE_DIM) {
             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
                 OP_NAME, "x1Scale", Ops::NN::FormatString("%zu", dimTensorScale).c_str(),
@@ -268,7 +248,7 @@ inline static bool CheckScalex1Valid(const aclTensor* x1Scale, int64_t batch, in
             return false;
         }
         return true;
-    } else if (isMxFp) {
+    } else if (isMXFP8) {
         if (dimTensorScale != EXPECTED_MX_SCALE_DIM) {
             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
                 OP_NAME, "x1Scale", Ops::NN::FormatString("%zu", dimTensorScale).c_str(),
@@ -307,7 +287,7 @@ inline static bool CheckScalex1Valid(const aclTensor* x1Scale, int64_t batch, in
 }
 
 inline static bool CheckScalex2Valid(const aclTensor* x2Scale, int64_t batch, int64_t n, int64_t numGroup,
-                                     const aclIntArray* permX2, bool isMxFp, bool isHIFP4 = false)
+                                     const aclIntArray* permX2, bool isMXFP8, bool isHIFP4 = false)
 {
     OP_LOGD("X2Scale %s", op::ToString(x2Scale->GetViewShape()).GetString());
     auto dimTensorScale = x2Scale->GetViewShape().GetDimNum();
@@ -336,7 +316,7 @@ inline static bool CheckScalex2Valid(const aclTensor* x2Scale, int64_t batch, in
         }
         return true;
     }
-    if (isMxFp) {
+    if (isMXFP8) {
         if (dimTensorScale != EXPECTED_MX_SCALE_DIM) {
             OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
                 OP_NAME, "x2Scale", Ops::NN::FormatString("%zu", dimTensorScale).c_str(),
@@ -380,25 +360,26 @@ inline static bool CheckScalex2Valid(const aclTensor* x2Scale, int64_t batch, in
 }
 
 inline static bool CheckScaleValid(const aclTensor* x1Scale, const aclTensor* x2Scale, int64_t batch, int64_t m,
-                                   int64_t n, int64_t k, const aclIntArray* permX2, bool isMxFp, bool isHIFP8,
+                                   int64_t n, int64_t k, const aclIntArray* permX2, bool isMXFP8, bool isHIFP8,
                                    bool isHIFP4 = false)
 {
     int64_t numGroup = isHIFP4 ? MathUtil::CeilDivision(k, K_ALIGNMENT64) :
                                  MathUtil::CeilDivision(MathUtil::CeilDivision(k, SUPPORTED_GROUP_SIZE), NUM_TWO);
-    // 对x1Scale的维度和shape信息进行校验
-    if (!(isHIFP8 && x1Scale == nullptr) && !CheckScalex1Valid(x1Scale, batch, m, numGroup, isMxFp, isHIFP8, isHIFP4)) {
+    // Validate the dimension and shape of x1Scale.
+    if (!(isHIFP8 && x1Scale == nullptr) &&
+        !CheckScalex1Valid(x1Scale, batch, m, numGroup, isMXFP8, isHIFP8, isHIFP4)) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "x1Scale is invalid");
         return false;
     }
-    // 对x2Scale的维度和shape信息进行校验
-    if (!CheckScalex2Valid(x2Scale, batch, n, numGroup, permX2, isMxFp, isHIFP4)) {
+    // Validate the dimension and shape of x2Scale.
+    if (!CheckScalex2Valid(x2Scale, batch, n, numGroup, permX2, isMXFP8, isHIFP4)) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "x2Scale is invalid");
         return false;
     }
     return true;
 }
 
-static bool CheckPermValid(const aclIntArray* permX1, const aclIntArray* permX2, const aclIntArray* permY, bool isMxFp,
+static bool CheckPermValid(const aclIntArray* permX1, const aclIntArray* permX2, const aclIntArray* permY, bool isMXFP8,
                            bool isHIFP8, bool isHIFP4 = false, bool /*isW8A8*/ = false)
 {
     if (permX1->Size() != EXPECTED_DIM) {
@@ -416,7 +397,7 @@ static bool CheckPermValid(const aclIntArray* permX1, const aclIntArray* permX2,
                                      std::to_string(EXPECTED_DIM).c_str());
         return false;
     }
-    // 当前支持转置场景
+    // Transpose cases currently supported.
     constexpr int64_t kDim0 = 0;
     constexpr int64_t kDim1 = 1;
     constexpr int64_t kDim2 = 2;
@@ -425,7 +406,7 @@ static bool CheckPermValid(const aclIntArray* permX1, const aclIntArray* permX2,
     auto allowedPermX2 = ((*permX2)[kDim0] == 0 && (*permX2)[kDim1] == 1 && (*permX2)[kDim2] == 2); // 0 1 2
     auto allowedPermY = ((*permY)[kDim0] == 1 && (*permY)[kDim1] == 0 && (*permY)[kDim2] == 2);     // 1 0 2    // 1 0 2
     std::string permX2ErrorInfo = "[0, 1, 2].";
-    if (isMxFp || isHIFP8 || isHIFP4) {
+    if (isMXFP8 || isHIFP8 || isHIFP4) {
         allowedPermX2 = allowedPermX2 ||
                         ((*permX2)[kDim0] == 0 && (*permX2)[kDim1] == NUM_TWO && (*permX2)[kDim2] == 1);
         permX2ErrorInfo = "[0, 1, 2] or [0, 2, 1].";
@@ -476,8 +457,8 @@ static bool CheckBatchAndKDimsValid(op::Shape& x1Shape, op::Shape& x2Shape, int6
 }
 
 static bool CheckShapeValid(const aclTensor* x1, const aclTensor* x2, const aclTensor* x1Scale,
-                            const aclTensor* x2Scale, const aclIntArray* permX1, const aclIntArray* permX2, bool isMxFp,
-                            bool isHIFP4 = false)
+                            const aclTensor* x2Scale, const aclIntArray* permX1, const aclIntArray* permX2,
+                            bool isMXFP8, bool isHIFP4 = false)
 {
     op::Shape x1Shape = x1->GetViewShape();
     op::Shape x2Shape = x2->GetViewShape();
@@ -521,7 +502,7 @@ static bool CheckShapeValid(const aclTensor* x1, const aclTensor* x2, const aclT
         }
         return true;
     }
-    if (!isMxFp && !isHIFP8 && !isHIFP4) {
+    if (!isMXFP8 && !isHIFP8 && !isHIFP4) {
         // Check shape k n
         if (x1KDim != TQBMM_VALID_K || n != TQBMM_VALID_N) {
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(OP_NAME, "x2", op::ToString(x2Shape).GetString(),
@@ -530,7 +511,7 @@ static bool CheckShapeValid(const aclTensor* x1, const aclTensor* x2, const aclT
                                                       .c_str());
             return false;
         }
-    } else if (isMxFp || isHIFP4) {
+    } else if (isMXFP8 || isHIFP4) {
         if (static_cast<uint64_t>(x1KDim) % K_ALIGNMENT64 != 0) {
             OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
                 OP_NAME, "x1", op::ToString(x1Shape).GetString(),
@@ -539,12 +520,12 @@ static bool CheckShapeValid(const aclTensor* x1, const aclTensor* x2, const aclT
             return false;
         }
     }
-    return CheckScaleValid(x1Scale, x2Scale, x1BatchDim, m, n, x1KDim, permX2, isMxFp, isHIFP8, isHIFP4);
+    return CheckScaleValid(x1Scale, x2Scale, x1BatchDim, m, n, x1KDim, permX2, isMXFP8, isHIFP8, isHIFP4);
 }
 
-static inline bool CheckWeightNz(const aclTensor* x2, bool isMxFp, bool isHIFP8, bool isW8A8 = false)
+static inline bool CheckWeightNz(const aclTensor* x2, bool isMXFP8, bool isHIFP8, bool isW8A8 = false)
 {
-    if (!isMxFp && !isHIFP8 && !isW8A8) {
+    if (!isMXFP8 && !isHIFP8 && !isW8A8) {
         OP_LOGE_FOR_INVALID_FORMAT_WITH_REASON(OP_NAME, "x2", "FRACTAL_NZ",
                                                Ops::NN::FormatString("In %s case, the format of %s cannot be %s",
                                                                      "non-mx and non-hifp8 mode", "x2", "FRACTAL_NZ")
@@ -562,18 +543,18 @@ static inline bool CheckWeightNz(const aclTensor* x2, bool isMxFp, bool isHIFP8,
     return true;
 }
 
-static inline bool validGroupSize(uint64_t groupSizeM, uint64_t groupSizeN, uint64_t groupSizeK)
+static inline bool ValidGroupSize(uint64_t groupSizeM, uint64_t groupSizeN, uint64_t groupSizeK)
 {
     return (groupSizeM == 0 || groupSizeM == 1) && (groupSizeN == 0 || groupSizeN == 1) &&
            groupSizeK == SUPPORTED_GROUP_SIZE;
 }
 
-static inline bool InferGroupSize(int64_t& groupSize, bool isMxFp)
+static inline bool InferGroupSize(int64_t& groupSize, bool isMXFP8)
 {
     uint64_t groupSizeK = static_cast<uint64_t>(groupSize) & GROUP_MNK_BIT_SIZE;
     uint64_t groupSizeN = (static_cast<uint64_t>(groupSize) >> GROUP_N_OFFSET) & GROUP_MNK_BIT_SIZE;
     uint64_t groupSizeM = (static_cast<uint64_t>(groupSize) >> GROUP_M_OFFSET) & GROUP_MNK_BIT_SIZE;
-    if (isMxFp && !validGroupSize(groupSizeM, groupSizeN, groupSizeK)) {
+    if (isMXFP8 && !ValidGroupSize(groupSizeM, groupSizeN, groupSizeK)) {
         OP_LOGE_FOR_INVALID_VALUES_WITH_REASON(
             OP_NAME, "groupSizeM, groupSizeN, groupSizeK",
             Ops::NN::FormatString("%lu, %lu, %lu", groupSizeM, groupSizeN, groupSizeK).c_str(),
@@ -592,7 +573,7 @@ static inline bool InferGroupSize(int64_t& groupSize, bool isMxFp)
 inline static aclnnStatus CheckParams(const aclTensor* x1, const aclTensor* x2, const aclTensor* x1Scale,
                                       const aclTensor* x2Scale, aclTensor* out, int32_t dtype,
                                       const aclIntArray* permX1, const aclIntArray* permX2, const aclIntArray* permY,
-                                      int32_t batch_split_factor, int64_t groupSize)
+                                      int32_t batchSplitFactor, int64_t groupSize)
 {
     // Check null
     CHECK_RET(CheckNotNull(x1, x2, out, x1Scale, x2Scale, permX1, permX2, permY), ACLNN_ERR_PARAM_NULLPTR);
@@ -614,19 +595,19 @@ inline static aclnnStatus CheckParams(const aclTensor* x1, const aclTensor* x2, 
                 .c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
-    bool isMxFp = IsMicroScaling(x1Scale, x2Scale);
+    bool isMXFP8 = IsMicroScaling(x1Scale, x2Scale);
     bool isHIFP8 = IsHIFP8(x1, x2);
     bool isHIFP4 = IsHIFP4(x1, x2, x1Scale, x2Scale);
-    CHECK_RET(CheckPermValid(permX1, permX2, permY, isMxFp, isHIFP8, isHIFP4, isW8A8), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckPermValid(permX1, permX2, permY, isMXFP8, isHIFP8, isHIFP4, isW8A8), ACLNN_ERR_PARAM_INVALID);
     // check shape
-    CHECK_RET(CheckShapeValid(x1, x2, x1Scale, x2Scale, permX1, permX2, isMxFp, isHIFP4), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckShapeValid(x1, x2, x1Scale, x2Scale, permX1, permX2, isMXFP8, isHIFP4), ACLNN_ERR_PARAM_INVALID);
     // check dtype
     CHECK_RET(CheckDtypeValid(x1, x2, x1Scale, x2Scale, out, dtype), ACLNN_ERR_PARAM_INVALID);
     // check nz
     if (ge::GetPrimaryFormat(x2->GetStorageFormat()) == Format::FORMAT_FRACTAL_NZ) {
-        CHECK_RET(CheckWeightNz(x2, isMxFp, isHIFP8, isW8A8), ACLNN_ERR_PARAM_INVALID);
+        CHECK_RET(CheckWeightNz(x2, isMXFP8, isHIFP8, isW8A8), ACLNN_ERR_PARAM_INVALID);
     }
-    // 不支持x1Format、 outFormat、 x1scaleFormat、 x2scaleFormat为NZ
+    // x1, out, x1Scale and x2Scale must not be in FRACTAL_NZ format.
     if (ge::GetPrimaryFormat(x1->GetStorageFormat()) == Format::FORMAT_FRACTAL_NZ ||
         ge::GetPrimaryFormat(out->GetStorageFormat()) == Format::FORMAT_FRACTAL_NZ ||
         (x1Scale != nullptr && ge::GetPrimaryFormat(x1Scale->GetStorageFormat()) == Format::FORMAT_FRACTAL_NZ) ||
@@ -641,11 +622,11 @@ inline static aclnnStatus CheckParams(const aclTensor* x1, const aclTensor* x2, 
             Ops::NN::FormatString("The formats of %s cannot be %s", "x1, out, x1Scale, x2Scale", "FRACTAL_NZ").c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
-    // MxFp8场景groupSize判断
-    CHECK_RET(InferGroupSize(groupSize, isMxFp), ACLNN_ERR_PARAM_INVALID);
-    if (batch_split_factor != 1) {
+    // groupSize validation for MXFP8.
+    CHECK_RET(InferGroupSize(groupSize, isMXFP8), ACLNN_ERR_PARAM_INVALID);
+    if (batchSplitFactor != 1) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
-            OP_NAME, "batchSplitFactor", Ops::NN::FormatString("%d", batch_split_factor).c_str(),
+            OP_NAME, "batchSplitFactor", Ops::NN::FormatString("%d", batchSplitFactor).c_str(),
             Ops::NN::FormatString("The value of %s must be %d", "batchSplitFactor", 1).c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
@@ -658,7 +639,7 @@ static const aclTensor* BuildTransposeQuantBatchMatMulGraph(const aclTensor* x1,
                                                             const aclIntArray* permX2, const aclIntArray* permY,
                                                             int32_t batchSplitFactor, aclOpExecutor* executor)
 {
-    // 连续性转换
+    // Make the tensors contiguous.
     auto contiguousX1 = l0op::Contiguous(x1, executor);
     OP_CHECK(contiguousX1 != nullptr,
              OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The input x1 preprocess failed, contiguous return nullptr."),
@@ -710,6 +691,12 @@ static const aclTensor* BuildTransposeQuantBatchMatMulGraph(const aclTensor* x1,
                  OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The input x2Scale preprocess failed, contiguous return nullptr."),
                  return nullptr);
     }
+    contiguousX1Scale = ProcessScaleDtype(contiguousX1Scale, executor);
+    contiguousX2Scale = ProcessScaleDtype(contiguousX2Scale, executor);
+    OP_CHECK(contiguousX1Scale != nullptr || x1Scale == nullptr,
+             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The input x1Scale dtype view creation failed."), return nullptr);
+    OP_CHECK(contiguousX2Scale != nullptr,
+             OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "The input x2Scale dtype view creation failed."), return nullptr);
 
     // Invoke tqbmm l0 api
     return l0op::TransposeQuantBatchMatMul(reformX1, reformX2, nullptr, contiguousX1Scale, contiguousX2Scale, dtype,
@@ -725,14 +712,14 @@ aclnnStatus aclnnTransposeQuantBatchMatMulGetWorkspaceSize(
                    DFX_IN(x1, x2, bias, x1Scale, x2Scale, dtype, groupSize, permX1, permX2, permY, batchSplitFactor),
                    DFX_OUT(out));
 
-    // 固定写法, 创建OpExecutor
-    auto unique_executor = CREATE_EXECUTOR();
-    CHECK_RET(unique_executor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // Create the op executor.
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
-    // 入参检查
+    // Check input parameters.
     auto ret = CheckParams(x1, x2, x1Scale, x2Scale, out, dtype, permX1, permX2, permY, batchSplitFactor, groupSize);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
-    // 空tensor 处理
+    // Handle empty tensors.
     if (x1->IsEmpty() || x2->IsEmpty()) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "x1, x2",
@@ -742,25 +729,25 @@ aclnnStatus aclnnTransposeQuantBatchMatMulGetWorkspaceSize(
             Ops::NN::FormatString("%s cannot be empty tensors", "x1, x2").c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
-    // 当前暂不支持bias
+    // Bias is not supported currently.
     if (bias != nullptr) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "bias", "", Ops::NN::FormatString("The value of %s must be %s", "bias", "null").c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
-    // 构建matmul计算图
+    // Build the matmul graph.
     const aclTensor* tqbmmOut = nullptr;
     tqbmmOut = BuildTransposeQuantBatchMatMulGraph(x1, x2, x1Scale, x2Scale, dtype, groupSize, permX1, permX2, permY,
-                                                   batchSplitFactor, unique_executor.get());
+                                                   batchSplitFactor, uniqueExecutor.get());
     CHECK_RET(tqbmmOut != nullptr, ACLNN_ERR_PARAM_INVALID);
 
-    tqbmmOut = l0op::Cast(tqbmmOut, out->GetDataType(), unique_executor.get());
+    tqbmmOut = l0op::Cast(tqbmmOut, out->GetDataType(), uniqueExecutor.get());
     CHECK_RET(tqbmmOut != nullptr, ACLNN_ERR_PARAM_INVALID);
-    auto viewCopyResult = l0op::ViewCopy(tqbmmOut, out, unique_executor.get());
+    auto viewCopyResult = l0op::ViewCopy(tqbmmOut, out, uniqueExecutor.get());
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_PARAM_INVALID);
 
-    *workspaceSize = unique_executor->GetWorkspaceSize();
-    unique_executor.ReleaseTo(executor);
+    *workspaceSize = uniqueExecutor->GetWorkspaceSize();
+    uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;
 }
 
@@ -780,11 +767,11 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNzGetWorkspaceSize(
                    DFX_IN(x1, x2, bias, x1Scale, x2Scale, dtype, groupSize, permX1, permX2, permY, batchSplitFactor),
                    DFX_OUT(out));
 
-    // 固定写法, 创建OpExecutor
-    auto unique_executor = CREATE_EXECUTOR();
-    CHECK_RET(unique_executor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
+    // Create the op executor.
+    auto uniqueExecutor = CREATE_EXECUTOR();
+    CHECK_RET(uniqueExecutor.get() != nullptr, ACLNN_ERR_INNER_CREATE_EXECUTOR);
 
-    // 入参检查
+    // Check input parameters.
     auto ret = CheckParams(x1, x2, x1Scale, x2Scale, out, dtype, permX1, permX2, permY, batchSplitFactor, groupSize);
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
@@ -795,7 +782,7 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNzGetWorkspaceSize(
             Ops::NN::FormatString("The format of %s must be %s", "x2", "FRACTAL_NZ").c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
-    // 空tensor 处理
+    // Handle empty tensors.
     if (x1->IsEmpty() || x2->IsEmpty()) {
         OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
             OP_NAME, "x1, x2",
@@ -805,26 +792,26 @@ aclnnStatus aclnnTransposeQuantBatchMatMulWeightNzGetWorkspaceSize(
             Ops::NN::FormatString("The shapes of %s cannot be %s", "x1, x2", "empty").c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
-    // 当前暂不支持bias
+    // Bias is not supported currently.
     if (bias != nullptr) {
         OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
             OP_NAME, "bias", "not nullptr",
             Ops::NN::FormatString("The value of %s must be %s", "bias", "null").c_str());
         return ACLNN_ERR_PARAM_INVALID;
     }
-    // 构建matmul计算图
+    // Build the matmul graph.
     const aclTensor* tqbmmOut = nullptr;
     tqbmmOut = BuildTransposeQuantBatchMatMulGraph(x1, x2, x1Scale, x2Scale, dtype, groupSize, permX1, permX2, permY,
-                                                   batchSplitFactor, unique_executor.get());
+                                                   batchSplitFactor, uniqueExecutor.get());
     CHECK_RET(tqbmmOut != nullptr, ACLNN_ERR_PARAM_INVALID);
 
-    tqbmmOut = l0op::Cast(tqbmmOut, out->GetDataType(), unique_executor.get());
+    tqbmmOut = l0op::Cast(tqbmmOut, out->GetDataType(), uniqueExecutor.get());
     CHECK_RET(tqbmmOut != nullptr, ACLNN_ERR_PARAM_INVALID);
-    auto viewCopyResult = l0op::ViewCopy(tqbmmOut, out, unique_executor.get());
+    auto viewCopyResult = l0op::ViewCopy(tqbmmOut, out, uniqueExecutor.get());
     CHECK_RET(viewCopyResult != nullptr, ACLNN_ERR_PARAM_INVALID);
 
-    *workspaceSize = unique_executor->GetWorkspaceSize();
-    unique_executor.ReleaseTo(executor);
+    *workspaceSize = uniqueExecutor->GetWorkspaceSize();
+    uniqueExecutor.ReleaseTo(executor);
     return ACLNN_SUCCESS;
 }
 
