@@ -43,8 +43,6 @@ public:
             .DynamicRankSupportFlag(true)
             .DynamicShapeSupportFlag(true)
             .PrecisionReduceFlag(false);
-        this->AICore().AddConfig("ascend910b", aicoreConfig);
-        this->AICore().AddConfig("ascend910_93", aicoreConfig);
         opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_3510, aicoreConfig);
     }
 };
