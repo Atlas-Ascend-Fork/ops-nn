@@ -31,6 +31,7 @@ struct InferShapeCase {
     bool hasGroupIndex = false;
     gert::Shape weightShape = {};
     gert::Shape groupIndexShape = {2};
+    bool forceGradWeightOutput = false;
     ge::graphStatus expectedStatus = ge::GRAPH_SUCCESS;
 };
 
@@ -68,7 +69,12 @@ void ExecuteInferShapeCase(const InferShapeCase& testCase)
     std::vector<uint32_t> inputInstanceNum = {
         1, 1, testCase.hasWeight ? 1U : 0U, testCase.hasYOrigin ? 1U : 0U, testCase.hasGroupIndex ? 1U : 0U,
     };
-    std::vector<uint32_t> outputInstanceNum = {1, 1};
+    const bool hasGradWeightOutput = testCase.hasYOrigin || testCase.forceGradWeightOutput;
+    std::vector<uint32_t> outputInstanceNum = {1, hasGradWeightOutput ? 1U : 0U};
+    std::vector<gert::Shape*> outputShapes = {&gradXShape};
+    if (hasGradWeightOutput) {
+        outputShapes.emplace_back(&gradWeightShape);
+    }
     std::vector<gert::Shape*> inputShapes = {&gradYShape, &xShape};
     if (testCase.hasWeight) {
         inputShapes.emplace_back(&weightShape);
@@ -85,11 +91,13 @@ void ExecuteInferShapeCase(const InferShapeCase& testCase)
     contextFaker.SetOpType("SwigluGroupGrad")
         .IrInstanceNum(inputInstanceNum, outputInstanceNum)
         .InputShapes(inputShapes)
-        .OutputShapes({&gradXShape, &gradWeightShape})
+        .OutputShapes(outputShapes)
         .NodeInputTd(0, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
         .NodeInputTd(1, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-        .NodeOutputTd(0, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND)
-        .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+        .NodeOutputTd(0, testCase.dtype, ge::FORMAT_ND, ge::FORMAT_ND);
+    if (hasGradWeightOutput) {
+        contextFaker.NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
+    }
     int32_t optionalInputIndex = 2;
     if (testCase.hasWeight) {
         contextFaker.NodeInputTd(optionalInputIndex++, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND);
@@ -119,18 +127,18 @@ void ExecuteInferShapeCase(const InferShapeCase& testCase)
     auto* outputGradXShape = context->GetOutputShape(0);
     auto* outputGradWeightShape = context->GetOutputShape(1);
     ASSERT_NE(outputGradXShape, nullptr);
-    ASSERT_NE(outputGradWeightShape, nullptr);
     ASSERT_EQ(outputGradXShape->GetDimNum(), xShape.GetDimNum());
     for (size_t dim = 0; dim < xShape.GetDimNum(); ++dim) {
         EXPECT_EQ(outputGradXShape->GetDim(dim), xShape.GetDim(dim));
     }
-    if (testCase.hasWeight) {
+    if (testCase.hasYOrigin) {
+        ASSERT_NE(outputGradWeightShape, nullptr);
         EXPECT_EQ(outputGradWeightShape->GetDimNum(), weightShape.GetDimNum());
         for (size_t dim = 0; dim < weightShape.GetDimNum(); ++dim) {
             EXPECT_EQ(outputGradWeightShape->GetDim(dim), weightShape.GetDim(dim));
         }
-    } else {
-        EXPECT_EQ(outputGradWeightShape->GetDimNum(), 0);
+    } else if (!testCase.forceGradWeightOutput) {
+        EXPECT_EQ(outputGradWeightShape, nullptr);
     }
 }
 
@@ -226,11 +234,20 @@ TEST_F(SwigluGroupGradInferShapeTest, infershape_accepts_3d_input)
     ExecuteInferShapeCase(testCase);
 }
 
-TEST_F(SwigluGroupGradInferShapeTest, infershape_rejects_unpaired_weight)
+TEST_F(SwigluGroupGradInferShapeTest, infershape_accepts_weight_without_y_origin)
 {
     InferShapeCase testCase;
     testCase.hasWeight = true;
-    testCase.expectedStatus = ge::GRAPH_FAILED;
+    testCase.weightShape = {4};
+    ExecuteInferShapeCase(testCase);
+}
+
+TEST_F(SwigluGroupGradInferShapeTest, infershape_accepts_weight_without_y_origin_with_grad_weight_port)
+{
+    InferShapeCase testCase;
+    testCase.hasWeight = true;
+    testCase.weightShape = {4};
+    testCase.forceGradWeightOutput = true;
     ExecuteInferShapeCase(testCase);
 }
 
@@ -242,12 +259,12 @@ TEST_F(SwigluGroupGradInferShapeTest, infershape_rejects_unpaired_y_origin)
     ExecuteInferShapeCase(testCase);
 }
 
-TEST_F(SwigluGroupGradInferShapeTest, infershape_rejects_unpaired_weight_with_group_index)
+TEST_F(SwigluGroupGradInferShapeTest, infershape_accepts_weight_without_y_origin_with_group_index)
 {
     InferShapeCase testCase;
     testCase.hasWeight = true;
+    testCase.weightShape = {4};
     testCase.hasGroupIndex = true;
-    testCase.expectedStatus = ge::GRAPH_FAILED;
     ExecuteInferShapeCase(testCase);
 }
 

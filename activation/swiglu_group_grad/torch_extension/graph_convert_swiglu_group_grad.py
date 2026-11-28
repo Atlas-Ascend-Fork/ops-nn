@@ -37,8 +37,8 @@ if _TORCHAIR_AVAILABLE:
         clamp_limit: float = -1.0,
         meta_outputs: TensorSpec = None,
     ):
-        if (weight is None) != (y_origin is None):
-            raise RuntimeError("weight and y_origin must be provided together")
+        if y_origin is not None and weight is None:
+            raise RuntimeError("weight must be provided when y_origin is provided")
         if clamp_limit != -1.0 and not clamp_limit > 0.0:
             raise RuntimeError("clamp_limit must be -1.0 (no clamp) or > 0.0")
 
@@ -65,7 +65,7 @@ if _TORCHAIR_AVAILABLE:
             .output("grad_x", "DT_FLOAT16, DT_BF16, DT_FLOAT")
             .output("grad_weight", "DT_FLOAT"),
         )
-        if weight is None:
+        if weight is None or y_origin is None:
             return grad_x, None
         return grad_x, grad_weight
 else:

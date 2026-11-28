@@ -191,20 +191,30 @@ def test_meta_rejects_empty_group_index():
         )
 
 
-@pytest.mark.parametrize("missing", ["weight", "y_origin"])
-def test_meta_rejects_unpaired_optional_inputs(missing):
+def test_meta_accepts_weight_without_y_origin():
     _load_cann_ops_nn()
 
     grad_output = torch.empty((8, 128), dtype=torch.float16, device="meta")
     x = torch.empty((8, 256), dtype=torch.float16, device="meta")
     weight = torch.empty((8, 1), dtype=torch.float32, device="meta")
+
+    grad_x, grad_weight = torch.ops.cann_ops_nn.swiglu_group_backward(
+        grad_output, x, weight=weight
+    )
+
+    assert grad_x.shape == x.shape
+    assert grad_weight is None
+
+
+def test_meta_rejects_y_origin_without_weight():
+    _load_cann_ops_nn()
+
+    grad_output = torch.empty((8, 128), dtype=torch.float16, device="meta")
+    x = torch.empty((8, 256), dtype=torch.float16, device="meta")
     y_origin = torch.empty((8, 128), dtype=torch.float16, device="meta")
 
-    kwargs = {"weight": weight, "y_origin": y_origin}
-    kwargs.pop(missing)
-
-    with pytest.raises(RuntimeError, match="weight and y_origin"):
-        torch.ops.cann_ops_nn.swiglu_group_backward(grad_output, x, **kwargs)
+    with pytest.raises(RuntimeError, match="weight must be provided when y_origin"):
+        torch.ops.cann_ops_nn.swiglu_group_backward(grad_output, x, y_origin=y_origin)
 
 
 @pytest.mark.skipif(not _npu_available(), reason="torch_npu/NPU is not available")

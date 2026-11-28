@@ -224,6 +224,15 @@ TEST_F(SwigluGroupGradTilingTest, tiling_all_optional_inputs)
     ExecuteTilingCase(testCase);
 }
 
+TEST_F(SwigluGroupGradTilingTest, tiling_regbase_path_with_weight_without_y_origin)
+{
+    TilingCase testCase;
+    testCase.gradYShape = {64, 128};
+    testCase.xShape = {64, 256};
+    testCase.hasWeight = true;
+    ExecuteTilingCase(testCase);
+}
+
 TEST_F(SwigluGroupGradTilingTest, tiling_group_index_only)
 {
     TilingCase testCase;
@@ -322,11 +331,10 @@ TEST_F(SwigluGroupGradTilingTest, tiling_rejects_mismatched_outer_numel)
     ExecuteTilingCase(testCase);
 }
 
-TEST_F(SwigluGroupGradTilingTest, tiling_rejects_unpaired_weight)
+TEST_F(SwigluGroupGradTilingTest, tiling_accepts_weight_without_y_origin)
 {
     TilingCase testCase;
     testCase.hasWeight = true;
-    testCase.expectedStatus = ge::GRAPH_FAILED;
     ExecuteTilingCase(testCase);
 }
 
@@ -400,15 +408,15 @@ TEST_F(SwigluGroupGradTilingTest, errmsg_x_last_dim_mismatch_ez0015)
     ExecuteTilingCase(testCase);
 }
 
-TEST_F(SwigluGroupGradTilingTest, errmsg_weight_without_y_origin_ez0037)
+TEST_F(SwigluGroupGradTilingTest, errmsg_y_origin_without_weight_ez0037)
 {
     TilingCase testCase;
-    testCase.hasWeight = true;
+    testCase.hasYOrigin = true;
     testCase.expectedStatus = ge::GRAPH_FAILED;
     testCase.expectErrorId = "EZ0037";
-    testCase.expectErrorArgs = {{"param_name", "weight, y_origin"},
+    testCase.expectErrorArgs = {{"param_name", "weight"},
                                 {"op_name", "SwigluGroupGrad"},
-                                {"reason", "weight and y_origin must be provided together"}};
+                                {"reason", "weight must be provided when y_origin is present"}};
     ExecuteTilingCase(testCase);
 }
 

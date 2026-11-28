@@ -74,10 +74,9 @@ std::tuple<at::Tensor, c10::optional<at::Tensor>> swiglu_group_backward(
 
     const bool has_weight = weight.has_value() && weight.value().defined();
     const bool has_y_origin = y_origin.has_value() && y_origin.value().defined();
-    TORCH_CHECK(has_weight == has_y_origin, "weight and y_origin must be provided together");
+    TORCH_CHECK(!has_y_origin || has_weight, "weight must be provided when y_origin is provided");
 
     at::Tensor grad_x = at::empty(x.sizes(), grad_output.options());
-    at::Tensor grad_weight = at::empty({0}, grad_output.options().dtype(at::kFloat));
 
     int64_t totalRows = 1;
     for (int64_t i = 0; i < grad_output.dim() - 1; ++i) {
@@ -89,7 +88,6 @@ std::tuple<at::Tensor, c10::optional<at::Tensor>> swiglu_group_backward(
         TORCH_CHECK(weightElementNum == totalRows, "weight element num must equal total rows (", totalRows,
                     "), but got ", weightElementNum);
         TORCH_CHECK(weight.value().scalar_type() == at::kFloat, "weight dtype must be FLOAT");
-        grad_weight = at::empty(weight.value().sizes(), weight.value().options().dtype(at::kFloat));
     }
 
     if (has_y_origin) {
@@ -112,10 +110,15 @@ std::tuple<at::Tensor, c10::optional<at::Tensor>> swiglu_group_backward(
     }
 
     float clamp_limit_float = static_cast<float>(clamp_limit);
+    const bool need_grad_weight = has_weight && has_y_origin;
+    c10::optional<at::Tensor> grad_weight_out = c10::nullopt;
+    if (need_grad_weight) {
+        grad_weight_out = at::empty(weight.value().sizes(), weight.value().options().dtype(at::kFloat));
+    }
     ACLNN_CMD(aclnnSwigluGroupGrad, grad_output, x, weight, y_origin, group_index, clamp_limit_float, grad_x,
-              grad_weight);
-    if (has_weight) {
-        return std::make_tuple(grad_x, c10::optional<at::Tensor>(grad_weight));
+              grad_weight_out);
+    if (need_grad_weight) {
+        return std::make_tuple(grad_x, c10::optional<at::Tensor>(grad_weight_out.value()));
     }
     return std::make_tuple(grad_x, c10::nullopt);
 }

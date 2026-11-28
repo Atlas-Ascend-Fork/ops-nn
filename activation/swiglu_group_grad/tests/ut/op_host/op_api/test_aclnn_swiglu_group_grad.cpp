@@ -341,7 +341,20 @@ TEST_F(l2_swiglu_group_grad_test, l2_abnormal_empty_group_index)
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
 
-TEST_F(l2_swiglu_group_grad_test, l2_abnormal_weight_without_y_origin)
+TEST_F(l2_swiglu_group_grad_test, l2_weight_without_y_origin)
+{
+    auto dyDesc = TensorDesc({4, 16}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto xDesc = TensorDesc({4, 32}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto weightDesc = TensorDesc({4, 1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto dxOutDesc = TensorDesc({4, 32}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto ut = OP_API_UT(aclnnSwigluGroupGrad, INPUT(dyDesc, xDesc, weightDesc, nullptr, nullptr, -1.0f),
+                        OUTPUT(dxOutDesc, nullptr));
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
+
+TEST_F(l2_swiglu_group_grad_test, l2_abnormal_weight_without_y_origin_with_grad_weight_output)
 {
     auto dyDesc = TensorDesc({4, 16}, ACL_FLOAT, ACL_FORMAT_ND);
     auto xDesc = TensorDesc({4, 32}, ACL_FLOAT, ACL_FORMAT_ND);

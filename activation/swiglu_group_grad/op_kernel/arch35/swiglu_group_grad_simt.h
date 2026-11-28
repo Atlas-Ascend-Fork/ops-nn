@@ -484,9 +484,6 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(SIMT_THREAD_NUM) inline void ComputeGradSimt
         } else {
             (void)SimtComputeGradAt<inType, HAS_CLAMP>(dyAddr, xAddr, dxOutAddr, rowBase, doubleRowBase, 1, 0, wtVal,
                                                        mrVal, clampValue);
-            if constexpr (IS_WEIGHT) {
-                gradWeightAddr[r] = 0.0f;
-            }
         }
     }
 }
@@ -534,9 +531,6 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(SIMT_THREAD_NUM) inline void ComputeGradSimt
         } else {
             SimtComputeGradRow<inType, HAS_CLAMP>(dyAddr, xAddr, dxOutAddr, rowBase, doubleRowBase, H, wtVal, mrVal,
                                                   clampValue);
-            if constexpr (IS_WEIGHT) {
-                gradWeightAddr[r] = 0.0f;
-            }
         }
     }
 }
@@ -588,6 +582,9 @@ __aicore__ inline void SwigluGroupGradSimt<inType, HC, HTK, HYO, HGI>::Init(
 
     if constexpr (HTK) {
         weightAddr_ = reinterpret_cast<__gm__ float*>(topkWeightOptional);
+    }
+
+    if constexpr (HTK && HYO) {
         gradWeightAddr_ = reinterpret_cast<__gm__ float*>(dTopWeightsOutOptional);
     }
 

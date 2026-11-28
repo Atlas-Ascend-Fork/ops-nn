@@ -60,8 +60,8 @@ def _check_swiglu_group_backward_inputs(
         lambda: f"clamp_limit must be -1.0 (no clamp) or > 0.0, but got {clamp_limit}",
     )
 
-    if (weight is None) != (y_origin is None):
-        raise RuntimeError("weight and y_origin must be provided together")
+    if y_origin is not None and weight is None:
+        raise RuntimeError("weight must be provided when y_origin is provided")
     if weight is not None:
         weight_element_num = weight.numel()
         total_rows = 1
@@ -74,6 +74,10 @@ def _check_swiglu_group_backward_inputs(
         torch._check(
             weight.dtype == torch.float32, lambda: "weight dtype must be FLOAT"
         )
+    if y_origin is not None:
+        total_rows = 1
+        for s in grad_output.shape[:-1]:
+            total_rows *= s
         torch._check(
             y_origin.dim() >= 1,
             lambda: "y_origin must be at least 1D",
@@ -135,7 +139,7 @@ class SwigluGroupBackwardOpBuilder(OpBuilder):
                 grad_output, x, weight, y_origin, group_index, clamp_limit
             )
             grad_x = grad_output.new_empty(x.shape)
-            if weight is not None:
+            if weight is not None and y_origin is not None:
                 grad_weight = weight.new_empty(weight.shape, dtype=torch.float32)
             else:
                 grad_weight = None

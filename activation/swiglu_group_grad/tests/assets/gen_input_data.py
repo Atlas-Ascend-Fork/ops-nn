@@ -206,14 +206,16 @@ def compute_golden(
             grad_x:      FP32 numpy array [..., 2H]
             grad_weight: FP32 numpy array [..., 1], or None
     """
-    if (weight is None) != (y_origin is None):
-        raise ValueError("weight and y_origin must be provided together")
+    if y_origin is not None and weight is None:
+        raise ValueError("weight must be provided when y_origin is provided")
 
     # ── Handle empty tensor ──
     if x.size == 0:
         grad_x = np.zeros(x.shape, dtype=np.float32)
         grad_weight = (
-            np.zeros(weight.shape, dtype=np.float32) if weight is not None else None
+            np.zeros(weight.shape, dtype=np.float32)
+            if weight is not None and y_origin is not None
+            else None
         )
         return grad_x, grad_weight
 
@@ -285,7 +287,7 @@ def compute_golden(
 
     # ── gradWeight ──
     grad_weight = None
-    if weight is not None:
+    if weight is not None and y_origin is not None:
         y_origin_f = cast_to_fp32(y_origin)
         # grad_weight = Σ(gradY · yOrigin) along hidden dim，再按 m_r 掩码
         grad_weight = np.sum(dy_f * y_origin_f, axis=-1, keepdims=True)

@@ -40,14 +40,16 @@ static const std::initializer_list<DataType> DTYPE_SUPPORT_LIST = {DataType::DT_
 
 // ── Null-pointer checks ────────────────────────────────────────────────────
 static inline bool CheckNotNull(const aclTensor* gradY, const aclTensor* x, const aclTensor* gradXOut,
-                                const aclTensor* gradWeightOutOptional, const aclTensor* weightOptional)
+                                const aclTensor* gradWeightOutOptional, const aclTensor* weightOptional,
+                                const aclTensor* yOriginOptional)
 {
     OP_CHECK_NULL(gradY, return false);
     OP_CHECK_NULL(x, return false);
     OP_CHECK_NULL(gradXOut, return false);
 
-    // weightOptional non-null ⇒ gradWeightOutOptional must be non-null
-    if (weightOptional != nullptr) {
+    // yOriginOptional non-null ⇒ weight and gradWeightOutOptional must be non-null
+    if (yOriginOptional != nullptr) {
+        OP_CHECK_NULL(weightOptional, return false);
         OP_CHECK_NULL(gradWeightOutOptional, return false);
     }
     return true;
@@ -131,10 +133,10 @@ static inline bool CheckShape(const aclTensor* gradY, const aclTensor* x, const 
                 "The element num of weightOptional must be equal to the product of gradY leading dims.");
             return false;
         }
-        OP_CHECK_SHAPE_NOT_EQUAL(gradWeightOutOptional, weightOptional, return false);
     }
 
     if (yOriginOptional != nullptr) {
+        OP_CHECK_SHAPE_NOT_EQUAL(gradWeightOutOptional, weightOptional, return false);
         auto yOriginShape = yOriginOptional->GetViewShape();
         if (yOriginShape.GetDimNum() < 1) {
             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "yOriginOptional must be at least 1D.");
@@ -177,11 +179,16 @@ static aclnnStatus CheckParams(const aclTensor* gradY, const aclTensor* x, const
                                const aclTensor* yOriginOptional, const aclTensor* groupIndexOptional, float clampLimit,
                                const aclTensor* gradXOut, const aclTensor* gradWeightOutOptional)
 {
-    CHECK_RET(CheckNotNull(gradY, x, gradXOut, gradWeightOutOptional, weightOptional), ACLNN_ERR_PARAM_NULLPTR);
-    if ((weightOptional == nullptr) != (yOriginOptional == nullptr)) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "weightOptional and yOriginOptional must be provided together.");
+    if (yOriginOptional != nullptr && weightOptional == nullptr) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "weightOptional must be provided when yOriginOptional is present.");
         return ACLNN_ERR_PARAM_INVALID;
     }
+    if (yOriginOptional == nullptr && gradWeightOutOptional != nullptr) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "gradWeightOutOptional must be nullptr when yOriginOptional is absent.");
+        return ACLNN_ERR_PARAM_INVALID;
+    }
+    CHECK_RET(CheckNotNull(gradY, x, gradXOut, gradWeightOutOptional, weightOptional, yOriginOptional),
+              ACLNN_ERR_PARAM_NULLPTR);
     if (clampLimit != -1.0f && !(clampLimit > 0.0f)) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "clampLimit must be -1.0 (no clamp) or > 0.0, but got %f.", clampLimit);
         return ACLNN_ERR_PARAM_INVALID;
@@ -256,8 +263,8 @@ aclnnStatus aclnnSwigluGroupGradGetWorkspaceSize(const aclTensor* gradY, const a
     auto viewCopyGradX = l0op::ViewCopy(result[0], gradXOut, uniqueExecutor.get());
     CHECK_RET(viewCopyGradX != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    // ViewCopy gradWeightOutOptional when present
-    if (gradWeightOutOptional != nullptr && weightOptional != nullptr) {
+    // ViewCopy gradWeightOutOptional only when y_origin is present
+    if (gradWeightOutOptional != nullptr && yOriginOptional != nullptr) {
         CHECK_RET(result[1] != nullptr, ACLNN_ERR_INNER_NULLPTR);
         auto viewCopyGradWeight = l0op::ViewCopy(result[1], gradWeightOutOptional, uniqueExecutor.get());
         CHECK_RET(viewCopyGradWeight != nullptr, ACLNN_ERR_INNER_NULLPTR);

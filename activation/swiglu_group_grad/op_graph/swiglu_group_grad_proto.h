@@ -36,10 +36,10 @@ namespace ge {
  *     and the product of its leading dimensions must equal the product of grad_y's leading dimensions.
  *     Must be one of: bfloat16, float16, float32.
  * @li weight: An optional Tensor of shape (..., 1) with dtype float32. MoE top-k routing weight.
- *     It must be provided together with y_origin.
+ *     It can be provided alone; grad_weight is computed only when y_origin is also provided.
  * @li y_origin: An optional Tensor of shape (..., H) with same dtype as grad_y. Forward output y,
  *     including weight multiplication when weight is present.
- *     It must be provided together with weight.
+ *     It can only be provided together with weight.
 * @li group_index: An optional non-empty Tensor of shape (G,), G > 0, with dtype int64. Token/batch count per group.
 
 * @par Outputs:

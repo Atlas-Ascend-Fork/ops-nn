@@ -40,10 +40,10 @@ std::array<aclTensor*, SWIGLU_GROUP_GRAD_OUT_NUM> SwigluGroupGrad(const aclTenso
         return {nullptr, nullptr};
     }
 
-    // Allocate gradWeightOutOptional when weight is present
-    // When not present, allocate a dummy one-element tensor (the kernel will ignore it)
+    // Allocate gradWeightOutOptional only when both weight and y_origin are present.
+    // Otherwise allocate a dummy one-element tensor (the kernel will ignore it).
     aclTensor* gradWeightOutOptional = nullptr;
-    if (weightOptional != nullptr) {
+    if (weightOptional != nullptr && yOriginOptional != nullptr) {
         gradWeightOutOptional = executor->AllocTensor(weightOptional->GetViewShape(), DataType::DT_FLOAT,
                                                       Format::FORMAT_ND);
         if (gradWeightOutOptional == nullptr) {

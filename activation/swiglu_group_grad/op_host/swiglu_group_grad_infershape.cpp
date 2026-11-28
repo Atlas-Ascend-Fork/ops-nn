@@ -70,15 +70,13 @@ static ge::graphStatus InferShapeForSwigluGroupGrad(gert::InferShapeContext* con
     const bool has_y_origin = (y_origin_shape != nullptr);
     const bool has_group_index = (group_index_shape != nullptr);
 
-    if (has_weight != has_y_origin) {
+    if (has_y_origin && !has_weight) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
             context->GetNodeName(), "weight, y_origin",
-            "weight and y_origin must both be present or both be absent. has_weight=" +
-                std::to_string(static_cast<int>(has_weight)) +
+            "y_origin requires weight. has_weight=" + std::to_string(static_cast<int>(has_weight)) +
                 ", has_y_origin=" + std::to_string(static_cast<int>(has_y_origin)));
         return ge::GRAPH_FAILED;
     }
-
     gert::Shape* grad_x_shape = context->GetOutputShape(GRAD_X_INDEX);
     OPS_CHECK_NULL_WITH_CONTEXT(context, grad_x_shape);
 
@@ -108,7 +106,7 @@ static ge::graphStatus InferShapeForSwigluGroupGrad(gert::InferShapeContext* con
     const bool x_unknown_rank = Ops::Base::IsUnknownRank(*x_shape);
 
     if (grad_y_unknown_rank || x_unknown_rank) {
-        if (has_weight) {
+        if (has_y_origin) {
             gert::Shape* grad_weight_shape = context->GetOutputShape(GRAD_WEIGHT_INDEX);
             if (grad_weight_shape != nullptr) {
                 if (Ops::Base::IsUnknownRank(*weight_shape)) {
@@ -185,8 +183,6 @@ static ge::graphStatus InferShapeForSwigluGroupGrad(gert::InferShapeContext* con
 
     if (has_weight) {
         const bool weight_unknown_rank = Ops::Base::IsUnknownRank(*weight_shape);
-        const bool y_origin_unknown_rank = Ops::Base::IsUnknownRank(*y_origin_shape);
-
         if (!weight_unknown_rank) {
             int64_t weightElementNum = 1;
             bool weight_known = true;
@@ -215,6 +211,11 @@ static ge::graphStatus InferShapeForSwigluGroupGrad(gert::InferShapeContext* con
                 return ge::GRAPH_FAILED;
             }
         }
+    }
+
+    if (has_y_origin) {
+        const bool weight_unknown_rank = Ops::Base::IsUnknownRank(*weight_shape);
+        const bool y_origin_unknown_rank = Ops::Base::IsUnknownRank(*y_origin_shape);
 
         if (!y_origin_unknown_rank) {
             if (y_origin_shape->GetDimNum() < 1U) {
@@ -295,29 +296,26 @@ static ge::graphStatus InferDataTypeForSwigluGroupGrad(gert::InferDataTypeContex
     const bool has_y_origin = (y_origin_dtype != ge::DT_UNDEFINED);
     const bool has_group_index = (group_index_dtype != ge::DT_UNDEFINED);
 
-    if (has_weight != has_y_origin) {
+    if (has_y_origin && !has_weight) {
         OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(
             context->GetNodeName(), "weight, y_origin",
-            "weight and y_origin must both be present or both be absent. has_weight=" +
-                std::to_string(static_cast<int>(has_weight)) +
+            "y_origin requires weight. has_weight=" + std::to_string(static_cast<int>(has_weight)) +
                 ", has_y_origin=" + std::to_string(static_cast<int>(has_y_origin)));
         return ge::GRAPH_FAILED;
     }
 
-    if (has_weight) {
-        if (weight_dtype != ge::DT_FLOAT) {
-            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "weight", Ops::Base::ToString(weight_dtype),
-                                                  "weight only supports DT_FLOAT");
-            return ge::GRAPH_FAILED;
-        }
+    if (has_weight && weight_dtype != ge::DT_FLOAT) {
+        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(context->GetNodeName(), "weight", Ops::Base::ToString(weight_dtype),
+                                              "weight only supports DT_FLOAT");
+        return ge::GRAPH_FAILED;
+    }
 
-        if (y_origin_dtype != grad_y_dtype) {
-            OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
-                context->GetNodeName(), "y_origin, grad_y",
-                Ops::Base::ToString(y_origin_dtype) + ", " + Ops::Base::ToString(grad_y_dtype),
-                "y_origin dtype must be equal to grad_y dtype");
-            return ge::GRAPH_FAILED;
-        }
+    if (has_y_origin && y_origin_dtype != grad_y_dtype) {
+        OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+            context->GetNodeName(), "y_origin, grad_y",
+            Ops::Base::ToString(y_origin_dtype) + ", " + Ops::Base::ToString(grad_y_dtype),
+            "y_origin dtype must be equal to grad_y dtype");
+        return ge::GRAPH_FAILED;
     }
 
     if (has_group_index && group_index_dtype != ge::DT_INT64) {
@@ -333,7 +331,7 @@ static ge::graphStatus InferDataTypeForSwigluGroupGrad(gert::InferDataTypeContex
         return ret;
     }
 
-    if (has_weight) {
+    if (has_y_origin) {
         ret = context->SetOutputDataType(GRAD_WEIGHT_INDEX, ge::DT_FLOAT);
         if (ret != ge::GRAPH_SUCCESS) {
             OP_LOGE(context->GetNodeName(), "Failed to set grad_weight output dtype, ret=%d.", static_cast<int>(ret));

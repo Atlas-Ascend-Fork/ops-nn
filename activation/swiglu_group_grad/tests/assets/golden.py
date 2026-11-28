@@ -15,7 +15,7 @@ Ported from tbetoolkits golden.
 Outputs (order matches def.cpp / aclnn*.h):
   grad_x      (always)   — gradient w.r.t. x,       shape (*outer, 2H), dtype = grad_y.dtype
   grad_weight (optional) — gradient w.r.t. weight,  shape (*outer, 1),  dtype = float32
-                           returned only when weight input is provided.
+                           returned only when both weight and y_origin are provided.
 
 Attribute:
   clamp_limit (float, default=-1.0) — clamp threshold; -1 means no clamp.
@@ -27,7 +27,7 @@ Core formula (ClampedSwiGLU backward):
   dg = grad_y * silu' * u_tilde * w * m_g * m_r
   du = grad_y * f * w * m_u * m_r
   grad_x = concat([dg, du], axis=-1)
-  grad_weight = sum(grad_y * y_origin, axis=-1, keepdims) * m_r  [if weight given]
+  grad_weight = sum(grad_y * y_origin, axis=-1, keepdims) * m_r  [if weight and y_origin given]
 """
 
 import numpy
@@ -138,18 +138,15 @@ def _compute_clamped_swiglu_grad(
     grad_x = numpy.concatenate([dg, du], axis=-1)
 
     grad_weight = None
-    if weight is not None:
-        if y_origin is not None:
-            if y_origin.shape != grad_output.shape:
-                raise Exception(
-                    "ClampedSwigluGrad y_origin shape must be same as grad_output shape. "
-                    "y_origin shape={}, grad_output shape={}".format(
-                        y_origin.shape, grad_output.shape
-                    )
+    if weight is not None and y_origin is not None:
+        if y_origin.shape != grad_output.shape:
+            raise Exception(
+                "ClampedSwigluGrad y_origin shape must be same as grad_output shape. "
+                "y_origin shape={}, grad_output shape={}".format(
+                    y_origin.shape, grad_output.shape
                 )
-            y_origin_f = y_origin.astype(numpy.float32)
-        else:
-            y_origin_f = f * u_tilde
+            )
+        y_origin_f = y_origin.astype(numpy.float32)
         grad_weight = numpy.sum(dy_f * y_origin_f, axis=-1, keepdims=True).astype(
             numpy.float32
         )
@@ -181,7 +178,7 @@ class SwigluGroupGradTestSpec:
 
         if x.size == 0:
             grad_x = numpy.zeros(x.shape, dtype=grad_output.dtype)
-            if weight is not None:
+            if weight is not None and y_origin is not None:
                 grad_weight = numpy.zeros(weight.shape, dtype=numpy.float32)
                 return [grad_x, grad_weight]
             return [grad_x]
@@ -191,23 +188,18 @@ class SwigluGroupGradTestSpec:
         )
         grad_x = grad_x.astype(grad_output.dtype, copy=False)
 
-        if weight is not None:
+        if weight is not None and y_origin is not None:
             # 保留原始 golden 的重复计算逻辑:丢弃 _compute 算出的 grad_weight,重新计算
-            if y_origin is not None:
-                grad_weight = numpy.sum(
-                    grad_output.astype(numpy.float32) * y_origin.astype(numpy.float32),
-                    axis=-1,
-                    keepdims=True,
-                ).astype(numpy.float32)
-                # 无效行(t >= trunc)输出精确 0;用 where 而非乘 m_r,避免 Inf/NaN * 0 => NaN
-                m_r = _get_row_mask(grad_output.shape[:-1], group_index)
-                grad_weight = numpy.where(
-                    m_r > 0.0, grad_weight, numpy.float32(0.0)
-                ).astype(numpy.float32)
-            else:
-                # def.cpp 约束 weight/y_origin 必须同时提供,此分支不可达
-                outer_shape = grad_output.shape[:-1]
-                grad_weight = numpy.zeros(outer_shape + (1,), dtype=numpy.float32)
+            grad_weight = numpy.sum(
+                grad_output.astype(numpy.float32) * y_origin.astype(numpy.float32),
+                axis=-1,
+                keepdims=True,
+            ).astype(numpy.float32)
+            # 无效行(t >= trunc)输出精确 0;用 where 而非乘 m_r,避免 Inf/NaN * 0 => NaN
+            m_r = _get_row_mask(grad_output.shape[:-1], group_index)
+            grad_weight = numpy.where(
+                m_r > 0.0, grad_weight, numpy.float32(0.0)
+            ).astype(numpy.float32)
             return [grad_x, grad_weight]
         return [grad_x]
 
@@ -251,7 +243,7 @@ class AclnnSwigluGroupGradTestSpec:
         if x_np.size == 0:
             grad_x_np = numpy.zeros(x_np.shape, dtype=grad_output_np.dtype)
             results = [grad_x_np]
-            if weight_np is not None:
+            if weight_np is not None and y_origin_np is not None:
                 grad_weight_np = numpy.zeros(weight_np.shape, dtype=numpy.float32)
                 results.append(grad_weight_np)
         else:
@@ -264,25 +256,19 @@ class AclnnSwigluGroupGradTestSpec:
                 float(clampLimit),
             )
             results = [grad_x_np]
-            if weight_np is not None:
+            if weight_np is not None and y_origin_np is not None:
                 # 保留原始 golden 的重复计算逻辑:丢弃 _compute 算出的 grad_weight,重新计算
-                if y_origin_np is not None:
-                    grad_weight_np = numpy.sum(
-                        grad_output_np.astype(numpy.float32)
-                        * y_origin_np.astype(numpy.float32),
-                        axis=-1,
-                        keepdims=True,
-                    ).astype(numpy.float32)
-                    # 无效行(t >= trunc)输出精确 0;用 where 而非乘 m_r,避免 Inf/NaN * 0 => NaN
-                    m_r = _get_row_mask(grad_output_np.shape[:-1], group_index_np)
-                    grad_weight_np = numpy.where(
-                        m_r > 0.0, grad_weight_np, numpy.float32(0.0)
-                    ).astype(numpy.float32)
-                else:
-                    outer_shape = grad_output_np.shape[:-1]
-                    grad_weight_np = numpy.zeros(
-                        outer_shape + (1,), dtype=numpy.float32
-                    )
+                grad_weight_np = numpy.sum(
+                    grad_output_np.astype(numpy.float32)
+                    * y_origin_np.astype(numpy.float32),
+                    axis=-1,
+                    keepdims=True,
+                ).astype(numpy.float32)
+                # 无效行(t >= trunc)输出精确 0;用 where 而非乘 m_r,避免 Inf/NaN * 0 => NaN
+                m_r = _get_row_mask(grad_output_np.shape[:-1], group_index_np)
+                grad_weight_np = numpy.where(
+                    m_r > 0.0, grad_weight_np, numpy.float32(0.0)
+                ).astype(numpy.float32)
                 results.append(grad_weight_np)
 
         torch_results = [torch.from_numpy(r) for r in results]

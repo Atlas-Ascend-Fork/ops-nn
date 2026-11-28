@@ -116,41 +116,44 @@ static ge::graphStatus ParseOptionalInputs(gert::TilingContext* context, SwigluG
     inputData.isGroupIndex = 0;
     inputData.groupIndexG = 0;
 
-    const gert::Shape* weightShape = nullptr;
-    const gert::Shape* yOriginShape = nullptr;
-    const gert::Shape* groupIndexShape = nullptr;
-    int64_t floatOptCount = 0;
-    for (int64_t i = WEIGHT_INDEX; i <= GROUP_INDEX_INDEX; i++) {
-        auto shapePtr = context->GetInputShape(i);
-        if (shapePtr == nullptr) {
-            continue;
-        }
-        const gert::Shape& optShape = shapePtr->GetStorageShape();
-        if (optShape.GetDimNum() == 0) {
-            continue;
-        }
-        auto desc = context->GetInputDesc(i);
-        if (desc == nullptr) {
-            continue;
-        }
-        if (desc->GetDataType() == ge::DT_INT64) {
-            groupIndexShape = &optShape;
-        } else {
-            floatOptCount++;
-            if (floatOptCount == 1) {
-                weightShape = &optShape;
-            } else {
-                yOriginShape = &optShape;
-            }
-        }
-    }
+    auto weightShapePtr = context->GetOptionalInputShape(WEIGHT_INDEX);
+    auto yOriginShapePtr = context->GetOptionalInputShape(YORIGIN_INDEX);
+    auto groupIndexShapePtr = context->GetOptionalInputShape(GROUP_INDEX_INDEX);
+
+    const gert::Shape* weightShape = (weightShapePtr != nullptr && weightShapePtr->GetStorageShape().GetDimNum() > 0) ?
+                                         &weightShapePtr->GetStorageShape() :
+                                         nullptr;
+    const gert::Shape* yOriginShape = (yOriginShapePtr != nullptr &&
+                                       yOriginShapePtr->GetStorageShape().GetDimNum() > 0) ?
+                                          &yOriginShapePtr->GetStorageShape() :
+                                          nullptr;
+    const gert::Shape* groupIndexShape = (groupIndexShapePtr != nullptr &&
+                                          groupIndexShapePtr->GetStorageShape().GetDimNum() > 0) ?
+                                             &groupIndexShapePtr->GetStorageShape() :
+                                             nullptr;
 
     if (weightShape != nullptr) {
         inputData.isWeight = 1;
+        auto weightElementNum = weightShape->GetShapeSize();
+        if (weightElementNum != inputData.totalRows) {
+            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
+                context->GetNodeName(), "weight", std::to_string(weightElementNum).c_str(),
+                "The element num of weight must be equal to the product of grad_y leading dims.");
+            return ge::GRAPH_FAILED;
+        }
+    }
+
+    if (yOriginShape != nullptr) {
+        OP_CHECK_IF(weightShape == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "weight",
+                                                             "weight must be present when y_origin is present"),
+                    return ge::GRAPH_FAILED);
+        inputData.isYOrigin = 1;
+
         auto gradWeightOut = context->GetOutputShape(1);
         OP_CHECK_IF(gradWeightOut == nullptr,
                     OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "grad_weight",
-                                                             "grad_weight must be non-null when weight is present"),
+                                                             "grad_weight must be non-null when y_origin is present"),
                     return ge::GRAPH_FAILED);
         const gert::Shape& gradWeightShape = gradWeightOut->GetStorageShape();
         OP_CHECK_IF(gradWeightShape.GetDimNum() != weightShape->GetDimNum(),
@@ -167,11 +170,6 @@ static ge::graphStatus ParseOptionalInputs(gert::TilingContext* context, SwigluG
                             "grad_weight shape must match weight shape"),
                         return ge::GRAPH_FAILED);
         }
-        OP_CHECK_IF(yOriginShape == nullptr,
-                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(context->GetNodeName(), "weight, y_origin",
-                                                             "y_origin must be present when weight is present"),
-                    return ge::GRAPH_FAILED);
-        inputData.isYOrigin = 1;
 
         OP_CHECK_IF(yOriginShape->GetDimNum() < 1,
                     OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "y_origin",
@@ -194,14 +192,6 @@ static ge::graphStatus ParseOptionalInputs(gert::TilingContext* context, SwigluG
                         std::to_string(yOriginTotalRows) + ", " + std::to_string(inputData.totalRows),
                         "y_origin outer numel must equal grad_y outer numel"),
                     return ge::GRAPH_FAILED);
-
-        auto weightElementNum = weightShape->GetShapeSize();
-        if (weightElementNum != inputData.totalRows) {
-            OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(
-                context->GetNodeName(), "weight", std::to_string(weightElementNum).c_str(),
-                "The element num of weight must be equal to the product of grad_y leading dims.");
-            return ge::GRAPH_FAILED;
-        }
     }
 
     if (groupIndexShape != nullptr) {

@@ -55,7 +55,7 @@
   du = grad\_output \cdot f \cdot w_t \cdot I(−c < u < c) \cdot m_r
   $$
 
-  `dg`与`du`沿最后一维拼接即为返回值`grad_x`；对`grad_output`与`y_origin`在hidden维求和得`grad_weight`（`y_origin`为含`w_t`的前向输出，与底层`aclnnSwigluGroupGrad`的定义一致）：
+  `dg`与`du`沿最后一维拼接即为返回值`grad_x`；对`grad_output`与`y_origin`在hidden维求和得`grad_weight`（`y_origin`为未乘`w_t`的前向激活值`SiLU(g̃)·ũ`）：
 
   $$
   grad\_weight = \Sigma(grad\_output \cdot y\_origin) \text{ along hidden dim}
@@ -84,7 +84,7 @@ torch.ops.cann_ops_nn.swiglu_group_backward(
 | `grad_output`| Tensor | 必选 | 上游梯度。 | `torch.float16`、`torch.bfloat16`、`torch.float32`| 1-8维 |
 | `x`| Tensor | 必选 | 前向输入，包含 gate 和 up 分支。 | `torch.float16`、`torch.bfloat16`、`torch.float32`| 1-8维，最后一维为 `2 * grad_output.shape[-1]`|
 | `weight`| Tensor | 可选 | MoE top-k路由权重，缺省视作全1。 | `torch.float32`| 元素个数等于`grad_output`除最后一维外的元素个数 |
-| `y_origin`| Tensor | 可选 | 前向输出 y，weight存在时y已乘该权重。 | 与`grad_output`相同 | 最后一维与`grad_output`相同，非尾轴元素个数等于`grad_output`非尾轴元素个数 |
+| `y_origin`| Tensor | 可选 | 未乘weight的前向激活值`SiLU(g̃)·ũ`。自动反向会在weight需要梯度时用`weight=None`的前向结果生成。 | 与`grad_output`相同 | 最后一维与`grad_output`相同，非尾轴元素个数等于`grad_output`非尾轴元素个数 |
 | `group_index`| Tensor | 可选 | 各分组token数量索引，缺省视作全部行有效。 | `torch.int64`| 1维 |
 | `clamp_limit`| float | 可选 | 截断门限，默认`-1.0`表示不clamp，启用时必须大于0。 | - | - |
 
@@ -93,13 +93,13 @@ torch.ops.cann_ops_nn.swiglu_group_backward(
 | 参数名 | 参数类型 | 描述 | 数据类型 | 维度（shape） |
 | --- | --- | --- | --- | --- |
 |`grad_x`| Tensor | x的梯度。 | 与`grad_output`相同 | 与`x`相同 |
-| `grad_weight`| Tensor | weight的梯度，仅weight和y_origin同时提供时返回。 | `torch.float32`| 与`weight`相同 |
+| `grad_weight`| Tensor | weight的梯度，仅同时提供`weight`和`y_origin`时返回，否则为`None`。 | `torch.float32`| 与`weight`相同 |
 
 ## 约束说明
 
 - 该接口支持单算子模式和TorchAir图模式调用。
 - `grad_output`、`x`、`weight`、`y_origin`、`group_index`均需为NPU Tensor；可选Tensor可以传`None`。
-- `weight`和`y_origin`必须同时提供或同时为空。
+- `weight`可单独提供，此时仅计算`grad_x`；`y_origin`仅可在提供`weight`时传入。
 - `grad_output`与`x`的非尾轴元素总数相等，`x.shape[-1]`必须等于`2 * grad_output.shape[-1]`。
 - `group_index`非空时必须是一维非空Tensor（G > 0）。
 - `clamp_limit`为`-1.0`或大于`0.0`，`-1.0`表示不clamp。
@@ -121,7 +121,7 @@ torch.ops.cann_ops_nn.swiglu_group_backward(
   # grad_output：上游梯度，形状(8, 128)；x：前向输入，最后一维须为2*128=256（前128列为gate，后128列为up）
   grad_output = torch.randn(8, 128, dtype=torch.float16).npu()
   x = torch.randn(8, 256, dtype=torch.float16).npu()
-  # weight：MoE路由权重，形状(8, 1)，每行一个标量；y_origin：前向输出，须与grad_output同形状且已乘weight（此处随机数仅作示意）
+  # weight：MoE路由权重，形状(8, 1)，每行一个标量；y_origin：未乘weight的前向激活值，须与grad_output同形状（此处随机数仅作示意）
   weight = torch.ones(8, 1, dtype=torch.float32).npu()
   y_origin = torch.randn(8, 128, dtype=torch.float16).npu()
   # group_index：各分组token数，[8]表示单组且8行全部有效

@@ -266,7 +266,7 @@ aclnnStatus aclnnSwigluGroupGrad(
       <td>weightOptional (aclTensor*)</td>
       <td>Input (optional)</td>
       <td>MoE weight tensor.</td>
-      <td><ul><li>The number of elements equals the number of elements in gradY excluding the last dimension.</li><li>Must be provided together with yOriginOptional.</li></ul></td>
+      <td><ul><li>The number of elements equals the number of elements in gradY excluding the last dimension.</li><li>Can be provided alone; in that case it is only used to compute gradX, and gradWeight is computed only when yOriginOptional is also provided.</li></ul></td>
       <td>FLOAT</td>
       <td>ND</td>
       <td>1-8</td>
@@ -275,8 +275,8 @@ aclnnStatus aclnnSwigluGroupGrad(
     <tr>
       <td>yOriginOptional (aclTensor*)</td>
       <td>Input (optional)</td>
-      <td>SwiGLU forward output. If weight exists, this output is multiplied by weight.</td>
-      <td><ul><li>shape=[..., H]. Common shapes are [T, H] or [B, S, H].</li><li>Must be provided together with weightOptional.</li><li>The number of non-trailing axis elements equals that of gradY.</li></ul></td>
+      <td>SwiGLU forward activation SiLU(g̃)·ũ, before the weight multiplication.</td>
+      <td><ul><li>shape=[..., H]. Common shapes are [T, H] or [B, S, H].</li><li>Can only be provided together with weightOptional.</li><li>The number of non-trailing axis elements equals that of gradY.</li></ul></td>
       <td>BFLOAT16, FLOAT16, FLOAT</td>
       <td>ND</td>
       <td>1-8</td>
@@ -316,7 +316,7 @@ aclnnStatus aclnnSwigluGroupGrad(
       <td>gradWeightOutOptional (aclTensor*)</td>
       <td>Output (optional)</td>
       <td>Weight gradient tensor.</td>
-      <td><ul><li>Output when both weightOptional and yOriginOptional are provided.</li><li>shape is consistent with weightOptional.</li></ul></td>
+      <td><ul><li>Output only when both weightOptional and yOriginOptional are provided.</li><li>shape is consistent with weightOptional.</li></ul></td>
       <td>FLOAT</td>
       <td>ND</td>
       <td>Same as weightOptional</td>
@@ -416,7 +416,7 @@ aclnnStatus: Returns a status code. For details, see [aclnn Return Codes](../../
 - H must be greater than 0.
 - The last dimension of x must be an even number (2H). The last dimension of gradY is H, which is half of the last dimension of x.
 - The trailing axes of gradY and x satisfy x.shape[-1] == 2 * gradY.shape[-1], and the total numbers of non-trailing axis elements are equal.
-- weightOptional and yOriginOptional must be provided together or left empty together; the number of elements in weightOptional is equal to the number of non-trailing axis elements in gradY; the last dimension of yOriginOptional is the same as that of gradY, and the number of non-trailing axis elements is equal to that of gradY.
+- weightOptional can be provided alone, in which case it is only used to compute gradX and gradWeight is not computed; yOriginOptional can only be provided together with weightOptional; the number of elements in weightOptional is equal to the number of non-trailing axis elements in gradY; the last dimension of yOriginOptional is the same as that of gradY, and the number of non-trailing axis elements is equal to that of gradY.
 - When groupIndexOptional is non-empty, it must be a 1-D non-empty tensor.
 - gradY, x, yOriginOptional, and gradXOut must have the same data type (FLOAT, FLOAT16, or BFLOAT16).
 - weightOptional and gradWeightOutOptional must be of the FLOAT type.

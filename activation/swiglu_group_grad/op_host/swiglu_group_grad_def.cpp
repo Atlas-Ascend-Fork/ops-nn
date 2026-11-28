@@ -14,8 +14,8 @@
  *
  * IR definition:
  *   Required inputs:  grad_y (T,H)/(B,S,H) [BF16/FP16/FP32], x (T,2H)/(B,S,2H) [BF16/FP16/FP32]
- *   Optional inputs:  weight (T,1)/(B,S,1) [FP32] and y_origin (T,H)/(B,S,H) [BF16/FP16/FP32]
- *                     must be provided together,
+ *   Optional inputs:  weight (T,1)/(B,S,1) [FP32], y_origin (T,H)/(B,S,H) [BF16/FP16/FP32]
+ *                     (y_origin requires weight; weight alone is valid),
  *                     group_index (G,) [INT64]
  *   Attribute:        clamp_limit (Float, default=-1 → no clamp)
  *   Required output:  grad_x (T,2H)/(B,S,2H) [BF16/FP16/FP32]

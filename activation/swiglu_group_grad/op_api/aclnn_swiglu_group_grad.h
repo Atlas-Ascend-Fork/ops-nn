@@ -36,15 +36,15 @@ extern "C" {
  * @param [in] gradY: 上游梯度，shape (T, H)或(B, S, H)，dtype BF16/FP16/FP32。
  * @param [in] x: 前向输入，shape (T, 2H)或(B, S, 2H)，dtype 同gradY。
  * @param [in] weightOptional: 可选输入，MoE top-k路由权重，shape (T, 1)或(B, S, 1)，dtype FP32。
- *           必须与yOriginOptional同时提供或同时为空。
+ *           可单独提供，此时仅参与gradX计算；仅当同时提供yOriginOptional时计算gradWeight。
  * @param [in] yOriginOptional: 可选输入，前向输出y，shape (T, H)或(B, S, H)，dtype 同gradY；
  *           weight存在时，y应为已乘weight的前向输出。
- *           必须与weightOptional同时提供或同时为空。
+ *           仅当同时提供weightOptional时才能传入，用于计算gradWeight。
  * @param [in] groupIndexOptional: 可选输入，各分组token数量，shape (G,)，G > 0，dtype INT64。支持空指针。
  * @param [in] clampLimit: 可选属性，截断门限值，dtype FP32。-1.0 表示不截断。
  * @param [out] gradXOut: 梯度输出，shape (T, 2H)或(B, S, 2H)，dtype 同gradY/x。不支持空指针。
  * @param [out] gradWeightOutOptional: 可选输出，weight的梯度，shape (T, 1)或(B, S, 1)，dtype FP32。
- *           weightOptional非空时此参数必传非空指针；weightOptional为空时可传空指针。
+ *           仅当weightOptional和yOriginOptional同时提供时此参数必传非空指针，否则可传空指针。
  * @param [out] workspaceSize: 返回需要在Device侧申请的workspace大小。
  * @param [out] executor: 返回op执行器，包含算子计算流程。
  * @return aclnnStatus: 返回状态码。

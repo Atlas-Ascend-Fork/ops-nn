@@ -49,7 +49,7 @@
   grad\_weight = \Sigma(grad\_output \cdot y\_origin) \text{ along hidden dim}
   $$
 
-  where `I` is the indicator function for the open interval (mask=0 at boundary values), `m_r` is the group_index mask, and `w_t` is the broadcast of weight.
+  where `I` is the indicator function for the open interval (mask=0 at boundary values), `m_r` is the group_index mask, and `w_t` is the broadcast of weight. `y_origin` here is the forward activation before the weight multiplication, `SiLU(g̃)·ũ`.
 
 ## Function Prototype
 
@@ -72,7 +72,7 @@ torch.ops.cann_ops_nn.swiglu_group_backward(
 | `grad_output`| Tensor | Required | Upstream gradient. | `torch.float16`, `torch.bfloat16`, `torch.float32`| 1-8 dimensions |
 | `x`| Tensor | Required | Forward input, containing the gate and up branches. | `torch.float16`, `torch.bfloat16`, `torch.float32`| 1-8 dimensions; the last dimension is `2 * grad_output.shape[-1]`. |
 | `weight`| Tensor | Optional | MoE top-k routing weights. Defaults to all ones. | `torch.float32`| The number of elements equals the number of elements in `grad_output` excluding the last dimension. |
-| `y_origin`| Tensor | Optional | Forward output y. When weight is provided, y has already been multiplied by the weight. | Same as `grad_output` | The last dimension is the same as `grad_output`; the number of elements in non-last dimensions equals that of `grad_output`. |
+| `y_origin`| Tensor | Optional | Forward activation before the weight multiplication, `SiLU(g̃)·ũ`. Autograd generates it from a `weight=None` forward result when the weight requires a gradient. | Same as `grad_output` | The last dimension is the same as `grad_output`; the number of elements in non-last dimensions equals that of `grad_output`. |
 | `group_index`| Tensor | Optional | Token count index of each group. Defaults to all rows being valid. | `torch.int64`| 1 dimension |
 | `clamp_limit`| float | Optional | Clamp limit. The default `-1.0` indicates no clamping. Must be greater than 0 when enabled. | - | - |
 
@@ -81,13 +81,13 @@ torch.ops.cann_ops_nn.swiglu_group_backward(
 | Name | Type | Description | Data Type | Dimension (Shape) |
 | --- | --- | --- | --- | --- |
 |`grad_x`| Tensor | Gradient of x. | Same as `grad_output` | Same as `x` |
-| `grad_weight`| Tensor | Gradient of weight, returned only when both weight and y_origin are provided. | `torch.float32`| Same as `weight` |
+| `grad_weight`| Tensor | Gradient of weight, returned only when both `weight` and `y_origin` are provided; otherwise `None`. | `torch.float32`| Same as `weight` |
 
 ## Constraints
 
 - This API supports calls in single-operator mode and TorchAir graph mode.
 - `grad_output`, `x`, `weight`, `y_origin`, and `group_index` must all be NPU tensors; optional tensors can be set to `None`.
-- `weight` and `y_origin` must be provided together or left empty together.
+- `weight` can be provided alone, in which case only `grad_x` is computed; `y_origin` can only be provided together with `weight`.
 - The total number of elements in the non-tail axes of `grad_output` equals that of `x`, and `x.shape[-1]` must equal `2 * grad_output.shape[-1]`.
 - When `group_index` is not empty, it must be a 1-D non-empty tensor (G > 0).
 - `clamp_limit` must be `-1.0` or greater than `0.0`; `-1.0` indicates no clamping.

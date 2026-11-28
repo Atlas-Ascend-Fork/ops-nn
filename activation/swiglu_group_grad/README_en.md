@@ -34,7 +34,7 @@ English | [简体中文](./README.md)
 
   where I is the open-interval indicator function (the mask is 0 at boundary values), trunc is the sum of the token counts of the groups in group_index, m_r is the group_index mask (that is, I(t < trunc)), and w_t is the broadcast of weight.
 
-  **Constraint**: weight and y_origin must be provided together or be empty at the same time; when they are provided as a pair, grad_weight is computed.
+  **Constraint**: weight can be provided alone, in which case it is only used to compute grad_x; y_origin can only be provided together with weight, and grad_weight is computed only when both are provided.
 
   grad_x concatenation: gradX[..., :H] = dg, gradX[..., H:] = du.
 
@@ -82,7 +82,7 @@ English | [简体中文](./README.md)
     <tr>
       <td>y_origin</td>
       <td>Optional input</td>
-      <td>Forward output y, whose last dimension is H. The number of its elements on the non-trailing axes equals the number of elements on the non-trailing axes of grad_y, and its dtype is the same as grad_y. When weight exists, y has already been multiplied by this weight. It must be provided together with weight.</td>
+      <td>Forward activation before the weight multiplication, SiLU(g̃)·ũ, whose last dimension is H. The number of its elements on the non-trailing axes equals the number of elements on the non-trailing axes of grad_y, and its dtype is the same as grad_y. It can only be provided together with weight.</td>
       <td>BFLOAT16, FLOAT16, FLOAT32</td>
       <td>ND</td>
     </tr>
@@ -110,7 +110,7 @@ English | [简体中文](./README.md)
     <tr>
       <td>grad_weight</td>
       <td>Optional output</td>
-      <td>Gradient of weight, with the same shape as weight and the dtype FP32. It is computed only when weight and y_origin are provided at the same time.</td>
+      <td>Gradient of weight, with the same shape as weight and the dtype FP32. It is output only when both weight and y_origin are provided.</td>
       <td>FLOAT32</td>
       <td>ND</td>
     </tr>
@@ -121,7 +121,8 @@ English | [简体中文](./README.md)
 - H > 0
 - x.shape[-1] = 2 × H (grad_y.shape[-1])
 - The trailing axes of grad_y and x satisfy x.shape[-1] == 2 * grad_y.shape[-1], and the total numbers of elements on the non-trailing axes are equal
-- weight and y_origin must be provided at the same time to compute grad_weight
+- weight can be provided alone, in which case it is only used to compute grad_x and grad_weight is not computed
+- y_origin can only be provided together with weight, and is used to compute grad_weight
 - The default value of clamp_limit is -1.0. Passing -1.0 means that clamping is not performed, and when clamping is enabled, a value greater than 0 must be passed in
 - When group_index is not empty, it must be a 1-dimensional non-empty tensor (G > 0)
 - When group_index is absent, all rows after flattening the leading dimensions are valid rows

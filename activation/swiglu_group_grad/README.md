@@ -32,7 +32,7 @@
 
   其中I为开区间指示函数（边界值时mask=0），trunc为group_index各分组token数之和，m_r为group_index mask（即I(t < trunc)），w_t为weight的broadcast。
 
-  **约束**：weight和y_origin必须同时提供或同时为空；成对提供时计算grad_weight。
+  **约束**：weight可单独提供，此时仅参与grad_x计算；y_origin仅可在提供weight时传入，仅在同时提供weight和y_origin时计算grad_weight。
 
   grad_x拼回：gradX[..., :H] = dg，gradX[..., H:] = du。
 
@@ -80,7 +80,7 @@
     <tr>
       <td>y_origin</td>
       <td>可选输入</td>
-      <td>前向输出 y，最后一维为 H，非尾轴元素个数等于 grad_y 非尾轴元素个数，dtype 同 grad_y；weight 存在时 y 已乘该权重。weight 提供时必须同时提供。</td>
+      <td>未乘weight的前向激活值SiLU(g̃)·ũ，最后一维为H，非尾轴元素个数等于grad_y非尾轴元素个数，dtype同grad_y。仅在同时提供weight时才能传入。</td>
       <td>BFLOAT16、FLOAT16、FLOAT32</td>
       <td>ND</td>
     </tr>
@@ -108,7 +108,7 @@
     <tr>
       <td>grad_weight</td>
       <td>可选输出</td>
-      <td>weight 的梯度，shape 与 weight 相同，dtype FP32。仅 weight 和 y_origin 同时提供时计算。</td>
+      <td>weight的梯度，shape与weight相同，dtype FP32。仅同时提供weight和y_origin时输出。</td>
       <td>FLOAT32</td>
       <td>ND</td>
     </tr>
@@ -119,7 +119,8 @@
 - H > 0
 - x.shape[-1] = 2 × H（grad_y.shape[-1]）
 - grad_y 与 x 的尾轴满足 x.shape[-1] == 2 * grad_y.shape[-1]，非尾轴元素总数相等
-- weight 和 y_origin 必须同时提供才能计算 grad_weight
+- weight可单独提供，此时仅参与grad_x计算，不计算grad_weight
+- y_origin仅可在提供weight时传入，用于计算grad_weight
 - clamp_limit 默认值 -1.0，传入 -1.0 表示不进行截断，启用截断时必须传入大于 0 的值
 - group_index 非空时必须是一维非空 Tensor（G > 0）
 - group_index 缺省时所有前导维度展平后的行均为有效行

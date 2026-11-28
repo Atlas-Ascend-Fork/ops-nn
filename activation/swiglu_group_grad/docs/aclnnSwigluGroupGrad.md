@@ -274,7 +274,7 @@ aclnnStatus aclnnSwigluGroupGrad(
       <td>weightOptional（aclTensor*）</td>
       <td>输入（可选）</td>
       <td>MoE权重张量。</td>
-      <td><ul><li>元素个数等于gradY除最后一维外的元素个数。</li><li>必须与yOriginOptional同时提供。</li></ul></td>
+      <td><ul><li>元素个数等于gradY除最后一维外的元素个数。</li><li>可单独提供，此时仅参与gradX计算；仅当同时提供yOriginOptional时计算gradWeight。</li></ul></td>
       <td>FLOAT</td>
       <td>ND</td>
       <td>1-8</td>
@@ -283,8 +283,8 @@ aclnnStatus aclnnSwigluGroupGrad(
     <tr>
       <td>yOriginOptional（aclTensor*）</td>
       <td>输入（可选）</td>
-      <td>SwiGLU前向输出；存在weight时，该输出已乘weight。</td>
-      <td><ul><li>shape=[..., H]，常用shape为[T, H]或[B, S, H]。</li><li>必须与weightOptional同时提供。</li><li>非尾轴元素个数等于gradY非尾轴元素个数。</li></ul></td>
+      <td>SwiGLU前向激活值SiLU(g̃)·ũ，未乘weight。</td>
+      <td><ul><li>shape=[..., H]，常用shape为[T, H]或[B, S, H]。</li><li>仅当同时提供weightOptional时才能传入。</li><li>非尾轴元素个数等于gradY非尾轴元素个数。</li></ul></td>
       <td>BFLOAT16、FLOAT16、FLOAT</td>
       <td>ND</td>
       <td>1-8</td>
@@ -324,7 +324,7 @@ aclnnStatus aclnnSwigluGroupGrad(
       <td>gradWeightOutOptional（aclTensor*）</td>
       <td>输出（可选）</td>
       <td>权重梯度张量。</td>
-      <td><ul><li>当weightOptional和yOriginOptional同时提供时输出。</li><li>shape与weightOptional一致。</li></ul></td>
+      <td><ul><li>仅当weightOptional和yOriginOptional同时提供时输出。</li><li>shape与weightOptional一致。</li></ul></td>
       <td>FLOAT</td>
       <td>ND</td>
       <td>与weightOptional相同</td>
@@ -424,7 +424,7 @@ aclnnStatus aclnnSwigluGroupGrad(
 - H必须大于0。
 - x最后一维必须为偶数（2H），gradY最后一维为H，与x最后一维的一半对应。
 - gradY与x的尾轴满足x.shape[-1] == 2 * gradY.shape[-1]，非尾轴元素总数相等。
-- weightOptional与yOriginOptional必须同时提供或同时为空；weightOptional的元素个数等于gradY非尾轴元素个数；yOriginOptional的最后一维与gradY相同，非尾轴元素个数与gradY相等。
+- weightOptional可单独提供，此时仅参与gradX计算，不计算gradWeight；yOriginOptional仅可在同时提供weightOptional时传入；weightOptional的元素个数等于gradY非尾轴元素个数；yOriginOptional的最后一维与gradY相同，非尾轴元素个数与gradY相等。
 - groupIndexOptional非空时必须是一维非空Tensor。
 - gradY、x、yOriginOptional、gradXOut数据类型必须一致（FLOAT、FLOAT16或BFLOAT16）。
 - weightOptional、gradWeightOutOptional必须为FLOAT类型。

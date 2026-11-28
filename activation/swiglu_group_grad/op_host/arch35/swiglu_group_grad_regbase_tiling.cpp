@@ -188,9 +188,9 @@ ge::graphStatus SwigluGroupGradArch35Tiling::ParseOptionalInputs()
                         1 :
                         0;
 
-    OP_CHECK_IF(isWeight_ != isYOrigin_,
-                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext->GetNodeName(), "weight, y_origin",
-                                                         "weight and y_origin must be provided together"),
+    OP_CHECK_IF(isYOrigin_ == 1 && isWeight_ == 0,
+                OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext->GetNodeName(), "weight",
+                                                         "weight must be provided when y_origin is present"),
                 return ge::GRAPH_FAILED);
 
     if (isWeight_ == 1) {
@@ -202,13 +202,14 @@ ge::graphStatus SwigluGroupGradArch35Tiling::ParseOptionalInputs()
                 "The element num of weight must be equal to the product of grad_y leading dims.");
             return ge::GRAPH_FAILED;
         }
-        auto gradWeightOut = tilingContext->GetOutputShape(1);
-        OP_CHECK_IF(gradWeightOut == nullptr,
-                    OP_LOGE(tilingContext->GetNodeName(), "grad_weight must be non-null when weight is present"),
-                    return ge::GRAPH_FAILED);
     }
 
     if (isYOrigin_ == 1) {
+        auto gradWeightOut = tilingContext->GetOutputShape(1);
+        OP_CHECK_IF(gradWeightOut == nullptr,
+                    OP_LOGE_FOR_INVALID_ARGUMENT_WITH_REASON(tilingContext->GetNodeName(), "grad_weight",
+                                                             "grad_weight must be non-null when y_origin is present"),
+                    return ge::GRAPH_FAILED);
         const gert::Shape& yOriginShape = yOriginStorageShape->GetStorageShape();
         OP_CHECK_IF(yOriginShape.GetDimNum() < 1,
                     OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(tilingContext->GetNodeName(), "y_origin",
