@@ -55,8 +55,8 @@ public:
         opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_2201);
 
         OpAICoreConfig config_kirin = GetKirinCoreConfig();
-        this->AICore().AddConfig("kirinx90", config_kirin);
-        this->AICore().AddConfig("kirin9030", config_kirin);
+        opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_3003, config_kirin);
+        opbase::ArchConfigHelper::AddConfigByArch(this->AICore(), Ops::Base::DAV_3113, config_kirin);
     }
 
 private:
