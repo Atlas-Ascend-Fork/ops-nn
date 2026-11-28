@@ -15,7 +15,9 @@
  * Key differences from args version:
  *  - 4 inputs (gradients, x, min, max) vs 2 inputs (gradients, x)
  *  - 3 outputs (backprops_wrt_x, backprops_wrt_min, backprops_wrt_max) vs 1 output (y)
- *  - No workspace: multi-core reduce via SetAtomicAdd direct to output GM
+ *  - Workspace = 16MB system-reserved head + 2*max(numCore,1)*float user area
+ *    (accessed via GetUserWorkspace) for deterministic two-stage reduce
+ *    (block partials in fixed slots, single-writer Kahan combine; no atomics)
  */
 
 #include "kernel_operator.h"
@@ -38,6 +40,6 @@ __global__ __aicore__ void fake_quant_with_min_max_vars_gradient(GM_ADDR gradien
     GET_TILING_DATA(tilingData, tiling);
 
     FakeQuantWithMinMaxVarsGradientRegbase<schMode> op(&tilingData);
-    op.Init(gradients, x, min_gm, max_gm, backprops_wrt_x, backprops_wrt_min, backprops_wrt_max);
+    op.Init(gradients, x, min_gm, max_gm, backprops_wrt_x, backprops_wrt_min, backprops_wrt_max, workspace);
     op.Process();
 }

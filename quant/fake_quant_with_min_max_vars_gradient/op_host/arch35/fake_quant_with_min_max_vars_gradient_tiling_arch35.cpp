@@ -15,8 +15,10 @@
  * Key differences from args version:
  *  - min/max are tensor inputs, NOT read in Tiling
  *  - No CalcNudge() — nudgedMin/nudgedMax computed on Device side
- *  - Multi-core reduce via SetAtomicAdd direct to output GM; a small legacy workspace
- *    (2 * max(numCore, 1) * sizeof(float)) is still requested but never read/written
+ *  - Workspace = 16MB system-reserved head + 2*max(numCore,1)*float user area,
+ *    used by the deterministic two-stage reduce (kernel side accesses it via
+ *    AscendC::GetUserWorkspace): [0, numCore) holds per-block backprops_wrt_min
+ *    partials, [numCore, 2*numCore) holds backprops_wrt_max partials
  *  - TilingData includes numBits and narrowRange (NOT nudgedMin/nudgedMax)
  */
 
@@ -44,6 +46,9 @@ constexpr int64_t MIN_BLOCK_FACTOR = 64;
 // arch35 VF 整寄存器装载宽度（VECTOR_REG_WIDTH 256B / sizeof(float)）：无谓词 vlds 固定读满
 // 256B，UB 单块缓冲必须不小于该宽度，否则小形状下装载越出缓冲（SAFE.01）。
 constexpr int64_t VECTOR_LEN_FP32 = 64;
+// arch35 kernel workspace 头部为系统保留区（SyncAll 等框架机制使用，16MB）；
+// 用户数据须经 AscendC::GetUserWorkspace 起算，tiling 声明需覆盖保留区+用户区。
+constexpr size_t SYS_WORKSPACE_SIZE = 16 * 1024 * 1024;
 
 ge::graphStatus FakeQuantWithMinMaxVarsGradientTiling::GetCompileInfo()
 {
@@ -204,10 +209,11 @@ ge::graphStatus FakeQuantWithMinMaxVarsGradientTiling::CalcTiling()
 
 ge::graphStatus FakeQuantWithMinMaxVarsGradientTiling::CalcWorkspace()
 {
-    // workspace = 2 * max(numCore, 1) * sizeof(float)
-    // Used for reduce: [0, numCore) for backprops_wrt_min local sums,
-    //                  [numCore, 2*numCore) for backprops_wrt_max local sums
-    size_t wsSize = 2 * static_cast<size_t>(numCore_ > 0 ? numCore_ : 1) * sizeof(float);
+    // workspace = system-reserved head (16MB, used by SyncAll etc.) + user area
+    // User area (accessed from AscendC::GetUserWorkspace in the kernel):
+    //   [0, numCore) for backprops_wrt_min per-block partials,
+    //   [numCore, 2*numCore) for backprops_wrt_max per-block partials
+    size_t wsSize = SYS_WORKSPACE_SIZE + 2 * static_cast<size_t>(numCore_ > 0 ? numCore_ : 1) * sizeof(float);
 
     size_t* workspaceSizes = context_->GetWorkspaceSizes(1);
     OP_CHECK_NULL_WITH_CONTEXT(context_, workspaceSizes);
