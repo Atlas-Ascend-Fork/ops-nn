@@ -392,6 +392,17 @@ bool QuantBatchMatmulInplaceAddHelper<BaseT>::CheckParamsForMxQuant(const gert::
                                  expectedKDimValue, this->inputParams_.mSize)
                         .c_str()),
                 return false);
+
+    // groupsizeM N K [1 1 32]
+    OP_CHECK_IF(this->inputParams_.groupSizeM != 1ULL || this->inputParams_.groupSizeN != 1ULL ||
+                    this->inputParams_.groupSizeK != MXFP_GROUP_SIZE_K,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    this->inputParams_.opName, "groupSizeM groupSizeN groupSizeK",
+                    FormatString("[%lu, %lu, %lu]", this->inputParams_.groupSizeM, this->inputParams_.groupSizeN,
+                                 this->inputParams_.groupSizeK)
+                        .c_str(),
+                    "when the quantization mode is mx, the groupSizeM, groupSizeN, groupSizeK must be [1, 1, 32]"),
+                return false);
     return true;
 }
 
