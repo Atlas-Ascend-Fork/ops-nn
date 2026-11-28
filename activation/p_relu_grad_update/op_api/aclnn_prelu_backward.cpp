@@ -14,6 +14,7 @@
 #include "prelu_grad_update.h"
 #include "../../p_relu_grad_reduce/op_api/prelu_grad_reduce.h"
 #include "aclnn_kernels/reshape.h"
+#include "level0/zero_op.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "op_api/op_api_def_nn.h"
 #include "opdev/common_types.h"
@@ -167,6 +168,21 @@ aclnnStatus CalcPreluBackwardL0Kernel(const aclTensor* contiguousGradOutput, con
     return ACLNN_SUCCESS;
 }
 
+// 空输入时gradInput为空无需写入，但gradWeight的形状由weight决定（与本用例的batch维无关），
+// 可能非空；此时PReLU反向的gradWeight应为全0，需要显式补零，避免返回成功但输出未被写入。
+static aclnnStatus FillEmptyGradWeight(const aclTensor* weight, aclTensor* gradWeight, aclOpExecutor* executor)
+{
+    auto weightContiguous = l0op::Contiguous(weight, executor);
+    CHECK_RET(weightContiguous != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+    auto gradWeightZeros = l0op::ZerosLike(weightContiguous, executor);
+    CHECK_RET(gradWeightZeros != nullptr, ACLNN_ERR_INNER_NULLPTR);
+
+    auto gradWeightResult = l0op::ViewCopy(gradWeightZeros, gradWeight, executor);
+    CHECK_RET(gradWeightResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    return ACLNN_SUCCESS;
+}
+
 aclnnStatus aclnnPreluBackwardGetWorkspaceSize(const aclTensor* gradOutput, const aclTensor* self,
                                                const aclTensor* weight, aclTensor* gradInput, aclTensor* gradWeight,
                                                uint64_t* workspaceSize, aclOpExecutor** executor)
@@ -183,7 +199,13 @@ aclnnStatus aclnnPreluBackwardGetWorkspaceSize(const aclTensor* gradOutput, cons
 
     // 如果gradOutput是空tensor，则gradInput也是空tensor，直接返回
     if (gradOutput->IsEmpty() || self->IsEmpty() || weight->IsEmpty()) {
-        *workspaceSize = 0;
+        // gradInput为空无需写入；但gradWeight的形状由weight决定，batch为0时仍可能非空，
+        // 需显式补零（PReLU反向在该形态下weight.grad为全0），否则会留下未写入的脏梯度。
+        if (!gradWeight->IsEmpty()) {
+            ret = FillEmptyGradWeight(weight, gradWeight, uniqueExecutor.get());
+            CHECK_RET(ret == ACLNN_SUCCESS, ret);
+        }
+        *workspaceSize = uniqueExecutor->GetWorkspaceSize();
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
     }

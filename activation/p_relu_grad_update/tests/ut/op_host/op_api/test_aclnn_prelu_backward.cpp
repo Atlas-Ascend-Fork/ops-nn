@@ -728,3 +728,37 @@ TEST_F(l2_prelu_backward_test, prelu_backward_testcase_038_exception_weight_mult
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
+
+// 空batch, weight只有1个元素: gradWeight非空, 早退时需要补零而不是跳过
+TEST_F(l2_prelu_backward_test, prelu_backward_testcase_039_empty_batch_weight_one_element)
+{
+    auto gradOutputDesc = TensorDesc({0, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto selfDesc = TensorDesc({0, 4}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto weightDesc = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto gradInputDesc = TensorDesc({0, 4}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.0001, 0.0001);
+    auto gradWeightDesc = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+
+    auto ut = OP_API_UT(aclnnPreluBackward, INPUT(gradOutputDesc, selfDesc, weightDesc),
+                        OUTPUT(gradInputDesc, gradWeightDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}
+
+// 空batch, weight为多维: gradWeight非空且shape与weight一致, 早退时需要补零
+TEST_F(l2_prelu_backward_test, prelu_backward_testcase_040_empty_batch_weight_multi_dim)
+{
+    auto gradOutputDesc = TensorDesc({0, 2, 3}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto selfDesc = TensorDesc({0, 2, 3}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto weightDesc = TensorDesc({1, 2, 1}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto gradInputDesc = TensorDesc({0, 2, 3}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.0001, 0.0001);
+    auto gradWeightDesc = TensorDesc({1, 2, 1}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+
+    auto ut = OP_API_UT(aclnnPreluBackward, INPUT(gradOutputDesc, selfDesc, weightDesc),
+                        OUTPUT(gradInputDesc, gradWeightDesc));
+
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+}

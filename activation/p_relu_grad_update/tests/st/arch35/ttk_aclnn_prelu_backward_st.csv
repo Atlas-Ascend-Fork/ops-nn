@@ -1,0 +1,7 @@
+testcase_name,api_name,tensor_view_shapes,tensor_dtypes,tensor_formats,scalar_dtypes,scalar_data_ranges,attributes,input_data_ranges,precision_tolerances,absolute_precision,tensor_view_strides,tensor_view_offsets,tensor_storage_shapes,output_tensor_indexes,remark
+"prelu_bwd_empty_batch_w8","aclnnPreluBackward","((0,8),(0,8),(8,),(0,8),(8,))","('float32',)","","","","","((-2,2),(-2,2),(-1,1))","","","","","","","空batch,w=8:gradWeight需补零(issue8246基线复现)"
+"prelu_bwd_empty_batch_w1","aclnnPreluBackward","((0,8),(0,8),(1,),(0,8),(1,))","('float32',)","","","","","((-2,2),(-2,2),(-1,1))","","","","","","","空batch,w=1:gradWeight需补零(weightNum==1支路)"
+"prelu_bwd_empty_batch_fp16_w8","aclnnPreluBackward","((0,8),(0,8),(8,),(0,8),(8,))","('float16',)","","","","","((-2,2),(-2,2),(-1,1))","","","","","","","空batch+fp16,w=8:gradWeight需补零"
+"prelu_bwd_normal_batch2_w8","aclnnPreluBackward","((2,8),(2,8),(8,),(2,8),(8,))","('float32',)","","","","","((-2,2),(-2,2),(-1,1))","","","","","","","正常batch,w=8:回归对照"
+"prelu_bwd_normal_batch2_w1","aclnnPreluBackward","((2,8),(2,8),(1,),(2,8),(1,))","('float32',)","","","","","((-2,2),(-2,2),(-1,1))","","","","","","","正常batch,w=1:回归对照"
+"prelu_bwd_normal_batch3_w8","aclnnPreluBackward","((3,8),(3,8),(8,),(3,8),(8,))","('float32',)","","","","","((-2,2),(-2,2),(-1,1))","","","","","","","正常batch=3,w=8:回归对照"
