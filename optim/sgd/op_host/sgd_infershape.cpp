@@ -129,7 +129,13 @@ static ge::graphStatus InferShapeForSgd(gert::InferShapeContext* context)
                 OP_LOGD(context, "Input shape validation failed."), return ge::GRAPH_FAILED);
 
     ge::graphStatus ret = Ops::Base::InferShape4Elewise(context);
-    OP_CHECK_IF(ret == ge::GRAPH_FAILED, OP_LOGE(context, "InferShapeForSgd failed."), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(ret == ge::GRAPH_FAILED,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(context->GetNodeName(), "parameters",
+                                                      Ops::Base::ToString(*paramShape).c_str(),
+                                                      "Sgd failed to derive the output shape from the input shapes, "
+                                                      "check the shape relationship between parameters and other "
+                                                      "inputs"),
+                return ge::GRAPH_FAILED);
     OP_LOGD(context, "InferShapeForSgd end.");
     return ret;
 }

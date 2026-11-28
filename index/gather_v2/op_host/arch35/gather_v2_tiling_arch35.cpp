@@ -18,6 +18,9 @@
 #include "register/op_impl_registry.h"
 #include "register/tilingdata_base.h"
 #include "op_host/tiling_util.h"
+#include "op_common/log/log.h"
+
+#include <string>
 
 namespace optiling {
 static const size_t INPUT_IDX_AXIS = 2;
@@ -187,12 +190,19 @@ bool CheckAndUpdateAxisAndBatchdims(const gert::TilingContext* context, int64_t&
     const gert::Shape& xShape = EnsureNotScalar(context->GetInputShape(0)->GetStorageShape());
     const gert::Shape& indiesShape = EnsureNotScalar(context->GetInputShape(1)->GetStorageShape());
     OP_CHECK_IF(params_dims <= 0 || indices_dims <= 0,
-                OP_LOGE("GatherV2:", "GatherV2Tiling: params_dims or indices_dims is 0."), return false);
-
-    OP_CHECK_IF(axis < -params_dims || axis >= params_dims,
-                OP_LOGE("GatherV2:", "op GatherV2Tiling: axis[%ld] is out of range, expected in [%ld, %ld).", axis,
-                        -params_dims, params_dims),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                    context->GetNodeName(), "params_dims/indices_dims",
+                    (std::to_string(params_dims) + "/" + std::to_string(indices_dims)).c_str(),
+                    "params_dims or indices_dims must be greater than 0"),
                 return false);
+
+    OP_CHECK_IF(
+        axis < -params_dims || axis >= params_dims,
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "axis", std::to_string(axis).c_str(),
+                                              ("axis is out of range, expected in [" + std::to_string(-params_dims) +
+                                               ", " + std::to_string(params_dims) + ")")
+                                                  .c_str()),
+        return false);
 
     if (axis < 0) {
         axis += params_dims;
@@ -200,22 +210,30 @@ bool CheckAndUpdateAxisAndBatchdims(const gert::TilingContext* context, int64_t&
 
     if (batch_dims != 0) {
         OP_CHECK_IF(batch_dims < -indices_dims || batch_dims > indices_dims,
-                    OP_LOGE("GatherV2:", "op GatherV2Tiling: batch_dims[%ld] is out of range, expected in [%ld, %ld].",
-                            batch_dims, -indices_dims, indices_dims),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                        context->GetNodeName(), "batch_dims", std::to_string(batch_dims).c_str(),
+                        ("batch_dims is out of range, expected in [" + std::to_string(-indices_dims) + ", " +
+                         std::to_string(indices_dims) + "]")
+                            .c_str()),
                     return false);
         if (batch_dims < 0) {
             batch_dims += indices_dims;
         }
         OP_CHECK_IF(batch_dims >= params_dims,
-                    OP_LOGE("GatherV2:", "op GatherV2Tiling: batch_dims must be less than rank(params)."),
+                    OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "batch_dims",
+                                                             std::to_string(batch_dims).c_str(),
+                                                             "batch_dims must be less than rank(params)"),
                     return false);
         OP_CHECK_IF(batch_dims > axis,
-                    OP_LOGE("GatherV2:", "op GatherV2Tiling: batch_dims must be less than or equal to axis."),
+                    OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(context->GetNodeName(), "batch_dims",
+                                                          std::to_string(batch_dims).c_str(),
+                                                          "batch_dims must be less than or equal to axis"),
                     return false);
         for (int64_t i = 0; i < batch_dims; i++) {
             if (xShape.GetDim(i) != indiesShape.GetDim(i)) {
-                OP_LOGE("GatherV2", "op GatherV2Tiling: Params.shape[:batch_dims] "
-                                    "should be equal to indices.shape[:batch_dims].");
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "indices", Ops::Base::ToString(indiesShape).c_str(),
+                    "Params.shape[:batch_dims] should be equal to indices.shape[:batch_dims]");
                 return false;
             }
         }
@@ -1036,7 +1054,15 @@ bool TilingWithoutBatchDims(const gert::TilingContext* context, const GatherV2Co
     int64_t half_remain_ub_size = (available_ub_size - PARAMS_CACHED_UB) / HALF_UB;
     int64_t half_ub_params_elem = half_ub_size / (compile_info->params_dsize);
     if (half_ub_params_elem == 0) {
-        OP_LOGE("GatherV2", "half_ub_params_elem is 0");
+        const char* opName = context->GetNodeName() == nullptr ? "GatherV2" : context->GetNodeName();
+        OP_LOGE_WITHOUT_REPORT(opName, "half_ub_params_elem is 0: params dtype size leaves no element in UB");
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{opName, (std::string("TilingWithoutBatchDims failed: half UB cannot hold one "
+                                                           "params element; halfUbSize=") +
+                                               std::to_string(half_ub_size) +
+                                               "B, paramsDsize=" + std::to_string(compile_info->params_dsize) + "B.")
+                                                  .c_str()}));
         return false;
     }
 
@@ -1075,7 +1101,16 @@ bool TilingWithoutBatchDims(const gert::TilingContext* context, const GatherV2Co
          (params->params_row) * (compile_info->params_dsize) % BLOCK_SIZE == 0)) {
         if (!ParamsPreTiling(params, compile_info, half_ub_size, half_remain_ub_size, params_total_ceil,
                              params_row_ceil)) {
-            OP_LOGE("GatherV2", "ParamsPreTiling is false");
+            const char* opName = context->GetNodeName() == nullptr ? "GatherV2" : context->GetNodeName();
+            OP_LOGE_WITHOUT_REPORT(opName, "ParamsPreTiling is false: params shape=%s",
+                                   Ops::Base::ToString(context->GetInputShape(0)->GetStorageShape()).c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{opName,
+                                          (std::string("TilingWithoutBatchDims failed: ParamsPreTiling cannot plan "
+                                                       "the cache-mode split for this params shape; paramsShape=") +
+                                           Ops::Base::ToString(context->GetInputShape(0)->GetStorageShape()) + ".")
+                                              .c_str()}));
             return false;
         }
     } else {
@@ -1159,7 +1194,14 @@ bool CalcWithBatchDims(GatherV2TilingParams* params, int64_t indices_num_per_loo
                        int64_t params_d_size)
 {
     if (indices_num_per_loop == 0 || params_d_size == 0) {
-        OP_LOGE("gather_v2", "indices_num_per_loop or params_d_size= 0 is not support");
+        OP_LOGE_WITHOUT_REPORT("GatherV2", "indices_num_per_loop=%ld or params_d_size=%ld is 0 is not supported",
+                               indices_num_per_loop, params_d_size);
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{"GatherV2", (std::string("CalcWithBatchDims failed: indices_num_per_loop=") +
+                                                   std::to_string(indices_num_per_loop) + ", params_d_size=" +
+                                                   std::to_string(params_d_size) + "; both must be positive.")
+                                                      .c_str()}));
         return false;
     }
     params->indices_loop_num = (params->indices_row) / indices_num_per_loop;
@@ -1182,7 +1224,13 @@ bool CalcWithBatchDims(GatherV2TilingParams* params, int64_t indices_num_per_loo
         params->row_num_once_ub = int((params->row_num_once_ub) / block_num) * block_num;
     }
     OP_CHECK_IF((params->row_num_once_ub == 0),
-                OP_LOGE("Gather Tiling:", "Divide by row_num_once_ub[%ld] exception.", params->row_num_once_ub),
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{"GatherV2", (std::string("CalcWithBatchDims failed: row_num_once_ub is "
+                                                                       "0; params_row exceeds the available UB, "
+                                                                       "res_ub_size=") +
+                                                           std::to_string(res_ub_size) + ".")
+                                                              .c_str()})),
                 return false);
     params->inner_loop_num = (params->indices_row_num_once) / (params->row_num_once_ub);
     if ((params->indices_row_num_once) % (params->row_num_once_ub) != 0) {
@@ -1440,13 +1488,31 @@ bool TilingWithBatchDims(gert::TilingContext* context, GatherV2TilingParams* par
     if ((params->params_row) * (compile_info->params_dsize) < BLOCK_SIZE) {
         if (!WithBatchDimsSmall(params, compile_info, half_remain_params_elem, half_size_ub, params_total_ceil,
                                 params_row_ceil)) {
-            OP_LOGE("GatherV2", "WithBatchDimsSmall is false");
+            const char* opName = context->GetNodeName() == nullptr ? "GatherV2" : context->GetNodeName();
+            OP_LOGE_WITHOUT_REPORT(opName, "WithBatchDimsSmall is false: params shape=%s",
+                                   Ops::Base::ToString(context->GetInputShape(0)->GetStorageShape()).c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{opName,
+                                          (std::string("TilingWithBatchDims failed: WithBatchDimsSmall cannot plan "
+                                                       "the small-batch split; paramsShape=") +
+                                           Ops::Base::ToString(context->GetInputShape(0)->GetStorageShape()) + ".")
+                                              .c_str()}));
             return false;
         }
     } else {
         if (!WithBatchDimsBig(params, compile_info, params_row_ceil, half_size_ub, half_ub_params_elem,
                               params_total_ceil, half_remain_params_elem)) {
-            OP_LOGE("GatherV2", "WithBatchDimsBig is false");
+            const char* opName = context->GetNodeName() == nullptr ? "GatherV2" : context->GetNodeName();
+            OP_LOGE_WITHOUT_REPORT(opName, "WithBatchDimsBig is false: params shape=%s",
+                                   Ops::Base::ToString(context->GetInputShape(0)->GetStorageShape()).c_str());
+            REPORT_PREDEFINED_ERR_MSG(
+                "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                (std::vector<const char*>{opName,
+                                          (std::string("TilingWithBatchDims failed: WithBatchDimsBig cannot plan "
+                                                       "the batch split; paramsShape=") +
+                                           Ops::Base::ToString(context->GetInputShape(0)->GetStorageShape()) + ".")
+                                              .c_str()}));
             return false;
         }
     }

@@ -46,10 +46,17 @@ ge::graphStatus TilingPrepare4SegmentSum(gert::TilingParseContext* context)
     compileInfoPtr->core_num = ascendcPlatform.GetCoreNumAiv();
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, compileInfoPtr->ub_size);
 
-    OP_CHECK_IF((compileInfoPtr->core_num <= 0), OP_LOGE(context->GetNodeName(), "The core num is invalid."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF((compileInfoPtr->ub_size <= 0),
-                OP_LOGE(context->GetNodeName(), "The UB size from platform is invalid."), return ge::GRAPH_FAILED);
+    const char* opName = context->GetNodeName() == nullptr ? "SegmentSum" : context->GetNodeName();
+    OP_CHECK_IF(
+        (compileInfoPtr->core_num <= 0),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "core_num", std::to_string(compileInfoPtr->core_num).c_str(),
+                                              "The core num from platform must be greater than 0."),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        (compileInfoPtr->ub_size <= 0),
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "ub_size", std::to_string(compileInfoPtr->ub_size).c_str(),
+                                              "The UB size from platform must be greater than 0."),
+        return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "TilingPrepare4SegmentSum is end.");
     return ge::GRAPH_SUCCESS;
 }

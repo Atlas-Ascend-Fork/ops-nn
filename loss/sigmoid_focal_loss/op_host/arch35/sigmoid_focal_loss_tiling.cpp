@@ -213,8 +213,19 @@ void ComputeBranch2Tiling(const SigmoidFocalLossBranch2TilingInputs& inputs, Sig
         ++cacheCount;
     }
     if (cacheCount * sizeof(float) > REDUCTION_CACHE_BYTES) {
-        OP_LOGE("SigmoidFocalLoss", "Branch2 cache is insufficient: count=%lu required=%lu available=%lu rLoops=%lu",
-                cacheCount, cacheCount * sizeof(float), REDUCTION_CACHE_BYTES, rLoopCnt);
+        OP_LOGE_WITHOUT_REPORT("SigmoidFocalLoss",
+                               "Branch2 cache is insufficient: count=%lu required=%lu available=%lu rLoops=%lu",
+                               cacheCount, cacheCount * sizeof(float), REDUCTION_CACHE_BYTES, rLoopCnt);
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{
+                "SigmoidFocalLoss",
+                (std::string("Branch2 reduction tiling failed: the loop cache required by the "
+                             "reduction plan exceeds the reserved cache; count=") +
+                 std::to_string(cacheCount) + ", required=" + std::to_string(cacheCount * sizeof(float)) +
+                 "B, available=" + std::to_string(REDUCTION_CACHE_BYTES) + "B, rLoops=" + std::to_string(rLoopCnt) +
+                 ".")
+                    .c_str()}));
         return;
     }
 
@@ -267,10 +278,22 @@ void ComputeBranch3Tiling(const SigmoidFocalLossBranch3TilingInputs& inputs, Sig
         (inputs.reductionMode != REDUCTION_SUM && inputs.reductionMode != REDUCTION_MEAN) ||
         (inputs.hasWeight != 0 && inputs.hasWeight != 1) || !std::isfinite(inputs.gamma) || inputs.gamma < 0.0F ||
         inputs.gamma > 5.0F || !std::isfinite(inputs.alpha) || inputs.alpha < 0.0F || inputs.alpha > 1.0F) {
-        OP_LOGE("SigmoidFocalLoss",
-                "invalid Branch3 inputs: total=%ld block=%lu dtypeBytes=%lu mode=%d weight=%d gamma=%f alpha=%f",
-                inputs.totalElements, inputs.blockSize, inputs.dtypeBytes, inputs.reductionMode, inputs.hasWeight,
-                inputs.gamma, inputs.alpha);
+        OP_LOGE_WITHOUT_REPORT("SigmoidFocalLoss",
+                               "invalid Branch3 inputs: total=%ld block=%lu dtypeBytes=%lu mode=%d weight=%d "
+                               "gamma=%f alpha=%f",
+                               inputs.totalElements, inputs.blockSize, inputs.dtypeBytes, inputs.reductionMode,
+                               inputs.hasWeight, inputs.gamma, inputs.alpha);
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{
+                "SigmoidFocalLoss",
+                (std::string("Branch3 EMPTY-R tiling failed: the internal input invariant "
+                             "guaranteed by ValidateInputs was violated; total=") +
+                 std::to_string(inputs.totalElements) + ", blockSize=" + std::to_string(inputs.blockSize) +
+                 ", dtypeBytes=" + std::to_string(inputs.dtypeBytes) +
+                 ", mode=" + std::to_string(inputs.reductionMode) + ", weight=" + std::to_string(inputs.hasWeight) +
+                 ", gamma=" + std::to_string(inputs.gamma) + ", alpha=" + std::to_string(inputs.alpha) + ".")
+                    .c_str()}));
         return;
     }
 
@@ -311,11 +334,23 @@ void ComputeBranch4Tiling(const SigmoidFocalLossBranch4TilingInputs& inputs, Sig
         (inputs.reductionMode != REDUCTION_SUM && inputs.reductionMode != REDUCTION_MEAN) ||
         (inputs.hasWeight != 0 && inputs.hasWeight != 1) || !std::isfinite(inputs.gamma) || inputs.gamma < 0.0F ||
         inputs.gamma > 5.0F || !std::isfinite(inputs.alpha) || inputs.alpha < 0.0F || inputs.alpha > 1.0F) {
-        OP_LOGE("SigmoidFocalLoss",
-                "invalid Branch4 inputs: total=%ld cores=%u ub=%lu block=%lu dtypeBytes=%lu mode=%d weight=%d "
-                "gamma=%f alpha=%f",
-                inputs.totalElements, inputs.availableCoreNum, inputs.ubSize, inputs.blockSize, inputs.dtypeBytes,
-                inputs.reductionMode, inputs.hasWeight, inputs.gamma, inputs.alpha);
+        OP_LOGE_WITHOUT_REPORT("SigmoidFocalLoss",
+                               "invalid Branch4 inputs: total=%ld cores=%u ub=%lu block=%lu dtypeBytes=%lu mode=%d "
+                               "weight=%d gamma=%f alpha=%f",
+                               inputs.totalElements, inputs.availableCoreNum, inputs.ubSize, inputs.blockSize,
+                               inputs.dtypeBytes, inputs.reductionMode, inputs.hasWeight, inputs.gamma, inputs.alpha);
+        REPORT_PREDEFINED_ERR_MSG(
+            "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+            (std::vector<const char*>{
+                "SigmoidFocalLoss",
+                (std::string("Branch4 REDUCE tiling failed: the internal invariant "
+                             "guaranteed by ValidateInputs and platform info was violated; total=") +
+                 std::to_string(inputs.totalElements) + ", cores=" + std::to_string(inputs.availableCoreNum) +
+                 ", ub=" + std::to_string(inputs.ubSize) + ", blockSize=" + std::to_string(inputs.blockSize) +
+                 ", dtypeBytes=" + std::to_string(inputs.dtypeBytes) +
+                 ", mode=" + std::to_string(inputs.reductionMode) + ", weight=" + std::to_string(inputs.hasWeight) +
+                 ", gamma=" + std::to_string(inputs.gamma) + ", alpha=" + std::to_string(inputs.alpha) + ".")
+                    .c_str()}));
         return;
     }
 
@@ -585,17 +620,29 @@ ge::graphStatus ValidateInputs(gert::TilingContext* context, SemanticInfo& seman
     if (predOriginShape.GetDimNum() != 2 || predShape.GetDimNum() != 2 || targetOriginShape.GetDimNum() != 2 ||
         targetShape.GetDimNum() != 2 ||
         (semanticInfo.hasWeight && (weightOriginShape->GetDimNum() != 2 || weightShape->GetDimNum() != 2))) {
-        OP_LOGE(context->GetNodeName(),
-                "all inputs must have origin/storage rank 2: pred=%zu/%zu target=%zu/%zu weight=%zu/%zu",
-                predOriginShape.GetDimNum(), predShape.GetDimNum(), targetOriginShape.GetDimNum(),
-                targetShape.GetDimNum(), semanticInfo.hasWeight ? weightOriginShape->GetDimNum() : 0U,
-                semanticInfo.hasWeight ? weightShape->GetDimNum() : 0U);
+        OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+            context->GetNodeName(), "pred, target and weight",
+            ("pred=" + std::to_string(predOriginShape.GetDimNum()) + "/" + std::to_string(predShape.GetDimNum()) +
+             " target=" + std::to_string(targetOriginShape.GetDimNum()) + "/" +
+             std::to_string(targetShape.GetDimNum()) +
+             " weight=" + std::to_string(semanticInfo.hasWeight ? weightOriginShape->GetDimNum() : 0U) + "/" +
+             std::to_string(semanticInfo.hasWeight ? weightShape->GetDimNum() : 0U))
+                .c_str(),
+            "all inputs must have origin/storage rank 2");
         return ge::GRAPH_FAILED;
     }
     if (!HasNonNegativeDims(predOriginShape) || !HasNonNegativeDims(predShape) ||
         !HasNonNegativeDims(targetOriginShape) || !HasNonNegativeDims(targetShape) ||
         (semanticInfo.hasWeight && (!HasNonNegativeDims(*weightOriginShape) || !HasNonNegativeDims(*weightShape)))) {
-        OP_LOGE(context->GetNodeName(), "all input origin/storage dimensions must be non-negative");
+        OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+            context->GetNodeName(), "pred, target and weight",
+            ("pred=" + Ops::Base::ToString(predOriginShape) + "/" + Ops::Base::ToString(predShape) +
+             " target=" + Ops::Base::ToString(targetOriginShape) + "/" + Ops::Base::ToString(targetShape) + " weight=" +
+             (semanticInfo.hasWeight ?
+                  Ops::Base::ToString(*weightOriginShape) + "/" + Ops::Base::ToString(*weightShape) :
+                  std::string("none")))
+                .c_str(),
+            "all input origin/storage dimensions must be non-negative");
         return ge::GRAPH_FAILED;
     }
 
@@ -612,8 +659,10 @@ ge::graphStatus ValidateInputs(gert::TilingContext* context, SemanticInfo& seman
     const std::string reductionValue = reduction == nullptr ? "mean" : reduction;
     if (!std::isfinite(semanticInfo.gamma) || semanticInfo.gamma < 0.0F || semanticInfo.gamma > 5.0F ||
         !std::isfinite(semanticInfo.alpha) || semanticInfo.alpha < 0.0F || semanticInfo.alpha > 1.0F) {
-        OP_LOGE(context->GetNodeName(), "attribute out of range: gamma=%f alpha=%f", semanticInfo.gamma,
-                semanticInfo.alpha);
+        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+            context->GetNodeName(), "gamma, alpha",
+            ("gamma=" + std::to_string(semanticInfo.gamma) + " alpha=" + std::to_string(semanticInfo.alpha)).c_str(),
+            "gamma must be in [0.0, 5.0] and alpha must be in [0.0, 1.0]");
         return ge::GRAPH_FAILED;
     }
     if (reductionValue == "none") {
@@ -632,7 +681,15 @@ ge::graphStatus ValidateInputs(gert::TilingContext* context, SemanticInfo& seman
         (semanticInfo.hasWeight &&
          (!IsSameShape(*weightOriginShape, *weightShape) || !IsSameShape(predOriginShape, *weightOriginShape) ||
           !IsSameShape(predShape, *weightShape)))) {
-        OP_LOGE(context->GetNodeName(), "pred, target and instantiated weight origin/storage shapes must be identical");
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+            context->GetNodeName(), "pred, target and weight",
+            ("pred=" + Ops::Base::ToString(predOriginShape) + "/" + Ops::Base::ToString(predShape) +
+             " target=" + Ops::Base::ToString(targetOriginShape) + "/" + Ops::Base::ToString(targetShape) + " weight=" +
+             (semanticInfo.hasWeight ?
+                  Ops::Base::ToString(*weightOriginShape) + "/" + Ops::Base::ToString(*weightShape) :
+                  std::string("none")))
+                .c_str(),
+            "pred, target and instantiated weight origin/storage shapes must be identical");
         return ge::GRAPH_FAILED;
     }
     const int64_t n = predShape.GetDim(0);

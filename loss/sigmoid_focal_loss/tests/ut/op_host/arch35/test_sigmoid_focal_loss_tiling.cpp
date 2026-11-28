@@ -28,6 +28,7 @@
 #include "register/op_impl_registry.h"
 #include "test_cube_util.h"
 #include "ut_op_util.h"
+#include "base/err_mgr.h"
 #include "../../../../op_host/arch35/sigmoid_focal_loss_tiling.h"
 
 using namespace ut_util;
@@ -154,6 +155,181 @@ ge::graphStatus RunHostTiling(const HostTilingCase& testCase, bool expectTilingD
 }
 
 void ExpectRejected(const HostTilingCase& testCase) { EXPECT_EQ(RunHostTiling(testCase, true), ge::GRAPH_FAILED); }
+
+// ============================================================================
+// ValidateInputs 首报错误码断言（对应外部用户错误整改 #14376/#14377/#14379/#14381）。
+// ErrorManager 上下文隔离方式与 hard_sigmoid_grad UT 一致。
+// ============================================================================
+
+class ScopedErrorContext {
+public:
+    ScopedErrorContext() : savedContext_(error_message::GetErrMgrContext())
+    {
+        auto context = savedContext_;
+        context.work_stream_id = reinterpret_cast<std::uintptr_t>(this);
+        error_message::SetErrMgrContext(context);
+        (void)error_message::GetErrMgrRawErrorMessages();
+    }
+
+    ~ScopedErrorContext()
+    {
+        (void)error_message::GetErrMgrRawErrorMessages();
+        error_message::SetErrMgrContext(savedContext_);
+    }
+
+    ScopedErrorContext(const ScopedErrorContext&) = delete;
+    ScopedErrorContext& operator=(const ScopedErrorContext&) = delete;
+
+private:
+    error_message::ErrorManagerContext savedContext_;
+};
+
+struct CapturedError {
+    size_t count = 0;
+    std::string code;
+    std::vector<std::string> keys;
+    std::vector<std::string> values;
+};
+
+CapturedError CaptureError()
+{
+    CapturedError captured;
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    captured.count = errors.size();
+    if (errors.empty()) {
+        return captured;
+    }
+    const auto& error = errors.back();
+    captured.code = error.error_id == nullptr ? "" : error.error_id.get();
+    for (const auto& key : error.args_key) {
+        captured.keys.emplace_back(key == nullptr ? "" : key.get());
+    }
+    for (const auto& value : error.args_value) {
+        captured.values.emplace_back(value == nullptr ? "" : value.get());
+    }
+    return captured;
+}
+
+std::string ErrorValue(const CapturedError& error, const std::string& key)
+{
+    for (size_t i = 0; i < error.keys.size() && i < error.values.size(); ++i) {
+        if (error.keys[i] == key) {
+            return error.values[i];
+        }
+    }
+    return "<missing:" + key + ">";
+}
+
+void ExpectSingleFormalError(const CapturedError& error, const std::string& expectedCode)
+{
+    EXPECT_EQ(error.count, 1U) << "expected exactly one first error, actual code=" << error.code;
+    EXPECT_EQ(error.code, expectedCode);
+    EXPECT_EQ(error.keys.size(), 4U);
+    EXPECT_EQ(error.values.size(), 4U);
+}
+
+// #14376: 输入 rank 非 2 → EZ0012
+TEST(SigmoidFocalLossErrorCode, ValidateRankReportsEz0012)
+{
+    HostTilingCase value;
+    value.pred.originShape = value.pred.storageShape = {2, 3, 4};
+    value.target.originShape = value.target.storageShape = {2, 3, 4};
+    ScopedErrorContext errorContext;
+    EXPECT_EQ(RunHostTiling(value), ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+
+    ExpectSingleFormalError(error, "EZ0012");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "pred, target and weight");
+    EXPECT_EQ(ErrorValue(error, "op_name"), kOpType);
+    EXPECT_EQ(ErrorValue(error, "incorrect_dim"), "pred=3/3 target=3/3 weight=0/0");
+    EXPECT_EQ(ErrorValue(error, "reason"), "all inputs must have origin/storage rank 2");
+}
+
+// #14377: 输入维度为负 → EZ0009
+TEST(SigmoidFocalLossErrorCode, ValidateNegativeDimReportsEz0009)
+{
+    HostTilingCase value;
+    value.pred.originShape = value.pred.storageShape = {-1, 3};
+    value.target.originShape = value.target.storageShape = {-1, 3};
+    ScopedErrorContext errorContext;
+    EXPECT_EQ(RunHostTiling(value), ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+
+    ExpectSingleFormalError(error, "EZ0009");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "pred, target and weight");
+    EXPECT_EQ(ErrorValue(error, "op_name"), kOpType);
+    EXPECT_EQ(ErrorValue(error, "incorrect_shape"), "pred=[-1, 3]/[-1, 3] target=[-1, 3]/[-1, 3] weight=none");
+    EXPECT_EQ(ErrorValue(error, "reason"), "all input origin/storage dimensions must be non-negative");
+}
+
+// #14379: gamma/alpha 越界 → EZ0026
+TEST(SigmoidFocalLossErrorCode, ValidateAttributeRangeReportsEz0026)
+{
+    HostTilingCase value;
+    value.gamma = 5.01F;
+    ScopedErrorContext errorContext;
+    EXPECT_EQ(RunHostTiling(value), ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+
+    ExpectSingleFormalError(error, "EZ0026");
+    EXPECT_EQ(ErrorValue(error, "param_name"), "gamma, alpha");
+    EXPECT_EQ(ErrorValue(error, "op_name"), kOpType);
+    EXPECT_EQ(ErrorValue(error, "incorrect_value"), "gamma=5.010000 alpha=0.250000");
+    EXPECT_EQ(ErrorValue(error, "reason"), "gamma must be in [0.0, 5.0] and alpha must be in [0.0, 1.0]");
+}
+
+// #14381: pred/target/weight shape 不一致 → EZ0010
+TEST(SigmoidFocalLossErrorCode, ValidateShapeMismatchReportsEz0010)
+{
+    HostTilingCase value;
+    value.target.originShape = value.target.storageShape = {2, 4};
+    ScopedErrorContext errorContext;
+    EXPECT_EQ(RunHostTiling(value), ge::GRAPH_FAILED);
+    const auto error = CaptureError();
+
+    ExpectSingleFormalError(error, "EZ0010");
+    EXPECT_EQ(ErrorValue(error, "param_names"), "pred, target and weight");
+    EXPECT_EQ(ErrorValue(error, "op_name"), kOpType);
+    EXPECT_EQ(ErrorValue(error, "incorrect_shapes"), "pred=[2, 3]/[2, 3] target=[2, 4]/[2, 4] weight=none");
+    EXPECT_EQ(ErrorValue(error, "reason"),
+              "pred, target and instantiated weight origin/storage shapes must be identical");
+}
+
+// Branch4（生产可达的 REDUCE 分支）内部不变量被违反 → EZ1008（首报唯一，opName+reason）。
+// 合法输入下 ValidateInputs 已先行拦截同类错误，此处直调注入 gamma 越界验证防御路径上报。
+TEST(SigmoidFocalLossErrorCode, Branch4InvariantViolationReportsEz1008)
+{
+    optiling::SigmoidFocalLossBranch4TilingInputs inputs;
+    inputs.totalElements = 8;
+    inputs.reductionMode = REDUCTION_SUM;
+    inputs.hasWeight = 1;
+    inputs.gamma = 6.0F;
+    inputs.alpha = 0.25F;
+    inputs.availableCoreNum = 16U;
+    inputs.ubSize = kUbSize;
+    inputs.blockSize = 32U;
+    inputs.dtypeBytes = sizeof(float);
+
+    SigmoidFocalLossTilingData output;
+    uint64_t tilingKey = 0;
+    uint32_t blockDim = 1;
+    uint64_t workspaceBytes = 0;
+    uint32_t scheduleMode = 0;
+    ScopedErrorContext errorContext;
+    optiling::ComputeBranch4Tiling(inputs, output, tilingKey, blockDim, workspaceBytes, scheduleMode);
+    const auto error = CaptureError();
+
+    EXPECT_EQ(error.count, 1U) << "expected exactly one first error, actual code=" << error.code;
+    EXPECT_EQ(error.code, "EZ1008");
+    EXPECT_EQ(error.keys.size(), 2U);
+    EXPECT_EQ(error.values.size(), 2U);
+    EXPECT_EQ(ErrorValue(error, "opName"), "SigmoidFocalLoss");
+    EXPECT_EQ(ErrorValue(error, "reason"),
+              "Branch4 REDUCE tiling failed: the internal invariant guaranteed by ValidateInputs and platform info "
+              "was violated; total=8, cores=16, ub=196608, blockSize=32, dtypeBytes=4, mode=1, weight=1, "
+              "gamma=6.000000, alpha=0.250000.");
+    EXPECT_EQ(blockDim, 0U);
+}
 
 TEST(SigmoidFocalLossReviewRegression, GenericPowerTileUsesTilingApiFactorFormula)
 {

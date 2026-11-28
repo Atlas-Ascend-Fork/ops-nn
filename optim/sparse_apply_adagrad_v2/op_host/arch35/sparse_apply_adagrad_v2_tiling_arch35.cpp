@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <string>
 #include "graph/utils/type_utils.h"
 #include "log/log.h"
 #include "platform/platform_ascendc.h"
@@ -224,11 +225,17 @@ static ge::graphStatus SparseApplyAdagradV2TilingFunc(gert::TilingContext* conte
     // tiling 阶段要求参与切分计算的维度均为具体值：var 各维、indices 长度未解析(-1)时拒绝，
     // 否则切分计算会静默产出垃圾 tiling 数据；lr/epsilon 的动态标量 [-1] 不参与切分计算，已放行
     for (size_t i = 0; i < varStorageShape.GetDimNum(); i++) {
-        OP_CHECK_IF(varStorageShape.GetDim(i) == UNKNOWN_DIM,
-                    OP_LOGE(context, "var dim[%zu] is unresolved (-1), tiling requires concrete dims", i),
-                    return ge::GRAPH_FAILED);
+        OP_CHECK_IF(
+            varStorageShape.GetDim(i) == UNKNOWN_DIM,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                context->GetNodeName(), "var", Ops::Base::ToString(varStorageShape).c_str(),
+                ("var dim[" + std::to_string(i) + "] is unresolved (-1), tiling requires concrete dims").c_str()),
+            return ge::GRAPH_FAILED);
     }
-    OP_CHECK_IF(N == UNKNOWN_DIM, OP_LOGE(context, "indices length is unresolved (-1), tiling requires concrete dims"),
+    OP_CHECK_IF(N == UNKNOWN_DIM,
+                OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                    context->GetNodeName(), "indices", Ops::Base::ToString(indicesStorageShape).c_str(),
+                    "indices length is unresolved (-1), tiling requires concrete dims"),
                 return ge::GRAPH_FAILED);
 
     bool updateSlots = GetUpdateSlotsAttr(context);
@@ -238,9 +245,18 @@ static ge::graphStatus SparseApplyAdagradV2TilingFunc(gert::TilingContext* conte
 
     SparseApplyAdagradV2TilingData* tiling = context->GetTilingData<SparseApplyAdagradV2TilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
-    OP_CHECK_IF(
-        memset_s(tiling, sizeof(SparseApplyAdagradV2TilingData), 0, sizeof(SparseApplyAdagradV2TilingData)) != EOK,
-        OP_LOGE(context, "set tiling data error"), return ge::GRAPH_FAILED);
+    errno_t memsetRet = memset_s(tiling, sizeof(SparseApplyAdagradV2TilingData), 0,
+                                 sizeof(SparseApplyAdagradV2TilingData));
+    OP_CHECK_IF(memsetRet != EOK,
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{
+                        context->GetNodeName() == nullptr ? "SparseApplyAdagradV2" : context->GetNodeName(),
+                        (std::string("SparseApplyAdagradV2TilingFunc failed to initialize the tiling data buffer; "
+                                     "memset_s returned ") +
+                         std::to_string(memsetRet) + ".")
+                            .c_str()})),
+                return ge::GRAPH_FAILED);
 
     tiling->N = N;
     tiling->innerDim = innerDim;

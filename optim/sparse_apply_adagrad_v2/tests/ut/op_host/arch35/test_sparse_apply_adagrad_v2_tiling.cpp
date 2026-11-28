@@ -14,6 +14,7 @@
 #include <vector>
 #include <gtest/gtest.h>
 #include "log/log.h"
+#include "base/err_mgr.h"
 #include "kernel_run_context_facker.h"
 #include "test_cube_util.h"
 #include "exe_graph/runtime/storage_format.h"
@@ -295,6 +296,148 @@ TEST_F(SparseApplyAdagradV2TilingTest, tiling_epsilon_shape_two_rejected)
 
     DoTest(var, accum, lr, epsilon, grad, indices, var_out, accum_out, varDtype, indicesDtype, dataFormat, updateSlots,
            useLocking, ge::GRAPH_FAILED, expectData, expectWorkspaces);
+}
+
+// ============================================================================
+// 首报错误码断言（对应外部用户错误整改 #15184）。ErrorManager 上下文隔离方式
+// 与 hard_sigmoid_grad UT 一致。
+// ============================================================================
+
+namespace {
+
+class ScopedErrorContext {
+public:
+    ScopedErrorContext() : savedContext_(error_message::GetErrMgrContext())
+    {
+        auto context = savedContext_;
+        context.work_stream_id = reinterpret_cast<std::uintptr_t>(this);
+        error_message::SetErrMgrContext(context);
+        (void)error_message::GetErrMgrRawErrorMessages();
+    }
+
+    ~ScopedErrorContext()
+    {
+        (void)error_message::GetErrMgrRawErrorMessages();
+        error_message::SetErrMgrContext(savedContext_);
+    }
+
+    ScopedErrorContext(const ScopedErrorContext&) = delete;
+    ScopedErrorContext& operator=(const ScopedErrorContext&) = delete;
+
+private:
+    error_message::ErrorManagerContext savedContext_;
+};
+
+struct CapturedError {
+    size_t count = 0;
+    std::string code;
+    std::vector<std::string> keys;
+    std::vector<std::string> values;
+};
+
+CapturedError CaptureError()
+{
+    CapturedError captured;
+    const auto errors = error_message::GetErrMgrRawErrorMessages();
+    captured.count = errors.size();
+    if (errors.empty()) {
+        return captured;
+    }
+    const auto& error = errors.back();
+    captured.code = error.error_id == nullptr ? "" : error.error_id.get();
+    for (const auto& key : error.args_key) {
+        captured.keys.emplace_back(key == nullptr ? "" : key.get());
+    }
+    for (const auto& value : error.args_value) {
+        captured.values.emplace_back(value == nullptr ? "" : value.get());
+    }
+    return captured;
+}
+
+std::string ErrorValue(const CapturedError& error, const std::string& key)
+{
+    for (size_t i = 0; i < error.keys.size() && i < error.values.size(); ++i) {
+        if (error.keys[i] == key) {
+            return error.values[i];
+        }
+    }
+    return "<missing:" + key + ">";
+}
+
+} // namespace
+
+// #15184: var 维度未解析(-1) → EZ0009（首报唯一，param_name=var）。
+// 注意 grad shape[1:] 一致性检查在 var dim 检查之前，构造时保持 var[1]==grad[1] 以直达目标分支。
+TEST_F(SparseApplyAdagradV2TilingTest, tiling_unresolved_var_dim_reports_ez0009)
+{
+    auto varDtype = ge::DT_FLOAT;
+    auto indicesDtype = ge::DT_INT32;
+    auto dataFormat = ge::FORMAT_ND;
+    bool updateSlots = true;
+    bool useLocking = false;
+
+    gert::StorageShape var = {{-1, 3}, {-1, 3}};
+    gert::StorageShape accum = {{-1, 3}, {-1, 3}};
+    gert::StorageShape lr = {{}, {}};
+    gert::StorageShape epsilon = {{}, {}};
+    gert::StorageShape grad = {{2, 3}, {2, 3}};
+    gert::StorageShape indices = {{2}, {2}};
+    gert::StorageShape var_out = {{4, 3}, {4, 3}};
+    gert::StorageShape accum_out = {{4, 3}, {4, 3}};
+
+    string expectData = "";
+    std::vector<size_t> expectWorkspaces = {};
+
+    ScopedErrorContext errorContext;
+    DoTest(var, accum, lr, epsilon, grad, indices, var_out, accum_out, varDtype, indicesDtype, dataFormat, updateSlots,
+           useLocking, ge::GRAPH_FAILED, expectData, expectWorkspaces);
+    const auto error = CaptureError();
+
+    EXPECT_EQ(error.count, 1U) << "expected exactly one first error, actual code=" << error.code;
+    EXPECT_EQ(error.code, "EZ0009");
+    EXPECT_EQ(error.keys.size(), 4U);
+    EXPECT_EQ(error.values.size(), 4U);
+    EXPECT_EQ(ErrorValue(error, "param_name"), "var");
+    EXPECT_EQ(ErrorValue(error, "op_name"), "fakeOp");
+    EXPECT_EQ(ErrorValue(error, "incorrect_shape"), "[-1, 3]");
+    EXPECT_EQ(ErrorValue(error, "reason"), "var dim[0] is unresolved (-1), tiling requires concrete dims");
+}
+
+// indices 长度未解析(-1) → EZ0009（首报唯一，param_name=indices）。
+// 注意 grad[0]==N 与 grad shape[1:] 检查在 N 检查之前，构造时保持 grad[0]==-1、var 维度具体，以直达目标分支。
+TEST_F(SparseApplyAdagradV2TilingTest, tiling_unresolved_indices_length_reports_ez0009)
+{
+    auto varDtype = ge::DT_FLOAT;
+    auto indicesDtype = ge::DT_INT32;
+    auto dataFormat = ge::FORMAT_ND;
+    bool updateSlots = true;
+    bool useLocking = false;
+
+    gert::StorageShape var = {{2, 3}, {2, 3}};
+    gert::StorageShape accum = {{2, 3}, {2, 3}};
+    gert::StorageShape lr = {{}, {}};
+    gert::StorageShape epsilon = {{}, {}};
+    gert::StorageShape grad = {{-1, 3}, {-1, 3}};
+    gert::StorageShape indices = {{-1}, {-1}};
+    gert::StorageShape var_out = {{4, 3}, {4, 3}};
+    gert::StorageShape accum_out = {{4, 3}, {4, 3}};
+
+    string expectData = "";
+    std::vector<size_t> expectWorkspaces = {};
+
+    ScopedErrorContext errorContext;
+    DoTest(var, accum, lr, epsilon, grad, indices, var_out, accum_out, varDtype, indicesDtype, dataFormat, updateSlots,
+           useLocking, ge::GRAPH_FAILED, expectData, expectWorkspaces);
+    const auto error = CaptureError();
+
+    EXPECT_EQ(error.count, 1U) << "expected exactly one first error, actual code=" << error.code;
+    EXPECT_EQ(error.code, "EZ0009");
+    EXPECT_EQ(error.keys.size(), 4U);
+    EXPECT_EQ(error.values.size(), 4U);
+    EXPECT_EQ(ErrorValue(error, "param_name"), "indices");
+    EXPECT_EQ(ErrorValue(error, "op_name"), "fakeOp");
+    EXPECT_EQ(ErrorValue(error, "incorrect_shape"), "[-1]");
+    EXPECT_EQ(ErrorValue(error, "reason"), "indices length is unresolved (-1), tiling requires concrete dims");
 }
 
 // 负例：全动态 shape（var/grad/indices 维度均为 -1 未解析），tiling 应拒绝，

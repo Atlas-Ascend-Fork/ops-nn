@@ -42,10 +42,17 @@ static ge::graphStatus TilingPrepare4ScatterNdMin(gert::TilingParseContext* cont
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSizePlatForm); // 接口预留8K
     compileInfo->ub_size = ubSizePlatForm;
 
-    OP_CHECK_IF((compileInfo->core_num <= 0), OP_LOGE(context, "Failed to get core_num size"), return ge::GRAPH_FAILED);
+    const char* opName = context->GetNodeName() == nullptr ? "ScatterNdMin" : context->GetNodeName();
+    OP_CHECK_IF((compileInfo->core_num <= 0),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "core_num", std::to_string(compileInfo->core_num).c_str(),
+                                                      "The core_num from platform must be greater than 0."),
+                return ge::GRAPH_FAILED);
     OP_LOGD(context, "corenum_platform is %lu", compileInfo->core_num);
 
-    OP_CHECK_IF((compileInfo->ub_size <= 0), OP_LOGE(context, "Failed to get ub size"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF((compileInfo->ub_size <= 0),
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "ub_size", std::to_string(compileInfo->ub_size).c_str(),
+                                                      "The ub_size from platform must be greater than 0."),
+                return ge::GRAPH_FAILED);
     OP_LOGD(context, "ub_size_platform is %lu", compileInfo->ub_size);
 
     OP_LOGD(context, "Tiling Prepare for ScatterNdMin end");

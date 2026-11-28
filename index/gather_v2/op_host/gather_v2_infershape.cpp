@@ -195,8 +195,10 @@ static ge::graphStatus InferShapeForGatherV2(gert::InferShapeContext* context)
         OP_LOGE_FOR_INVALID_SHAPESIZE_WITH_REASON(context->GetNodeName(), "axis", std::to_string(axes_size).c_str(),
                                                   "The shape size of axis must be greater than 0."),
         return ge::GRAPH_FAILED);
+    // pre-check const-ness to avoid misleading ERROR logs from GetConstInt on non-const inputs
+    const bool axisIsConst = axes_tensor->GetAddr() != nullptr;
     int64_t axis = 0;
-    if (axes_size < 0 || !Ops::Base::GetConstInt(context, INPUT_IDX_AXIS, axis)) {
+    if (!axisIsConst || axes_size < 0 || !Ops::Base::GetConstInt(context, INPUT_IDX_AXIS, axis)) {
         // 对齐rt1.0：axis数据不可得（未知rank/未知维/数据未就绪）时，输出rank与axis值无关，
         // 可推导为 x_rank + rank_indices - batch_dims - 1，各维置为未知维-1
         auto attrs = context->GetAttrs();

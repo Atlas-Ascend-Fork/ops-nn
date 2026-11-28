@@ -304,7 +304,15 @@ ge::graphStatus SgdRegbaseTiling::SetTilingData()
             "scheMode=%lu, useNesterov=%lu, hasWeightDecay=%lu, hasDampening=%lu, tilingKey=%lu",
             tiling_->elewiseTiling.scheMode, useNesterovKey_, hasWeightDecayKey_, hasDampeningKey_, tilingKey_);
     OP_CHECK_IF(tilingContext_->SetTilingKey(tilingKey_) != ge::GRAPH_SUCCESS,
-                OP_LOGE(tilingContext_, "Set tiling key failed"), return ge::GRAPH_FAILED);
+                REPORT_PREDEFINED_ERR_MSG(
+                    "EZ1008", (std::vector<const char*>{"opName", "reason"}),
+                    (std::vector<const char*>{
+                        tilingContext_->GetNodeName() == nullptr ? "Sgd" : tilingContext_->GetNodeName(),
+                        (std::string("SgdRegbaseTiling failed to set the tiling key derived from the input and attr "
+                                     "combination; tilingKey=") +
+                         std::to_string(tilingKey_) + ".")
+                            .c_str()})),
+                return ge::GRAPH_FAILED);
 
     uint32_t blockDim = static_cast<uint32_t>(tiling_->elewiseTiling.blockNum);
     OP_CHECK_IF(blockDim == 0, OP_LOGE(tilingContext_, "Get blockDim failed"), return ge::GRAPH_FAILED);
