@@ -136,8 +136,8 @@ aclnnStatus aclnnSyncBatchNormGatherStats(
     </tr>
     <tr>
       <td>mean (aclTensor*)</td>
-      <td>Input</td>
-      <td>Mean value during the computation, corresponding to runningMean in the formula.</td>
+      <td>Input/Output</td>
+      <td>Mean value during the computation, corresponding to runningMean in the formula. The updated runningMean is output through this parameter.</td>
       <td><ul><li>Empty tensors are supported.</li><li>The shape is consistent with the second dimension of totalSum.</li><li>The data type is consistent with the data type of totalSum.</li></ul></td>
       <td>BFLOAT16, FLOAT16, FLOAT</td>
       <td>ND</td>
@@ -146,8 +146,8 @@ aclnnStatus aclnnSyncBatchNormGatherStats(
     </tr>
     <tr>
       <td>variance (aclTensor*)</td>
-      <td>Input</td>
-      <td>Variance used in the computation, corresponding to runningVar in the formula.</td>
+      <td>Input/Output</td>
+      <td>Variance used in the computation, corresponding to runningVar in the formula. The updated runningVar is output through this parameter.</td>
       <td><ul><li>Supports empty tensors.</li><li>The shape is consistent with the second dimension of totalSum.</li><li>The data type is consistent with the data type of totalSum.</li></ul></td>
       <td>BFLOAT16, FLOAT16, FLOAT</td>
       <td>ND</td>
@@ -385,28 +385,28 @@ int main() {
   std::vector<int64_t> totalSquareSumShape = {1, 2};
   std::vector<int64_t> sampleCountShape = {1};
   std::vector<int64_t> meanShape = {2};
-  std::vector<int64_t> varShape = {2};
+  std::vector<int64_t> varianceShape = {2};
   std::vector<int64_t> batchMeanShape = {2};
   std::vector<int64_t> batchInvstdShape = {2};
   void* totalSumDeviceAddr = nullptr;
   void* totalSquareSumDeviceAddr = nullptr;
   void* sampleCountDeviceAddr = nullptr;
   void* meanDeviceAddr = nullptr;
-  void* varDeviceAddr = nullptr;
+  void* varianceDeviceAddr = nullptr;
   void* batchMeanDeviceAddr = nullptr;
   void* batchInvstdDeviceAddr = nullptr;
   aclTensor* totalSum = nullptr;
   aclTensor* totalSquareSum = nullptr;
   aclTensor* sampleCount = nullptr;
   aclTensor* mean = nullptr;
-  aclTensor* var = nullptr;
+  aclTensor* variance = nullptr;
   aclTensor* batchMean = nullptr;
   aclTensor* batchInvstd = nullptr;
   std::vector<float> totalSumData = {300, 400};
   std::vector<float> totalSquareSumData = {300, 400};
   std::vector<int32_t> sampleCountData = {400};
   std::vector<float> meanData = {400, 400};
-  std::vector<float> varData = {400, 400};
+  std::vector<float> varianceData = {400, 400};
   std::vector<float> batchMeanData = {0, 0};
   std::vector<float> batchInvstdData = {0, 0};
   float momentum = 1e-1;
@@ -423,8 +423,8 @@ int main() {
   // Create the input meanData aclTensor.
   ret = CreateAclTensor(meanData, meanShape, &meanDeviceAddr, aclDataType::ACL_FLOAT, &mean);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
-  // Create the input varData aclTensor.
-  ret = CreateAclTensor(varData, varShape, &varDeviceAddr, aclDataType::ACL_FLOAT, &var);
+  // Create the input varianceData aclTensor.
+  ret = CreateAclTensor(varianceData, varianceShape, &varianceDeviceAddr, aclDataType::ACL_FLOAT, &variance);
   CHECK_RET(ret == ACL_SUCCESS, return ret);
   // Create the input batchMeanData aclTensor.
   ret = CreateAclTensor(batchMeanData, batchMeanShape, &batchMeanDeviceAddr, aclDataType::ACL_FLOAT, &batchMean);
@@ -438,7 +438,7 @@ int main() {
   aclOpExecutor* executor;
 
   // Call the first-phase API of aclnnSyncBatchNormGatherStats.
-  ret = aclnnSyncBatchNormGatherStatsGetWorkspaceSize(totalSum, totalSquareSum, sampleCount, mean, var, momentum, eps, batchMean, batchInvstd, &workspaceSize, &executor);
+  ret = aclnnSyncBatchNormGatherStatsGetWorkspaceSize(totalSum, totalSquareSum, sampleCount, mean, variance, momentum, eps, batchMean, batchInvstd, &workspaceSize, &executor);
   CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnSyncBatchNormGatherStatsGetWorkspaceSize failed. ERROR: %d\n", ret); return ret);
 
   // Allocate device memory based on the workspaceSize computed by the first-phase API.
@@ -471,7 +471,7 @@ int main() {
   aclDestroyTensor(totalSquareSum);
   aclDestroyTensor(sampleCount);
   aclDestroyTensor(mean);
-  aclDestroyTensor(var);
+  aclDestroyTensor(variance);
   aclDestroyTensor(batchMean);
   aclDestroyTensor(batchInvstd);
   // 7. Release device resources. Modify them based on the specific API definition.
@@ -479,7 +479,7 @@ int main() {
   aclrtFree(totalSquareSumDeviceAddr);
   aclrtFree(sampleCountDeviceAddr);
   aclrtFree(meanDeviceAddr);
-  aclrtFree(varDeviceAddr);
+  aclrtFree(varianceDeviceAddr);
   aclrtFree(batchMeanDeviceAddr);
   aclrtFree(batchInvstdDeviceAddr);
   if (workspaceSize > 0) {
