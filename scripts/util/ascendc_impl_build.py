@@ -817,6 +817,7 @@ def parse_args(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("argv", nargs="+")
     parser.add_argument("--opsinfo-dir", nargs="*", default=None)
+    parser.add_argument("--compute-units", nargs="*", default=None)
     parser.add_argument("--pypto-ops", nargs="?", const="", default="")
     return parser.parse_args(argv)
 
@@ -838,9 +839,20 @@ if __name__ == "__main__":
 
     ops_infos = []
     if args.opsinfo_dir:
-        ops_infos.extend(get_ops_info_files(args.opsinfo_dir))
-        if not ops_infos:
+        all_ops_infos = get_ops_info_files(args.opsinfo_dir)
+        if not all_ops_infos:
             raise OpFileNotExistsError(args.opsinfo_dir)
+        if args.compute_units:
+            wanted = {f"aic-{unit}-ops-info.ini" for unit in args.compute_units}
+            ops_infos = [f for f in all_ops_infos if os.path.basename(f) in wanted]
+            if not ops_infos:
+                print(
+                    "[INFO] no ops-info ini matched compute units {}, skip impl python generation.".format(
+                        ",".join(args.compute_units)
+                    )
+                )
+        else:
+            ops_infos = all_ops_infos
     else:
         ops_infos.append(args.argv[1])
 

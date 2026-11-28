@@ -164,25 +164,47 @@ function(add_ops_impl_target)
     set(PYPTO_OPS_ENV export PYPTO_OPS=${_pypto_adapt_ops_str} &&)
   endif()
 
-  add_custom_command(OUTPUT ${OPIMPL_OUT_DIR}/.impl_timestamp
-    COMMAND mkdir -m 700 -p ${OPIMPL_OUT_DIR}/dynamic
-    COMMAND ${ASCEND_PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/util/ascendc_impl_build.py
-             \"\" \"${OPIMPL_OPS_BATCH}\" \"${OPIMPL_OPS_ITERATE}\"
-             ${OPIMPL_IMPL_DIR} ${OPIMPL_OUT_DIR}/dynamic ${ASCEND_AUTOGEN_PATH}
-             --opsinfo-dir ${OPIMPL_OPS_INFO_DIR} ${OPIMPL_OPS_INFO_DIR}/inner ${OPIMPL_OPS_INFO_DIR}/exc
-             ${PYPTO_ADAPT_OPS_OPTION}
-    COMMAND rm -rf ${OPIMPL_OUT_DIR}/.impl_timestamp
-    COMMAND touch ${OPIMPL_OUT_DIR}/.impl_timestamp
-    DEPENDS ${CMAKE_SOURCE_DIR}/scripts/util/ascendc_impl_build.py
-            ${OPIMPL_DEPENDS}
-  )
-  add_custom_target(${OPIMPL_TARGET} ALL
-    DEPENDS ${OPIMPL_OUT_DIR}/.impl_timestamp
-  )
+  # py生成分路径（仅PREPROCESS_ONLY=OFF的正式构建生效；preprocess阶段只configure从不build，
+  # 且其ini为旧残留、COMPUTE_UNIT为缓存默认值，不作为py生成来源）：
+  # - EXPERIMENTAL：py由impl按--compute-units指定的当前soc的ops-info ini生成（opbuild按
+  #   def声明逐soc展开ini，全量glob会导致其他soc的ini条目覆盖同名py；不带编译选项，避免
+  #   experimental算子继承仓内同名算子的编译选项）。EXPERIMENTAL分支的gen_compile_options
+  #   只touch时间戳不写py。
+  # - 其余场景：py完全由gen_compile_option.sh按cur_op_pairs（当前soc合法的涉及算子，
+  #   含编译选项）生成，不再提前全量生成impl py（其产物要么被gen覆盖，要么是死产物）。
+  #   注意write_adapt不创建输出目录，gen命令需自行mkdir。
+  if(NOT PREPROCESS_ONLY AND ENABLE_EXPERIMENTAL)
+    add_custom_command(OUTPUT ${OPIMPL_OUT_DIR}/.impl_timestamp
+      COMMAND mkdir -m 700 -p ${OPIMPL_OUT_DIR}/dynamic
+      COMMAND ${ASCEND_PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/util/ascendc_impl_build.py
+               \"\" \"${OPIMPL_OPS_BATCH}\" \"${OPIMPL_OPS_ITERATE}\"
+               ${OPIMPL_IMPL_DIR} ${OPIMPL_OUT_DIR}/dynamic ${ASCEND_AUTOGEN_PATH}
+               --opsinfo-dir ${OPIMPL_OPS_INFO_DIR} ${OPIMPL_OPS_INFO_DIR}/inner ${OPIMPL_OPS_INFO_DIR}/exc
+               --compute-units ${ASCEND_COMPUTE_UNIT}
+               ${PYPTO_ADAPT_OPS_OPTION}
+      COMMAND rm -rf ${OPIMPL_OUT_DIR}/.impl_timestamp
+      COMMAND touch ${OPIMPL_OUT_DIR}/.impl_timestamp
+      DEPENDS ${CMAKE_SOURCE_DIR}/scripts/util/ascendc_impl_build.py
+              ${OPIMPL_DEPENDS}
+    )
+    add_custom_target(${OPIMPL_TARGET} ALL
+      DEPENDS ${OPIMPL_OUT_DIR}/.impl_timestamp
+    )
+  else()
+    add_custom_target(${OPIMPL_TARGET} ALL)
+  endif()
 
   # 当编译单算子时，PREPROCESS_ONLY=FALSE情况下COMPILED_OP_DIRS是指定算子与被依赖的算子
   if(NOT PREPROCESS_ONLY)
     foreach(compute_unit ${ASCEND_COMPUTE_UNIT})
+      # experimental：py已由ascendc_impl_gen按当前soc生成且不继承编译选项，无需
+      # gen_compile_option.sh，也无需cur_op_pairs逐算子校验；保留空目标维持依赖关系
+      if(ENABLE_EXPERIMENTAL)
+        add_custom_target(gen_compile_options_${compute_unit} ALL)
+        add_dependencies(${OPIMPL_TARGET} gen_compile_options_${compute_unit})
+        continue()
+      endif()
+
       set(compute_unit_op_cache "${compute_unit}_ALL_COMPUTE_PAIRS")
       if(NOT DEFINED ${compute_unit_op_cache})
         set(all_op_pairs)
@@ -199,24 +221,16 @@ function(add_ops_impl_target)
       endif()
 
       set(cur_op_pairs ${${compute_unit_op_cache}})
-      if(ENABLE_EXPERIMENTAL)
-        add_custom_command(OUTPUT ${OPIMPL_OUT_DIR}/${compute_unit}/.gen_timestamp
-          COMMAND mkdir -m 700 -p ${OPIMPL_OUT_DIR}/${compute_unit}
-          COMMAND rm -rf ${OPIMPL_OUT_DIR}/${compute_unit}/.gen_timestamp
-          COMMAND touch ${OPIMPL_OUT_DIR}/${compute_unit}/.gen_timestamp
-          DEPENDS merge_ini_${compute_unit} ${OPIMPL_OUT_DIR}/.impl_timestamp
-        )
-      else()
-        add_custom_command(OUTPUT ${OPIMPL_OUT_DIR}/${compute_unit}/.gen_timestamp
-          COMMAND mkdir -m 700 -p ${OPIMPL_OUT_DIR}/${compute_unit}
-          COMMAND ${PYPTO_OPS_ENV} bash ${CMAKE_SOURCE_DIR}/scripts/util/gen_compile_option.sh ${cur_op_pairs}
-          COMMAND rm -rf ${OPIMPL_OUT_DIR}/${compute_unit}/.gen_timestamp
-          COMMAND touch ${OPIMPL_OUT_DIR}/${compute_unit}/.gen_timestamp
-          DEPENDS merge_ini_${compute_unit} ${OPIMPL_OUT_DIR}/.impl_timestamp
-        )
-      endif()
+      add_custom_command(OUTPUT ${OPIMPL_OUT_DIR}/${compute_unit}/.gen_timestamp
+        COMMAND mkdir -m 700 -p ${OPIMPL_OUT_DIR}/dynamic
+        COMMAND mkdir -m 700 -p ${OPIMPL_OUT_DIR}/${compute_unit}
+        COMMAND ${PYPTO_OPS_ENV} bash ${CMAKE_SOURCE_DIR}/scripts/util/gen_compile_option.sh ${cur_op_pairs}
+        COMMAND rm -rf ${OPIMPL_OUT_DIR}/${compute_unit}/.gen_timestamp
+        COMMAND touch ${OPIMPL_OUT_DIR}/${compute_unit}/.gen_timestamp
+        DEPENDS merge_ini_${compute_unit} ${OPIMPL_DEPENDS}
+      )
       add_custom_target(gen_compile_options_${compute_unit} ALL
-        DEPENDS ${OPIMPL_OUT_DIR}/.impl_timestamp ${OPIMPL_OUT_DIR}/${compute_unit}/.gen_timestamp)
+        DEPENDS ${OPIMPL_OUT_DIR}/${compute_unit}/.gen_timestamp)
       add_dependencies(${OPIMPL_TARGET} gen_compile_options_${compute_unit})
     endforeach()
   endif()
