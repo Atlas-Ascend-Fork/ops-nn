@@ -26,10 +26,30 @@ def compare_data(golden_file_lists, output_file_lists, d_type):
     else:
         raise ValueError("d_type must be float16 or float32")
 
+    if not golden_file_lists:
+        print("FAILED! no golden/output files found.")
+        return False
+    if len(golden_file_lists) != len(output_file_lists):
+        print(
+            f"FAILED! file count mismatch: golden={len(golden_file_lists)}, "
+            f"output={len(output_file_lists)}"
+        )
+        return False
+
     data_same = True
     for gold, out in zip(golden_file_lists, output_file_lists):
         tmp_out = np.fromfile(out, np_dtype)
         tmp_gold = np.fromfile(gold, np_dtype)
+        if tmp_out.size == 0 or tmp_gold.size == 0:
+            print(f"FAILED! empty data: output={tmp_out.size}, golden={tmp_gold.size}")
+            data_same = False
+            continue
+        if tmp_out.size != tmp_gold.size:
+            print(
+                f"FAILED! size mismatch: output={tmp_out.size}, golden={tmp_gold.size}"
+            )
+            data_same = False
+            continue
         diff_res = np.isclose(tmp_out, tmp_gold, rtol=1e-2, atol=1e-2, equal_nan=True)
         diff_idx = np.where(~diff_res)[0]
         if len(diff_idx) == 0:
