@@ -130,8 +130,10 @@ static graphStatus GetAvgPoolV2XShape(const gert::CompileTimeTensorDesc* tensorD
     inputs.inH = shapeIn->GetDim(inputs.xhPosition);
     inputs.inW = shapeIn->GetDim(inputs.xwPosition);
 
-    OP_LOGE_IF(inputs.inC != UNKNOWN_DIM_VALUE && inputs.inC < 1, GRAPH_FAILED, opName,
-               "x channel should be greater than or equal to 1. actual is: %ld", inputs.inC);
+    OP_CHECK_IF(inputs.inC != UNKNOWN_DIM_VALUE && inputs.inC < 1,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(opName, "x", std::to_string(inputs.inC).c_str(),
+                                                      "the channel dimension of x must be greater than or equal to 1"),
+                return GRAPH_FAILED);
 
     return GRAPH_SUCCESS;
 }

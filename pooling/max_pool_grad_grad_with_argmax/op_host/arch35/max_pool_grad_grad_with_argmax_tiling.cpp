@@ -84,30 +84,41 @@ static ge::graphStatus MaxPoolGradGradWithArgmaxTilingFunc(gert::TilingContext* 
 
     // 3. shape 校验：x.shape == grad.shape
     OP_CHECK_IF(xShape.GetDimNum() != gradShape.GetDimNum(),
-                OP_LOGE(context, "x and grad rank must be equal, x rank=%zu, grad rank=%zu", xShape.GetDimNum(),
-                        gradShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), "x, grad",
+                    (std::to_string(xShape.GetDimNum()) + ", " + std::to_string(gradShape.GetDimNum())).c_str(),
+                    "the rank of x must be equal to the rank of grad"),
                 return ge::GRAPH_FAILED);
     for (size_t i = 0; i < xShape.GetDimNum(); ++i) {
-        OP_CHECK_IF(
-            xShape.GetDim(i) != gradShape.GetDim(i),
-            OP_LOGE(context, "x.shape[%zu]=%ld != grad.shape[%zu]=%ld", i, xShape.GetDim(i), i, gradShape.GetDim(i)),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(xShape.GetDim(i) != gradShape.GetDim(i),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), "x, grad",
+                        (Ops::Base::ToString(xShape) + ", " + Ops::Base::ToString(gradShape)).c_str(),
+                        "the shape of x must be equal to the shape of grad"),
+                    return ge::GRAPH_FAILED);
     }
 
     // 4. 校验固定 4D
     constexpr size_t EXPECTED_RANK = 4;
     OP_CHECK_IF(xShape.GetDimNum() != EXPECTED_RANK,
-                OP_LOGE(context, "x must be 4-D, actual rank=%zu", xShape.GetDimNum()), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(
+                    context->GetNodeName(), "x", std::to_string(xShape.GetDimNum()).c_str(), "the rank of x must be 4"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(gradShape.GetDimNum() != EXPECTED_RANK,
-                OP_LOGE(context, "grad must be 4-D, actual rank=%zu", gradShape.GetDimNum()), return ge::GRAPH_FAILED);
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "grad",
+                                                         std::to_string(gradShape.GetDimNum()).c_str(),
+                                                         "the rank of grad must be 4"),
+                return ge::GRAPH_FAILED);
     OP_CHECK_IF(argmaxShape.GetDimNum() != EXPECTED_RANK,
-                OP_LOGE(context, "argmax must be 4-D, actual rank=%zu", argmaxShape.GetDimNum()),
+                OP_LOGE_FOR_INVALID_SHAPEDIM_WITH_REASON(context->GetNodeName(), "argmax",
+                                                         std::to_string(argmaxShape.GetDimNum()).c_str(),
+                                                         "the rank of argmax must be 4"),
                 return ge::GRAPH_FAILED);
 
     // 4.5 校验 x 与 argmax 的 batch(dim0)、channel(dim3) 一致，避免 kernel 内 batchId 越界
     OP_CHECK_IF(xShape.GetDim(0) != argmaxShape.GetDim(0) || xShape.GetDim(3) != argmaxShape.GetDim(3),
                 OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
-                    "MaxPoolGradGradWithArgmax", "x, argmax",
+                    context->GetNodeName(), "x, argmax",
                     (Ops::Base::ToString(xShape) + ", " + Ops::Base::ToString(argmaxShape)).c_str(),
                     "x and argmax must have equal batch(dim0) and channel(dim3)"),
                 return ge::GRAPH_FAILED);
@@ -116,12 +127,18 @@ static ge::graphStatus MaxPoolGradGradWithArgmaxTilingFunc(gert::TilingContext* 
     auto yShapePtr = context->GetOutputShape(0);
     OP_CHECK_NULL_WITH_CONTEXT(context, yShapePtr);
     auto yShape = yShapePtr->GetStorageShape();
-    OP_CHECK_IF(yShape.GetDimNum() != argmaxShape.GetDimNum(), OP_LOGE(context, "y and argmax rank must be equal"),
+    OP_CHECK_IF(yShape.GetDimNum() != argmaxShape.GetDimNum(),
+                OP_LOGE_FOR_INVALID_SHAPEDIMS_WITH_REASON(
+                    context->GetNodeName(), "y, argmax",
+                    (std::to_string(yShape.GetDimNum()) + ", " + std::to_string(argmaxShape.GetDimNum())).c_str(),
+                    "the rank of y must be equal to the rank of argmax"),
                 return ge::GRAPH_FAILED);
     for (size_t i = 0; i < yShape.GetDimNum(); ++i) {
         OP_CHECK_IF(yShape.GetDim(i) != argmaxShape.GetDim(i),
-                    OP_LOGE(context, "y.shape[%zu]=%ld != argmax.shape[%zu]=%ld", i, yShape.GetDim(i), i,
-                            argmaxShape.GetDim(i)),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), "y, argmax",
+                        (Ops::Base::ToString(yShape) + ", " + Ops::Base::ToString(argmaxShape)).c_str(),
+                        "the shape of y must be equal to the shape of argmax"),
                     return ge::GRAPH_FAILED);
     }
 

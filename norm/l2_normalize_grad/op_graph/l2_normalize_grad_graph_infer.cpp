@@ -21,7 +21,8 @@ static ge::graphStatus InferDataType4L2NormalizeGrad(gert::InferDataTypeContext*
     }
     const DataType xDataType = context->GetInputDataType(0);
     if (xDataType != DT_FLOAT16 && xDataType != DT_FLOAT) {
-        OP_LOGE(context, "L2NormalizeGrad input x dtype is not supported: %d.", static_cast<int32_t>(xDataType));
+        OP_LOGE_FOR_INVALID_DTYPE(context->GetNodeName(), "x", Ops::Base::ToString(xDataType).c_str(),
+                                  "float16 or float32");
         return GRAPH_FAILED;
     }
     if (context->SetOutputDataType(0, xDataType) != GRAPH_SUCCESS) {

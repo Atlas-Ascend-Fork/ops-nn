@@ -749,10 +749,14 @@ static ge::graphStatus FillTilingData(gert::TilingContext* context, uint32_t til
 static ge::graphStatus L2NormalizeGradTilingFunc(gert::TilingContext* context)
 {
     OP_CHECK_NULL_WITH_CONTEXT(context, context);
-    OP_CHECK_IF(CheckDtype(context) != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "Inputs dtype invalid."),
-                return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CheckShape(context) != ge::GRAPH_SUCCESS, OP_LOGE(context->GetNodeName(), "Inputs shape invalid."),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        CheckDtype(context) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s", "dtype check failed, see the previously reported error"),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        CheckShape(context) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "%s", "shape check failed, see the previously reported error"),
+        return ge::GRAPH_FAILED);
 
     uint64_t ubSize = 0;
     int64_t coreNum = 0;

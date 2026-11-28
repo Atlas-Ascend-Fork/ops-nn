@@ -17,6 +17,7 @@
 #include "op_api/op_util.h"
 #include "log/log.h"
 #include "op_common/log/log.h"
+#include "graph/utils/type_utils.h"
 #include "error_util.h"
 #include "op_host/tiling_templates_registry.h"
 #include "index_fill_tiling_arch35.h"
@@ -59,8 +60,10 @@ ge::graphStatus CheckSupportForHif4(gert::TilingContext* context, IndexFillInput
         return ge::GRAPH_FAILED);
 
     OP_CHECK_IF(inputData.Q % TWO != 0,
-                OP_LOGE(context->GetNodeName(), "The number of input in each line must be an even number when dtype is \
-                    DT_HIFLOAT4, DT_FLOAT4_E2M1 and DT_FLOAT4_E1M2."),
+                OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                    context->GetNodeName(), "x", ge::TypeUtils::DataTypeToSerialString(inputData.dtype).c_str(),
+                    "the number of elements in the last dimension must be even for DT_HIFLOAT4, DT_FLOAT4_E2M1 and "
+                    "DT_FLOAT4_E1M2 dtypes"),
                 return ge::GRAPH_FAILED);
     // HIFLOAT4在kernel按int8进行搬运，尾轴长度减半
     inputData.Q = inputData.Q / TWO;
