@@ -13,7 +13,6 @@
 #include "log/log.h"
 #include "ut_op_common.h"
 #include "infershape_test_util.h"
-#include "platform/platform_info.h"
 
 using namespace ge;
 
@@ -26,25 +25,18 @@ protected:
 
 TEST_F(gather_elements, gather_elements_test_1)
 {
-    fe::PlatformInfo platformInfo;
-    fe::OptionalInfo optiCompilationInfo;
-    platformInfo.soc_info.ai_core_cnt = 64;
-    platformInfo.str_info.short_soc_version = "Ascend950";
-    optiCompilationInfo.soc_version = "Ascend950";
-    fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
-    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
-
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("GatherElements")->infer_shape;
     gert::Shape xShape = {2, 3, 4};
     gert::Shape indexShape = {2, 1, 4};
     gert::Shape outputShape = {2, 1, 4};
 
     auto holder = gert::InferShapeContextFaker()
-                      .NodeIoNum(1, 1)
-                      .IrInstanceNum({1}, {1})
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1}, {1})
                       .InputShapes({&xShape, &indexShape})
                       .OutputShapes({&outputShape})
                       .NodeInputTd(0, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(0, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
                       .Build();
 
@@ -57,25 +49,18 @@ TEST_F(gather_elements, gather_elements_test_1)
 
 TEST_F(gather_elements, gather_elements_test_4)
 {
-    fe::PlatformInfo platformInfo;
-    fe::OptionalInfo optiCompilationInfo;
-    platformInfo.soc_info.ai_core_cnt = 64;
-    platformInfo.str_info.short_soc_version = "Ascend950";
-    optiCompilationInfo.soc_version = "Ascend950";
-    fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
-    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
-
     auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("GatherElements")->infer_shape;
     gert::Shape xShape = {-1, -1};
     gert::Shape indexShape = {-1, -1};
     gert::Shape outputShape = {-1, -1};
 
     auto holder = gert::InferShapeContextFaker()
-                      .NodeIoNum(1, 1)
-                      .IrInstanceNum({1}, {1})
+                      .NodeIoNum(2, 1)
+                      .IrInstanceNum({1, 1}, {1})
                       .InputShapes({&xShape, &indexShape})
                       .OutputShapes({&outputShape})
                       .NodeInputTd(0, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeOutputTd(0, ge::DT_INT64, ge::FORMAT_ND, ge::FORMAT_ND)
                       .Build();
 
