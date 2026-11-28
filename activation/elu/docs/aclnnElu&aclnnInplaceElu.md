@@ -443,6 +443,7 @@ aclnnStatus aclnnInplaceElu(
 
 - 确定性计算：
   - aclnnElu&aclnnInplaceElu默认确定性实现。
+- 当alpha或inputScale为±Inf或NaN时，接口使用特殊计算路径，此时inputScale不参与运算：x > 0时输出x * scale，x <= 0时输出-alpha * scale。
 
 ## 调用示例
 

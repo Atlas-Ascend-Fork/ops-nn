@@ -445,6 +445,7 @@ aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../
 
 - Deterministic computation:
   - aclnnElu&aclnnInplaceElu default to a deterministic implementation.
+- When alpha or inputScale is ±Inf or NaN, the API uses a special computation path and does not use inputScale: it returns x * scale when x > 0, and -alpha * scale when x <= 0.
 
 ## Example
 
