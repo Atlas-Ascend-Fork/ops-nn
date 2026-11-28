@@ -15,9 +15,14 @@ add_kernel_sources(
     AUTO_SYNC false
 )
 
-# arch35 (ascend950)
+# arch35: ascend950 uses the RegBase SIMD TU, ascend350 keeps the original SIMT TU
+add_kernel_sources(
+    KERNEL_SRC arch35/foreach_acos_arch35.cpp
+    COMPUTE_UNITS ascend950
+    AUTO_SYNC false
+)
 add_kernel_sources(
     KERNEL_SRC arch35/foreach_acos.cpp
-    COMPUTE_UNITS ascend950 ascend350
+    COMPUTE_UNITS ascend350
     AUTO_SYNC false
 )

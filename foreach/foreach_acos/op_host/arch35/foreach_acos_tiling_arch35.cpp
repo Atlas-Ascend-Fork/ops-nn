@@ -24,6 +24,9 @@
 #include "platform/platform_info.h"
 #include "log/log.h"
 #include "foreach_acos_tiling_arch35.h"
+#include "../../op_kernel/arch35/foreach_acos_tiling_key.h"
+#include "../../../foreach_utils/op_host/foreach_flat_regbase_validator.h"
+#include "../../../foreach_utils/op_host/foreach_flat_regbase_tiling.h"
 
 using namespace AscendC;
 
@@ -77,8 +80,120 @@ static ge::graphStatus GetPlatformInfoFallback(gert::TilingContext* context, int
     return ge::GRAPH_FAILED;
 }
 
+static bool IsForeachAcosDtype(ge::DataType dtype)
+{
+    return dtype == ge::DT_FLOAT16 || dtype == ge::DT_FLOAT || dtype == ge::DT_BF16;
+}
+
+// An empty tensor list is legal (consistent with the aclnn entry): tiling succeeds and the
+// kernel runs as a single-core no-op. The shared flat runner skips a range whose endOffset == -1
+// without resolving any tensor pointer, so no GM access happens. This must run before
+// ValidateHomogeneous, which rejects a list of size 0 and would turn the legal no-op entry into
+// a tiling failure.
+static ge::graphStatus ForeachAcosEmptyListNoOp(gert::TilingContext* context)
+{
+    int64_t maxCoreNum = 0;
+    int64_t ubSize = 0;
+    OP_CHECK_IF(GetPlatformInfoFallback(context, maxCoreNum, ubSize) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "GetPlatformInfo failed"), return ge::GRAPH_FAILED);
+    ForeachFlatTilingData* tilingData = context->GetTilingData<ForeachFlatTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tilingData);
+    *tilingData = ForeachFlatTilingData{};
+    tilingData->tileElems = 1U; // keep the mover's InitBuffer positive on the no-op core
+    tilingData->tensorEndOffsetList[0] = -1;
+    auto res = context->SetLocalMemorySize(static_cast<uint32_t>(ubSize));
+    OP_CHECK_IF((res != ge::GRAPH_SUCCESS), OP_LOGE(context, "SetLocalMemorySize ubSize=%ld failed", ubSize),
+                return ge::GRAPH_FAILED);
+    size_t* workspaceSizes = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, workspaceSizes);
+    workspaceSizes[0] = 0;
+    context->SetBlockDim(1);
+    context->SetTilingKey(0);
+    return ge::GRAPH_SUCCESS;
+}
+
+/*
+ * Ascend950 transport: RegBase flat tiling.  The shared Build<1> fills a ForeachFlatTilingData
+ * (the caller already ran the same ValidateHomogeneous<1>), sets the block dim / UB and requests a
+ * 32B workspace.  This operator does not use workspace, so the public dtype tiling key is
+ * re-derived, the workspace is overwritten to 0, and tileElems is clamped so the double-buffered
+ * in+out tile plus the tiling copy fits the UB.
+ */
+static ge::graphStatus ForeachAcosRegbaseTiling(gert::TilingContext* context)
+{
+    auto rawTiling = context->GetRawTilingData();
+    OP_CHECK_NULL_WITH_CONTEXT(context, rawTiling);
+    OP_CHECK_IF(rawTiling->GetCapacity() < sizeof(ForeachFlatTilingData),
+                OP_LOGE(context, "tiling capacity[%zu] is smaller than ForeachFlatTilingData[%zu]",
+                        rawTiling->GetCapacity(), sizeof(ForeachFlatTilingData)),
+                return ge::GRAPH_FAILED);
+
+    if (ForeachFlatRegbaseTiling::Build<1>(context) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+
+    auto xDesc = context->GetDynamicInputDesc(INPUT_IDX, 0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, xDesc);
+    ge::DataType xDtype = xDesc->GetDataType();
+
+    uint64_t tilingKey = 0;
+    if (GetTilingKeyByDtype(context, xDtype, tilingKey) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED;
+    }
+    context->SetTilingKey(tilingKey);
+
+    size_t* wsSizes = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, wsSizes);
+    wsSizes[0] = 0;
+
+    ForeachFlatTilingData* tiling = context->GetTilingData<ForeachFlatTilingData>();
+    OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
+    int64_t maxCoreNum = 0;
+    int64_t ubSize = 0;
+    OP_CHECK_IF(GetPlatformInfoFallback(context, maxCoreNum, ubSize) != ge::GRAPH_SUCCESS,
+                OP_LOGE(context, "GetPlatformInfo failed"), return ge::GRAPH_FAILED);
+    constexpr uint64_t TILING_RESERVE_BYTES = 16384U;
+    constexpr uint64_t TILE_VL_ELEMS = 64U;
+    constexpr uint64_t BUFFER_COPIES = 4U; // BUFFER_DEPTH(2) * (one input flow + one output)
+    uint64_t budget = static_cast<uint64_t>(ubSize) > TILING_RESERVE_BYTES ?
+                          static_cast<uint64_t>(ubSize) - TILING_RESERVE_BYTES :
+                          0U;
+    uint64_t storageBytes = (xDtype == ge::DT_FLOAT16 || xDtype == ge::DT_BF16) ? 2U : 4U;
+    uint64_t maxTileElems = budget / (BUFFER_COPIES * storageBytes);
+    maxTileElems = maxTileElems / TILE_VL_ELEMS * TILE_VL_ELEMS;
+    OP_CHECK_IF(maxTileElems == 0U, OP_LOGE(context, "UB[%ld] is too small for one vector tile", ubSize),
+                return ge::GRAPH_FAILED);
+    if (static_cast<uint64_t>(tiling->tileElems) > maxTileElems) {
+        tiling->tileElems = static_cast<uint32_t>(maxTileElems);
+    }
+    return ge::GRAPH_SUCCESS;
+}
+
 static ge::graphStatus ForeachAcosTilingFunc(gert::TilingContext* context)
 {
+    // Ascend950 routes to the RegBase flat transport (arch35/foreach_acos_arch35.cpp). Every other
+    // SoC keeps the baseline SIMT tiling body below, verbatim (including its empty-list no-op path),
+    // so the shared flat validator must only run on the Ascend950 route.
+    auto socPlatformInfo = context->GetPlatformInfo();
+    OP_CHECK_NULL_WITH_CONTEXT(context, socPlatformInfo);
+    auto socPlatform = platform_ascendc::PlatformAscendC(socPlatformInfo);
+    if (socPlatform.GetSocVersion() == platform_ascendc::SocVersion::ASCEND950) {
+        // Empty-list short-circuit must precede ValidateHomogeneous, which rejects a list of
+        // size 0 and would turn the legal aclnn no-op entry into a tiling failure.
+        auto computeNodeInfoEarly = context->GetComputeNodeInfo();
+        OP_CHECK_NULL_WITH_CONTEXT(context, computeNodeInfoEarly);
+        auto instanceInfoEarly = computeNodeInfoEarly->GetInputInstanceInfo(INPUT_IDX);
+        OP_CHECK_NULL_WITH_CONTEXT(context, instanceInfoEarly);
+        if (instanceInfoEarly->GetInstanceNum() == 0) {
+            return ForeachAcosEmptyListNoOp(context);
+        }
+        // Validate tensor-list size, dtype homogeneity, rank and output capacity.
+        if (ForeachFlatRegbaseValidation::ValidateHomogeneous<1>(context, IsForeachAcosDtype) != ge::GRAPH_SUCCESS) {
+            return ge::GRAPH_FAILED;
+        }
+        return ForeachAcosRegbaseTiling(context);
+    }
+
     // 1. Get platform info (with fallback for simulation)
     int64_t maxCoreNum = 0;
     int64_t ubSize = 0;
