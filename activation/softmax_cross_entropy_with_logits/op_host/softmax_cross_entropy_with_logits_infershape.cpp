@@ -76,6 +76,19 @@ static bool ScewlDimsBroadcastCompatible(const int64_t& features_dim, const int6
            labels_dim == ge::UNKNOWN_DIM;
 }
 
+// 取非 1 的那一侧作为输出维度：维度 1 与未知维(-1)广播时须保留未知维，
+// 否则取较大值会把未知维错误地固定为 1；零长度维(0)与 1 广播同理应得 0。
+static int64_t ScewlBroadcastDim(const int64_t features_dim, const int64_t labels_dim)
+{
+    if (features_dim == 1) {
+        return labels_dim;
+    }
+    if (labels_dim == 1) {
+        return features_dim;
+    }
+    return features_dim >= labels_dim ? features_dim : labels_dim;
+}
+
 static bool ScewlCheckInputsDims(const size_t& input_features_dim_num, const size_t& input_labels_dim_num,
                                  ScewlInputsDims& inputs_dims, gert::InferShapeContext* context)
 {
@@ -165,10 +178,8 @@ static graphStatus InferShapeForSoftmaxCrossEntropyWithLogits(gert::InferShapeCo
         return GRAPH_FAILED;
     }
 
-    int64_t dim_0 = inputs_dims.features_dim_0 >= inputs_dims.labels_dim_0 ? inputs_dims.features_dim_0 :
-                                                                             inputs_dims.labels_dim_0;
-    int64_t dim_1 = inputs_dims.features_dim_1 >= inputs_dims.labels_dim_1 ? inputs_dims.features_dim_1 :
-                                                                             inputs_dims.labels_dim_1;
+    int64_t dim_0 = ScewlBroadcastDim(inputs_dims.features_dim_0, inputs_dims.labels_dim_0);
+    int64_t dim_1 = ScewlBroadcastDim(inputs_dims.features_dim_1, inputs_dims.labels_dim_1);
 
     gert::Shape* output_loss_shape = context->GetOutputShape(0);
     if (output_loss_shape == nullptr) {
@@ -211,10 +222,8 @@ static graphStatus InferShapeForSoftmaxCrossEntropyWithLogits(gert::InferShapeCo
     output_backprop_shape->AppendDim(dim_1);
 
     if (input_features_dim_num == 4 && input_labels_dim_num == 4) { // 4 dims inputs
-        int64_t dim_2 = inputs_dims.features_dim_2 >= inputs_dims.labels_dim_2 ? inputs_dims.features_dim_2 :
-                                                                                 inputs_dims.labels_dim_2;
-        int64_t dim_3 = inputs_dims.features_dim_3 >= inputs_dims.labels_dim_3 ? inputs_dims.features_dim_3 :
-                                                                                 inputs_dims.labels_dim_3;
+        int64_t dim_2 = ScewlBroadcastDim(inputs_dims.features_dim_2, inputs_dims.labels_dim_2);
+        int64_t dim_3 = ScewlBroadcastDim(inputs_dims.features_dim_3, inputs_dims.labels_dim_3);
 
         output_loss_shape->AppendDim(dim_2);
         output_backprop_shape->AppendDim(dim_2);

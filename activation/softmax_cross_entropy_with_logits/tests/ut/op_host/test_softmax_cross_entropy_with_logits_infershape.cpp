@@ -17,6 +17,7 @@
 #include "exe_graph/runtime/storage_shape.h"
 #include "log/log.h"
 #include "platform/platform_info.h"
+#include "infershape_test_util.h"
 #include "../../../../../tests/ut/common/any_value.h"
 
 class SoftmaxCrossEntropyWithLogitsTest : public testing::Test {
@@ -183,3 +184,82 @@ TEST_F(SoftmaxCrossEntropyWithLogitsTest, softmax_cross_entropy_with_logits_test
     gert::Shape expected_backprop_shape = {2, 3, 4, 5};
     ASSERT_EQ(Ops::Base::ToString(*backprop_desc), Ops::Base::ToString(expected_backprop_shape));
 }
+
+namespace {
+// 覆盖 CannBot #12：未知维(-1)与维度 1 广播时，输出维度必须取"非 1 的那一侧"而不是逐维取较大值。
+// 规则与仓内广播语义一致：(-1, 1) 与 (1, -1) -> -1；(-1, d>1) -> d；(0, 1) -> 0。
+struct ScewlBroadcastCase {
+    const char* name;
+    std::vector<int64_t> features;
+    std::vector<int64_t> labels;
+    ge::graphStatus expected_status;
+    std::vector<int64_t> expected_loss;
+    std::vector<int64_t> expected_backprop;
+};
+
+class SoftmaxCrossEntropyWithLogitsBroadcastTest : public testing::TestWithParam<ScewlBroadcastCase> {};
+
+TEST_P(SoftmaxCrossEntropyWithLogitsBroadcastTest, infer_shape_merges_dims_by_broadcast_rule)
+{
+    const auto& param = GetParam();
+    const auto* op_impl = gert::OpImplRegistry::GetInstance().GetOpImpl("SoftmaxCrossEntropyWithLogits");
+    ASSERT_NE(op_impl, nullptr);
+    auto infer_shape_func = op_impl->infer_shape;
+    ASSERT_NE(infer_shape_func, nullptr);
+
+    gert::StorageShape features_shape = CreateStorageShape(param.features);
+    gert::StorageShape labels_shape = CreateStorageShape(param.labels);
+
+    std::vector<gert::StorageShape> output_shapes(2);
+    std::vector<void*> output_shapes_ref(2);
+    for (size_t i = 0; i < output_shapes.size(); ++i) {
+        output_shapes_ref[i] = &output_shapes[i];
+    }
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(2, 2)
+                      .IrInstanceNum({1})
+                      .InputShapes({&features_shape, &labels_shape})
+                      .OutputShapes(output_shapes_ref)
+                      .Build();
+
+    auto* context = holder.GetContext<gert::InferShapeContext>();
+    ASSERT_EQ(infer_shape_func(context), param.expected_status);
+    if (param.expected_status != ge::GRAPH_SUCCESS) {
+        return;
+    }
+    EXPECT_EQ(Ops::Base::ToString(*context->GetOutputShape(0)), Ops::Base::ToString(CreateShape(param.expected_loss)));
+    EXPECT_EQ(Ops::Base::ToString(*context->GetOutputShape(1)),
+              Ops::Base::ToString(CreateShape(param.expected_backprop)));
+}
+
+const ScewlBroadcastCase BROADCAST_CASES[] = {
+    {"UnknownRowVsBroadcastRow", {-1, 10}, {1, 10}, ge::GRAPH_SUCCESS, {-1}, {-1, 10}},
+    {"BroadcastRowVsUnknownRow", {1, 10}, {-1, 10}, ge::GRAPH_SUCCESS, {-1}, {-1, 10}},
+    {"UnknownColumnVsBroadcastColumn", {3, -1}, {3, 1}, ge::GRAPH_SUCCESS, {3}, {3, -1}},
+    {"BroadcastColumnVsUnknownColumn", {3, 1}, {3, -1}, ge::GRAPH_SUCCESS, {3}, {3, -1}},
+    // rank 1 的一侧按前导 1 补齐，补出的 1 不能把未知维压成 1。
+    {"UnknownRowVsRank1Labels", {-1, 10}, {10}, ge::GRAPH_SUCCESS, {-1}, {-1, 10}},
+    {"Rank1FeaturesVsUnknownRow", {10}, {-1, 10}, ge::GRAPH_SUCCESS, {-1}, {-1, 10}},
+    {"UnknownRowVsKnownRow", {-1, 10}, {4, 10}, ge::GRAPH_SUCCESS, {4}, {4, 10}},
+    {"KnownRowVsUnknownRow", {4, 10}, {-1, 10}, ge::GRAPH_SUCCESS, {4}, {4, 10}},
+    // 空 Tensor：0 与 1 广播得 0。
+    {"ZeroRowVsBroadcastRow", {0, 10}, {1, 10}, ge::GRAPH_SUCCESS, {0}, {0, 10}},
+    // 4D 的空间维同样按广播规则合并。
+    {"Unknown4dSpatialVsBroadcastSpatial",
+     {2, 3, -1, 5},
+     {2, 3, 1, 5},
+     ge::GRAPH_SUCCESS,
+     {2, 1, -1, 5},
+     {2, 3, -1, 5}},
+    {"Broadcast4dBatchVsUnknownBatch", {1, 3, 4, 5}, {-1, 3, 4, 5}, ge::GRAPH_SUCCESS, {-1, 1, 4, 5}, {-1, 3, 4, 5}},
+    // 两个已知且不等、均不为 1 的具体维仍应报错。
+    {"IncompatibleKnownRows", {2, 10}, {3, 10}, ge::GRAPH_FAILED, {}, {}},
+};
+
+INSTANTIATE_TEST_SUITE_P(BroadcastScenarios, SoftmaxCrossEntropyWithLogitsBroadcastTest,
+                         testing::ValuesIn(BROADCAST_CASES),
+                         [](const testing::TestParamInfo<ScewlBroadcastCase>& info) {
+                             return std::string(info.param.name);
+                         });
+} // namespace
