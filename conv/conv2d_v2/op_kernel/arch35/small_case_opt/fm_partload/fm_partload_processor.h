@@ -60,7 +60,6 @@ struct FmPartloadProcessor {
         state.al1Db = (tiling.pBufferFlag & AL1_DB_FLAG) != 0;
 
         state.cinL1 = static_cast<uint32_t>(AlignB(tiling.kAL1 / tiling.kernelHxkernelW, GK0));
-        state.cinL1Blocks = static_cast<uint32_t>(CeilDiv(AlignB(tiling.singleCoreCi, GK0Fmap), state.cinL1));
 
         // Mode-specific L1 width (M-mode: full width; HW-mode: block W window).
         FmapRange r = scheme_.ResolveBlockWindow(blockCtx, tiling);
@@ -69,9 +68,32 @@ struct FmPartloadProcessor {
         state.al1BufBytes = tiling.aL1SpaceSize;
         uint32_t al1ElemPerBuf = tiling.aL1SpaceSize / sizeof(FmapT);
 
-        ComputeL1LayoutTool<BlockCtx, TilingData> l1Layout;
+        uint32_t al1BufCnt = state.al1Db ? DOUBLE_BUFFER_NUM : 1;
         uint32_t bl1ElemCount = k1Total * state.n1PerCore * GN0 * GK0;
-        state.l1 = l1Layout(tiling, state.al1Db ? DOUBLE_BUFFER_NUM : 1, al1ElemPerBuf, bl1ElemCount);
+        ComputeL1LayoutTool<BlockCtx, TilingData> l1Layout;
+        state.l1 = l1Layout(tiling, al1BufCnt, al1ElemPerBuf, bl1ElemCount);
+        // L1 budget: when the host-sized al1 buffers + whole-K bl1 + tail overflow
+        // L1, shrink the per-chunk cin width and keep the al1 ping-pong.
+        if (state.l1.endBytes > TOTAL_L1_SIZE) {
+            uint32_t rowElems = al1ElemPerBuf / state.cinL1; // host pair implies maxHi*orgWin
+            uint32_t bl1Bytes = state.l1.bl1ElemCount * sizeof(WeightT);
+            uint32_t tailBytes = state.l1.endBytes - state.l1.bl1OffBytes - bl1Bytes;
+            uint32_t gk0Bytes = rowElems * GK0 * sizeof(FmapT);
+            uint32_t cinBudget = GK0;
+            if (gk0Bytes > 0 && bl1Bytes + tailBytes + ADDR_ALIGN_SIZE < TOTAL_L1_SIZE) {
+                uint32_t al1Avail = (TOTAL_L1_SIZE - bl1Bytes - tailBytes - ADDR_ALIGN_SIZE) / al1BufCnt;
+                if (al1Avail >= gk0Bytes) {
+                    cinBudget = al1Avail / gk0Bytes * GK0;
+                }
+            }
+            if (cinBudget < state.cinL1) {
+                state.cinL1 = cinBudget;
+                al1ElemPerBuf = rowElems * state.cinL1;
+                state.al1BufBytes = al1ElemPerBuf * sizeof(FmapT);
+                state.l1 = l1Layout(tiling, al1BufCnt, al1ElemPerBuf, bl1ElemCount);
+            }
+        }
+        state.cinL1Blocks = static_cast<uint32_t>(CeilDiv(AlignB(tiling.singleCoreCi, GK0Fmap), state.cinL1));
     }
 
     __aicore__ inline void operator()(const BlockCtx& blockCtx, const TilingData& tiling, GM_ADDR x, GM_ADDR filter,
@@ -88,13 +110,13 @@ struct FmPartloadProcessor {
         SetFlag<HardEvent::MTE1_MTE2>(EVT_FMAP_BUF1);
         SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
         SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
-        SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_SCALE_DONE);
+        SetFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
 
         Process(blockCtx, tiling, state, x, filter, bias, y, ep);
 
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
-        WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_SCALE_DONE);
+        WaitFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_FMAP_BUF0);
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_FMAP_BUF1);
         WaitFlag<HardEvent::M_MTE1>(static_cast<event_t>(0));
@@ -130,7 +152,7 @@ private:
             if (tiling.hasBias) {
                 WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
             }
-            WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_SCALE_DONE);
+            WaitFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
             loadBiasScale_(blockCtx, tiling, biasGm, scale0Gm, scale1Gm, reluWeight0Gm, reluWeight1Gm, state.l1);
             LocalTensor<WeightT> bl1Full(TPosition::B1, state.l1.bl1OffBytes, state.l1.bl1ElemCount);
             WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
@@ -165,7 +187,7 @@ private:
                 SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
             }
             SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
-            SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_SCALE_DONE);
+            SetFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
             needLoadBias = true;
         }
     }

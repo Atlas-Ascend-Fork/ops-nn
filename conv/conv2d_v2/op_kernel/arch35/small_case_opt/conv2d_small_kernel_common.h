@@ -118,8 +118,10 @@ __aicore__ inline void LoadChannelWiseL1FullLoad(const LocalTensor<ChannelWiseT>
     uint64_t byteNum = sizeof(ChannelWiseT);
     // Zero-fill first: DataCopyPad only right-pads to 32B, while the BT copy
     // reads up to 64B alignment, so the 32B..64B gap must be pre-cleared.
-    InitConstValueParams<ChannelWiseT> initParams(1, static_cast<uint16_t>(AlignB(loadNum, BLOCK_L0_N) * 4 / C0_SIZE),
-                                                  0, 0); // 4 for 64 bit align.
+    // Cleared bytes = AlignB(loadNum, BLOCK_L0_N) * sizeof(ChannelWiseT) (legacy
+    // parity); the fixed *4 over-cleared 2B bias and under-cleared 8B scale.
+    uint16_t initDataNum = static_cast<uint16_t>(AlignB(loadNum, BLOCK_L0_N) * byteNum / C0_SIZE);
+    InitConstValueParams<ChannelWiseT> initParams(1, initDataNum, 0, 0);
     InitConstValue<ChannelWiseT>(tensorL1, initParams);
     PipeBarrier<PIPE_MTE2>();
     DataCopyParams dataCopyParams(1, loadNum * byteNum, 0, 0);

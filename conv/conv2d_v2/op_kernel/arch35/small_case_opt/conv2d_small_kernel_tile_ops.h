@@ -56,24 +56,35 @@ struct ComputeL1LayoutTool {
 
         uint32_t afterBl1 = l1.bl1OffBytes + l1.bl1ElemCount * sizeof(typename BlockCtx::WeightT);
         l1.biasL1OffBytes = static_cast<uint32_t>(AlignB(afterBl1, ADDR_ALIGN_SIZE));
-        uint32_t afterBias = tiling.hasBias ?
-                                 l1.biasL1OffBytes + tiling.singleCoreCo * sizeof(typename BlockCtx::L0cT) :
-                                 afterBl1;
+        // Legacy InitBuffer parity: every channel-wise segment is sized by its own
+        // dtype and BLOCK_L0_N-aligned. Bias must NOT be sized by L0cT (the acc dtype
+        // doubles the half-bias footprint and overflows edge-fit L1 layouts); the BT
+        // copy's <=64B overshoot falls into the ADDR_ALIGN gap, as in legacy.
+        uint32_t biasBytes = static_cast<uint32_t>(AlignB(tiling.singleCoreCo * sizeof(typename BlockCtx::BiasT),
+                                                          BLOCK_L0_N * sizeof(typename BlockCtx::BiasT)));
+        uint32_t afterBias = tiling.hasBias ? l1.biasL1OffBytes + biasBytes : afterBl1;
         l1.scale0L1OffBytes = static_cast<uint32_t>(AlignB(afterBias, ADDR_ALIGN_SIZE));
         uint32_t afterScale0 = tiling.quantMode0 == static_cast<uint8_t>(QuantModeType::VECTOR_QUANT) ?
-                                   l1.scale0L1OffBytes + tiling.singleCoreCo * sizeof(uint64_t) :
+                                   l1.scale0L1OffBytes +
+                                       static_cast<uint32_t>(AlignB(tiling.singleCoreCo * sizeof(uint64_t),
+                                                                    BLOCK_L0_N * sizeof(uint64_t))) :
                                    afterBias;
         l1.reluWeight0L1OffBytes = static_cast<uint32_t>(AlignB(afterScale0, ADDR_ALIGN_SIZE));
         uint32_t afterReluWeight0 = tiling.reluMode0 == static_cast<uint8_t>(ReluMode::VECTOR_RELU) ?
-                                        l1.reluWeight0L1OffBytes + tiling.singleCoreCo * sizeof(float) :
+                                        l1.reluWeight0L1OffBytes +
+                                            static_cast<uint32_t>(AlignB(tiling.singleCoreCo * sizeof(float),
+                                                                         BLOCK_L0_N * sizeof(float))) :
                                         afterScale0;
         l1.scale1L1OffBytes = static_cast<uint32_t>(AlignB(afterReluWeight0, ADDR_ALIGN_SIZE));
         uint32_t afterScale1 = tiling.quantMode1 == static_cast<uint8_t>(QuantModeType::VECTOR_QUANT) ?
-                                   l1.scale1L1OffBytes + tiling.singleCoreCo * sizeof(uint64_t) :
+                                   l1.scale1L1OffBytes +
+                                       static_cast<uint32_t>(AlignB(tiling.singleCoreCo * sizeof(uint64_t),
+                                                                    BLOCK_L0_N * sizeof(uint64_t))) :
                                    afterReluWeight0;
         l1.reluWeight1L1OffBytes = static_cast<uint32_t>(AlignB(afterScale1, ADDR_ALIGN_SIZE));
         l1.endBytes = tiling.reluMode1 == static_cast<uint8_t>(ReluMode::VECTOR_RELU) ?
-                          l1.reluWeight1L1OffBytes + tiling.singleCoreCo * sizeof(float) :
+                          l1.reluWeight1L1OffBytes + static_cast<uint32_t>(AlignB(tiling.singleCoreCo * sizeof(float),
+                                                                                  BLOCK_L0_N * sizeof(float))) :
                           afterScale1;
         return l1;
     }

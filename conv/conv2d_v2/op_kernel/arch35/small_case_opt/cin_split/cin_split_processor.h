@@ -113,8 +113,6 @@ struct CinSplitProcessor {
                 state.cinL1 = static_cast<uint32_t>(AlignB(blockCtx.cinAligned / CIN_L1_SPLIT_HALF, GK0));
             }
         }
-        state.cinL1Blocks = static_cast<uint32_t>(CeilDiv(AlignB(tiling.singleCoreCi, GK0Fmap), state.cinL1));
-
         // Mode-specific L1 width (M-mode: full width; HW-mode: block W window)
         // and widest-chunk Ho span come from the scheme.
         FmapRange r = scheme_.ResolveBlockWindow(blockCtx, tiling);
@@ -127,12 +125,32 @@ struct CinSplitProcessor {
             maxHiL1 = static_cast<uint32_t>(tiling.hin);
         }
 
-        uint32_t al1ElemPerBuf = maxHiL1 * state.orgWin * state.cinL1;
-        state.al1BufBytes = al1ElemPerBuf * sizeof(FmapT);
-
-        ComputeL1LayoutTool<BlockCtx, TilingData> l1Layout;
         uint32_t bl1ElemCount = k1Total * state.n1PerCore * GN0 * GK0;
-        state.l1 = l1Layout(tiling, DOUBLE_BUFFER_NUM, al1ElemPerBuf, bl1ElemCount);
+        uint32_t al1ElemPerBuf = maxHiL1 * state.orgWin * state.cinL1;
+        ComputeL1LayoutTool<BlockCtx, TilingData> l1Layout;
+        L1Layout l1Two = l1Layout(tiling, DOUBLE_BUFFER_NUM, al1ElemPerBuf, bl1ElemCount);
+        // L1 budget: on overflow shrink cinL1 (more, narrower cin blocks) instead of
+        // dropping the al1 double buffer; bl1 + tail are the cin-independent reservation.
+        if (l1Two.endBytes > TOTAL_L1_SIZE) {
+            uint32_t bl1Bytes = l1Two.bl1ElemCount * sizeof(WeightT);
+            uint32_t tailBytes = l1Two.endBytes - l1Two.bl1OffBytes - bl1Bytes;
+            uint32_t gk0Bytes = maxHiL1 * state.orgWin * GK0 * sizeof(FmapT); // A1 bytes per GK0 cols
+            uint32_t cinBudget = GK0;
+            if (bl1Bytes + tailBytes + ADDR_ALIGN_SIZE < TOTAL_L1_SIZE) {
+                uint32_t al1Avail = (TOTAL_L1_SIZE - bl1Bytes - tailBytes - ADDR_ALIGN_SIZE) / DOUBLE_BUFFER_NUM;
+                if (al1Avail >= gk0Bytes) {
+                    cinBudget = al1Avail / gk0Bytes * GK0; // whole GK0 groups, floored
+                }
+            }
+            if (cinBudget < state.cinL1) {
+                state.cinL1 = cinBudget;
+                al1ElemPerBuf = maxHiL1 * state.orgWin * state.cinL1;
+                l1Two = l1Layout(tiling, DOUBLE_BUFFER_NUM, al1ElemPerBuf, bl1ElemCount);
+            }
+        }
+        state.cinL1Blocks = static_cast<uint32_t>(CeilDiv(AlignB(tiling.singleCoreCi, GK0Fmap), state.cinL1));
+        state.al1BufBytes = al1ElemPerBuf * sizeof(FmapT);
+        state.l1 = l1Two;
     }
 
     // Largest factor of (cinL1*kernelHxW/GK0) not exceeding kL0/GK0, in K0 units.
@@ -399,6 +417,7 @@ struct CinSplitProcessor {
     {
         bool needLoadBias = true;
         SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
+        SetFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
         for (uint32_t groupIter = 0; groupIter < scheme_.GroupIters(blockCtx); groupIter++) {
             GroupPlan groupPlan = scheme_.GroupAt(blockCtx, tiling, groupIter);
             if (!groupPlan.valid) {
@@ -419,6 +438,7 @@ struct CinSplitProcessor {
             if (tiling.hasBias) {
                 WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
             }
+            WaitFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
             loadBiasScale_(blockCtx, tiling, biasGm, scale0Gm, scale1Gm, reluWeight0Gm, reluWeight1Gm, state.l1);
             // The Fixpipe reads vector scale/relu from L1 and does not sync on
             // MTE2 by itself: gate every later Fixpipe on the bias/scale copy.
@@ -443,9 +463,11 @@ struct CinSplitProcessor {
             if (tiling.hasBias && tiling.nL0 < tiling.nBL1) {
                 SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
             }
+            SetFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
             needLoadBias = true;
         }
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
+        WaitFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
     }
 
     // One inner batch: scheme-driven spatial chunk loop x N-tile loop. Shared

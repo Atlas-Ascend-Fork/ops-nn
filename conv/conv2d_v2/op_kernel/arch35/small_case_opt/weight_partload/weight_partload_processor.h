@@ -150,9 +150,9 @@ struct WeightPartloadProcessor {
         return ((static_cast<uint32_t>(tiling.pBufferFlag) >> WP_L1_PB_BL1_BIT) & 1) != 0 ? DOUBLE_BUFFER_NUM : 1;
     }
 
-    static __aicore__ inline uint32_t KBlkCnt(const BlockCtx& blockCtx, const TilingData& tiling)
+    static __aicore__ inline uint32_t KBlkCnt(const BlockCtx& blockCtx, uint32_t kBL1Eff)
     {
-        return static_cast<uint32_t>(CeilDiv(blockCtx.kTotalFmap, tiling.kBL1));
+        return static_cast<uint32_t>(CeilDiv(blockCtx.kTotalFmap, kBL1Eff));
     }
 
     static __aicore__ inline uint32_t NTileStep(const TilingData& tiling)
@@ -160,9 +160,8 @@ struct WeightPartloadProcessor {
         return tiling.nL0 < tiling.nBL1 ? static_cast<uint32_t>(tiling.nL0) : static_cast<uint32_t>(tiling.nBL1);
     }
 
-    static __aicore__ inline uint32_t Bl1ElemPerBuf(const TilingData& tiling)
+    static __aicore__ inline uint32_t Bl1ElemPerBuf(const TilingData& tiling, uint32_t k1Blk)
     {
-        uint32_t k1Blk = static_cast<uint32_t>(tiling.kBL1) / GK0;
         uint32_t n1Tile = static_cast<uint32_t>(AlignB(NTileStep(tiling), GN0)) / GN0;
         return k1Blk * n1Tile * GN0 * GK0;
     }
@@ -185,10 +184,32 @@ struct WeightPartloadProcessor {
         }
     }
 
+    // L1 budget: on overflow cap the per-buffer k1 rows and walk more weight
+    // k-blocks; ping-pong buffer counts are tiling decisions and never reduced.
+    __aicore__ inline uint32_t K1BlkCap(const BlockCtx& blockCtx, const TilingData& tiling) const
+    {
+        uint32_t k1Blk = static_cast<uint32_t>(tiling.kBL1) / GK0;
+        L1Layout full = l1Layout_(tiling, FmBufCnt(tiling), Al1ElemPerBuf(blockCtx, tiling),
+                                  Bl1ElemPerBuf(tiling, k1Blk), WtBufCnt(tiling));
+        if (full.endBytes <= TOTAL_L1_SIZE) {
+            return k1Blk;
+        }
+        uint32_t bl1Bytes = full.bl1ElemCount * sizeof(WeightT);
+        uint32_t tailBytes = full.endBytes - full.bl1OffBytes - bl1Bytes;
+        uint32_t n1Tile = static_cast<uint32_t>(AlignB(NTileStep(tiling), GN0)) / GN0;
+        uint32_t rowBytes = n1Tile * GN0 * GK0 * sizeof(WeightT);
+        uint32_t reserve = full.bl1OffBytes + tailBytes + ADDR_ALIGN_SIZE;
+        if (reserve >= TOTAL_L1_SIZE) {
+            return 1;
+        }
+        uint32_t k1Cap = (TOTAL_L1_SIZE - reserve) / (WtBufCnt(tiling) * rowBytes);
+        return k1Cap < k1Blk ? (k1Cap > 0 ? k1Cap : 1) : k1Blk;
+    }
+
     __aicore__ inline L1Layout MakeL1(const BlockCtx& blockCtx, const TilingData& tiling) const
     {
-        return l1Layout_(tiling, FmBufCnt(tiling), Al1ElemPerBuf(blockCtx, tiling), Bl1ElemPerBuf(tiling),
-                         WtBufCnt(tiling));
+        return l1Layout_(tiling, FmBufCnt(tiling), Al1ElemPerBuf(blockCtx, tiling),
+                         Bl1ElemPerBuf(tiling, K1BlkCap(blockCtx, tiling)), WtBufCnt(tiling));
     }
 
     static __aicore__ inline event_t FmEv(uint32_t buf) { return buf == 0 ? EVT_FMAP_BUF0 : EVT_FMAP_BUF1; }
@@ -226,10 +247,10 @@ struct WeightPartloadProcessor {
 
     __aicore__ inline void LoadWeightBlockTo(const BlockCtx& blockCtx, const TilingData& tiling, const GroupCtx& gm,
                                              const L1Layout& l1, uint32_t kOff, uint32_t curK, uint32_t nOff,
-                                             uint32_t n1Tile, uint32_t wbuf) const
+                                             uint32_t n1Tile, uint32_t wbuf, uint32_t k1Blk) const
     {
-        LocalTensor<WeightT> bl1(TPosition::B1, l1.bl1OffBytes + wbuf * Bl1ElemPerBuf(tiling) * sizeof(WeightT),
-                                 Bl1ElemPerBuf(tiling));
+        LocalTensor<WeightT> bl1(TPosition::B1, l1.bl1OffBytes + wbuf * Bl1ElemPerBuf(tiling, k1Blk) * sizeof(WeightT),
+                                 Bl1ElemPerBuf(tiling, k1Blk));
         uint32_t n1Total = gm.n1Total;
         loadWeightBlock_(blockCtx, tiling, gm.filterGm, bl1, kOff, curK, nOff, n1Tile, n1Total);
     }
@@ -275,6 +296,10 @@ private:
                                    bool& btUsed) const
     {
         SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
+        // Group scale/relu reload token: FIX_MTE2, because the L1 scale/relu
+        // buffers are read by the Fixpipe (FIX queue), not by MTE1. The FIX
+        // queue is empty here, so this arm fires immediately.
+        SetFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
         for (uint32_t groupIter = 0; groupIter < scheme_.GroupIters(blockCtx); groupIter++) {
             GroupPlan groupPlan = scheme_.GroupAt(blockCtx, tiling, groupIter);
             if (!groupPlan.valid) {
@@ -298,6 +323,9 @@ private:
             if (tiling.hasBias) {
                 WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
             }
+            // Hold the scale/relu reload until the previous group's last
+            // Fixpipe finished reading the L1 vector scale/relu buffers.
+            WaitFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
             loadBiasScale_(blockCtx, tiling, biasGm, gm.scale0Gm, gm.scale1Gm, gm.reluWeight0Gm, gm.reluWeight1Gm, l1);
             SetFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
             WaitFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
@@ -319,8 +347,12 @@ private:
             if (tiling.hasBias) {
                 SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
             }
+            // Enqueued on the FIX queue behind this group's Fixpipes: releases
+            // the next group's scale/relu reload once they all completed.
+            SetFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
         }
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
+        WaitFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
     }
 
     // One inner batch: spatial-chunk loop. FULL mode: block window GM-loaded once per
@@ -380,12 +412,13 @@ private:
                                         bool& biasL1Waited) const
     {
         uint32_t fullK = blockCtx.kTotalFmap;
-        uint32_t kBL1 = static_cast<uint32_t>(tiling.kBL1);
+        uint32_t k1BlkCap = K1BlkCap(blockCtx, tiling);
+        uint32_t kBL1 = k1BlkCap * GK0;
         uint32_t kStep = KStepFm(blockCtx, tiling);
         uint32_t cinL1 = CinL1(blockCtx, tiling);
         uint32_t fmBufCnt = FmBufCnt(tiling);
         uint32_t wtBufCnt = WtBufCnt(tiling);
-        uint32_t kBlkCnt = KBlkCnt(blockCtx, tiling);
+        uint32_t kBlkCnt = KBlkCnt(blockCtx, kBL1);
         uint32_t fmChunkCnt = static_cast<uint32_t>(CeilDiv(fullK, kStep));
         uint32_t nBlk = static_cast<uint32_t>(tiling.nBL1);
         uint32_t nTileStep = NTileStep(tiling);
@@ -422,7 +455,7 @@ private:
                     uint32_t wbuf = kBlk % wtBufCnt;
                     if (wLoaded[wbuf] != kBlk) {
                         WaitFlag<HardEvent::MTE1_MTE2>(WEv(wbuf));
-                        LoadWeightBlockTo(blockCtx, tiling, gm, l1, kBlkOff, curKBlk, nOff, n1Tile, wbuf);
+                        LoadWeightBlockTo(blockCtx, tiling, gm, l1, kBlkOff, curKBlk, nOff, n1Tile, wbuf, k1BlkCap);
                         SetFlag<HardEvent::MTE2_MTE1>(WEv(wbuf));
                         wLoaded[wbuf] = kBlk;
                         wPend[wbuf] = true;
@@ -434,7 +467,8 @@ private:
                             nextK = kBL1;
                         }
                         WaitFlag<HardEvent::MTE1_MTE2>(WEv((kBlk + 1) & 1));
-                        LoadWeightBlockTo(blockCtx, tiling, gm, l1, nextOff, nextK, nOff, n1Tile, (kBlk + 1) & 1);
+                        LoadWeightBlockTo(blockCtx, tiling, gm, l1, nextOff, nextK, nOff, n1Tile, (kBlk + 1) & 1,
+                                          k1BlkCap);
                         SetFlag<HardEvent::MTE2_MTE1>(WEv((kBlk + 1) & 1));
                         wLoaded[(kBlk + 1) & 1] = kBlk + 1;
                         wPend[(kBlk + 1) & 1] = true;
@@ -515,9 +549,9 @@ private:
                         }
 
                         LocalTensor<FmapT> al1(TPosition::A1, fbuf * l1.al1BufBytes, l1.al1ElemCount / fmBufCnt);
-                        LocalTensor<WeightT> bl1(TPosition::B1,
-                                                 l1.bl1OffBytes + wbuf * Bl1ElemPerBuf(tiling) * sizeof(WeightT),
-                                                 Bl1ElemPerBuf(tiling));
+                        LocalTensor<WeightT> bl1(
+                            TPosition::B1, l1.bl1OffBytes + wbuf * Bl1ElemPerBuf(tiling, k1BlkCap) * sizeof(WeightT),
+                            Bl1ElemPerBuf(tiling, k1BlkCap));
                         // Release at the chunk end only when consumed for good: co-resident
                         // chunks are re-read by later N tiles; only the last tile may free.
                         bool releaseFm = (FmMode != FmapLoadMode::FULL) && (runEnd == chunkEnd) &&

@@ -108,6 +108,7 @@ protected:
         bool needLoadBias = true;
         SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
         SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
+        SetFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
         for (uint32_t groupIter = 0; groupIter < scheme_.GroupIters(blockCtx); groupIter++) {
             GroupPlan groupPlan = scheme_.GroupAt(blockCtx, tiling, groupIter);
             if (!groupPlan.valid) {
@@ -147,6 +148,7 @@ protected:
             if (tiling.hasBias) {
                 WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
             }
+            WaitFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
             loadBiasScale_(blockCtx, tiling, biasGm, scale0Gm, scale1Gm, reluWeight0Gm, reluWeight1Gm, l1Layout);
             SetFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
             WaitFlag<HardEvent::MTE2_FIX>(static_cast<event_t>(0));
@@ -225,9 +227,11 @@ protected:
             }
             needLoadBias = true;
             SetFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
+            SetFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
         }
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_BIAS_DONE);
         WaitFlag<HardEvent::MTE1_MTE2>(EVT_GROUP_L1_DONE);
+        WaitFlag<HardEvent::FIX_MTE2>(EVT_GROUP_SCALE_DONE);
     }
 
     // K-loop: accumulates one output chunk over all K0 blocks.
