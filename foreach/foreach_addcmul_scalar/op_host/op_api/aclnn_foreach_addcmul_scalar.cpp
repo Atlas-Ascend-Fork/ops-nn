@@ -152,6 +152,21 @@ static inline bool ForeachAddcMulScalarCheckShape(const aclTensorList* addcmulSc
     return true;
 }
 
+static bool CheckScalarShape(const aclTensor* scalar)
+{
+    OP_CHECK_MAX_DIM(scalar, MAX_SUPPORT_DIMS_NUMS, return false);
+    const auto& shape = scalar->GetViewShape();
+    // All dimensions must be one. This accepts rank-zero scalars and avoids
+    // multiplying untrusted dimensions just to check for one element.
+    for (size_t axis = 0; axis < shape.GetDimNum(); ++axis) {
+        if (shape.GetDim(axis) != 1) {
+            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "scalar must contain exactly one element.");
+            return false;
+        }
+    }
+    return true;
+}
+
 static inline aclnnStatus ForeachAddcMulScalarCheckParams(const aclTensorList* addcmulScalarSelf,
                                                           const aclTensorList* x2, const aclTensorList* x3,
                                                           const aclTensor* scalar, const aclTensorList* out)
@@ -166,6 +181,7 @@ static inline aclnnStatus ForeachAddcMulScalarCheckParams(const aclTensorList* a
     CHECK_RET(CheckTensorListNotNull(out, "out"), ACLNN_ERR_PARAM_INVALID);
     // 2. 检查输入的数据类型是否在API支持的数据类型范围之内，需要根据api定义校验
     CHECK_RET(ForeachAddcMulScalarCheckDtypeValid(addcmulScalarSelf, x2, x3, scalar, out), ACLNN_ERR_PARAM_INVALID);
+    CHECK_RET(CheckScalarShape(scalar), ACLNN_ERR_PARAM_INVALID);
     // 3. 检查shape是否满足约束
     CHECK_RET(ForeachAddcMulScalarCheckShape(addcmulScalarSelf, x2, x3, out), ACLNN_ERR_PARAM_INVALID);
     // 4. 检查Format是否满足约束

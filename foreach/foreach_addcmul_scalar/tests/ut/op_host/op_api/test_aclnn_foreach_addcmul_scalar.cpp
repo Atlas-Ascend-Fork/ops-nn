@@ -8,6 +8,8 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 
+#include "opdev/platform.h"
+#include <memory>
 #include <vector>
 #include <array>
 #include <float.h>
@@ -46,4 +48,55 @@ TEST_F(l2_foreach_addcmul_scalar_test, ascend910B2_foreach_addcmul_scalar_test_n
     uint64_t workspaceSize = 0;
     aclnnStatus getWorkspaceResult = ut.TestGetWorkspaceSize(&workspaceSize);
     EXPECT_EQ(getWorkspaceResult, ACL_SUCCESS);
+}
+
+// Regression coverage: foreach-addcmul-scalar-validation
+TEST_F(l2_foreach_addcmul_scalar_test, ascend910B2_scalar_cardinality_and_rank)
+{
+    op::SocVersionManager soc(op::SocVersion::ASCEND910B);
+    struct Case {
+        vector<int64_t> shape;
+        aclnnStatus expected;
+    };
+    const vector<Case> cases = {
+        {{}, ACLNN_SUCCESS},
+        {{1}, ACLNN_SUCCESS},
+        {{1, 1}, ACLNN_SUCCESS},
+        {{0}, ACLNN_ERR_PARAM_INVALID},
+        {{2}, ACLNN_ERR_PARAM_INVALID},
+        {{1, 0}, ACLNN_ERR_PARAM_INVALID},
+        {{1, 1, 1, 1, 1, 1, 1, 1}, ACLNN_SUCCESS},
+        {{1, 1, 1, 1, 1, 1, 1, 1, 1}, ACLNN_ERR_PARAM_INVALID},
+    };
+    for (const auto& c : cases) {
+        auto tensor = TensorDesc({2}, ACL_FLOAT, ACL_FORMAT_ND);
+        auto list = TensorListDesc({tensor});
+        auto outList = TensorListDesc({tensor});
+        auto scalar = TensorDesc(c.shape, ACL_FLOAT, ACL_FORMAT_ND);
+        auto ut = OP_API_UT(aclnnForeachAddcmulScalar, INPUT(list, list, list, scalar), OUTPUT(outList));
+        uint64_t workspaceSize = 0;
+        EXPECT_EQ(ut.TestGetWorkspaceSize(&workspaceSize), c.expected);
+    }
+}
+
+TEST_F(l2_foreach_addcmul_scalar_test, ascend910B2_empty_lists_keep_valid_scalar_contract)
+{
+    op::SocVersionManager soc(op::SocVersion::ASCEND910B);
+    // TensorListDesc asserts on zero elements; use the public empty-list API.
+    unique_ptr<aclTensorList, decltype(&aclDestroyTensorList)> list(aclCreateTensorList(nullptr, 0),
+                                                                    &aclDestroyTensorList);
+    ASSERT_NE(list.get(), nullptr);
+    for (const auto& shape : {vector<int64_t>{}, vector<int64_t>{0}, vector<int64_t>{2}}) {
+        auto scalar = TensorDesc(shape, ACL_FLOAT, ACL_FORMAT_ND).ToAclType();
+        ASSERT_NE(scalar.get(), nullptr);
+        uint64_t workspaceSize = 99;
+        aclOpExecutor* executor = nullptr;
+        auto status = aclnnForeachAddcmulScalarGetWorkspaceSize(list.get(), list.get(), list.get(), scalar.get(),
+                                                                list.get(), &workspaceSize, &executor);
+        unique_ptr<aclOpExecutor> executorGuard(executor);
+        EXPECT_EQ(status, shape.empty() ? ACLNN_SUCCESS : ACLNN_ERR_PARAM_INVALID);
+        if (shape.empty()) {
+            EXPECT_EQ(workspaceSize, 0U);
+        }
+    }
 }
