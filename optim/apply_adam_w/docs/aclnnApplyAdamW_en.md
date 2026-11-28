@@ -53,22 +53,26 @@
   $$
 
   $$
-  v_t=\begin{cases}\max(maxGradNorm, v_t)
+  v_{\mathrm{eff}}=\begin{cases}\max(maxGradNorm, v_t)
   & \text{ if } amsgrad = true\\
   v_t  & \text{ if } amsgrad = false
   \end{cases}
   $$
+
+  where v_eff is an internal intermediate of the operator (never written back to any
+  output; vRef holds the regular v_t update) and only participates in the denominator
+  of the var update formula.
 
   $$
   \hat{m}_{t}=\frac{m_{t}}{1-\beta_{1}^{t}} \\
   $$
 
   $$
-  \hat{v}_{t}=\frac{v_{t}}{1-\beta_{2}^{t}} \\
+  \hat{v}_{\mathrm{eff}}=\frac{v_{\mathrm{eff}}}{1-\beta_{2}^{t}} \\
   $$
 
   $$
-  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{t}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t}
+  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{\mathrm{eff}}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t}
   $$
 
 ## Function Prototype

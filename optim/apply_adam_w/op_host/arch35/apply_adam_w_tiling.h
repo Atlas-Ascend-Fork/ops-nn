@@ -31,7 +31,7 @@ struct ApplyAdamWCompileInfo {
 
 class ApplyAdamWTiling {
 public:
-    explicit ApplyAdamWTiling(gert::TilingContext* context) : tilingContext_(context){};
+    explicit ApplyAdamWTiling(gert::TilingContext* context) : tilingContext_(context) {};
 
     ge::graphStatus RunTiling();
     ApplyAdamWTilingData* tiling_ = nullptr;
@@ -41,7 +41,7 @@ protected:
     ge::graphStatus SetTilingData();
     ge::graphStatus CheckIsScalar(size_t inputIdx);
     ge::graphStatus CheckSameShape(size_t inputIdx, const gert::Shape& input0Shape);
-    ge::graphStatus CheckSameDtype(size_t inputIdx, const ge::DataType& input0Dtype);
+    ge::graphStatus CheckSameDtype(size_t inputIdx, const ge::DataType& input0Dtype, ge::DataType& curDtype);
     ge::graphStatus CheckShapeAndType();
 
 private:

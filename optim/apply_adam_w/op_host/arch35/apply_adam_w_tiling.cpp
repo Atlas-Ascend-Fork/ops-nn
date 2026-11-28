@@ -76,11 +76,12 @@ ge::graphStatus ApplyAdamWTiling::CheckSameShape(size_t inputIdx, const gert::Sh
     return ge::GRAPH_SUCCESS;
 }
 
-ge::graphStatus ApplyAdamWTiling::CheckSameDtype(size_t inputIdx, const ge::DataType& input0Dtype)
+ge::graphStatus ApplyAdamWTiling::CheckSameDtype(size_t inputIdx, const ge::DataType& input0Dtype,
+                                                 ge::DataType& curDtype)
 {
     auto inputDesc = tilingContext_->GetInputDesc(inputIdx);
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputDesc);
-    auto curDtype = inputDesc->GetDataType();
+    curDtype = inputDesc->GetDataType();
     if (curDtype != input0Dtype) {
         return ge::GRAPH_FAILED;
     }
@@ -97,22 +98,38 @@ ge::graphStatus ApplyAdamWTiling::CheckShapeAndType()
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, inputDesc);
     auto inputDtype = inputDesc->GetDataType();
     for (const auto& pair : SCALAR_INDEX_LIST) {
-        OP_CHECK_IF(CheckIsScalar(pair.first) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(tilingContext_->GetNodeName(), "Input %s must be scalar.", pair.second.c_str()),
-                    return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CheckSameDtype(pair.first, inputDtype) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(tilingContext_->GetNodeName(), "the shape of input %s is different from that of input var.",
-                            pair.second.c_str()),
+        const gert::StorageShape* curShape = tilingContext_->GetInputShape(pair.first);
+        OP_CHECK_IF(
+            CheckIsScalar(pair.first) != ge::GRAPH_SUCCESS,
+            OP_LOGE_FOR_INVALID_SHAPE_WITH_REASON(
+                tilingContext_->GetNodeName(), pair.second.c_str(),
+                (curShape != nullptr ? Ops::Base::ToString(curShape->GetStorageShape()) : std::string("null")).c_str(),
+                "Input should be a scalar or have shape size 1"),
+            return ge::GRAPH_FAILED);
+        ge::DataType curDtype = ge::DT_UNDEFINED;
+        OP_CHECK_IF(CheckSameDtype(pair.first, inputDtype, curDtype) != ge::GRAPH_SUCCESS,
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        tilingContext_->GetNodeName(), (pair.second + " and var").c_str(),
+                        (Ops::Base::ToString(curDtype) + " and " + Ops::Base::ToString(inputDtype)).c_str(),
+                        "Their dtypes should be the same"),
                     return ge::GRAPH_FAILED);
     }
     for (const auto& pair : TENSOR_INDEX_LIST) {
+        const gert::StorageShape* curShape = tilingContext_->GetInputShape(pair.first);
         OP_CHECK_IF(CheckSameShape(pair.first, inputStorageShape) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(tilingContext_->GetNodeName(), "the shape of input %s is different from that of input var.",
-                            pair.second.c_str()),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        tilingContext_->GetNodeName(), (std::string("var and ") + pair.second).c_str(),
+                        (Ops::Base::ToString(inputStorageShape) + " and " +
+                         (curShape != nullptr ? Ops::Base::ToString(curShape->GetStorageShape()) : std::string("null")))
+                            .c_str(),
+                        (std::string("The shapes of input ") + pair.second + " and var should be the same").c_str()),
                     return ge::GRAPH_FAILED);
-        OP_CHECK_IF(CheckSameDtype(pair.first, inputDtype) != ge::GRAPH_SUCCESS,
-                    OP_LOGE(tilingContext_->GetNodeName(), "the shape of input %s is different from that of input var.",
-                            pair.second.c_str()),
+        ge::DataType curDtype = ge::DT_UNDEFINED;
+        OP_CHECK_IF(CheckSameDtype(pair.first, inputDtype, curDtype) != ge::GRAPH_SUCCESS,
+                    OP_LOGE_FOR_INVALID_DTYPES_WITH_REASON(
+                        tilingContext_->GetNodeName(), (pair.second + " and var").c_str(),
+                        (Ops::Base::ToString(curDtype) + " and " + Ops::Base::ToString(inputDtype)).c_str(),
+                        "Their dtypes should be the same"),
                     return ge::GRAPH_FAILED);
     }
 
@@ -188,23 +205,46 @@ ge::graphStatus ApplyAdamWTiling::DoElewiseTiling()
 ge::graphStatus ApplyAdamWTiling::RunTiling()
 {
     if (tilingContext_ == nullptr) {
+        const std::vector<const char*> msgKey = {"opName", "reason"};
+        const std::vector<const char*> msgValue = {
+            "ApplyAdamW", "RunTiling: TilingContext is nullptr. Check the GE tiling invocation."};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+        OP_LOGE_WITHOUT_REPORT("ApplyAdamW", "RunTiling: TilingContext is nullptr. Check the GE tiling invocation.");
         return ge::GRAPH_FAILED;
     }
     OP_CHECK_IF(CheckShapeAndType() != ge::GRAPH_SUCCESS,
-                OP_LOGE(tilingContext_->GetNodeName(), "Shape and Dtype check failed."), return ge::GRAPH_FAILED);
+                OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(),
+                                       "CheckShapeAndType failed; propagate the lower-layer first error."),
+                return ge::GRAPH_FAILED);
     ElewiseBaseTiling elewiseBaseTiling(tilingContext_);
     tiling_ = tilingContext_->GetTilingData<ApplyAdamWTilingData>();
-    OP_CHECK_IF((tiling_ == nullptr), OP_LOGE(tilingContext_, "Get EleBaseTilingData from context failed"),
-                return ge::GRAPH_FAILED);
+    if (tiling_ == nullptr) {
+        const std::vector<const char*> msgKey = {"opName", "reason"};
+        const std::vector<const char*> msgValue = {
+            "ApplyAdamW", "RunTiling: GetTilingData returns nullptr. Check the GE tiling data allocation."};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+        OP_LOGE_WITHOUT_REPORT("ApplyAdamW", "RunTiling: GetTilingData returns nullptr.");
+        return ge::GRAPH_FAILED;
+    }
     auto attrs = tilingContext_->GetAttrs();
     OP_CHECK_NULL_WITH_CONTEXT(tilingContext_, attrs);
 
     const bool* amsgradAttr = attrs->GetAttrPointer<bool>(0);
     amsgradAttr_ = amsgradAttr != nullptr ? *amsgradAttr : false;
 
+    // amsgrad=true 时可选输入 max_grad_norm 必选（对齐 aclnn 层校验与 apply_adam_w_v2 的
+    // SEQ28 裁决修复）：GE/GEIR 图通路不经过 aclnn，tiling 是唯一拦截点；
+    // 缺失时 kernel amsgrad DAG 会对 nullptr GM 地址执行 CopyIn（非法地址访问）。
+    OP_CHECK_IF(amsgradAttr_ && tilingContext_->GetOptionalInputDesc(OPTIONAL_INPUT_INDEX) == nullptr,
+                OP_LOGE_FOR_INVALID_VALUE_WITH_REASON("ApplyAdamW", "max_grad_norm", "None",
+                                                      "max_grad_norm is required when amsgrad is true"),
+                return ge::GRAPH_FAILED);
+
     const bool* maximizeAttr = attrs->GetAttrPointer<bool>(1);
     maximizeAttr_ = maximizeAttr != nullptr ? *maximizeAttr : false;
-    OP_CHECK_IF(DoElewiseTiling() != ge::GRAPH_SUCCESS, OP_LOGE(tilingContext_, "elewiseBaseTiling failed"),
+    OP_CHECK_IF(DoElewiseTiling() != ge::GRAPH_SUCCESS,
+                OP_LOGE_WITHOUT_REPORT(tilingContext_->GetNodeName(),
+                                       "DoElewiseTiling failed; propagate the lower-layer first error."),
                 return ge::GRAPH_FAILED);
     return SetTilingData();
 }
@@ -212,7 +252,12 @@ ge::graphStatus ApplyAdamWTiling::RunTiling()
 static ge::graphStatus TilingForApplyAdamW(gert::TilingContext* context)
 {
     if (context == nullptr) {
-        OP_LOGE("ApplyAdamWTiling", "Tiling context is null");
+        const std::vector<const char*> msgKey = {"opName", "reason"};
+        const std::vector<const char*> msgValue = {
+            "ApplyAdamW", "TilingForApplyAdamW: TilingContext is nullptr. Check the GE tiling invocation."};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+        OP_LOGE_WITHOUT_REPORT("ApplyAdamW",
+                               "TilingForApplyAdamW: TilingContext is nullptr. Check the GE tiling invocation.");
         return ge::GRAPH_FAILED;
     }
     OP_LOGD("ApplyAdamWTiling", "Enter TilingForApplyAdamW");

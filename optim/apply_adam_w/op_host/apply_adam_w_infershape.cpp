@@ -44,12 +44,18 @@ static ge::graphStatus InferShape4ApplyAdamW(gert::InferShapeContext* context)
     constexpr size_t outputVarIdx = 0;
     constexpr size_t outputMIdx = 1;
     constexpr size_t outputVIdx = 2;
-    OP_CHECK_IF(CopyShapeInput2OutputInApplyAdamW(context, inputVarIdx, outputVarIdx) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "copy input var shape to output var failed"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CopyShapeInput2OutputInApplyAdamW(context, inputMIdx, outputMIdx) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "copy input m shape to output m failed"), return ge::GRAPH_FAILED);
-    OP_CHECK_IF(CopyShapeInput2OutputInApplyAdamW(context, inputVIdx, outputVIdx) != ge::GRAPH_SUCCESS,
-                OP_LOGE(context->GetNodeName(), "copy input v shape to output v failed"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        CopyShapeInput2OutputInApplyAdamW(context, inputVarIdx, outputVarIdx) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "copy var shape failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        CopyShapeInput2OutputInApplyAdamW(context, inputMIdx, outputMIdx) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "copy m shape failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        CopyShapeInput2OutputInApplyAdamW(context, inputVIdx, outputVIdx) != ge::GRAPH_SUCCESS,
+        OP_LOGE_WITHOUT_REPORT(context->GetNodeName(), "copy v shape failed; propagate the lower-layer first error."),
+        return ge::GRAPH_FAILED);
     OP_LOGD(context->GetNodeName(), "End to do InferShape4ApplyAdamW");
     return ge::GRAPH_SUCCESS;
 }

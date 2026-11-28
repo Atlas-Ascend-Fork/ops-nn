@@ -39,7 +39,8 @@ std::tuple<const aclTensor*, const aclTensor*, const aclTensor*> ApplyAdamW(
                                                           beta1, beta2, eps, grad, maxGradNormOptional),
                                                  OP_OUTPUT(varRef, mRef, vRef), OP_ATTR(amsgrad, maximize));
     if (retAicore != ACLNN_SUCCESS) {
-        OP_LOGE(ACLNN_ERR_INNER_NULLPTR, "ApplyAdamW ADD_TO_LAUNCHER_LIST_AICORE failed.");
+        // 聚合失败：首错已由 Tiling/执行器创建路径正式上报，此处仅记录日志。
+        OP_LOGE_WITHOUT_REPORT(ACLNN_ERR_INNER_NULLPTR, "ApplyAdamW ADD_TO_LAUNCHER_LIST_AICORE failed.");
     }
     return std::tuple<const aclTensor*, const aclTensor*, const aclTensor*>(varRef, mRef, vRef);
 }

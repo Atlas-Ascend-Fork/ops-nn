@@ -51,22 +51,24 @@
   $$
 
   $$
-  v_t=\begin{cases}\max(maxGradNorm, v_t)
+  v_{\mathrm{eff}}=\begin{cases}\max(maxGradNorm, v_t)
   & \text{ if } amsgrad = true\\
   v_t & \text{ if } amsgrad = false
   \end{cases}
   $$
+
+  其中 v_eff 为算子内部中间量（不写回任何输出；vRef 写回常规的 v_t 更新值），仅参与 var 更新公式的分母计算。
 
   $$
   \hat{m}_{t}=\frac{m_{t}}{1-\beta_{1}^{t}} \\
   $$
 
   $$
-  \hat{v}_{t}=\frac{v_{t}}{1-\beta_{2}^{t}} \\
+  \hat{v}_{\mathrm{eff}}=\frac{v_{\mathrm{eff}}}{1-\beta_{2}^{t}} \\
   $$
 
   $$
-  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{t}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t}
+  \theta_{t+1}=\theta_{t}-\frac{\eta}{\sqrt{\hat{v}_{\mathrm{eff}}}+\epsilon} \hat{m}_{t}-\eta \cdot \lambda \cdot \theta_{t}
   $$
 
 ## 函数原型
@@ -240,7 +242,7 @@ aclnnStatus aclnnApplyAdamW(
     <tr>
       <td class="tg-0lax">maxGradNormOptional（aclTensor*）</td>
       <td class="tg-0lax">输入</td>
-      <td class="tg-0lax">如果amsgrad=true，在vRef中保存maxGradNorm与v最大值。如果amsgrad=false，在vRef中的值不做额外计算。此参数在amsgrad参数为true时必选，在amsgrad参数为false时可选。</td>
+      <td class="tg-0lax">如果amsgrad=true，maxGradNorm与v_t的最大值仅作为var更新公式的分母参与计算（算子内部状态，不写回任何输出；vRef保存常规的v_t更新值）。如果amsgrad=false，maxGradNorm不参与计算。此参数在amsgrad参数为true时必选，在amsgrad参数为false时可选。</td>
       <td class="tg-0lax">shape要求与输入varRef保持一致。</td>
       <td class="tg-0lax">与varRef保持一致</td>
       <td class="tg-0lax">ND</td>
