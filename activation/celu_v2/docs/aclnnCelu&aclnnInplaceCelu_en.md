@@ -108,14 +108,14 @@ aclnnStatus aclnnInplaceCelu(
       <td>Supports empty tensor.</td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
-      <td>0-8</td>
+      <td>Any dimension</td>
       <td>√</td>
     </tr>
       <tr>
       <td>alpha (aclScalar*)</td>
       <td>Input</td>
       <td>Indicates the activation coefficient of the CELU activation function, α in the formula.</td>
-      <td><ul><li>The data type must be convertible to FLOAT (see <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">Conversion Relationship</a>).</li><li>α cannot be 0.</li></ul></td>
+      <td><ul><li>The data type must be convertible to FLOAT (see <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">Conversion Relationship</a>).</li><li>α cannot be 0 or NaN.</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -128,7 +128,7 @@ aclnnStatus aclnnInplaceCelu(
       <td><ul><li>The data type must be a type to which self can be converted (see <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">Conversion Relationship</a>).</li><li>The shape must be the same as that of self.</li></ul></td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
-      <td>0-8</td>
+      <td>Any dimension</td>
       <td>√</td>
     </tr>
      <tr>
@@ -157,6 +157,9 @@ aclnnStatus aclnnInplaceCelu(
   <!-- npu="910" id7 -->
   - <term>Atlas training products</term>: support data types FLOAT and FLOAT16.
   <!-- end id7 -->
+  <!-- npu="A3,910b,910,310p,310b" id9 -->
+  - <term>Atlas A3 products</term>, <term>Atlas A2 products</term>, <term>Atlas training products</term>, <term>Atlas inference products</term>, <term>Atlas 200I/500 A2 inference products</term>: alpha within the subnormal domain (|α|<1e-7) is rejected.
+  <!-- end id9 -->
 
 - **Return value**
 
@@ -170,7 +173,7 @@ aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../
   </colgroup>
   <thead>
     <tr>
-      <th>Error Code</th>
+      <th>Status Code</th>
       <th>Error Code</th>
       <th>Description</th>
     </tr>
@@ -187,19 +190,19 @@ aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../
       <td>The data type of self is not in the supported range.</td>
     </tr>
     <tr>
-      <td>The data type of alpha cannot be converted to FLOAT.</td>
+      <td>The data type of out is not in the supported range.</td>
     </tr>
     <tr>
-      <td>The data type of out is not convertible to that of self.</td>
+      <td>The data type of alpha cannot be converted to FLOAT.</td>
     </tr>
     <tr>
       <td>The shapes of self and out are inconsistent.</td>
     </tr>
     <tr>
-      <td>The dimensions of self and out are greater than 8.</td>
-    </tr>
-      <tr>
       <td>The value of alpha is 0.</td>
+    </tr>
+    <tr>
+      <td>The value of alpha is NaN.</td>
     </tr>
   </tbody></table>
 
@@ -279,14 +282,14 @@ aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../
       <td>Supports empty tensor.</td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
-      <td>0-8</td>
+      <td>Any dimension</td>
       <td>√</td>
     </tr>
       <tr>
       <td>alpha (aclScalar*)</td>
       <td>Input</td>
-      <td>Indicates the activation coefficient of the CELU activation function, in the formula.</td>
-      <td><ul><li>The data type must be a data type convertible to FLOAT (see <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">Conversion Relationship</a>).</li><li>alpha cannot be 0.</li></ul></td>
+      <td>Indicates the activation coefficient of the CELU activation function, α in the formula.</td>
+      <td><ul><li>The data type must be a data type convertible to FLOAT (see <a href="../../../docs/en/context/conversion_relationship.md" target="_blank">Conversion Relationship</a>).</li><li>α cannot be 0 or NaN.</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -318,6 +321,9 @@ aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../
    <!-- npu="910" id8 -->
    - <term>Atlas training products</term>: the supported data types are FLOAT and FLOAT16.
    <!-- end id8 -->
+   <!-- npu="A3,910b,910,310p,310b" id14 -->
+   - <term>Atlas A3 products</term>, <term>Atlas A2 products</term>, <term>Atlas training products</term>, <term>Atlas inference products</term>, <term>Atlas 200I/500 A2 inference products</term>: alpha within the subnormal domain (|α|<1e-7) is rejected.
+   <!-- end id14 -->
 
 - **Return value**
 
@@ -332,7 +338,7 @@ aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../
   </colgroup>
   <thead>
     <tr>
-      <th>Error Code</th>
+      <th>Status Code</th>
       <th>Error Code</th>
       <th>Description</th>
     </tr>
@@ -352,10 +358,10 @@ aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../
       <td>The data type of alpha cannot be converted to FLOAT.</td>
     </tr>
     <tr>
-      <td>The dimension of selfRef is greater than 8.</td>
+      <td>The value of alpha is 0.</td>
     </tr>
     <tr>
-      <td>The value of alpha is 0.</td>
+      <td>The value of alpha is NaN.</td>
     </tr>
   </tbody></table>
 

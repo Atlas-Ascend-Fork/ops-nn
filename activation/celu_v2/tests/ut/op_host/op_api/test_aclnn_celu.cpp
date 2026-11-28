@@ -14,6 +14,7 @@
  * \file test_celu.cpp
  * \brief
  */
+#include <cmath>
 #include <vector>
 #include <array>
 #include <complex>
@@ -91,8 +92,9 @@ TEST_F(l2_celu_test, l2_celu_normal_FLOAT16_NCHW)
     ut.TestPrecision();
 }
 
-// 正常场景_out_COMPLEX64_NCDHW
-TEST_F(l2_celu_test, l2_celu_normal_out_COMPLEX64_NCDHW)
+// CheckDtypeValid_out_COMPLEX64：out域外dtype须拒绝（参数表声明out域FLOAT/FLOAT16/BFLOAT16；
+// 原用例按缺陷实现生成并期望SUCCESS，随F-001修复对齐文档域改判拒绝）
+TEST_F(l2_celu_test, l2_celu_abnormal_out_COMPLEX64)
 {
     auto selfDesc = TensorDesc({2, 2, 2, 2, 2}, ACL_FLOAT, ACL_FORMAT_NCDHW);
     float alpha = 1.0;
@@ -104,10 +106,23 @@ TEST_F(l2_celu_test, l2_celu_normal_out_COMPLEX64_NCDHW)
     // only test GetWorkspaceSize
     uint64_t workspaceSize = 0;
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
-    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
 
-    // precision simulate
-    ut.TestPrecision();
+// CheckDtypeValid_out_COMPLEX128：out域外dtype须拒绝（对齐board F-001实测形态）
+TEST_F(l2_celu_test, l2_celu_abnormal_out_COMPLEX128)
+{
+    auto selfDesc = TensorDesc({2, 2, 3, 3}, ACL_FLOAT, ACL_FORMAT_ND);
+    float alpha = 1.0;
+    auto alphaDesc = ScalarDesc(alpha);
+    auto outDesc = TensorDesc({2, 2, 3, 3}, ACL_COMPLEX128, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnCelu, INPUT(selfDesc, alphaDesc), OUTPUT(outDesc));
+
+    // only test GetWorkspaceSize
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
 
 // 正常场景_ratio_uint8_NDHWC
@@ -441,8 +456,9 @@ TEST_F(l2_celu_test, l2_celu_abnormal_shape_unequal)
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
 
-// CheckShape_10D
-TEST_F(l2_celu_test, l2_celu_abnormal_shape_10D)
+// shape_10d: rank-10 input passes the parameter checks (the operator is
+// elementwise and carries no rank limit of its own).
+TEST_F(l2_celu_test, l2_celu_normal_shape_10d)
 {
     auto selfDesc = TensorDesc({2, 2, 2, 2, 2, 2, 2, 2, 2, 2}, ACL_FLOAT, ACL_FORMAT_ND);
     float alpha = 1.0;
@@ -454,14 +470,30 @@ TEST_F(l2_celu_test, l2_celu_abnormal_shape_10D)
     // only test GetWorkspaceSize
     uint64_t workspaceSize = 0;
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
-    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+    EXPECT_EQ(aclRet, ACLNN_SUCCESS);
 }
 
-// CheckAttributeValue_alpha_0
+// CheckAttributeValue_alpha_0：alpha为0时接口报错（161002）
 TEST_F(l2_celu_test, l2_celu_abnormal_alpha_0)
 {
     auto selfDesc = TensorDesc({2}, ACL_FLOAT, ACL_FORMAT_ND);
     float alpha = 0.0;
+    auto alphaDesc = ScalarDesc(alpha);
+    auto outDesc = TensorDesc({2}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    auto ut = OP_API_UT(aclnnCelu, INPUT(selfDesc, alphaDesc), OUTPUT(outDesc));
+
+    // only test GetWorkspaceSize
+    uint64_t workspaceSize = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspaceSize);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+// CheckAttributeValue_alpha_nan：alpha为NaN时同样报错（!(α>0||α<0)同时覆盖0与NaN，161002）
+TEST_F(l2_celu_test, l2_celu_abnormal_alpha_nan)
+{
+    auto selfDesc = TensorDesc({2}, ACL_FLOAT, ACL_FORMAT_ND);
+    float alpha = std::nanf("");
     auto alphaDesc = ScalarDesc(alpha);
     auto outDesc = TensorDesc({2}, ACL_FLOAT, ACL_FORMAT_ND);
 

@@ -21,7 +21,7 @@
 #include "kernel_ut_data_helper.h"
 #include "kernel_ut_data_executor.h"
 
-#include "../../../op_kernel/celu_v2_apt.cpp"
+#include "../../../op_kernel/celu_v2.cpp"
 
 using namespace std;
 
@@ -65,6 +65,7 @@ TEST_F(celu_v2_test, test_case_fp32_alpha1)
     tilingData->finalSmallTileNum = 1;
     tilingData->finalBigTileNum = 1;
     tilingData->tailBlockNum = 0;
+    tilingData->totalDataNum = static_cast<int64_t>(dataNum);
     tilingData->alpha = alpha;
     tilingData->invAlpha = invAlpha;
 
@@ -111,6 +112,7 @@ TEST_F(celu_v2_test, test_case_fp16_alpha1)
     tilingData->finalSmallTileNum = 1;
     tilingData->finalBigTileNum = 1;
     tilingData->tailBlockNum = 0;
+    tilingData->totalDataNum = static_cast<int64_t>(dataNum);
     tilingData->alpha = alpha;
     tilingData->invAlpha = invAlpha;
 

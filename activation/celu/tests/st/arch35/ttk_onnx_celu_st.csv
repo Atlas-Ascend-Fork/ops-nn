@@ -1,0 +1,12 @@
+testcase_name,api_name,tensor_view_shapes,tensor_dtypes,tensor_formats,tensor_storage_shapes,tensor_view_strides,tensor_view_offsets,attributes,output_tensor_indexes,golden_api,input_data_ranges,precision_tolerances,absolute_precision,remark
+onnx_celu_f32_alpha1,onnx.18.Celu,"((7,9),)","('float32',)",,,,,,,,,,,"L0 f32 基线：默认 alpha=1.0，非 32B 对齐 shape (7,9)，显式 opset 18"
+onnx_celu_f32_alpha2p5,onnx.18.Celu,"((16,32),)","('float32',)",,,,,{'alpha':2.5},,,,,,L0 f32 alpha=2.5 属性透传，显式 opset 18
+onnx_celu_f16_alpha1,onnx.18.Celu,"((7,9),)","('float16',)",,,,,{'alpha':1.0},,,,,,"L0 f16 alpha=1.0，非 32B 对齐 shape (7,9)，显式 opset 18"
+onnx_celu_f16_alpha0p5,onnx.18.Celu,"((33,7),)","('float16',)",,,,,{'alpha':0.5},,,,,,"L0 f16 alpha=0.5，非 32B 对齐 shape (33,7)，显式 opset 18"
+onnx_celu_f32_alpha0p5_large,onnx.18.Celu,"((128,256),)","('float32',)",,,,,{'alpha':0.5},,,"((-100.0,100.0),)",,,L1 f32 alpha=0.5 大幅值，显式 opset 18
+onnx_celu_f16_alpha2p5_large,onnx.18.Celu,"((64,128),)","('float16',)",,,,,{'alpha':2.5},,,"((-60.0,60.0),)",,,L1 f16 alpha=2.5 大幅值，显式 opset 18
+onnx_celu_f32_alpha1_opset12,onnx.18.Celu,"((7,9),)","('float32',)",,,,,{'alpha':1.0},,,,,,"L1 显式 opset：onnx.18.Celu，非 32B 对齐 shape (7,9)"
+onnx_celu_f16_alpha1_opset12,onnx.18.Celu,"((5,13),)","('float16',)",,,,,{'alpha':1.0},,,,,,"L1 显式 opset：onnx.18.Celu，shape (5,13)"
+onnx_celu_f32_alpha2p5_large,onnx.18.Celu,"((31,17),)","('float32',)",,,,,{'alpha':2.5},,,"((-50.0,50.0,-49.5,49.0),)",,,L1 f32 alpha=2.5 大幅值+必现值，显式 opset 18
+onnx_celu_f16_alpha0p5_opset15,onnx.18.Celu,"((1,1),)","('float16',)",,,,,{'alpha':0.5},,,,,,L1 f16 最小 shape alpha=0.5，显式 opset 18
+onnx_celu_f16_alpha_default,onnx.18.Celu,"((15,11),)","('float16',)",,,,,,,,,,,"L1 f16 alpha 缺省(attr 省略, ONNX 默认 1.0)，非 32B 对齐 shape (15,11)，显式 opset 18"

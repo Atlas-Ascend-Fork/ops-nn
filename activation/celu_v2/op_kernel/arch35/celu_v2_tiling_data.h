@@ -29,5 +29,6 @@ struct CeluV2TilingData {
     int64_t tailBlockNum;
     float alpha;
     float invAlpha;
+    int64_t totalDataNum;
 };
 #endif

@@ -106,14 +106,14 @@ aclnnStatus aclnnInplaceCelu(
       <td>支持空Tensor。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
-      <td>0-8</td>
+      <td>任意维</td>
       <td>√</td>
     </tr>
       <tr>
       <td>alpha（aclScalar*）</td>
       <td>输入</td>
       <td>表示CELU激活函数的激活系数，公式中的α。</td>
-      <td><ul><li>数据类型需要是可转换为FLOAT的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li><li>α不能为0。</li></ul></td>
+      <td><ul><li>数据类型需要是可转换为FLOAT的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li><li>α不能为0，且不能为NaN。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -124,9 +124,9 @@ aclnnStatus aclnnInplaceCelu(
       <td>输出</td>
       <td>表示CELU激活函数的输出。</td>
       <td><ul><li>数据类型需要是self可转换的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li><li>shape需要与self一致。</li></ul></td>
-      <td>FLOAT、FLOAT16、BFLOAT16、COMPLEX64</td>
+      <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
-      <td>0-8</td>
+      <td>任意维</td>
       <td>√</td>
     </tr>
      <tr>
@@ -155,6 +155,9 @@ aclnnStatus aclnnInplaceCelu(
   <!-- npu="910" id7 -->
   - <term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16。
   <!-- end id7 -->
+  <!-- npu="A3,910b,910,310p,310b" id9 -->
+  - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>：alpha次正规域（|α|<1e-7）内拒绝。
+  <!-- end id9 -->
 
 - **返回值：**
 
@@ -185,19 +188,19 @@ aclnnStatus aclnnInplaceCelu(
       <td>self的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>alpha的数据类型不可转换为FLOAT。</td>
+      <td>out的数据类型不在支持的范围之内。</td>
     </tr>
     <tr>
-      <td>out的数据类型不是self可转换的。</td>
+      <td>alpha的数据类型不可转换为FLOAT。</td>
     </tr>
     <tr>
       <td>self、out的shape不一致。</td>
     </tr>
     <tr>
-      <td>self、out的维度大于8。</td>
-    </tr>
-      <tr>
       <td>alpha等于0。</td>
+    </tr>
+    <tr>
+      <td>alpha的取值为NaN。</td>
     </tr>
   </tbody></table>
 
@@ -277,14 +280,14 @@ aclnnStatus aclnnInplaceCelu(
       <td>支持空Tensor。</td>
       <td>FLOAT、FLOAT16、BFLOAT16</td>
       <td>ND</td>
-      <td>0-8</td>
+      <td>任意维</td>
       <td>√</td>
     </tr>
       <tr>
       <td>alpha（aclScalar*）</td>
       <td>输入</td>
       <td>表示CELU激活函数的激活系数，公式中的α。</td>
-      <td><ul><li>数据类型需要是可转换为FLOAT的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li><li>α不能为0。</li></ul></td>
+      <td><ul><li>数据类型需要是可转换为FLOAT的数据类型（参见<a href="../../../docs/zh/context/conversion_relationship.md" target="_blank">互转换关系</a>）。</li><li>α不能为0，且不能为NaN。</li></ul></td>
       <td>-</td>
       <td>-</td>
       <td>-</td>
@@ -316,6 +319,9 @@ aclnnStatus aclnnInplaceCelu(
    <!-- npu="910" id8 -->
    - <term>Atlas训练系列产品</term>：数据类型支持FLOAT、FLOAT16。
    <!-- end id8 -->
+   <!-- npu="A3,910b,910,310p,310b" id14 -->
+   - <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>：alpha次正规域（|α|<1e-7）内拒绝。
+   <!-- end id14 -->
 
 - **返回值：**
 
@@ -350,10 +356,10 @@ aclnnStatus aclnnInplaceCelu(
       <td>alpha的数据类型不可转换为FLOAT。</td>
     </tr>
     <tr>
-      <td>selfRef的维度大于8。</td>
+      <td>alpha等于0。</td>
     </tr>
     <tr>
-      <td>alpha等于0。</td>
+      <td>alpha的取值为NaN。</td>
     </tr>
   </tbody></table>
 

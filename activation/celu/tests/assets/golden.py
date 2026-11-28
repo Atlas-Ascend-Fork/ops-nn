@@ -29,7 +29,10 @@ alpha2 = +Inf 时负支随商趋 -0.0 而饱和到 0)。
 通路与载体:
     - Kernel / GEIR: golden 收 numpy.ndarray, 转 torch 计算后以 numpy 返回;
     - third_party: torch.Tensor 直调 _TorchCelu 核心 (与 golden 同一
-      精度合同)。
+      精度合同);
+    - ONNX E2E: api_name "onnx.18.Celu" 走 _celu_onnx_golden —— ONNX 标准
+      单 alpha CELU 映射 alpha1 = alpha2 = alpha, alpha3 = 1; onnx 域无三方
+      通道, 比对用两方 mix_tolerance (仅 golden vs NPU)。
 
 精度契约 (纯函数自保证, 不依赖测试框架升精度):
     golden 不读任何控制形参 —— 测试框架传入的 golden_mode 等控制参数
@@ -51,11 +54,23 @@ import math
 __spec__ = {
     "celu": "CeluTestSpec",
     "Celu": "CeluTestSpec",
+    # ONNX E2E path (ONNX op type Celu).
+    "onnx.18.Celu": "CeluOnnxSpec",
 }
 
 _TOLERANCE = {
     "float16": {"standard": "cross_check", "level": "L1"},
     "float32": {"standard": "cross_check", "level": "L1"},
+}
+
+# ONNX E2E 是两方比对 (golden vs NPU): onnx 域没有三方 XPU 通道 (TTK
+# ONNX_XPU_UNSUPPORTED), cross_check 作为三方判据在 third_party=None 时
+# 必然 GOLDEN_FAILURE, 故此处不能用。mix_tolerance 是 TTK 浮点输出的默认
+# 判据, 也是浮点 elementwise 兄弟算子 (如 softplus_v2) 的环境标准, 只需
+# golden 与 NPU 两方即可判定。
+_ONNX_TOLERANCE = {
+    "float16": {"standard": "mix_tolerance"},
+    "float32": {"standard": "mix_tolerance"},
 }
 
 
@@ -166,3 +181,34 @@ class CeluTestSpec:
     golden = staticmethod(_celu_golden)
     third_party = {"torch": _TorchCelu}
     tolerance = _TOLERANCE
+
+
+def _celu_onnx_golden(x, alpha=1.0, **kwargs):
+    """CPU golden for the ONNX Celu E2E lane.
+
+    ONNX Celu is the standard single-alpha CELU node; the operator's
+    registered contract is three-alpha, so the single ONNX ``alpha`` maps to
+    ``alpha1 = alpha2 = alpha`` and ``alpha3 = 1.0`` (positive branch is the
+    identity). The precision contract (fp16 -> fp32 compute -> RNE round
+    back) is carried by the shared ``_TorchCelu`` core, so this entry point
+    is a thin alias to ``_celu_golden``.
+    """
+
+    return _celu_golden(x, alpha1=alpha, alpha2=alpha, alpha3=1.0)
+
+
+class CeluOnnxSpec:
+    """ONNX E2E spec registered by CSV ``api_name`` ``onnx.18.Celu``.
+
+    The ONNX domain requires an explicit opset segment (environment onnx
+    opset 21 exceeds the ATC limit 18, so a bare name is unusable); this
+    spec registers ``onnx.18.Celu`` only. The golden is self-sufficient
+    (numpy in/out via the shared three-alpha core) so ``third_party`` is
+    None; with no third-party XPU channel, three-party ``cross_check`` is
+    inapplicable, and two-party ``mix_tolerance`` compares golden against
+    NPU only.
+    """
+
+    golden = staticmethod(_celu_onnx_golden)
+    third_party = None
+    tolerance = _ONNX_TOLERANCE

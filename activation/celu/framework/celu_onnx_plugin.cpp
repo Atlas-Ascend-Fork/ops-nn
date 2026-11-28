@@ -22,19 +22,12 @@ static Status ParseParamsCelu(const Message* op_src, ge::Operator& op_dest)
         return FAILED;
     }
     float alpha_value = 1.0;
-    float alpha3_value = 1.0;
-    op_dest.SetAttr("alpha1", alpha_value);
-    op_dest.SetAttr("alpha2", alpha_value);
-    op_dest.SetAttr("alpha3", alpha3_value);
+    op_dest.SetAttr("alpha", alpha_value);
     for (const auto& attr : node->attribute()) {
         if (attr.name() == "alpha" && attr.type() == ge::onnx::AttributeProto::FLOAT) {
             alpha_value = attr.f();
             op_dest.SetAttr("alpha1", alpha_value);
             op_dest.SetAttr("alpha2", alpha_value);
-        }
-        if (attr.name() == "alpha3" && attr.type() == ge::onnx::AttributeProto::FLOAT) {
-            alpha3_value = attr.f();
-            op_dest.SetAttr("alpha3", alpha3_value);
         }
     }
     return SUCCESS;
@@ -42,10 +35,12 @@ static Status ParseParamsCelu(const Message* op_src, ge::Operator& op_dest)
 // register Celu op info to GE
 REGISTER_CUSTOM_OP("Celu")
     .FrameworkType(ONNX)
-    .OriginOpType({ge::AscendString("ai.onnx::12::Celu"), ge::AscendString("ai.onnx::13::Celu"),
+    .OriginOpType({ge::AscendString("ai.onnx::8::Celu"), ge::AscendString("ai.onnx::9::Celu"),
+                   ge::AscendString("ai.onnx::10::Celu"), ge::AscendString("ai.onnx::11::Celu"),
+                   ge::AscendString("ai.onnx::12::Celu"), ge::AscendString("ai.onnx::13::Celu"),
                    ge::AscendString("ai.onnx::14::Celu"), ge::AscendString("ai.onnx::15::Celu"),
                    ge::AscendString("ai.onnx::16::Celu"), ge::AscendString("ai.onnx::17::Celu"),
                    ge::AscendString("ai.onnx::18::Celu")})
     .ParseParamsFn(ParseParamsCelu)
-    .ImplyType(ImplyType::CUSTOM);
+    .ImplyType(ImplyType::TVM);
 } // namespace domi

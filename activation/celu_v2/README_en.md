@@ -44,32 +44,36 @@ where:
     <tr>
     <td>x</td>
     <td>Input</td>
-    <td>'x' in the formula, the input tensor of the CELU activation function. Empty tensors are supported, non-contiguous tensors are supported, and 0 to 8 dimensions are supported.</td>
-    <td>FLOAT16, FLOAT32, DT_BF16</td>
+    <td>'x' in the formula, the input tensor of the CELU activation function. Empty tensors are supported. Non-contiguous tensor inputs are automatically converted to contiguous tensors by the framework before computation.</td>
+    <td>FLOAT, FLOAT16, BFLOAT16</td>
     <td>ND</td>
     </tr>
     <tr>
     <td>alpha</td>
     <td>Attribute</td>
-    <td>Activation coefficient in the CELU formula, with the default value 1.0, and it cannot be 0.</td>
+    <td>Activation coefficient in the CELU formula, with the default value 1.0. It cannot be 0.</td>
     <td>FLOAT</td>
     <td>-</td>
     </tr>
     <tr>
     <td>y</td>
     <td>Output</td>
-    <td>Output tensor of x computed by CELU, with the shape and dtype the same as the input x. Non-contiguous tensors are supported.</td>
-    <td>FLOAT16, FLOAT32, DT_BF16</td>
+    <td>Output tensor of x computed by CELU, with the shape the same as the input x. Non-contiguous tensor outputs are automatically converted to contiguous tensors by the framework before computation.</td>
+    <td>FLOAT, FLOAT16, BFLOAT16</td>
     <td>ND</td>
     </tr>
 </tbody></table>
 
+- <term>Atlas training products</term>, <term>Atlas inference products</term>, <term>Atlas 200I/500 A2 inference products</term>: BFLOAT16 is not supported.
+- <term>Atlas A3 products</term>, <term>Atlas A2 products</term>, <term>Atlas training products</term>, <term>Atlas inference products</term>, <term>Atlas 200I/500 A2 inference products</term>: alpha within the subnormal domain (|α|<1e-7) is rejected.
+
 ## Constraints
 
-None.
+- alpha: alpha cannot be 0.
 
 ## Invocation Description
 
 | Invocation method   | Sample code           | Description                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
 | aclnn API  | [test_aclnn_celu.cpp](examples/test_aclnn_celu.cpp) | Calls the CeluV2 operator through the [aclnnCelu&aclnnInplaceCelu](docs/aclnnCelu&aclnnInplaceCelu_en.md) API. |
+| GE graph mode | - | Calls the CeluV2 operator by constructing a graph with the [operator IR](op_graph/celu_v2_proto.h). |

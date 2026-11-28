@@ -45,11 +45,11 @@ extern "C" {
  * @brief aclnnCelu的第一段接口，根据具体的计算流程，计算workspace大小。
  * @domain aclnn_ops_infer
  * @param [in] self: 表示CELU激活函数的输入，npu device侧的aclTensor，数据类型支持FLOAT、FLOAT16、BFLOAT16，支持非连续的
- * Tensor, 数据格式支持ND，数据维度不支持8维以上。
+ * Tensor, 数据格式支持ND。
  * @param [in] alpha: 表示CELU激活函数的激活系数，host侧的aclScalar，数据类型需要是可转换为FLOAT的数据类型。
- * @param [in] out: 表示CELU激活函数的输出，npu
+ * @param [out] out: 表示CELU激活函数的输出，npu
  * device侧的aclTensor，数据类型需要是self可转换的数据类型，shape需要与self一致，
- * 支持非连续的Tensor，数据格式支持ND，数据维度不支持8维以上。
+ * 支持非连续的Tensor，数据格式支持ND。
  * @param [out] workspaceSize: 返回用户需要在npu device侧申请的workspace大小。
  * @param [out] executor: 返回op执行器，包含了算子计算流程。
  * @return aclnnStatus: 返回状态码。
@@ -71,7 +71,7 @@ ACLNN_API aclnnStatus aclnnCelu(void* workspace, uint64_t workspaceSize, aclOpEx
  * @brief aclnnInplaceCelu的第一段接口，根据具体的计算流程，计算workspace大小。
  * @domain aclnn_ops_infer
  * @param [in] selfRef: 表示CELU激活函数的输入，npu
- * device侧的aclTensor，数据类型支持FLOAT、FLOAT16，支持非连续的Tensor，数据 格式支持ND，数据维度不支持8维以上。
+ * device侧的aclTensor，数据类型支持FLOAT、FLOAT16、BFLOAT16，支持非连续的Tensor，数据格式支持ND。
  * @param [in] alpha: 表示CELU激活函数的激活系数，host侧的aclScalar，数据类型需要是可转换为FLOAT的数据类型。
  * @param [out] workspaceSize: 返回用户需要在npu device侧申请的workspace大小。
  * @param [out] executor: 返回op执行器，包含了算子计算流程。

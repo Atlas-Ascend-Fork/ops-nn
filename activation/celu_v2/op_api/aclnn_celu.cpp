@@ -18,7 +18,6 @@
 #include "op_api/aclnn_util.h"
 #include "opdev/common_types.h"
 #include "opdev/data_type_utils.h"
-#include "opdev/format_utils.h"
 #include "opdev/op_dfx.h"
 #include "opdev/op_log.h"
 #include "opdev/op_executor.h"
@@ -30,8 +29,6 @@ using namespace op;
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-static constexpr size_t MAX_DIM_LEN = 8;
 
 // 根据API定义，需要列出所能支持的所有dtype
 static const std::initializer_list<op::DataType> ASCEND910_DTYPE_SUPPORT_LIST = {op::DataType::DT_FLOAT,
@@ -66,6 +63,11 @@ static inline bool CheckDtypeValid(const aclTensor* self, const aclScalar* alpha
     auto dtypeSupportList = GetDtypeSupportList();
     OP_CHECK_DTYPE_NOT_SUPPORT(self, dtypeSupportList, return false);
 
+    // 检查out的数据类型是否在算子的支持列表内：接口文档参数表声明out域为
+    // FLOAT/FLOAT16/BFLOAT16（对齐def.cpp输出注册面）。仅靠可转换性检查拦不住
+    // complex等可转换方向的域外dtype，须按白名单显式拒绝（161002）。
+    OP_CHECK_DTYPE_NOT_SUPPORT(out, dtypeSupportList, return false);
+
     // 检查alpha的数据类型能否转换为FLOAT
     if (!CanCast(alpha->GetDataType(), DataType::DT_FLOAT)) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "alpha dtype %s can not cast to float32.",
@@ -80,9 +82,6 @@ static inline bool CheckDtypeValid(const aclTensor* self, const aclScalar* alpha
 
 static inline bool CheckShape(const aclTensor* self, const aclTensor* out)
 {
-    // self的数据维度不能超过8
-    OP_CHECK_MAX_DIM(self, MAX_DIM_LEN, return false);
-
     // self和out的shape必须一致
     OP_CHECK_SHAPE_NOT_EQUAL(out, self, return false);
     return true;
@@ -90,26 +89,12 @@ static inline bool CheckShape(const aclTensor* self, const aclTensor* out)
 
 static inline bool CheckAttributeValue(const aclScalar* alpha)
 {
-    // 当alpha为0时，报错
+    // 当alpha为0或NaN时，报错
     if (!(alpha->ToFloat() > 0 || alpha->ToFloat() < 0)) {
         OP_LOGE(ACLNN_ERR_PARAM_INVALID, "alpha cannot be 0 for CELU.");
         return false;
     }
 
-    return true;
-}
-
-static bool CheckFormat(const aclTensor* self, const aclTensor* out)
-{
-    const auto curArch = GetCurrentPlatformInfo().GetCurNpuArch();
-    if (!Ops::NN::AclnnUtil::IsRegbase(curArch)) {
-        return true;
-    }
-    if (op::IsPrivateFormat(self->GetStorageFormat()) || op::IsPrivateFormat(out->GetStorageFormat())) {
-        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Private format is not supported, self [%s], out [%s].",
-                op::ToString(self->GetStorageFormat()).GetString(), op::ToString(out->GetStorageFormat()).GetString());
-        return false;
-    }
     return true;
 }
 
@@ -126,9 +111,6 @@ static aclnnStatus CheckParams(const aclTensor* self, const aclScalar* alpha, co
 
     // 4. 检查alpha的取值是否满足要求
     CHECK_RET(CheckAttributeValue(alpha), ACLNN_ERR_PARAM_INVALID);
-
-    // 5. Check private format.
-    CHECK_RET(CheckFormat(self, out), ACLNN_ERR_PARAM_INVALID);
 
     return ACLNN_SUCCESS;
 }

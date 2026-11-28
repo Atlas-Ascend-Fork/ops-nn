@@ -15,8 +15,8 @@
  * \brief
  */
 
-#include "log/log.h"
 #include <cmath>
+#include "log/log.h"
 #include "util/math_util.h"
 #include "op_host/tiling_util.h"
 #include "op_host/tiling_templates_registry.h"
@@ -47,7 +47,8 @@ static ge::graphStatus GetPlatformInfo(gert::TilingContext* context, uint64_t& u
     OP_CHECK_NULL_WITH_CONTEXT(context, platformInfoPtr);
     auto ascendcPlatform = platform_ascendc::PlatformAscendC(platformInfoPtr);
     coreNum = ascendcPlatform.GetCoreNumAiv();
-    OP_CHECK_IF(coreNum == 0, OP_LOGE(context, "coreNum is 0"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(coreNum <= 0, OP_LOGE(context, "coreNum is %lld, must be positive", static_cast<long long>(coreNum)),
+                return ge::GRAPH_FAILED);
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     OP_CHECK_IF(ubSize == 0, OP_LOGE(context, "ubSize is 0"), return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
@@ -66,6 +67,23 @@ static ge::graphStatus GetShapeAttrsInfo(gert::TilingContext* context, int64_t& 
         OP_LOGE(context, "invalid dtype");
         return ge::GRAPH_FAILED;
     }
+    // Output dtype domain gate: the registered output face (def.cpp TensorType
+    // {DT_FLOAT, DT_FLOAT16, DT_BF16}) is the whitelist; out-of-domain y dtypes
+    // (bool/complex) must be rejected at the host gate instead of faulting in the
+    // kernel (direct-launch dyn path: y=bool → VEC_ERROR device error).
+    auto outputDesc = context->GetOutputDesc(0);
+    OP_CHECK_NULL_WITH_CONTEXT(context, outputDesc);
+    if (supportedDtype.count(outputDesc->GetDataType()) == 0) {
+        OP_LOGE(context, "invalid output dtype");
+        return ge::GRAPH_FAILED;
+    }
+    // y must carry the same dtype as x (proto: "y: Has the same type and format
+    // as input x"). A domain-internal mismatch (e.g. x=f32, y=f16) passes both
+    // whitelists but instantiates the kernel template at x's type width, so the
+    // kernel would write y with x's stride (wide→narrow overwrites GM past the
+    // y buffer; narrow→wide leaves half of y unwritten).
+    OP_CHECK_IF(outputDesc->GetDataType() != dataType, OP_LOGE(context, "output dtype must be the same as input dtype"),
+                return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
 }
 
@@ -92,6 +110,14 @@ static ge::graphStatus CeluV2TilingFunc(gert::TilingContext* context)
     OP_CHECK_IF(GetShapeAttrsInfo(context, totalIdx, dataType) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context, "GetShapeAttrsInfo error"), return ge::GRAPH_FAILED);
 
+    // Workspace sizing must run on every path, including the empty-tensor early
+    // exit below (v1 celu tiling precedent): hosts that launch the prebuilt
+    // binary directly pack the kernel argument list from this result, and a
+    // tiling result without a workspace slot misaligns the arguments (the
+    // kernel then faults reading its tiling data from a garbage pointer).
+    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
+                return ge::GRAPH_FAILED);
+
     if (totalIdx <= 0) {
         CeluV2TilingData* tiling = context->GetTilingData<CeluV2TilingData>();
         OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
@@ -101,9 +127,6 @@ static ge::graphStatus CeluV2TilingFunc(gert::TilingContext* context)
         context->SetTilingKey(GET_TPL_TILING_KEY(ELEMENTWISE_TPL_SCH_MODE_0));
         return ge::GRAPH_SUCCESS;
     }
-
-    OP_CHECK_IF(GetWorkspaceSize(context) != ge::GRAPH_SUCCESS, OP_LOGE(context, "GetWorkspaceSize error"),
-                return ge::GRAPH_FAILED);
 
     CeluV2TilingData* tiling = context->GetTilingData<CeluV2TilingData>();
     OP_CHECK_NULL_WITH_CONTEXT(context, tiling);
@@ -119,8 +142,27 @@ static ge::graphStatus CeluV2TilingFunc(gert::TilingContext* context)
         }
     }
     OP_LOGI(context, "CeluV2 tiling: attr a final value = %f", alpha);
-    OP_CHECK_IF(std::fabs(alpha) < 1e-7f, OP_LOGE(context, "alpha is zero or near zero"), return ge::GRAPH_FAILED);
+    // alpha == 0 is rejected by a precise comparison only. NaN compares
+    // unequal to every value (including 0.0f), so alpha == NaN deliberately
+    // passes this gate and flows into the kernel (invAlpha = NaN, outputs
+    // follow NaN propagation). alpha is an external attribute, so the
+    // rejection reports the parameter-value error code (EZ0024) instead of
+    // the internal fallback code.
+    if (alpha == 0.0f) {
+        OP_LOGE_FOR_INVALID_VALUE("CeluV2", "alpha", "0.0", "non-zero");
+        return ge::GRAPH_FAILED;
+    }
     float invAlpha = 1.0f / alpha;
+    // The kernel computes u = x * invAlpha (multiply-by-reciprocal): for
+    // 0 < |alpha| < 1/FLT_MAX (~2.94e-39, the subnormal bulk) 1.0f/alpha
+    // overflows to +/-inf and the negative-side elements read -inf instead of
+    // the finite alpha * expm1(x / alpha). Reference implementations share the
+    // same reciprocal-multiply structure in this domain, so the tiling logs a
+    // warning and continues instead of rejecting.
+    if (std::isinf(invAlpha)) {
+        OP_LOGW(context, "alpha magnitude is too small: 1.0/alpha overflows to inf, negative-side outputs may be -inf "
+                         "(aligned with reference implementations)");
+    }
 
     uint32_t typeLength = 0;
     ge::TypeUtils::GetDataTypeLength(context->GetInputDesc(0)->GetDataType(), typeLength);
@@ -183,6 +225,10 @@ static ge::graphStatus CeluV2TilingFunc(gert::TilingContext* context)
     tiling->finalSmallTileNum = static_cast<int64_t>(finalSmallTileNum);
     tiling->finalBigTileNum = static_cast<int64_t>(finalBigTileNum);
     tiling->tailBlockNum = static_cast<int64_t>(tailBlockNum);
+    // Exact element count: per-core block-rounded counts can overhang the real
+    // tensor end (the kernel clamps against this value), and it also marks the
+    // empty tensor (totalDataNum == 0) so the kernel can skip all buffer setup.
+    tiling->totalDataNum = totalIdx;
     tiling->alpha = alpha;
     tiling->invAlpha = invAlpha;
 

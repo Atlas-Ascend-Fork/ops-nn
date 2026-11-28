@@ -42,8 +42,8 @@ $$
     <tr>
     <td>x</td>
     <td>输入</td>
-    <td>公式中的'x'，表示CELU激活函数的输入张量。支持空Tensor，支持非连续Tensor，维度支持0-8。</td>
-    <td>FLOAT16、FLOAT32、DT_BF16</td>
+    <td>公式中的'x'，表示CELU激活函数的输入张量。支持空Tensor。非连续Tensor输入由框架自动转换为连续Tensor后执行。</td>
+    <td>FLOAT、FLOAT16、BFLOAT16</td>
     <td>ND</td>
     </tr>
     <tr>
@@ -56,18 +56,22 @@ $$
     <tr>
     <td>y</td>
     <td>输出</td>
-    <td>表示x经CELU计算得到的输出张量，shape和dtype与输入x一致。支持非连续Tensor。</td>
-    <td>FLOAT16、FLOAT32、DT_BF16</td>
+    <td>表示x经CELU计算得到的输出张量，shape与输入x一致。非连续Tensor输出由框架自动转换为连续Tensor后执行。</td>
+    <td>FLOAT、FLOAT16、BFLOAT16</td>
     <td>ND</td>
     </tr>
 </tbody></table>
 
+- <term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>：数据类型不支持BFLOAT16。
+- <term>Atlas A3系列产品</term>、<term>Atlas A2系列产品</term>、<term>Atlas训练系列产品</term>、<term>Atlas推理系列产品</term>、<term>Atlas 200I/500 A2推理产品</term>：alpha次正规域（|α|<1e-7）内拒绝。
+
 ## 约束说明
 
-无。
+- alpha：不能为0。
 
 ## 调用说明
 
 | 调用方式   | 样例代码           | 说明                                         |
 | ---------------- | --------------------------- | --------------------------------------------------- |
 | aclnn接口  | [test_aclnn_celu.cpp](examples/test_aclnn_celu.cpp) | 通过[aclnnCelu&aclnnInplaceCelu](docs/aclnnCelu&aclnnInplaceCelu.md)接口方式调用CeluV2算子。 |
+| GE图模式  | - | 通过[算子IR](op_graph/celu_v2_proto.h)构图方式调用CeluV2算子。 |
