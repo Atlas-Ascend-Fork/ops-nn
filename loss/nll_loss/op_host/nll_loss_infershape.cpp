@@ -110,6 +110,7 @@ graphStatus InferDtypeForNLLLoss(gert::InferDataTypeContext* context)
                 return GRAPH_FAILED);
 
     context->SetOutputDataType(IDX_ZERO, x_dtype);
+    context->SetOutputDataType(IDX_ONE, x_dtype);
 
     OP_LOGI(context->GetNodeName(), "inferdtype is success");
     return GRAPH_SUCCESS;

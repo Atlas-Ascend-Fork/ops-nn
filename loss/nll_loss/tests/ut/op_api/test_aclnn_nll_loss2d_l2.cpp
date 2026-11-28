@@ -585,3 +585,41 @@ TEST_F(l2_nll_loss2d_forward_test, case_029)
     aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
     EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
 }
+
+TEST_F(l2_nll_loss2d_forward_test, case_weight_not_1d)
+{
+    auto selfDesc = TensorDesc({1, 3, 5, 2}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    auto targetDesc = TensorDesc({1, 5, 2}, ACL_INT64, ACL_FORMAT_ND).ValueRange(0, 3);
+    auto weightDesc = TensorDesc({1, 3}, ACL_FLOAT, ACL_FORMAT_ND).ValueRange(-1, 1);
+    int64_t reduction = 1;
+    int64_t ignoreIndex = -100;
+
+    auto outDesc = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.0001, 0.0001);
+    auto totalWeightDesc = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.0001, 0.0001);
+
+    auto ut = OP_API_UT(aclnnNLLLoss2d, INPUT(selfDesc, targetDesc, weightDesc, reduction, ignoreIndex),
+                        OUTPUT(outDesc, totalWeightDesc));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}
+
+TEST_F(l2_nll_loss2d_forward_test, case_target_out_of_bounds_empty_self)
+{
+    auto selfDesc = TensorDesc({1, 0, 5, 2}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto targetDesc = TensorDesc({1, 5, 2}, ACL_INT64, ACL_FORMAT_ND).ValueRange(0, 3);
+    auto weightDesc = TensorDesc({0}, ACL_FLOAT, ACL_FORMAT_ND);
+    int64_t reduction = 1;
+    int64_t ignoreIndex = -100;
+
+    auto outDesc = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.0001, 0.0001);
+    auto totalWeightDesc = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND).Precision(0.0001, 0.0001);
+
+    auto ut = OP_API_UT(aclnnNLLLoss2d, INPUT(selfDesc, targetDesc, weightDesc, reduction, ignoreIndex),
+                        OUTPUT(outDesc, totalWeightDesc));
+
+    uint64_t workspace_size = 0;
+    aclnnStatus aclRet = ut.TestGetWorkspaceSize(&workspace_size);
+    EXPECT_EQ(aclRet, ACLNN_ERR_PARAM_INVALID);
+}

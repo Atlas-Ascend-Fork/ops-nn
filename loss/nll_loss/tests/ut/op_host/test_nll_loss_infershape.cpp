@@ -303,6 +303,7 @@ TEST_F(NLLLossProtoTest, success_dtype_infer_0)
         ASSERT_NE(context, nullptr);
         EXPECT_EQ(data_type_func(context), ge::GRAPH_SUCCESS);
         EXPECT_EQ(context->GetOutputDataType(0), output_ref);
+        EXPECT_EQ(context->GetOutputDataType(1), output_ref);
     }
 }
 

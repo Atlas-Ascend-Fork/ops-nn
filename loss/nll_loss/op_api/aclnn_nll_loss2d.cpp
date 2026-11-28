@@ -120,8 +120,11 @@ static bool CheckShape2D(const aclTensor* self, const aclTensor* target, const a
              OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Input tensor dim should be 4D, other dim not supported."), return false);
 
     const auto nClasses = self->GetViewShape().GetDim(1);
-    OP_CHECK(weight->GetViewShape().GetDim(0) == nClasses,
-             OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Input tensor x[1] should be equal to weight[0]."), return false);
+    OP_CHECK(weight->GetViewShape().GetDimNum() == 1 && weight->GetViewShape().GetDim(0) == nClasses,
+             OP_LOGE(ACLNN_ERR_PARAM_INVALID,
+                     "Weight tensor should be defined for all %ld classes but got weight tensor of shape: %s", nClasses,
+                     op::ToString(weight->GetViewShape()).GetString()),
+             return false);
 
     size_t targetDimNum = target->GetViewShape().GetDimNum();
     OP_CHECK(targetDimNum == 3,
@@ -154,6 +157,14 @@ static bool CheckShape2D(const aclTensor* self, const aclTensor* target, const a
              OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Shape of totalWeightOut tensor should be [1], but current is %s.",
                      op::ToString(totalWeightOut->GetViewShape()).GetString()),
              return false);
+
+    // When C == 0 every non-ignore target is out of bounds. The target values live on device and cannot be
+    // inspected here, so any non-empty target is rejected, including an all-ignore one (which ATen accepts).
+    // Keep this consistent with aclnnNLLLoss' 1D entry, which applies the same guard.
+    if (self->IsEmpty() && nClasses == 0 && target->GetViewShape().GetShapeSize() > 0) {
+        OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Target is out of bounds");
+        return false;
+    }
     return true;
 }
 
