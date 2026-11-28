@@ -26,9 +26,6 @@ static constexpr size_t kConv2dDimSizeLimit = 4;
 constexpr size_t kXIndex = 0;
 constexpr size_t kFilterSizeIndex = 1;
 constexpr size_t kOutBackpropIndex = 2;
-// 属性总数>=9为当前def布局，槽5是output_padding列表；不足9(旧def/skew或L0直调)时槽5是其他类型，跳过校验
-constexpr size_t kOutputPaddingAttrIdx = 5;
-constexpr size_t kMinAttrNumForLayout = 9;
 
 // filter_size为const且x为静态shape时，out_backprop的H/W维度不支持-1
 static ge::graphStatus CheckOutBackpropShapeForConv2DBackpropFilter(gert::InferShapeContext* context)
@@ -77,8 +74,8 @@ static ge::graphStatus CheckOutBackpropShapeForConv2DBackpropFilter(gert::InferS
 
 static ge::graphStatus InferShape4Conv2DBackpropFilter(gert::InferShapeContext* context)
 {
-    OP_CHECK_IF(CheckOutputPaddingListSize(context, kOutputPaddingAttrIdx, kConv2dDimSizeLimit, kMinAttrNumForLayout) !=
-                    ge::GRAPH_SUCCESS,
+    const BpParamIdx bpParamIdx = MakeBpParamIdx(C2D_BP_FILTER_LAYOUT, C2D_BP_FILTER_V2_LAYOUT, kConv2dDimSizeLimit);
+    OP_CHECK_IF(CheckOutputPaddingListSize(context, bpParamIdx) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "check output_padding failed."), return ge::GRAPH_FAILED);
     auto ret = InferShapeForConv2DBackpropFilter(context);
     if (ret == ge::GRAPH_SUCCESS) {

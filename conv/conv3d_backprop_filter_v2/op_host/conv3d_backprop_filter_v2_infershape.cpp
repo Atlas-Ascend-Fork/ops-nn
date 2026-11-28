@@ -24,12 +24,9 @@ constexpr int32_t NCDHW_N_INDEX = 0;
 constexpr int32_t NCDHW_C_INDEX = 1;
 constexpr int32_t DHWCN_N_INDEX = 4;
 constexpr int32_t DHWCN_C_INDEX = 3;
-constexpr int32_t FROM_DEPTHWISE_INDEX = 9;
-// 属性总数>=10为当前def布局，槽6是output_padding列表；不足10(旧V2布局)时槽6是padding字符串，跳过校验
-constexpr size_t kOutputPaddingAttrIdx = 6;
-constexpr size_t kMinAttrNumForLayout = 10;
 
-static ge::graphStatus InferShapeForDepthwiseConv2DBackpropFilter(gert::InferShapeContext* context, ge::graphStatus ret)
+static ge::graphStatus InferShapeForDepthwiseConv2DBackpropFilter(gert::InferShapeContext* context, ge::graphStatus ret,
+                                                                  const BpParamIdx& bpParamIdx)
 {
     if (ret != ge::GRAPH_SUCCESS) {
         return ret;
@@ -42,11 +39,12 @@ static ge::graphStatus InferShapeForDepthwiseConv2DBackpropFilter(gert::InferSha
     const auto runtime_attrs = context->GetAttrs();
     OP_CHECK_IF(runtime_attrs == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get runtime attrs"),
                 return ge::GRAPH_FAILED);
-    if (runtime_attrs->GetAttrNum() <= FROM_DEPTHWISE_INDEX) {
+    const int32_t fromDepthwiseIdx = AttrIndexIn(bpParamIdx.layout, bpParamIdx.layoutSize, "from_depthwise");
+    if (fromDepthwiseIdx < 0 || runtime_attrs->GetAttrNum() <= static_cast<size_t>(fromDepthwiseIdx)) {
         return ret;
     }
 
-    const bool* from_depthwise = runtime_attrs->GetAttrPointer<bool>(FROM_DEPTHWISE_INDEX);
+    const bool* from_depthwise = runtime_attrs->GetBool(static_cast<size_t>(fromDepthwiseIdx));
     OP_CHECK_IF(from_depthwise == nullptr,
                 CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get runtime attrs from_depthwise"),
                 return ge::GRAPH_FAILED);
@@ -74,8 +72,8 @@ static ge::graphStatus InferShapeForDepthwiseConv2DBackpropFilter(gert::InferSha
 
 static ge::graphStatus InferShapeForConv3DBackpropFilter(gert::InferShapeContext* context)
 {
-    OP_CHECK_IF(CheckOutputPaddingListSize(context, kOutputPaddingAttrIdx, kConv3dDimSizeLimit, kMinAttrNumForLayout) !=
-                    ge::GRAPH_SUCCESS,
+    const BpParamIdx bpParamIdx = MakeBpParamIdx(C3D_BP_FILTER_V2_LAYOUT, kConv3dDimSizeLimit);
+    OP_CHECK_IF(CheckOutputPaddingListSize(context, bpParamIdx) != ge::GRAPH_SUCCESS,
                 OP_LOGE(context->GetNodeName(), "check output_padding failed."), return ge::GRAPH_FAILED);
     auto const_tensor = context->GetInputTensor(1);
     OP_CHECK_IF(const_tensor == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "get null tensor"),
@@ -85,7 +83,7 @@ static ge::graphStatus InferShapeForConv3DBackpropFilter(gert::InferShapeContext
     auto ret = ge::GRAPH_SUCCESS;
     if (const_tensor_dim_num == kConv2dDimSizeLimit) {
         ret = InferShapeForConvBackpropExtend3D(context, 1, "filter_size");
-        ret = InferShapeForDepthwiseConv2DBackpropFilter(context, ret);
+        ret = InferShapeForDepthwiseConv2DBackpropFilter(context, ret, bpParamIdx);
     } else {
         ret = InferShapeForConvBackprop(context, 1, "filter_size", kConv3dDimSizeLimit);
     }
@@ -95,8 +93,10 @@ static ge::graphStatus InferShapeForConv3DBackpropFilter(gert::InferShapeContext
 
     // filter_size const编译期不可见时补推C/N维(from_depthwise场景语义不同，跳过)
     const auto runtime_attrs = context->GetAttrs();
-    if (runtime_attrs != nullptr && runtime_attrs->GetAttrNum() > FROM_DEPTHWISE_INDEX) {
-        const bool* from_depthwise = runtime_attrs->GetAttrPointer<bool>(FROM_DEPTHWISE_INDEX);
+    const int32_t fromDepthwiseIdx = AttrIndexIn(bpParamIdx.layout, bpParamIdx.layoutSize, "from_depthwise");
+    if (runtime_attrs != nullptr && fromDepthwiseIdx >= 0 &&
+        runtime_attrs->GetAttrNum() > static_cast<size_t>(fromDepthwiseIdx)) {
+        const bool* from_depthwise = runtime_attrs->GetBool(static_cast<size_t>(fromDepthwiseIdx));
         if (from_depthwise == nullptr || !*from_depthwise) {
             return PartialInferFilterShapeWhenConstInvisible(context);
         }

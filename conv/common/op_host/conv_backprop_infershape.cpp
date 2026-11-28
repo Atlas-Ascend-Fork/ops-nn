@@ -14,6 +14,8 @@
  */
 #include "conv_backprop_infershape.h"
 
+#include <cstring>
+
 namespace {
 inline bool IsConstTensor(const gert::Tensor* input_tensor)
 {
@@ -42,39 +44,66 @@ constexpr int32_t UNKNOWN_SHAPE_DIM = -1;
 constexpr size_t kXIndex = 0;
 constexpr size_t kOutBackpropIndex = 2;
 constexpr size_t kGroupsAttrIndex = 3;
-// legacy Conv2DBackpropFilter插入output_padding(5)后私有属性后移：padding(6) from_depthwise(7) _op_impl_mode_enum(8)
-constexpr size_t kFromDepthwiseAttrIdx = 7;
-// 本函数另被Conv2DBackpropFilterV2(内置def: padding(5) from_depthwise(6) use_hf32(7))跨仓调用，
-// 其from_depthwise@6；legacy旧def(skew场景)亦为@6。故按属性总数区分布局：>=9走legacy新布局@7，否则@6
-constexpr size_t kFromDepthwiseAttrIdxV2 = 6;
-constexpr size_t kLegacyNewLayoutAttrNum = 9;
 constexpr size_t kNDimIndexOfNFirst = 0;
 constexpr size_t kCDimIndexOfNSecond = 1;
 constexpr size_t kCDimIndexOfHWCN = 2;
 constexpr size_t kNDimIndexOfHWCN = 3;
 // 通道后置format中C维在倒数第二位(HWCN/DHWCN)时距末维的偏移
 constexpr size_t kSecondLastDimOffset = 2;
-
-// geir通路的output_padding元素个数校验：属性总数不足def完整布局时该槽位非真实列表，跳过；个数不符按expected_list_size拦截
-ge::graphStatus CheckOutputPaddingListSize(gert::InferShapeContext* context, size_t output_padding_attr_idx,
-                                           size_t expected_list_size, size_t min_attr_num_for_layout)
+int32_t AttrIndexIn(const char* const* layout, size_t layoutSize, const char* attrName)
 {
+    for (size_t idx = 0; idx < layoutSize; idx++) {
+        if (strcmp(layout[idx], attrName) == 0) {
+            return static_cast<int32_t>(idx);
+        }
+    }
+    return -1;
+}
+
+// geir通路的output_padding元素个数校验：模板未声明该属性、或属性总数不足模板(旧def或L0直调布局)时
+// 该槽位非真实列表，跳过；个数不符按outputPaddingSize拦截
+ge::graphStatus CheckOutputPaddingListSize(gert::InferShapeContext* context, const BpParamIdx& bpParamIdx)
+{
+    if (bpParamIdx.layout == nullptr) {
+        return ge::GRAPH_SUCCESS;
+    }
+    const int32_t outputPaddingIdx = AttrIndexIn(bpParamIdx.layout, bpParamIdx.layoutSize, "output_padding");
+    if (outputPaddingIdx < 0) {
+        return ge::GRAPH_SUCCESS;
+    }
     const auto runtime_attrs = context->GetAttrs();
     OP_CHECK_IF(runtime_attrs == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get runtime attrs"),
                 return ge::GRAPH_FAILED);
-    if (runtime_attrs->GetAttrNum() < min_attr_num_for_layout) {
+    if (runtime_attrs->GetAttrNum() < bpParamIdx.layoutSize) {
         return ge::GRAPH_SUCCESS;
     }
-    const auto output_padding_list = runtime_attrs->GetAttrPointer<gert::ContinuousVector>(output_padding_attr_idx);
+    const auto output_padding_list = runtime_attrs->GetAttrPointer<gert::ContinuousVector>(outputPaddingIdx);
     if (output_padding_list == nullptr) {
         return ge::GRAPH_SUCCESS;
     }
-    OP_CHECK_IF(output_padding_list->GetSize() != expected_list_size,
+    OP_CHECK_IF(output_padding_list->GetSize() != static_cast<size_t>(bpParamIdx.outputPaddingSize),
                 OP_LOGE_FOR_INVALID_LISTSIZE(context->GetNodeName(), "output_padding",
                                              std::to_string(output_padding_list->GetSize()).c_str(),
-                                             std::to_string(expected_list_size).c_str()),
+                                             std::to_string(bpParamIdx.outputPaddingSize).c_str()),
                 return ge::GRAPH_FAILED);
     return ge::GRAPH_SUCCESS;
+}
+
+const bool* GetFromDepthwiseAttr(const gert::RuntimeAttrs* runtimeAttrs, const BpParamIdx& bpParamIdx)
+{
+    if (runtimeAttrs != nullptr && bpParamIdx.layout != nullptr) {
+        const int32_t idx = AttrIndexIn(bpParamIdx.layout, bpParamIdx.layoutSize, "from_depthwise");
+        if (idx >= 0 && runtimeAttrs->GetAttrNum() >= bpParamIdx.layoutSize) {
+            return runtimeAttrs->GetBool(static_cast<size_t>(idx));
+        }
+    }
+    if (runtimeAttrs != nullptr && bpParamIdx.fallbackLayout != nullptr) {
+        const int32_t idx = AttrIndexIn(bpParamIdx.fallbackLayout, bpParamIdx.fallbackLayoutSize, "from_depthwise");
+        if (idx >= 0 && runtimeAttrs->GetAttrNum() > static_cast<size_t>(idx)) {
+            return runtimeAttrs->GetBool(static_cast<size_t>(idx));
+        }
+    }
+    return nullptr;
 }
 
 ge::graphStatus InferShapeForConvBackprop(gert::InferShapeContext* context, size_t const_tensor_idx,
@@ -385,12 +414,8 @@ ge::graphStatus InferShapeForConv2DBackpropFilter(gert::InferShapeContext* conte
     const auto runtime_attrs = context->GetAttrs();
     OP_CHECK_IF(runtime_attrs == nullptr, CUBE_INNER_ERR_REPORT(context->GetNodeName(), "failed to get runtime attrs"),
                 return ge::GRAPH_FAILED);
-    const bool* from_depthwise = nullptr;
-    if (runtime_attrs->GetAttrNum() >= kLegacyNewLayoutAttrNum) {
-        from_depthwise = runtime_attrs->GetBool(kFromDepthwiseAttrIdx);
-    } else if (runtime_attrs->GetAttrNum() > kFromDepthwiseAttrIdxV2) {
-        from_depthwise = runtime_attrs->GetBool(kFromDepthwiseAttrIdxV2);
-    }
+    const BpParamIdx bpParamIdx = MakeBpParamIdx(C2D_BP_FILTER_LAYOUT, C2D_BP_FILTER_V2_LAYOUT, kConv2dDimSizeLimit);
+    const bool* from_depthwise = GetFromDepthwiseAttr(runtime_attrs, bpParamIdx);
     if (from_depthwise == nullptr || !*from_depthwise) {
         return PartialInferFilterShapeWhenConstInvisible(context);
     }
