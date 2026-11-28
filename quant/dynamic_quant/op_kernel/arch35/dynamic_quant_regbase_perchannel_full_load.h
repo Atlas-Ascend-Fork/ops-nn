@@ -179,9 +179,9 @@ __aicore__ inline void
 DynamicQuantRegbasePerChannnelFullLoad<xDtype, yDtype, hasSmooth, isSymmetrical>::ProcessSingleBlock(
     uint32_t batchBlockIdx, uint32_t nBlockIdx, uint32_t bBlockSize, uint32_t nBlockSize)
 {
-    uint64_t xOffset = batchBlockIdx * batchBlockSize_ * nLen_ * mLen_ + nBlockIdx * nBlockSize_;
+    uint64_t xOffset = static_cast<uint64_t>(batchBlockIdx) * batchBlockSize_ * nLen_ * mLen_ + nBlockIdx * nBlockSize_;
     uint64_t smoothOffset = 0;
-    uint64_t scaleOffset = batchBlockIdx * batchBlockSize_ * nLen_ + nBlockIdx * nBlockSize_;
+    uint64_t scaleOffset = static_cast<uint64_t>(batchBlockIdx) * batchBlockSize_ * nLen_ + nBlockIdx * nBlockSize_;
     CopyIn(bBlockSize, nBlockSize, xOffset, smoothOffset);
     Compute(bBlockSize, nBlockSize);
     CopyOut(bBlockSize, nBlockSize, xOffset, scaleOffset);

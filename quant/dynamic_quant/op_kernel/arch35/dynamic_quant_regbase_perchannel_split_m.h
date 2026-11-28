@@ -129,13 +129,14 @@ __aicore__ inline void DynamicQuantRegbasePerChannnelSplitM<xDtype, yDtype, hasS
 
     // init buffers
     inGm.SetGlobalBuffer((__gm__ xDtype*)x);
-    colMaxGm.SetGlobalBuffer((__gm__ float*)workSpace + (batchStart_ * nLen_));
+    colMaxGm.SetGlobalBuffer((__gm__ float*)workSpace + (static_cast<uint64_t>(batchStart_) * nLen_));
     outGm.SetGlobalBuffer((__gm__ yCopyDtype*)y);
     scaleGm.SetGlobalBuffer((__gm__ float*)scale);
     InitGlobalMemory<float>(colMaxGm, (batchEnd_ - batchStart_) * nLen_, NEG_INFINITY);
 
     if constexpr (isSymmetrical == false) {
-        colMinGm.SetGlobalBuffer((__gm__ float*)workSpace + (totalBatchLen_ * nLen_) + (batchStart_ * nLen_));
+        colMinGm.SetGlobalBuffer((__gm__ float*)workSpace + (static_cast<uint64_t>(totalBatchLen_) * nLen_) +
+                                 (static_cast<uint64_t>(batchStart_) * nLen_));
         PipeBarrier<PIPE_ALL>();
         InitGlobalMemory<float>(colMinGm, (batchEnd_ - batchStart_) * nLen_, POS_INFINITY);
     }
@@ -304,8 +305,9 @@ template <bool copyInMax>
 __aicore__ inline void DynamicQuantRegbasePerChannnelSplitM<xDtype, yDtype, hasSmooth, isSymmetrical>::CopyIn(
     uint32_t bIdx, uint32_t mIdx, uint32_t nIdx)
 {
-    uint64_t xOffset = bIdx * nLen_ * mLen_ + mIdx * mBlockSize_ * nLen_ + nIdx * nBlockSize_;
-    uint64_t smoothOffset = mIdx * mBlockSize_;
+    uint64_t xOffset = static_cast<uint64_t>(bIdx) * nLen_ * mLen_ + static_cast<uint64_t>(mIdx) * mBlockSize_ * nLen_ +
+                       nIdx * nBlockSize_;
+    uint64_t smoothOffset = static_cast<uint64_t>(mIdx) * mBlockSize_;
     uint32_t nCopyInElePerRow = (nIdx + 1) == nBlockNum_ ? nTailBlockSize_ : nBlockSize_;
     uint8_t nCopyInPadNum = (nIdx + 1) == nBlockNum_ ? nTailBlockSizePadding_ : 0;
     uint32_t mCopyEle = (mIdx + 1) == mBlockNum_ ? mTailBlockSize_ : mBlockSize_;
@@ -325,7 +327,7 @@ __aicore__ inline void DynamicQuantRegbasePerChannnelSplitM<xDtype, yDtype, hasS
         smoothQueue_.template EnQue(smoothLocal);
     }
     if constexpr (copyInMax) {
-        uint64_t colMaxOffset = (bIdx - batchStart_) * nLen_ + nIdx * nBlockSize_;
+        uint64_t colMaxOffset = static_cast<uint64_t>(bIdx - batchStart_) * nLen_ + nIdx * nBlockSize_;
         LocalTensor<float> colMaxLocal = colMaxQueueIn_.template AllocTensor<float>();
         DataCopyExtParams colMaxCopyParams = {1, static_cast<uint32_t>(nCopyInElePerRow * sizeof(float)), 0, 0, 0};
         DataCopyPadExtParams<float> colMaxPadParams{false, 0, 0, 0};
@@ -411,7 +413,7 @@ __aicore__ inline void DynamicQuantRegbasePerChannnelSplitM<xDtype, yDtype, hasS
     if constexpr (!isSymmetrical) {
         colMinLocal = colMinQueue_.template DeQue<float>();
     }
-    uint64_t colMaxOffset = (bIdx - batchStart_) * nLen_ + nIdx * nBlockSize_;
+    uint64_t colMaxOffset = static_cast<uint64_t>(bIdx - batchStart_) * nLen_ + nIdx * nBlockSize_;
     SetAtomicMax<float>();
     DataCopyExtParams copyParams{1, static_cast<uint32_t>(count * sizeof(float)), 0, 0, 0};
     DataCopyPad(colMaxGm[colMaxOffset], colMaxLocal, copyParams);
@@ -593,8 +595,9 @@ template <typename xDtype, typename yDtype, bool hasSmooth, bool isSymmetrical>
 __aicore__ inline void DynamicQuantRegbasePerChannnelSplitM<xDtype, yDtype, hasSmooth, isSymmetrical>::CopyOut(
     uint32_t bIdx, uint32_t mIdx, uint32_t nIdx)
 {
-    uint64_t yOffset = bIdx * nLen_ * mLen_ + mIdx * mBlockSize_ * nLen_ + nIdx * nBlockSize_;
-    uint64_t scaleOffset = bIdx * nLen_ + nIdx * nBlockSize_;
+    uint64_t yOffset = static_cast<uint64_t>(bIdx) * nLen_ * mLen_ + static_cast<uint64_t>(mIdx) * mBlockSize_ * nLen_ +
+                       nIdx * nBlockSize_;
+    uint64_t scaleOffset = static_cast<uint64_t>(bIdx) * nLen_ + nIdx * nBlockSize_;
     uint32_t nCopyInElePerRow = (nIdx + 1) == nBlockNum_ ? nTailBlockSize_ : nBlockSize_;
     uint32_t mCopyEle = (mIdx + 1) == mBlockNum_ ? mTailBlockSize_ : mBlockSize_;
 

@@ -1775,13 +1775,14 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_pertoken_multicore_
 
 // 大 m perchannel 边界看护（Issue #10100）：IsCapableForFullLoad 的 UB 估算必须全程 int64，
 // mLen > 61184（UB=253952 时 4*mLen+1024 > 245760）不得回绕误选 full_load。
-static void RunPerchannelLargeMTilingCase(int64_t mLen, int64_t nLen, bool isSymmetrical, int32_t expectedQuantMode = 0)
+static void RunPerchannelLargeMTilingCase(int64_t mLen, int64_t nLen, bool isSymmetrical, int32_t expectedQuantMode = 0,
+                                          int64_t batch = 1)
 {
-    gert::StorageShape x_shape = {{1, mLen, nLen}, {1, mLen, nLen}};
+    gert::StorageShape x_shape = {{batch, mLen, nLen}, {batch, mLen, nLen}};
     gert::StorageShape smooth_shape = {{mLen}, {mLen}};
-    gert::StorageShape y_shape = {{1, mLen, nLen}, {1, mLen, nLen}};
-    gert::StorageShape scale_shape = {{1, nLen}, {1, nLen}};
-    gert::StorageShape offset_shape = {{1, nLen}, {1, nLen}};
+    gert::StorageShape y_shape = {{batch, mLen, nLen}, {batch, mLen, nLen}};
+    gert::StorageShape scale_shape = {{batch, nLen}, {batch, nLen}};
+    gert::StorageShape offset_shape = {{batch, nLen}, {batch, nLen}};
 
     std::map<std::string, std::string> soc_version_infos = {{"Short_SoC_version", "Ascend950"}, {"NpuArch", "3510"}};
     std::map<std::string, std::string> npu_arch_infos = {{"NpuArch", "3510"}};
@@ -1860,8 +1861,8 @@ static void RunPerchannelLargeMTilingCase(int64_t mLen, int64_t nLen, bool isSym
 
     auto tiling_key = tiling_context->GetTilingKey();
     const int32_t quant_mode = static_cast<int32_t>((tiling_key >> 1) & 0xF);
-    std::cout << "mLen=" << mLen << " nLen=" << nLen << " tiling_key=" << tiling_key << " quantMode=" << quant_mode
-              << std::endl;
+    std::cout << "batch=" << batch << " mLen=" << mLen << " nLen=" << nLen << " tiling_key=" << tiling_key
+              << " quantMode=" << quant_mode << std::endl;
     EXPECT_NE(quant_mode, 7) << "perchannel full_load must not be selected for mLen=" << mLen;
     if (expectedQuantMode != 0) {
         EXPECT_EQ(quant_mode, expectedQuantMode);
@@ -1871,6 +1872,7 @@ static void RunPerchannelLargeMTilingCase(int64_t mLen, int64_t nLen, bool isSym
 
     auto* tiling_data = tiling_context->GetTilingData<DynamicQuantTilingDataArch35>();
     ASSERT_NE(tiling_data, nullptr);
+    EXPECT_EQ(tiling_data->totalBatchLen, batch);
     EXPECT_EQ(tiling_data->mLen, mLen);
     EXPECT_EQ(tiling_data->nLen, nLen);
     EXPECT_GT(tiling_data->mBlockSize, 0);
@@ -1907,4 +1909,9 @@ TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_large_m_
 TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_large_m_wrap_61185_n1024_split_m)
 {
     RunPerchannelLargeMTilingCase(61185, 1024, false, 9);
+}
+
+TEST_F(DynamicQuantV2Tiling, dynamic_quant_v2_tiling_regbase_perchannel_batch_offset_2p32)
+{
+    RunPerchannelLargeMTilingCase(16384, 16384, false, 9, 17);
 }

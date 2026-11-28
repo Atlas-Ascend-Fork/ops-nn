@@ -83,9 +83,10 @@ private:
     {
         uint32_t newColNum = (localBatchIndex + 1) == nBlockNum_ ? nTailBlockSizeAligned_ : nBlockSize_;
         uint32_t newColNumB8 = (localBatchIndex + 1) == nBlockNum_ ? nTailBlockSizeAlignedB8_ : nBlockSize_;
-        uint64_t localBatchOffset = localBatchIndex * nBlockSize_;
-        uint64_t xStartOffset = batchIndex * mLen_ * nLen_ + localBatchOffset;
-        uint64_t scaleOffset = batchIndex * nLen_ + localBatchOffset; // scale和offset共用一个地址偏移量
+        uint64_t localBatchOffset = static_cast<uint64_t>(localBatchIndex) * nBlockSize_;
+        uint64_t xStartOffset = static_cast<uint64_t>(batchIndex) * mLen_ * nLen_ + localBatchOffset;
+        uint64_t scaleOffset = static_cast<uint64_t>(batchIndex) * nLen_ +
+                               localBatchOffset; // scale和offset共用一个地址偏移量
 
         LocalTensor<float> colMaxLocal = colMaxQueue_.AllocTensor<float>();
         LocalTensor<float> scaleLocal = scaleQueue_.AllocTensor<float>();
@@ -96,7 +97,7 @@ private:
             offsetLocal = offsetQueue_.AllocTensor<float>();
         }
 
-        uint32_t xShift = mBlockSize_ * nLen_;
+        uint64_t xShift = static_cast<uint64_t>(mBlockSize_) * nLen_;
         uint32_t smoothShift = mBlockSize_;
         uint64_t smoothOffset = 0;
         uint64_t xOffset = xStartOffset;
