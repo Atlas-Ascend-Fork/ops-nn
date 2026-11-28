@@ -23,6 +23,6 @@ extern "C" __global__ __aicore__ void sigmoid_cross_entropy_with_logits_grad(GM_
     GET_TILING_DATA_WITH_STRUCT(SigmoidCrossEntropyWithLogitsGradTilingData, tilingData, tiling);
 
     SigmoidBceGradKernel<DTYPE_PREDICT> op;
-    op.Init(predict, target, dout, gradient, tilingData.totalLength, tilingData.tileNum);
+    op.Init(predict, target, dout, gradient, tilingData);
     op.Process();
 }

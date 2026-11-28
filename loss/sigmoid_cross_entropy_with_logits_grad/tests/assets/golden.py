@@ -11,8 +11,14 @@
 
 gradient = (sigmoid(predict) - target) * dout
 
-Kernel 语义：非 float32 输入先提升到 float32 计算，结果用 CAST_RINT 转回原 dtype；
-fp16/bf16 输入在比较前完成 dtype 往返，float32 输入保持原 dtype。
+Kernel 语义：非 float32 输入先提升到 float32 计算，结果用 CAST_RINT 转回原 dtype。
+
+精度契约（Promote）：cross_check 场景框架把输入抬一档喂进来（fp16/bf16→fp32、
+fp32→fp64），此处照单全收、绝不向下砍，并统一提升到 float64 计算后按 float64 输出，
+作为与实现无关的高精度基准：若按 fp32 + torch 计算，golden 会与 third_party
+（同为 torch 实现）误差强相关（甚至逐位一致），cross_check 的 mare/mere/rmse
+比值分母趋零被 small_value 夹底，NPU 任意 1ulp 误差都会放大为超标。
+
 """
 
 import numpy as np
@@ -48,6 +54,12 @@ def _to_float32(arr):
     return arr.astype(np.float32)
 
 
+def _to_float64(arr):
+    if arr.dtype == np.float64:
+        return arr
+    return arr.astype(np.float64)
+
+
 def _cast_back(arr, orig_dtype):
     if orig_dtype == np.float32:
         return arr
@@ -70,6 +82,19 @@ class SigmoidCrossEntropyWithLogitsGradKernelSpec:
         import torch
 
         orig_dtype = predict.dtype
+        # Promote（cross_check 恒走）：输入已被框架抬档（fp16/bf16→fp32、fp32→fp64），
+        # 照单全收并统一提升到 float64 计算、按 float64 输出（高精度基准）。
+        # 兼容未下发 golden_mode 的旧框架：fp64 到达必为 Promote 抬档的 fp32 用例。
+        if kwargs.get("golden_mode") == "Promote" or orig_dtype == np.float64:
+            p = torch.from_numpy(_to_float64(predict))
+            t = torch.from_numpy(_to_float64(target))
+            d = torch.from_numpy(_to_float64(dout))
+            # dout 只需元素总数与 predict 相等，shape 可能不同；reshape 到 predict shape 后逐元素计算
+            d = d.reshape(p.shape)
+            grad = (torch.sigmoid(p) - t) * d
+            return [grad.numpy()]
+        # 非 Promote（原始 dtype 输入）：对齐 kernel 语义——窄档提升到 fp32 计算，
+        # 结果按 CAST_RINT 转回原 dtype
         p = torch.from_numpy(_to_float32(predict))
         t = torch.from_numpy(_to_float32(target))
         d = torch.from_numpy(_to_float32(dout))

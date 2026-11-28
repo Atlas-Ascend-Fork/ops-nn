@@ -51,7 +51,9 @@ TEST_F(sigmoid_cross_entropy_with_logits_grad_kernel_test, fp32_basic)
     SigmoidCrossEntropyWithLogitsGradTilingData*
         tilingData = reinterpret_cast<SigmoidCrossEntropyWithLogitsGradTilingData*>(tiling);
     tilingData->totalLength = numElements;
-    tilingData->tileNum = 256;
+    tilingData->coreNum = 1;
+    tilingData->elemsPerCore = static_cast<int64_t>(numElements);
+    tilingData->elemsPerTile = static_cast<int64_t>(numElements);
 
     auto kernelFn = [](GM_ADDR predict, GM_ADDR target, GM_ADDR dout, GM_ADDR gradient, GM_ADDR workspace,
                        GM_ADDR tiling) {
@@ -87,7 +89,9 @@ TEST_F(sigmoid_cross_entropy_with_logits_grad_kernel_test, fp32_basic_another)
     SigmoidCrossEntropyWithLogitsGradTilingData*
         tilingData = reinterpret_cast<SigmoidCrossEntropyWithLogitsGradTilingData*>(tiling);
     tilingData->totalLength = numElements;
-    tilingData->tileNum = 256;
+    tilingData->coreNum = 1;
+    tilingData->elemsPerCore = static_cast<int64_t>(numElements);
+    tilingData->elemsPerTile = static_cast<int64_t>(numElements);
 
     auto kernelFn = [](GM_ADDR predict, GM_ADDR target, GM_ADDR dout, GM_ADDR gradient, GM_ADDR workspace,
                        GM_ADDR tiling) {

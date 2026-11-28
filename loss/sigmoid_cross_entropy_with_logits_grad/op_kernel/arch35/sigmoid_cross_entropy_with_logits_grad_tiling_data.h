@@ -14,8 +14,10 @@
 #include <cstdint>
 
 struct SigmoidCrossEntropyWithLogitsGradTilingData {
-    uint64_t totalLength = 0;
-    uint32_t tileNum = 0;
+    int64_t totalLength = 0;  // total elements of the flattened input
+    int64_t coreNum = 0;      // launched core (block) count
+    int64_t elemsPerCore = 0; // elements per core (aligned)
+    int64_t elemsPerTile = 0; // elements per UB tile (aligned)
 };
 
 #endif
