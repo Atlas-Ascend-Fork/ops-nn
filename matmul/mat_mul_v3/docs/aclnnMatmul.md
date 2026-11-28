@@ -31,7 +31,7 @@
 - 计算公式：
 
   $$
-  result=self @ mat2
+  out=self @ mat2
   $$
 
 ## 函数原型

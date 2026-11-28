@@ -35,7 +35,7 @@
   - x1Scale， bias BFLOAT16/FLOAT16/FLOAT32（此场景无offset）：
 
     $$
-    qbmmout = x1@x2 * x2scale * x1Scale + bias
+    qbmmout = x1@x2 * x2Scale * x1Scale + bias
     $$
 
   - x1Scale无bias：
@@ -62,7 +62,7 @@
 
 每个算子分为[两段式接口](../../../docs/zh/context/two_phase_api.md)，必须先调用“aclnnFusedQuantMatmulGetWorkspaceSize”接口获取计算所需workspace大小以及包含了算子计算流程的执行器，再调用“aclnnFusedQuantMatmul”接口执行计算。
 
-```c++
+```cpp
 aclnnStatus aclnnFusedQuantMatmulGetWorkspaceSize(
   const aclTensor *x1,
   const aclTensor *x2,
@@ -81,7 +81,7 @@ aclnnStatus aclnnFusedQuantMatmulGetWorkspaceSize(
   aclOpExecutor   **executor)
 ```
 
-```c++
+```cpp
 aclnnStatus aclnnFusedQuantMatmul(
   void          *workspace,
   uint64_t       workspaceSize,
@@ -549,7 +549,7 @@ x1为INT8，x2为INT8，x1Scale为FLOAT32，x2Scale为FLOAT32。
       int64_t groupSize = 0;
       const char fusedOpType[] = "gelu_tanh";
 
-      // 3. 调用CANN算子库API，需要修改为具体的API名称
+      // 3. 调用CANN算子库API
       uint64_t workspaceSize = 0;
       aclOpExecutor* executor = nullptr;
 
@@ -573,7 +573,7 @@ x1为INT8，x2为INT8，x1Scale为FLOAT32，x2Scale为FLOAT32。
       ret = aclrtSynchronizeStream(stream);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
-      // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
+      // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧
       auto size = GetShapeSize(outShape);
       std::vector<uint16_t> resultData(
           size, 0); // C语言中无法直接打印fp16的数据，需要用uint16读出来，自行通过二进制转成fp16

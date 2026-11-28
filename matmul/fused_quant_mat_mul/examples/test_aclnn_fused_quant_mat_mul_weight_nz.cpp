@@ -176,7 +176,7 @@ int aclnnFusedQuantMatmulWeightNzTest(int32_t deviceId, aclrtStream& stream)
     int64_t groupSize = 0;
     const char fusedOpType[] = "gelu_tanh";
 
-    // 3. 调用CANN算子库API，需要修改为具体的Api名称
+    // 3. 调用CANN算子库API
     uint64_t workspaceSize = 0;
     aclOpExecutor* executor;
     void* workspaceAddr = nullptr;
@@ -220,7 +220,7 @@ int aclnnFusedQuantMatmulWeightNzTest(int32_t deviceId, aclrtStream& stream)
     ret = aclrtSynchronizeStream(stream);
     CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
-    // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧，需要根据具体API的接口定义修改
+    // 5. 获取输出的值，将device侧内存上的结果拷贝至host侧
     auto size = GetShapeSize(outShape);
     std::vector<uint16_t> resultData(size,
                                      0); // C语言中无法直接打印fp16的数据，需要用uint16读出来，自行通过二进制转成fp16

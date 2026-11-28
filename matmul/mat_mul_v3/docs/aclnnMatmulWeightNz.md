@@ -336,7 +336,7 @@ aclnnStatus aclnnMatmulWeightNz(
       }
       // Denormals
       float sig = f / 1024.0f;
-      float result = sig * pow(2, -24);
+      float result = sig * pow(2, -14);
       return s ? -result : result;
     } else if (e == 31) {
         // Infinity or NaN
@@ -437,7 +437,7 @@ aclnnStatus aclnnMatmulWeightNz(
     // 创建self aclTensor
     ret = CreateAclTensor(selfHostData, selfShape, &selfDeviceAddr, aclDataType::ACL_FLOAT16, &self);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    // 创建other aclTensor
+    // 创建mat2 aclTensor
     ret = CreateAclTensorWeight(mat2HostData, mat2Shape, &mat2DeviceAddr, aclDataType::ACL_FLOAT16, &mat2);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
     // 创建out aclTensor
@@ -875,8 +875,8 @@ aclnnStatus aclnnMatmulWeightNz(
       aclTensor* out = nullptr;
       aclTensor* mat2NZ = nullptr;
 
-      std::vector<uint16_t> selfHostData(m * k, 0x3F80); // bfloat16_t 用0x3F80表示uint_16的1
-      std::vector<uint16_t> mat2HostData(k * n, 0x3F80); // bfloat16_t 用0x3F80表示uint_16的1
+      std::vector<uint16_t> selfHostData(m * k, 0x3F80); // bfloat16_t用0x3F80表示uint16_t的1
+      std::vector<uint16_t> mat2HostData(k * n, 0x3F80); // bfloat16_t用0x3F80表示uint16_t的1
       std::vector<uint16_t> outHostData(m * n, 0);
       // weightNz需要的空间大于等于原[k,n]矩阵, 需要对齐16
       int64_t kAlign = (k + 16 - 1) / 16 * 16;
@@ -926,11 +926,11 @@ aclnnStatus aclnnMatmulWeightNz(
           CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("allocate workspace failed. ERROR: %d\n", ret); return ret);
       }
 
-      // 调用aclnnNpuFormatCastGetWorkspaceSize第二段接口
+      // 调用aclnnNpuFormatCast第二段接口
       ret = aclnnNpuFormatCast(workspaceAddr, workspaceSize, executor, stream);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnNpuFormatCast failed. ERROR: %d\n", ret); return ret);
 
-      // 4. 同步等待任务执行结束
+      // 同步等待aclnnNpuFormatCast任务执行结束
       ret = aclrtSynchronizeStream(stream);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 
@@ -947,7 +947,7 @@ aclnnStatus aclnnMatmulWeightNz(
       ret = aclnnMatmulWeightNz(workspaceAddrMm, workspaceSizeMm, executor, stream);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclnnMatmulWeightNz failed. ERROR: %d\n", ret); return ret);
 
-      // 4. 同步等待任务执行结束
+      // 同步等待aclnnMatmulWeightNz任务执行结束
       ret = aclrtSynchronizeStream(stream);
       CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
 

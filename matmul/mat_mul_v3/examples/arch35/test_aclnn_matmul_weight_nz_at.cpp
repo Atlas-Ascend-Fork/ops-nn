@@ -60,7 +60,7 @@ float Fp16ToFloat(uint16_t h)
         }
         // Denormals
         float sig = f / 1024.0f;
-        float result = sig * pow(2, -24);
+        float result = sig * pow(2, -14);
         return s ? -result : result;
     } else if (e == 31) {
         // Infinity or NaN
@@ -201,7 +201,7 @@ int AclnnMatmulWeightNZTest(int32_t deviceId, aclrtStream& stream)
     std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> selfTensorPtr(self, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> selfdeviceAddrPtr(selfDeviceAddr, aclrtFree);
     CHECK_RET(ret == ACL_SUCCESS, return ret);
-    // 创建other aclTensor
+    // 创建mat2 aclTensor
     ret = CreateAclTensorWeight(mat2HostData, mat2Shape, &mat2DeviceAddr, aclDataType::ACL_BF16, &mat2);
     std::unique_ptr<aclTensor, aclnnStatus (*)(const aclTensor*)> mat2TensorPtr(mat2, aclDestroyTensor);
     std::unique_ptr<void, aclError (*)(void*)> mat2deviceAddrPtr(mat2DeviceAddr, aclrtFree);
