@@ -283,7 +283,7 @@ aclnnStatus aclnnThnnFusedGruCellBackward(
 
 - 数据类型：gradHy与storage的数据类型须一致，仅支持FLOAT、FLOAT16、BFLOAT16。所有输出数据类型与gradHy保持一致。
 
-- 数据格式：输入和输出仅支持ND。
+- 数据格式：推荐使用ND。接口不校验Tensor的数据格式属性，非ND格式将按ND数据布局处理。
 
 - 维度约束：gradHy与storage须为2维，且storage的shape须满足 (B, 5H)，即storage第二维为gradHy第二维（H）的5倍，B维与gradHy一致。
 
