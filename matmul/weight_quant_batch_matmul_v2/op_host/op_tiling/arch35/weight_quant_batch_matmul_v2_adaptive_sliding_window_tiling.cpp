@@ -106,6 +106,17 @@ double GetL2BW(fe::PlatFormInfos* platformInfo)
 }
 } // namespace
 
+// ASW 仅承接 A16W8 ND（per-tensor/per-channel）：pergroup、int4、NZ 场景由 ASW-VC 等模板承接
+bool WeightQuantBatchMatmulV2TilingASW::IsCapable()
+{
+    if (matmulInfoPtr_->antiQuantType == QuantType::PER_GROUP || matmulInfoPtr_->bDtype == ge::DT_INT4 ||
+        matmulInfoPtr_->bFormat == ge::FORMAT_FRACTAL_NZ) {
+        OP_LOGI(opName_, "the ASW template only supports A16W8 ND with per-tensor/per-channel mode");
+        return false;
+    }
+    return true;
+}
+
 ge::graphStatus WeightQuantBatchMatmulV2TilingASW::DoOpTiling()
 {
     OP_LOGD(opName_, "DoOpTiling of adaptive sliding window tiling strategy.");

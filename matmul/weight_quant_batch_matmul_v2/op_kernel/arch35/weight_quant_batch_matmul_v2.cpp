@@ -65,6 +65,9 @@ using WeightQuantBatchMatmulV2::InvokeKernel;
 #if __CUBE_S8S4_S4S4__
 #include "weight_quant_batch_matmul_v2_adaptive_sliding_window.h"
 #include "weight_quant_batch_matmul_v2_iterbatch.h"
+#if defined(A16) && defined(WQBMMV2_S4)
+#include "weight_quant_batch_matmul_v2_asw_vc.h"
+#endif
 #endif
 
 using namespace WeightQuantBatchMatmulV2;
@@ -146,6 +149,17 @@ static constexpr VecAntiQuantConfig VEC_ANTIQUANT_CONFIG_5 = VEC_ANTIQUANT_CONFI
         op.Init(x, weight, antiquantScale, antiquantOffset, quantScale, quantOffset, bias, y, workspace,       \
                 &tilingDataIn, &tPipe);                                                                        \
         op.Process();                                                                                          \
+    } while (0)
+
+// ASW-VC kernel（SUB_ALGO_ASW_VC，A16W4 pergroup：vector 反量化 + cube matmul）
+#define INVOKE_WEIGHT_QUANT_BMM_OP_ASWVC_IMPL(templateClass, ...)                                                \
+    do {                                                                                                         \
+        GET_TILING_DATA_WITH_STRUCT(wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWVCTilingDataParams, tilingDataIn, \
+                                    tiling);                                                                     \
+        templateClass<DTYPE_X, DTYPE_WEIGHT, DTYPE_ANTIQUANT_SCALE, DTYPE_BIAS, DTYPE_Y, __VA_ARGS__> op;        \
+        op.Init(x, weight, antiquantScale, antiquantOffset, quantScale, quantOffset, bias, y, workspace,         \
+                &tilingDataIn);                                                                                  \
+        op.Process();                                                                                            \
     } while (0)
 #endif
 
@@ -586,6 +600,18 @@ __global__ __aicore__ void weight_quant_batch_matmul_v2(GM_ADDR x, GM_ADDR weigh
         INVOKE_WEIGHT_QUANT_BMM_ITERBATCH_IMPL(WeightQuantBatchMatmulV2IterBatchKernel, static_cast<bool>(TRANS_A),
                                                static_cast<bool>(TRANS_B), QuantType::PER_CHANNEL, false,
                                                QuantType::PER_TENSOR, MM_CFG_MULTI_BATCH_NO_BATCH_OUT);
+    }
+#endif
+#if defined(A16) && defined(WQBMMV2_S4) && defined(FORMAT_WEIGHT) && (FORMAT_WEIGHT == FORMAT_FRACTAL_NZ)
+    // ASW-VC 模板（A16W4 pergroup，weight FRACTAL_NZ）：NZ 编译变体，AIV 反量化 + AIC matmul
+    // mix 启动（本平台 AIC:AIV = 1:1；缺省为 AIC_ONLY 时 AIV 不会拉起，L1 B 区无写入）
+    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_1);
+    if constexpr (SOC_VERSION_TYPE == WQBMMV2_SOC_SUPPORT_MMAD_S8S4 && SUB_SOC_VERSION_TYPE == WQBMMV2_DEFAULT &&
+                  ANTIQUANT_SCENARIO == WQBMMV2_DEFAULT && ALGORITHM == WQBMMV2_ALGO_VECTOR_ANTIQUANT &&
+                  SUB_ALGORITHM == WQBMMV2_SUB_ALGO_ASW_VC) {
+        INVOKE_WEIGHT_QUANT_BMM_OP_ASWVC_IMPL(WeightQuantBatchMatmulV2ASWVCKernel, static_cast<bool>(TRANS_A),
+                                              static_cast<bool>(TRANS_B), QuantType::PER_GROUP, HAS_ANTIQUANT_OFFSET,
+                                              static_cast<QuantType>(QUANT_TYPE));
     }
 #endif
 #endif

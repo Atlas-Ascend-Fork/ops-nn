@@ -271,6 +271,13 @@ uint32_t WeightQuantBatchMatmulV2IterbatchTiling::GetGcd(uint32_t numA, uint32_t
 
 bool WeightQuantBatchMatmulV2IterbatchTiling::IsCapable()
 {
+    // iterbatch 仅承接 A16W8 ND（per-tensor/per-channel）：pergroup、int4、NZ 场景由 ASW-VC 等模板承接
+    if (matmulInfoPtr_->antiQuantType == QuantType::PER_GROUP || matmulInfoPtr_->bDtype == ge::DT_INT4 ||
+        matmulInfoPtr_->bFormat == ge::FORMAT_FRACTAL_NZ) {
+        OP_LOGI(opName_, "the iterbatch template only supports A16W8 ND with per-tensor/per-channel mode");
+        return false;
+    }
+
     OP_TILING_CHECK(!matmulInfoPtr_->transA && matmulInfoPtr_->batchWeight == 1UL,
                     OP_LOGI(opName_, "When transA = False and batchB = 1, batchA can be co-axial with M"),
                     return false);

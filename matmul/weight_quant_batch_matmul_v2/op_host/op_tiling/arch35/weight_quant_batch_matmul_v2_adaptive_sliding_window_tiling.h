@@ -82,6 +82,8 @@ protected:
     uint64_t GetTilingKey() const override;
     ge::graphStatus GetWorkspaceSize() override;
     ge::graphStatus PostTiling() override;
+    // ASW 仅承接 A16W8 ND（per-tensor/per-channel）：pergroup、int4、NZ 场景由 ASW-VC 等模板承接
+    bool IsCapable() override;
 
     std::unique_ptr<wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWCustomTilingDataParams> tilingData_;
     size_t tilingDataSize_ = sizeof(wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWCustomTilingDataParams);

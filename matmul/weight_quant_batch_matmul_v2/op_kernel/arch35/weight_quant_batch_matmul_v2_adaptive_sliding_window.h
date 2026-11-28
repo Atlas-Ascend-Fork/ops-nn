@@ -162,7 +162,7 @@ private:
 
     uint32_t blockIdx_;
     const wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWCustomTilingDataParams* tiling_ = nullptr;
-    WeightQuantBmmAswBlock block_;
+    WeightQuantBmmAswBlock<> block_;
     // GM基址
     GlobalTensor<xType> aGlobal_;
     GlobalTensor<wType> bGlobal_;

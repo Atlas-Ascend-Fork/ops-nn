@@ -85,7 +85,14 @@ def prepare_offset(antiquant_offset, inter_dtype, transpose_weight):
 
 
 def matmul_and_finalize(
-    x_f, weight_f, bias, inter_dtype, transpose_x, x_dtype_str, out_dtype_str
+    x_f,
+    weight_f,
+    bias,
+    inter_dtype,
+    transpose_x,
+    x_dtype_str,
+    out_dtype_str,
+    quant_scale=None,
 ):
     """公共尾部：转置 x，截断 x/weight，矩阵乘法，后处理。"""
     if transpose_x:
@@ -93,15 +100,19 @@ def matmul_and_finalize(
     x_f = _util.truncate(x_f, inter_dtype)
     weight_f = _util.truncate(weight_f, inter_dtype)
     out = np.matmul(x_f, weight_f)
-    return finalize(out, bias, x_dtype_str, out_dtype_str)
+    return finalize(out, bias, x_dtype_str, out_dtype_str, quant_scale)
 
 
-def finalize(out, bias, x_dtype_str, out_dtype_str):
-    """后处理：加 bias，bf16 往返截断，转换为输出 dtype。"""
+def finalize(out, bias, x_dtype_str, out_dtype_str, quant_scale=None):
+    """后处理：加 bias，可选输出量化，bf16 往返截断，转换为输出 dtype。"""
     if bias is not None:
         out = out + bias.astype(np.float32)
     if x_dtype_str == "bfloat16" and out_dtype_str != "int8":
         out = _util.truncate(out, _util.np_bfloat16)
+    if quant_scale is not None:
+        scale, offset = _util.decode_u64_scale(quant_scale)
+        out = np.rint(out * scale) + offset
+        out = np.clip(out, -128, 127)
     return _util.cast_output_dtype(out, out_dtype_str)
 
 
@@ -180,6 +191,7 @@ def wqbmm_kernel_compute(
             antiquant_group_size,
             x_dtype_str,
             out_dtype_str,
+            quant_scale,
         )
     else:
         y = _compute_tc(
@@ -254,6 +266,7 @@ def _compute_pergroup(
     antiquant_group_size,
     x_dtype_str,
     out_dtype_str,
+    quant_scale,
 ):
     """PerGroup 量化模式计算（分组量化）。
 
@@ -264,7 +277,7 @@ def _compute_pergroup(
     1. 准备输入：x, weight, scale, offset 转为 fp32 并按需截断
     2. 分组反量化 weight：对 K 维度的每组应用独立的 scale/offset
     3. 矩阵乘法：out = x_f @ weight_f
-    4. 后处理：加 bias，按 x_dtype 截断，转为输出 dtype
+    4. 后处理：加 bias，可选编码输出量化，按 x_dtype 截断，转为输出 dtype
     """
     x_f = x.astype(np.float32)
     weight_f = prepare_weight(weight, inter_dtype, is_f8_weight, transpose_weight)
@@ -295,7 +308,14 @@ def _compute_pergroup(
         weight_f[..., k_start:k_end, :] = w_slice
 
     return matmul_and_finalize(
-        x_f, weight_f, bias, inter_dtype, transpose_x, x_dtype_str, out_dtype_str
+        x_f,
+        weight_f,
+        bias,
+        inter_dtype,
+        transpose_x,
+        x_dtype_str,
+        out_dtype_str,
+        quant_scale,
     )
 
 
@@ -462,6 +482,11 @@ class WeightQuantBatchMatmulV2TestSpec:
         testcase_name = kwargs.get("testcase_name", "unknown")
 
         antiquant_scale = _util.sanitize_e8m0_scale(antiquant_scale, testcase_name)
+        if quant_scale is not None and testcase_name.startswith("aswvc_"):
+            scale = np.full(quant_scale.shape, 0.25, dtype=np.float32)
+            offset_value = 3.0 if "quant_offset" in testcase_name else 0.0
+            offset = np.full(quant_scale.shape, offset_value, dtype=np.float32)
+            quant_scale = _util.pack_u64_scale(scale, offset)
 
         _validate.validate_wqbmmv2_constraints(
             x,

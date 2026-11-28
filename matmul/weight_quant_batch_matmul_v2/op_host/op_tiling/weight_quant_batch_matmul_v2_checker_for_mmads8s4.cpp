@@ -24,6 +24,9 @@ constexpr size_t MAX_SHAPE_LEN_ND = 6UL;
 constexpr uint64_t MAX_SHAPE_DIM = 65535UL;
 constexpr uint64_t MIN_GROUP_SIZE = 32UL;
 constexpr uint64_t MAX_INT32 = 2147483647UL;
+constexpr uint32_t ANTIQUANT_OFFSET_INDEX = 3;
+constexpr uint32_t QUANT_SCALE_INDEX = 4;
+constexpr uint32_t QUANT_OFFSET_INDEX = 5;
 constexpr uint32_t BIAS_INDEX = 6;
 constexpr size_t LAST_SECOND_DIM_INDEX = 2;
 constexpr size_t LAST_BATCH_DIM_INDEX = 3;
@@ -52,11 +55,10 @@ ge::graphStatus WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckContext()
 
 /*
 The function is check the dtype limit:
-    1. Input x dtype should be fp16, weight should be int8
-    2. Output dtype should be same with x dtype without quant
-    3. antiquant scale dtype should be uint64
-    4. Bias dtype should be int32/fp16
-    5. other params should be null
+    1. A16W8 (weight ND int8): x fp16, weight int8, scale uint64/int64, y fp16/int8
+    2. A16W4 pergroup (weight FRACTAL_NZ int4): x fp16, weight int4, scale/offset fp16, y fp16/int8
+    3. Bias dtype should be int32/fp16
+    4. INT8 output requires uint64 quant_scale; quant_offset is encoded into quant_scale by fusion passes
 */
 bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckDtype()
 {
@@ -71,20 +73,53 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckDtype()
                         "the dtype of x must be FLOAT16"),
                     return false);
 
-    OP_TILING_CHECK(
-        inputParams_.bDtype != ge::DT_INT8,
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "weight",
-                                              ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype).c_str(),
-                                              "the dtype of weight must be INT8"),
-        return false);
+    if (inputParams_.bDtype == ge::DT_INT4) {
+        // A16W4 pergroup 场景（weight FRACTAL_NZ）：scale 为 fp16，输出量化由 quant_scale 承载
+        OP_TILING_CHECK(inputParams_.antiQuantScaleDtype != ge::DT_FLOAT16,
+                        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                            inputParams_.opName, "antiquantScale",
+                            ge::TypeUtils::DataTypeToSerialString(inputParams_.antiQuantScaleDtype).c_str(),
+                            "the dtype of antiquantScale must be FLOAT16 when weight dtype is INT4"),
+                        return false);
+        OP_TILING_CHECK(
+            inputParams_.cDtype != ge::DT_FLOAT16 && inputParams_.cDtype != ge::DT_INT8,
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "y",
+                                                  ge::TypeUtils::DataTypeToSerialString(inputParams_.cDtype).c_str(),
+                                                  "the dtype of y must be FLOAT16 or INT8 when weight dtype is INT4"),
+            return false);
+        if (inputParams_.cDtype == ge::DT_INT8) {
+            auto quantScaleDesc = context_->GetOptionalInputDesc(QUANT_SCALE_INDEX);
+            OP_TILING_CHECK(
+                quantScaleDesc == nullptr || quantScaleDesc->GetDataType() != ge::DT_UINT64,
+                VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "INT8 output requires UINT64 quant_scale"),
+                return false);
+        }
+        auto antiQuantOffsetDesc = context_->GetOptionalInputDesc(ANTIQUANT_OFFSET_INDEX);
+        if (antiQuantOffsetDesc != nullptr) {
+            auto antiQuantOffsetDtype = antiQuantOffsetDesc->GetDataType();
+            OP_TILING_CHECK(antiQuantOffsetDtype != inputParams_.antiQuantScaleDtype,
+                            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                                inputParams_.opName, "antiquantOffset",
+                                ge::TypeUtils::DataTypeToSerialString(antiQuantOffsetDtype).c_str(),
+                                "the dtype of antiquantOffset must be the same as antiquantScale"),
+                            return false);
+        }
+    } else {
+        OP_TILING_CHECK(
+            inputParams_.bDtype != ge::DT_INT8,
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(inputParams_.opName, "weight",
+                                                  ge::TypeUtils::DataTypeToSerialString(inputParams_.bDtype).c_str(),
+                                                  "the dtype of weight must be INT8 or INT4"),
+            return false);
 
-    OP_TILING_CHECK(
-        inputParams_.antiQuantScaleDtype != ge::DT_UINT64 && inputParams_.antiQuantScaleDtype != ge::DT_INT64,
-        OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
-            inputParams_.opName, "antiquantScale",
-            ge::TypeUtils::DataTypeToSerialString(inputParams_.antiQuantScaleDtype).c_str(),
-            "the dtype of antiquantScale must be UINT64 or INT64"),
-        return false);
+        OP_TILING_CHECK(
+            inputParams_.antiQuantScaleDtype != ge::DT_UINT64 && inputParams_.antiQuantScaleDtype != ge::DT_INT64,
+            OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
+                inputParams_.opName, "antiquantScale",
+                ge::TypeUtils::DataTypeToSerialString(inputParams_.antiQuantScaleDtype).c_str(),
+                "the dtype of antiquantScale must be UINT64 or INT64"),
+            return false);
+    }
 
     OP_TILING_CHECK(inputParams_.cDtype != ge::DT_FLOAT16 && inputParams_.cDtype != ge::DT_INT8,
                     OP_LOGE_FOR_INVALID_DTYPE_WITH_REASON(
@@ -107,8 +142,9 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckDtype()
 
 /*
 The function is check the attr limit:
-    1. Group size should be 0
-    2. innerPrecise only support 0 or 1
+    1. A16W8 (weight ND int8): Group size should be 0
+    2. A16W4 pergroup (weight FRACTAL_NZ int4): Group size should be (0, kSize) and aligned to 32
+    3. innerPrecise only support 0 or 1
 */
 bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckAttr()
 {
@@ -130,12 +166,28 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckAttr()
     inputParams_.transB = transposeWeight != nullptr && *transposeWeight;
 
     if (groupSizePtr != nullptr) {
-        OP_TILING_CHECK(*groupSizePtr != 0,
-                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "groupSize",
-                                                              std::to_string(*groupSizePtr).c_str(),
-                                                              "the value of groupSize must be 0"),
-                        return false);
         inputParams_.groupSize = static_cast<uint64_t>(*groupSizePtr);
+    }
+    if (inputParams_.bDtype == ge::DT_INT4) {
+        inputParams_.bFormat = GetInputStorageFormat(context_, 1);
+        const bool unsupportedTrans = (inputParams_.transA || inputParams_.transB) &&
+                                      (inputParams_.bFormat != ge::FORMAT_FRACTAL_NZ || inputParams_.groupSize == 0);
+        OP_TILING_CHECK(unsupportedTrans,
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(
+                            inputParams_.opName, "transposeX/transposeWeight", "true",
+                            "only INT4 FRACTAL_NZ per-group mode supports transposed x and weight"),
+                        return false);
+        OP_TILING_CHECK(inputParams_.groupSize == 0,
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "groupSize",
+                                                              std::to_string(inputParams_.groupSize).c_str(),
+                                                              "the value of groupSize must be greater than 0 for INT4"),
+                        return false);
+    } else {
+        OP_TILING_CHECK(inputParams_.groupSize != 0,
+                        OP_LOGE_FOR_INVALID_VALUE_WITH_REASON(inputParams_.opName, "groupSize",
+                                                              std::to_string(inputParams_.groupSize).c_str(),
+                                                              "the value of groupSize must be 0 for INT8"),
+                        return false);
     }
     if (innerPrecisePtr != nullptr) {
         OP_TILING_CHECK((*innerPrecisePtr != 0) && (*innerPrecisePtr != 1),
@@ -155,7 +207,7 @@ The function is check the shape limit:
     3. antiquant shape must be:
         per_channel: not trans_n: (1, n) or (n); trans_b: (n, 1) or (n)
         per_tensor: (1,)
-    4. quant shape must be empty tensor
+    4. INT4 INT8 output supports per-tensor/per-channel quant scale; other quant inputs must be empty
 */
 bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckShape()
 {
@@ -198,9 +250,22 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckShape()
     OP_TILING_CHECK(!CheckAntiQuantShape(antiQuantScaleShape, antiQuantOffsetShape),
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Check antiquant shape failed"), return false);
     // check quant scale, quant offset
-    OP_TILING_CHECK(quantScaleShape != nullptr,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Quant scale should be nullptr"),
-                    return false);
+    const bool isInt4Quant = inputParams_.bDtype == ge::DT_INT4 && inputParams_.cDtype == ge::DT_INT8;
+    if (isInt4Quant) {
+        OP_TILING_CHECK(
+            quantScaleShape == nullptr || quantScaleShape->GetStorageShape().GetDimNum() != 1,
+            VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "INT8 output requires a one-dimensional quant scale"),
+            return false);
+        const auto quantScaleSize = quantScaleShape->GetStorageShape().GetShapeSize();
+        OP_TILING_CHECK(quantScaleSize != 1 && quantScaleSize != static_cast<int64_t>(inputParams_.nSize),
+                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Quant scale size should be 1 or n size"),
+                        return false);
+        inputParams_.quantType = quantScaleSize == 1 ? QuantType::PER_TENSOR : QuantType::PER_CHANNEL;
+    } else {
+        OP_TILING_CHECK(quantScaleShape != nullptr,
+                        VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Quant scale should be nullptr"),
+                        return false);
+    }
     OP_TILING_CHECK(quantOffsetShape != nullptr,
                     VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Quant offset should be nullptr"),
                     return false);
@@ -238,10 +303,21 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckInputShape(const gert::Stora
                                           ge::TypeUtils::FormatToSerialString(inputParams_.aFormat).c_str()),
                     return false);
 
-    OP_TILING_CHECK(inputParams_.bFormat != ge::Format::FORMAT_ND && inputParams_.bFormat != ge::Format::FORMAT_NCHW,
-                    CUBE_INNER_ERR_REPORT(inputParams_.opName, "Input weight format should be ND , actual format is %s",
-                                          ge::TypeUtils::FormatToSerialString(inputParams_.bFormat).c_str()),
-                    return false);
+    // A16W4 pergroup 场景 weight 为 FRACTAL_NZ（storage 4D [N/16, K/16, 16, 16]，origin 仍为 (K, N)）
+    if (inputParams_.bDtype == ge::DT_INT4) {
+        OP_TILING_CHECK(inputParams_.bFormat != ge::Format::FORMAT_FRACTAL_NZ,
+                        CUBE_INNER_ERR_REPORT(inputParams_.opName,
+                                              "Input weight format should be FRACTAL_NZ when dtype is INT4, "
+                                              "actual format is %s",
+                                              ge::TypeUtils::FormatToSerialString(inputParams_.bFormat).c_str()),
+                        return false);
+    } else {
+        OP_TILING_CHECK(
+            inputParams_.bFormat != ge::Format::FORMAT_ND && inputParams_.bFormat != ge::Format::FORMAT_NCHW,
+            CUBE_INNER_ERR_REPORT(inputParams_.opName, "Input weight format should be ND , actual format is %s",
+                                  ge::TypeUtils::FormatToSerialString(inputParams_.bFormat).c_str()),
+            return false);
+    }
 
     size_t xOriDimNum = xShape->GetOriginShape().GetDimNum();
     size_t weightOriDimNum = weightShape->GetOriginShape().GetDimNum();
@@ -354,9 +430,19 @@ bool WeightQuantBatchMatmulV2Checker4MmadS8S4::CheckAntiQuantShape(const gert::S
         inputParams_.antiQuantType = QuantType::PER_TENSOR;
     }
 
-    OP_TILING_CHECK(antiQuantOffsetShape != nullptr,
-                    VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Antiquant offset should be nullptr"),
-                    return false);
+    if (antiQuantOffsetShape != nullptr) {
+        OP_TILING_CHECK(inputParams_.bDtype != ge::DT_INT4 || inputParams_.antiQuantType != QuantType::PER_GROUP,
+                        VECTOR_INNER_ERR_REPORT_TILIING(
+                            inputParams_.opName, "Antiquant offset only supports INT4 FRACTAL_NZ per-group mode"),
+                        return false);
+        OP_TILING_CHECK(antiQuantScaleShape->GetStorageShape() != antiQuantOffsetShape->GetStorageShape(),
+                        VECTOR_INNER_ERR_REPORT_TILIING(
+                            inputParams_.opName, "Antiquant scale %s and offset %s should have the same shape",
+                            Ops::Base::ToString(antiQuantScaleShape->GetStorageShape()).c_str(),
+                            Ops::Base::ToString(antiQuantOffsetShape->GetStorageShape()).c_str()),
+                        return false);
+        inputParams_.hasAntiQuantOffset = true;
+    }
     return true;
 }
 
@@ -366,8 +452,7 @@ ge::graphStatus WeightQuantBatchMatmulV2Checker4MmadS8S4::Check()
     if (ret != ge::GRAPH_SUCCESS) {
         return ret;
     }
-    // check the input and output dtype: x, weight, antiquant_scale, y.
-    // In RESERVED, antiquant_offset, quant_scale, quant_offset don't need to check, cause they are nullptr
+    // check the input and output dtype: x, weight, antiquant_scale, antiquant_offset, y.
     OP_TILING_CHECK(!CheckDtype(), VECTOR_INNER_ERR_REPORT_TILIING(inputParams_.opName, "Check input dtype failed"),
                     return ge::GRAPH_FAILED);
     // check attrs: transA, transB, group_size, dtype, innerPrecise

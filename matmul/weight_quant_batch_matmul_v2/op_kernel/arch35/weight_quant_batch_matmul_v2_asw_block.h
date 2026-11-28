@@ -57,11 +57,11 @@ struct ASWOffsetParam {
     uint64_t batchCOffset;
 };
 
+template <typename TilingT = wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWCustomTilingDataParams>
 class WeightQuantBmmAswBlock {
 public:
     __aicore__ inline WeightQuantBmmAswBlock() {}
-    __aicore__ inline void Init(const wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWCustomTilingDataParams* tilingData,
-                                uint32_t blockIdx);
+    __aicore__ inline void Init(const TilingT* tilingData, uint32_t blockIdx);
     __aicore__ inline void UpdateBasicIndex(uint64_t roundIdx);
     __aicore__ inline void UpdateBlockParams(uint64_t roundIdx);
     template <bool aTrans, bool bTrans, CubeFormat formatX2 = CubeFormat::ND>
@@ -71,15 +71,15 @@ public:
 public:
     ASWTilingParam params_;
     ASWOffsetParam offset_;
-    const wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWCustomTilingDataParams* tilingData_;
+    const TilingT* tilingData_;
 
 private:
     const uint64_t WINDOW_LEN = 4;
     uint32_t blockIdx_;
 };
 
-__aicore__ inline void WeightQuantBmmAswBlock::Init(
-    const wqbmmv2_tiling::WeightQuantBatchMatmulV2ASWCustomTilingDataParams* tilingData, uint32_t blockIdx)
+template <typename TilingT>
+__aicore__ inline void WeightQuantBmmAswBlock<TilingT>::Init(const TilingT* tilingData, uint32_t blockIdx)
 {
     params_.mSplitAddrOffset = 0;
     params_.nSplitAddrOffset = 0;
@@ -97,7 +97,8 @@ __aicore__ inline void WeightQuantBmmAswBlock::Init(
     params_.mTailCoreNum = params_.mCnt - params_.mCoreNum * params_.mainRow;
 }
 
-__aicore__ inline void WeightQuantBmmAswBlock::UpdateBasicIndex(uint64_t roundIdx)
+template <typename TilingT>
+__aicore__ inline void WeightQuantBmmAswBlock<TilingT>::UpdateBasicIndex(uint64_t roundIdx)
 {
     uint64_t newBlockIdx = (roundIdx == params_.round - 1) ? (blockIdx_ / params_.totalTailTile) : blockIdx_;
     params_.index = newBlockIdx + roundIdx * tilingData_->usedCoreNum;
@@ -117,7 +118,8 @@ __aicore__ inline void WeightQuantBmmAswBlock::UpdateBasicIndex(uint64_t roundId
     }
 }
 
-__aicore__ inline void WeightQuantBmmAswBlock::UpdateBlockParams(uint64_t roundIdx)
+template <typename TilingT>
+__aicore__ inline void WeightQuantBmmAswBlock<TilingT>::UpdateBlockParams(uint64_t roundIdx)
 {
     params_.singleCoreM = params_.mIndex != (params_.mCnt - 1) ? tilingData_->baseM : params_.mBaseTail;
     params_.singleCoreN = params_.nIndex != (params_.nCnt - 1) ? tilingData_->baseN : params_.nBaseTail;
@@ -149,14 +151,16 @@ __aicore__ inline void WeightQuantBmmAswBlock::UpdateBlockParams(uint64_t roundI
     }
 }
 
-__aicore__ inline void WeightQuantBmmAswBlock::ResetAddressOffsets()
+template <typename TilingT>
+__aicore__ inline void WeightQuantBmmAswBlock<TilingT>::ResetAddressOffsets()
 {
     params_.mSplitAddrOffset = 0;
     params_.nSplitAddrOffset = 0;
 }
 
+template <typename TilingT>
 template <bool aTrans, bool bTrans, CubeFormat formatX2>
-__aicore__ inline void WeightQuantBmmAswBlock::CalcGMOffset()
+__aicore__ inline void WeightQuantBmmAswBlock<TilingT>::CalcGMOffset()
 {
     uint64_t mOffset = params_.mIndex * tilingData_->baseM + params_.mSplitAddrOffset;
     uint64_t nOffset = params_.nIndex * tilingData_->baseN + params_.nSplitAddrOffset;

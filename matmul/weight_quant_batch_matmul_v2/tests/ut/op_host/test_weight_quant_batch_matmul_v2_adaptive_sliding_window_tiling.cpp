@@ -21,6 +21,7 @@
 #include "kernel_run_context_facker.h"
 #include "../../../op_host/op_tiling/arch35/weight_quant_batch_matmul_v2_adaptive_split_tiling.h"
 #include "../../../op_host/op_tiling/arch35/weight_quant_batch_matmul_v2_adaptive_sliding_window_tiling.h"
+#include "../../../op_host/op_tiling/arch35/weight_quant_batch_matmul_v2_asw_vc_tiling.h"
 #include "test_cube_util.h"
 #include "../../../../mat_mul_v3/op_host/op_tiling/matmul_v3_compile_info.h"
 
@@ -274,14 +275,13 @@ static void TestOneParamCase(const WeightQuantBatchMatmulV2TilingTestParam& para
     ASSERT_EQ(aswTiling.DoTiling(), ge::GRAPH_SUCCESS);
 }
 
-// Test ASW DoTiling directly for INT4/NZ cases that the framework rejects.
-// This covers 4-bit dtype branches (GetShapeWithDataType, GetSizeWithDataType)
-// and NZ tail split branches (IsValidWeightNzTailSplit, CalUsedCoreNum).
+// Verify INT4/NZ per-group inputs are rejected by ASW and handled by ASW-VC.
 TEST(TestWeightQuantBatchMatmulV2AdaptiveSlidingWindowTilingDirect, DirectDoTilingInt4Nz)
 {
     int64_t m = 128;
     int64_t k = 128;
     int64_t n = 128;
+    int64_t groupSize = 64;
     ge::DataType xDtype = ge::DT_FLOAT16;
     ge::DataType weightDtype = ge::DT_INT4;
     ge::DataType antiQuantScaleDtype = ge::DT_FLOAT16;
@@ -293,7 +293,7 @@ TEST(TestWeightQuantBatchMatmulV2AdaptiveSlidingWindowTilingDirect, DirectDoTili
     gert::StorageShape xShape({m, k}, {m, k});
     gert::StorageShape weigthShape({(n + 16) / 16, (k + 16) / 16, 16, 16}, {(n + 16) / 16, (k + 16) / 16, 16, 16});
     weigthShape.MutableOriginShape() = gert::Shape({k, n});
-    gert::StorageShape antiQuantScaleShape({1}, {1});
+    gert::StorageShape antiQuantScaleShape({k / groupSize, n}, {k / groupSize, n});
     gert::StorageShape quantScaleShape({1}, {1});
     gert::StorageShape outputShape({m, n}, {m, n});
 
@@ -350,7 +350,7 @@ TEST(TestWeightQuantBatchMatmulV2AdaptiveSlidingWindowTilingDirect, DirectDoTili
                       .NodeOutputTd(0, yDtype, ge::FORMAT_ND, ge::FORMAT_ND)
                       .NodeAttrs({{"transpose_x", Ops::NN::AnyValue::CreateFrom<bool>(false)},
                                   {"transpose_weight", Ops::NN::AnyValue::CreateFrom<bool>(false)},
-                                  {"group_size", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
+                                  {"group_size", Ops::NN::AnyValue::CreateFrom<int64_t>(groupSize)},
                                   {"dtype", Ops::NN::AnyValue::CreateFrom<int64_t>(-1)},
                                   {"inner_precise", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
                                   {"ascendc_op_para_size", Ops::NN::AnyValue::CreateFrom<int64_t>(0)},
@@ -374,9 +374,15 @@ TEST(TestWeightQuantBatchMatmulV2AdaptiveSlidingWindowTilingDirect, DirectDoTili
     ASSERT_NE(tilingParseFunc, nullptr);
     ASSERT_EQ(tilingParseFunc(kernelHold.GetContext<gert::KernelContext>()), ge::GRAPH_SUCCESS);
 
-    // Call ASW DoTiling directly (bypass framework template selection which rejects INT4+NZ on this platform)
+    // ASW only supports A16W8 ND; INT4/NZ per-group inputs belong to ASW-VC.
     auto aswTiling = optiling::weight_quant_batch_matmul_v2::WeightQuantBatchMatmulV2TilingASW(tilingContext);
-    ASSERT_EQ(aswTiling.DoTiling(), ge::GRAPH_SUCCESS);
+    ASSERT_EQ(aswTiling.DoTiling(), ge::GRAPH_PARAM_INVALID);
+    auto aswVcTiling = optiling::weight_quant_batch_matmul_v2::WeightQuantBatchMatmulV2TilingASWVC(tilingContext);
+    ASSERT_EQ(aswVcTiling.DoTiling(), ge::GRAPH_SUCCESS);
+
+    aswVcTiling.matmulInfoPtr_->transB = true;
+    aswVcTiling.matmulInfoPtr_->c0Size = 64;
+    EXPECT_FALSE(aswVcTiling.IsCapable());
 }
 
 TEST_P(TestWeightQuantBatchMatmulV2AdaptiveSlidingWindowTiling, generalTest)

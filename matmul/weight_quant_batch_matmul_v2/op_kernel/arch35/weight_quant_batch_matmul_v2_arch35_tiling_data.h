@@ -141,6 +141,44 @@ struct WeightQuantBatchMatmulV2ASWCustomTilingDataParams {
 #pragma pack(pop)
 
 #pragma pack(push, 8)
+// ASW-VC kernel 专用平铺 tiling 结构：ASW Custom 结构 + pergroup 参数
+// 场景：A16W4（x fp16 ND，weight int4 FRACTAL_NZ，antiquant_scale fp16 pergroup）
+struct WeightQuantBatchMatmulV2ASWVCTilingDataParams {
+    uint32_t usedCoreNum = 0;
+    uint32_t m = 0;
+    uint32_t n = 0;
+    uint32_t k = 0;
+    uint32_t baseM = 0;
+    uint32_t baseN = 0;
+    uint32_t baseK = 0;
+    uint32_t mTailCnt = 0;
+    uint32_t nTailCnt = 0;
+    uint8_t mmadParam = 0;   // f162s32(F16xF16)的FIXSHIFT_VAL：定点基数58， 有效范围[34, 43];
+    uint8_t l1BufferNum = 0; // L1 A/B 区 buffer 级数（2/4）
+    uint8_t l0cDB = 1;       // 默认不开db为1
+    L2CacheMode l2CacheDisable = L2CacheMode::L2_CACHE_DEFAULT; // L2Cache默认使能
+    uint32_t batchDimAll = 1;
+    uint32_t stepKa = 1;
+    uint32_t stepKb = 1;
+    uint32_t isBias = 0;
+    uint32_t groupSize = 0; // pergroup 大小
+    uint64_t batchA1 = 0;
+    uint64_t batchA2 = 0;
+    uint64_t batchA3 = 0;
+    uint64_t batchA4 = 0;
+    uint64_t batchB1 = 0;
+    uint64_t batchB2 = 0;
+    uint64_t batchB3 = 0;
+    uint64_t batchB4 = 0;
+    uint64_t batchC1 = 0;
+    uint64_t batchC2 = 0;
+    uint64_t batchC3 = 0;
+    uint64_t batchC4 = 0;
+    uint64_t biasWithBatch = 0;
+};
+#pragma pack(pop)
+
+#pragma pack(push, 8)
 // 8 means 8 bytes aligned
 struct alignas(8) WeightQuantBatchMatmulV2TilingData {
     uint8_t vecBlockDimN;
