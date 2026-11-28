@@ -57,7 +57,7 @@ ge::graphStatus AdamApplyOneWithDecayTiling::GetShapeAttrsInfo()
     ge::DataType input0DType = input0Desc->GetDataType();
     static const char* kInputNames[] = {"input0", "input1", "input2", "input3", "input4", "mul0_x",
                                         "mul1_x", "mul2_x", "mul3_x", "mul4_x", "add2_y"};
-    static const char* kOutputNames[] = {"input1", "input2", "input3"};
+    static const char* kOutputNames[] = {"output0", "output1", "output2"};
     for (int32_t inputIdx = 1; inputIdx < INPUT_NUM; inputIdx++) {
         auto inputDesc = context_->GetInputDesc(inputIdx);
         OP_CHECK_NULL_WITH_CONTEXT(context_, inputDesc);
@@ -101,26 +101,26 @@ ge::graphStatus AdamApplyOneWithDecayTiling::DoOpTiling()
     if (input0DType == ge::DT_FLOAT16) {
         BroadcastBaseTiling<AdamApplyOneWithDecayOp::AdamApplyOneWithDecayCompute<half, float>::OpDag> brcBaseTiling(
             context_, static_cast<uint32_t>(BROADCAST_KERNEL_TYPE::KERNEL_TYPE_NDDMA));
-        OP_CHECK_IF(
-            brcBaseTiling.DoTiling() == ge::GRAPH_FAILED,
-            OP_LOGE(context_->GetNodeName(), "Do tiling failed for fp16 branch. Please check the detailed log."),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(brcBaseTiling.DoTiling() == ge::GRAPH_FAILED,
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                           "DoTiling failed for fp16 branch; propagate the lower-layer first error."),
+                    return ge::GRAPH_FAILED);
         _tilingKey = GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode());
     } else if (input0DType == ge::DT_BF16) {
         BroadcastBaseTiling<AdamApplyOneWithDecayOp::AdamApplyOneWithDecayCompute<bfloat16_t, float>::OpDag>
             brcBaseTiling(context_, static_cast<uint32_t>(BROADCAST_KERNEL_TYPE::KERNEL_TYPE_NDDMA));
-        OP_CHECK_IF(
-            brcBaseTiling.DoTiling() == ge::GRAPH_FAILED,
-            OP_LOGE(context_->GetNodeName(), "Do tiling failed for bf16 branch. Please check the detailed log."),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(brcBaseTiling.DoTiling() == ge::GRAPH_FAILED,
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                           "DoTiling failed for bf16 branch; propagate the lower-layer first error."),
+                    return ge::GRAPH_FAILED);
         _tilingKey = GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode());
     } else if (input0DType == ge::DT_FLOAT) {
         BroadcastBaseTiling<AdamApplyOneWithDecayOp::AdamApplyOneWithDecayCompute<float, float>::OpDag> brcBaseTiling(
             context_, static_cast<uint32_t>(BROADCAST_KERNEL_TYPE::KERNEL_TYPE_NDDMA));
-        OP_CHECK_IF(
-            brcBaseTiling.DoTiling() == ge::GRAPH_FAILED,
-            OP_LOGE(context_->GetNodeName(), "Do tiling failed for fp32 branch. Please check the detailed log."),
-            return ge::GRAPH_FAILED);
+        OP_CHECK_IF(brcBaseTiling.DoTiling() == ge::GRAPH_FAILED,
+                    OP_LOGE_WITHOUT_REPORT(context_->GetNodeName(),
+                                           "DoTiling failed for fp32 branch; propagate the lower-layer first error."),
+                    return ge::GRAPH_FAILED);
         _tilingKey = GET_TPL_TILING_KEY(brcBaseTiling.GetSchMode());
     } else {
         OP_LOGE_FOR_INVALID_DTYPE(context_->GetNodeName(), "input0", Ops::Base::ToString(input0DType).c_str(),
@@ -144,7 +144,14 @@ static ge::graphStatus TilingForAdamApplyOneWithDecay(gert::TilingContext* conte
 {
     OP_LOGD("AdamApplyOneWithDecayTiling", "Enter TilingForAdamApplyOneWithDecay");
     if (context == nullptr) {
-        OP_LOGE("AdamApplyOneWithDecayTiling", "Tiling context is nullptr");
+        const std::vector<const char*> msgKey = {"opName", "reason"};
+        const std::vector<const char*> msgValue = {
+            "AdamApplyOneWithDecay",
+            "TilingForAdamApplyOneWithDecay: TilingContext is nullptr. Check the GE tiling invocation."};
+        REPORT_PREDEFINED_ERR_MSG("EZ1008", msgKey, msgValue);
+        OP_LOGE_WITHOUT_REPORT(
+            "AdamApplyOneWithDecay",
+            "TilingForAdamApplyOneWithDecay: TilingContext is nullptr. Check the GE tiling invocation.");
         return ge::GRAPH_FAILED;
     }
 

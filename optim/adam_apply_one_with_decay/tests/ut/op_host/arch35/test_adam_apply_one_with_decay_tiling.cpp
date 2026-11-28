@@ -134,6 +134,155 @@ TEST_F(AdamApplyOneWithDecayTilingTest, AdamApplyOneWithDecay_tiling_test_1)
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
 }
 
+namespace {
+// dtype 用例通用骨架：input0~3 为 (16,16,16)、input4~10 为标量 (1,)、三输出 (16,16,16)，
+// 仅按入参注入各输入/输出 dtype，驱动 GetShapeAttrsInfo 的输入循环与输出循环分支。
+ge::graphStatus RunDtypeMismatchCase(const ge::DataType (&inputDtypes)[11], const ge::DataType (&outputDtypes)[3])
+{
+    gert::StorageShape input0_shape = {{16, 16, 16}, {16, 16, 16}};
+    gert::StorageShape input1_shape = {{16, 16, 16}, {16, 16, 16}};
+    gert::StorageShape input2_shape = {{16, 16, 16}, {16, 16, 16}};
+    gert::StorageShape input3_shape = {{16, 16, 16}, {16, 16, 16}};
+    gert::StorageShape input4_shape = {{1}, {1}};
+    gert::StorageShape input5_shape = {{1}, {1}};
+    gert::StorageShape input6_shape = {{1}, {1}};
+    gert::StorageShape input7_shape = {{1}, {1}};
+    gert::StorageShape input8_shape = {{1}, {1}};
+    gert::StorageShape input9_shape = {{1}, {1}};
+    gert::StorageShape input10_shape = {{1}, {1}};
+    gert::StorageShape output0_shape = {{16, 16, 16}, {16, 16, 16}};
+    gert::StorageShape output1_shape = {{16, 16, 16}, {16, 16, 16}};
+    gert::StorageShape output2_shape = {{16, 16, 16}, {16, 16, 16}};
+    string compile_info_string = R"({
+      "hardware_info": {"BT_SIZE": 0, "load3d_constraints": "1",
+                        "Intrinsic_fix_pipe_l0c2out": false,
+                        "Intrinsic_data_move_l12ub": true,
+                        "Intrinsic_data_move_l0c2ub": true,
+                        "Intrinsic_data_move_out2l1_nd2nz": false,
+                        "UB_SIZE": 245760, "L2_SIZE": 33554432, "L1_SIZE": 524288,
+                        "L0A_SIZE": 65536, "L0B_SIZE": 65536, "L0C_SIZE": 131072,
+                        "CORE_NUM": 64, "socVersion": "Ascend950"}})";
+    map<string, string> soc_infos;
+    map<string, string> aicore_spec;
+    map<string, string> intrinsics;
+    map<string, string> soc_version;
+    GetPlatFormInfos(compile_info_string.c_str(), soc_infos, aicore_spec, intrinsics, soc_version);
+
+    fe::PlatFormInfos platform_info;
+    platform_info.Init();
+
+    optiling::AdamApplyOneWithDecayCompileInfo compile_info;
+
+    string op_type("AdamApplyOneWithDecay");
+    if (gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str()) == nullptr) {
+        return ge::GRAPH_FAILED + 100; // 注册缺失，与断言失败区分
+    }
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+    auto tiling_parse_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling_parse;
+
+    compile_info_string = R"({})";
+    auto kernel_holder = gert::KernelRunContextFaker()
+                             .KernelIONum(2, 1)
+                             .Inputs({const_cast<char*>(compile_info_string.c_str()),
+                                      reinterpret_cast<void*>(&platform_info)})
+                             .Outputs({&compile_info})
+                             .Build();
+    if (!kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->Init()) {
+        return ge::GRAPH_FAILED + 100;
+    }
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("version", soc_version);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    kernel_holder.GetContext<gert::TilingParseContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap",
+                                                                                            intrinsics);
+    if (tiling_parse_func(kernel_holder.GetContext<gert::KernelContext>()) != ge::GRAPH_SUCCESS) {
+        return ge::GRAPH_FAILED + 100;
+    }
+
+    auto param = gert::TilingData::CreateCap(4096);
+    auto workspace_size_holer = gert::ContinuousVector::Create<size_t>(4096);
+    auto ws_size = reinterpret_cast<gert::ContinuousVector*>(workspace_size_holer.get());
+    auto holder = gert::TilingContextFaker()
+                      .SetOpType(op_type)
+                      .NodeIoNum(11, 3)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&input0_shape, &input1_shape, &input2_shape, &input3_shape, &input4_shape,
+                                    &input5_shape, &input6_shape, &input7_shape, &input8_shape, &input9_shape,
+                                    &input10_shape})
+                      .OutputShapes({&output0_shape, &output1_shape, &output2_shape})
+                      .CompileInfo(&compile_info)
+                      .PlatformInfo(reinterpret_cast<char*>(&platform_info))
+                      .NodeInputTd(0, inputDtypes[0], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, inputDtypes[1], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, inputDtypes[2], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, inputDtypes[3], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, inputDtypes[4], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, inputDtypes[5], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(6, inputDtypes[6], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(7, inputDtypes[7], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(8, inputDtypes[8], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(9, inputDtypes[9], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(10, inputDtypes[10], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, outputDtypes[0], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, outputDtypes[1], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, outputDtypes[2], ge::FORMAT_ND, ge::FORMAT_ND)
+                      .TilingData(param.get())
+                      .Workspace(ws_size)
+                      .Build();
+    gert::TilingContext* tiling_context = holder.GetContext<gert::TilingContext>();
+    if (tiling_context->GetPlatformInfo() == nullptr) {
+        return ge::GRAPH_FAILED + 100;
+    }
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("SoCInfo", soc_infos);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreSpec", aicore_spec);
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetCoreNumByCoreType("AICore");
+    holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
+    return tiling_func(tiling_context);
+}
+} // namespace
+
+// #16/#41/#59：kOutputNames 分支逐输出覆盖（防数组错位与只测 output0 的漏检）
+TEST_F(AdamApplyOneWithDecayTilingTest, output_dtype_mismatch_output0)
+{
+    const ge::DataType inputs[11] = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+                                     ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    const ge::DataType outputs[3] = {ge::DT_BF16, ge::DT_FLOAT, ge::DT_FLOAT};
+    EXPECT_EQ(RunDtypeMismatchCase(inputs, outputs), ge::GRAPH_FAILED);
+}
+
+TEST_F(AdamApplyOneWithDecayTilingTest, output_dtype_mismatch_output1)
+{
+    const ge::DataType inputs[11] = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+                                     ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    const ge::DataType outputs[3] = {ge::DT_FLOAT, ge::DT_BF16, ge::DT_FLOAT};
+    EXPECT_EQ(RunDtypeMismatchCase(inputs, outputs), ge::GRAPH_FAILED);
+}
+
+TEST_F(AdamApplyOneWithDecayTilingTest, output_dtype_mismatch_output2)
+{
+    const ge::DataType inputs[11] = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+                                     ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    const ge::DataType outputs[3] = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16};
+    EXPECT_EQ(RunDtypeMismatchCase(inputs, outputs), ge::GRAPH_FAILED);
+}
+
+TEST_F(AdamApplyOneWithDecayTilingTest, input_dtype_mismatch)
+{
+    const ge::DataType inputs[11] = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_BF16,  ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+                                     ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    const ge::DataType outputs[3] = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    EXPECT_EQ(RunDtypeMismatchCase(inputs, outputs), ge::GRAPH_FAILED);
+}
+
+TEST_F(AdamApplyOneWithDecayTilingTest, all_dtype_consistent)
+{
+    const ge::DataType inputs[11] = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT,
+                                     ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    const ge::DataType outputs[3] = {ge::DT_FLOAT, ge::DT_FLOAT, ge::DT_FLOAT};
+    EXPECT_EQ(RunDtypeMismatchCase(inputs, outputs), ge::GRAPH_SUCCESS);
+}
+
 TEST_F(AdamApplyOneWithDecayTilingTest, AdamApplyOneWithDecay_tiling_test_2)
 {
     gert::StorageShape input0_shape = {{16, 16, 16}, {16, 16, 16}};
@@ -540,4 +689,12 @@ TEST_F(AdamApplyOneWithDecayTilingTest, AdamApplyOneWithDecay_tiling_test_5)
     holder.GetContext<gert::TilingContext>()->GetPlatformInfo()->SetPlatformRes("AICoreintrinsicDtypeMap", intrinsics);
 
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_FAILED);
+}
+
+// 判空防御分支直测：TilingForAdamApplyOneWithDecay 入口 context 为空（EZ1008）
+TEST_F(AdamApplyOneWithDecayTilingTest, tiling_func_null_context)
+{
+    std::string op_type("AdamApplyOneWithDecay");
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+    EXPECT_EQ(tiling_func(nullptr), ge::GRAPH_FAILED);
 }

@@ -45,17 +45,27 @@ static ge::graphStatus InferShape4AdamApplyOneWithDecay(gert::InferShapeContext*
     OP_CHECK_NULL_WITH_CONTEXT(context, output2_shape);
 
     gert::Shape broadcast_shape;
-    OP_CHECK_IF(!BroadcastShape(input0_shape, input1_shape, &broadcast_shape),
-                OP_LOGE(context->GetNodeName(), "shape %s and %s cannot broadcast!", ToString(*input0_shape).c_str(),
-                        ToString(*input1_shape).c_str()),
-                return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !BroadcastShape(input0_shape, input1_shape, &broadcast_shape),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input0 and input1",
+                                               (ToString(*input0_shape) + " and " + ToString(*input1_shape)).c_str(),
+                                               "The shapes of input0 and input1 should be broadcastable"),
+        return ge::GRAPH_FAILED);
 
     gert::Shape tmp_shape;
-    OP_CHECK_IF(!BroadcastShape(&broadcast_shape, input2_shape, &tmp_shape),
-                OP_LOGE(context->GetNodeName(), "input shapes cannot broadcast together"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !BroadcastShape(&broadcast_shape, input2_shape, &tmp_shape),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input2 and previous inputs",
+                                               (ToString(*input2_shape) + " and " + ToString(broadcast_shape)).c_str(),
+                                               "The shape of input2 should be broadcastable with previous inputs"),
+        return ge::GRAPH_FAILED);
     broadcast_shape = tmp_shape;
-    OP_CHECK_IF(!BroadcastShape(&broadcast_shape, input3_shape, &tmp_shape),
-                OP_LOGE(context->GetNodeName(), "input shapes cannot broadcast together"), return ge::GRAPH_FAILED);
+    OP_CHECK_IF(
+        !BroadcastShape(&broadcast_shape, input3_shape, &tmp_shape),
+        OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(context->GetNodeName(), "input3 and previous inputs",
+                                               (ToString(*input3_shape) + " and " + ToString(broadcast_shape)).c_str(),
+                                               "The shape of input3 should be broadcastable with previous inputs"),
+        return ge::GRAPH_FAILED);
     broadcast_shape = tmp_shape;
 
     *output0_shape = broadcast_shape;
