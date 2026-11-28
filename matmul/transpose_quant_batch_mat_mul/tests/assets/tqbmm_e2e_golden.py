@@ -9,12 +9,12 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
-"""E2E-level golden for torch_npu.npu_transpose_quant_batchmatmul.
+"""E2E-level golden for cann_ops_nn.transpose_quant_batch_mat_mul.
 
 Delegates core computation to the ACLNN-level golden; this layer only performs
 torch API parameter mapping:
 
-- dtype   : torch enum (5 = float16, 15 = bfloat16) -> output dtype string
+- dtype   : ACL enum (1 = float16, 27 = bfloat16, 34 = hifloat8) -> output dtype string
 - group_sizes : [gm, gn, gk] packed into the group_size attr
 - x1_dtype / x2_dtype : optional "carrier dtype" declarations - when a tensor
   is passed as a uint8 carrier, reinterpret its bit pattern as the declared
@@ -36,21 +36,17 @@ sys.path.insert(
 import matmul_golden_util as _util
 import tqbmm_aclnn_golden as _aclnn
 
-# torch dtype enum -> golden output dtype string (torch_npu enum table,
-# _meta_registrations.py TORCH_DTYPE_ENUM_VALUE_TO_SCALAR_TYPE_MAP).
-_TORCH_DTYPE_TO_STR = {
-    5: "float16",
-    15: "bfloat16",
-    290: "hifloat8",
+# ACL output dtype enum -> golden output dtype string.
+_ACL_DTYPE_TO_STR = {
+    1: "float16",
+    27: "bfloat16",
+    34: "hifloat8",
 }
 
-# torch_npu private dtype enum -> numpy view target for uint8 carriers.
-# Sources: torch_npu _meta_registrations.py enum table (24/290); 23/24 are
-# defensive entries - they have native torch scalar types and normally never
-# travel through the carrier path.
+# ACL+256 dtype overrides -> numpy view targets for uint8 carriers.
 _NPU_DTYPE_TO_NP_VIEW = {
-    23: _util.np_fp8_e5m2,
-    24: _util.np_fp8_e4m3,
+    291: _util.np_fp8_e5m2,
+    292: _util.np_fp8_e4m3,
     290: _util.np_hif8,
 }
 
@@ -58,12 +54,15 @@ _NPU_DTYPE_TO_NP_VIEW = {
 def _apply_npu_dtype_view(tensor, npu_dtype, arg_name):
     """Reinterpret a uint8 carrier tensor as its declared NPU dtype.
 
-    Mirrors the torch_npu ge converter: when x1_dtype/x2_dtype are not None,
-    the tensor is bit-cast to the declared dtype (ge.Bitcast semantics).
+    The repository interface accepts raw ACL codes and ACL+256 overrides.
+    The tensor is bit-cast to the declared dtype (ge.Bitcast semantics).
     """
     if npu_dtype is None or tensor is None:
         return tensor
-    np_dtype = _NPU_DTYPE_TO_NP_VIEW.get(int(npu_dtype))
+    npu_dtype = int(npu_dtype)
+    if npu_dtype < 256:
+        npu_dtype += 256
+    np_dtype = _NPU_DTYPE_TO_NP_VIEW.get(npu_dtype)
     if np_dtype is None:
         raise NotImplementedError(
             f"Unsupported {arg_name} npu dtype enum: {npu_dtype} "
@@ -81,7 +80,7 @@ def _apply_npu_dtype_view(tensor, npu_dtype, arg_name):
     return np.ascontiguousarray(carrier).view(np_dtype)
 
 
-class TorchNpuNpuTransposeQuantBatchmatmulTestSpec:
+class CannOpsNnTransposeQuantBatchMatMulTestSpec:
     compare = _util.isclose_compare
 
     @staticmethod
@@ -100,13 +99,20 @@ class TorchNpuNpuTransposeQuantBatchmatmulTestSpec:
         batch_split_factor=1,
         x1_dtype=None,
         x2_dtype=None,
+        x1_scale_dtype=None,
+        x2_scale_dtype=None,
         **kwargs,
     ):
-        out_dtype = _TORCH_DTYPE_TO_STR.get(int(dtype) if dtype is not None else None)
+        out_dtype = _ACL_DTYPE_TO_STR.get(int(dtype) if dtype is not None else None)
         if out_dtype is None:
             raise NotImplementedError(
                 f"Unsupported output dtype enum: {dtype} "
-                f"(supported: {sorted(_TORCH_DTYPE_TO_STR)})"
+                f"(supported: {sorted(_ACL_DTYPE_TO_STR)})"
+            )
+
+        if x1_scale_dtype is not None or x2_scale_dtype is not None:
+            raise NotImplementedError(
+                "Scale dtype overrides are not supported by this golden"
             )
 
         x1 = _apply_npu_dtype_view(x1, x1_dtype, "x1_dtype")
@@ -133,5 +139,5 @@ class TorchNpuNpuTransposeQuantBatchmatmulTestSpec:
 
 
 __spec__ = {
-    "torch_npu.npu_transpose_quant_batchmatmul": "TorchNpuNpuTransposeQuantBatchmatmulTestSpec",
+    "cann_ops_nn.transpose_quant_batch_mat_mul": "CannOpsNnTransposeQuantBatchMatMulTestSpec",
 }
