@@ -91,14 +91,22 @@ def quant_max_golden(x, scale, *, round_mode="rint", dst_type=35, **kwargs):
     if x.dtype == np.float16:
         x_fp32 = x.astype(np.float32)
         mul_scale = x_fp32 * scale
-        amax = np.max(np.abs(x_fp32)).astype(x.dtype, copy=False)
+        amax = (
+            np.array(0, dtype=x.dtype)
+            if x_fp32.size == 0
+            else np.max(np.abs(x_fp32)).astype(x.dtype, copy=False)
+        )
     elif x.dtype == np.dtype("bfloat16"):
         x_fp32 = x.astype(np.float32)
         mul_scale = x_fp32 * scale
-        amax = np.max(np.abs(x_fp32)).astype(x.dtype, copy=False)
+        amax = (
+            np.array(0, dtype=x.dtype)
+            if x_fp32.size == 0
+            else np.max(np.abs(x_fp32)).astype(x.dtype, copy=False)
+        )
     else:
         mul_scale = x * scale
-        amax = np.max(np.abs(x))
+        amax = np.array(0, dtype=x.dtype) if x.size == 0 else np.max(np.abs(x))
 
     mul_scale = _set_float_overflow_mode(dst_type, mul_scale)
     if dst_type == 34:

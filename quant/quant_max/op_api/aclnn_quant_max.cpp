@@ -11,6 +11,7 @@
 #include "aclnn_quant_max.h"
 #include "quant_max.h"
 #include "aclnn_kernels/contiguous.h"
+#include "level0/zero_op.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "opdev/op_log.h"
 #include "opdev/op_dfx.h"
@@ -234,7 +235,15 @@ aclnnStatus aclnnQuantMaxGetWorkspaceSize(const aclTensor* x, const aclTensor* s
     CHECK_RET(ret == ACLNN_SUCCESS, ret);
 
     if (x->IsEmpty()) {
-        *workspaceSize = 0;
+        // x 为空时 y 同为空无需写入；但 amax 形状恒为 [1]，空输入时 max(|x|) 语义上为 0，
+        // 必须显式写 0，否则返回 SUCCESS 但 amax 仍为调用方传入的脏数据。
+        auto amaxTmp = uniqueExecutor.get()->AllocTensor(amax->GetViewShape(), amax->GetDataType());
+        CHECK_RET(amaxTmp != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        auto amaxZeros = l0op::ZerosLike(amaxTmp, uniqueExecutor.get());
+        CHECK_RET(amaxZeros != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        auto amaxCopy = l0op::ViewCopy(amaxZeros, amax, uniqueExecutor.get());
+        CHECK_RET(amaxCopy != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        *workspaceSize = uniqueExecutor->GetWorkspaceSize();
         uniqueExecutor.ReleaseTo(executor);
         return ACLNN_SUCCESS;
     }

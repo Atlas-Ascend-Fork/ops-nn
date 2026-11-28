@@ -470,3 +470,29 @@ TEST_F(l2GroupedQuantMaxTest, DISABLED_l2_grouped_quant_max_bf16_to_hifloat8_hyb
                                                            &workspaceSize, &executor);
     EXPECT_EQ(ret, ACLNN_SUCCESS);
 }
+
+// Test empty x: 空 x 时 amax（[num_groups]，恒非空）必须被显式写 0。
+// 该分支只做图构建（AllocTensor + ZerosLike + ViewCopy），不依赖 kernel，可在 op_api UT 执行；
+// amax 实际写 0 的行为由 ST/ttk 用例验证。
+TEST_F(l2GroupedQuantMaxTest, l2_grouped_quant_max_empty_x)
+{
+    auto xDesc = TensorDesc({0, 128}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto scaleDesc = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+    auto groupListDesc = TensorDesc({1}, ACL_INT64, ACL_FORMAT_ND);
+    auto yDesc = TensorDesc({0, 128}, ACL_FLOAT8_E5M2, ACL_FORMAT_ND);
+    auto amaxDesc = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
+
+    aclTensor* x = xDesc.ToAclTypeRawPtr();
+    aclTensor* scale = scaleDesc.ToAclTypeRawPtr();
+    aclTensor* groupList = groupListDesc.ToAclTypeRawPtr();
+    int64_t dstType = 35;
+    char roundMode[] = "rint";
+    aclTensor* y = yDesc.ToAclTypeRawPtr();
+    aclTensor* amax = amaxDesc.ToAclTypeRawPtr();
+    uint64_t workspaceSize = 0;
+    aclOpExecutor* executor = nullptr;
+
+    aclnnStatus ret = aclnnGroupedQuantMaxGetWorkspaceSize(x, scale, groupList, roundMode, dstType, y, amax,
+                                                           &workspaceSize, &executor);
+    EXPECT_EQ(ret, ACLNN_SUCCESS);
+}

@@ -208,9 +208,10 @@ TEST_F(l2QuantMaxTest, DISABLED_l2_quant_max_bf16_to_fp8)
     EXPECT_EQ(ret, ACLNN_SUCCESS);
 }
 
-// Test empty tensor
-// DISABLED: Requires kernel execution which is not available in UT environment
-TEST_F(l2QuantMaxTest, DISABLED_l2_quant_max_empty_tensor)
+// Test empty tensor: 空 x 时 amax（[1]，恒非空）必须被显式写 0。
+// 该分支只做图构建（AllocTensor + ZerosLike + ViewCopy），不依赖 kernel，可在 op_api UT 执行；
+// amax 实际写 0 的行为由 ST/ttk 用例验证。
+TEST_F(l2QuantMaxTest, l2_quant_max_empty_tensor)
 {
     auto xDesc = TensorDesc({0}, ACL_FLOAT, ACL_FORMAT_ND);
     auto scaleDesc = TensorDesc({1}, ACL_FLOAT, ACL_FORMAT_ND);
