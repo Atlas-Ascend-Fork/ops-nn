@@ -13,6 +13,7 @@
 #include "aclnn_kernels/contiguous.h"
 #include "aclnn_kernels/common/op_error_check.h"
 #include "level0/realdiv.h"
+#include "level0/reduce_sum_op.h"
 #include "level0/unsqueeze.h"
 #include "aclnn/aclnn_base.h"
 #include "op_api/op_api_def_nn.h"
@@ -142,17 +143,6 @@ static bool CheckShape(const aclTensor* gradOut, const aclTensor* input, const a
     }
     OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(sumDy, expectShape, return false);
     OP_CHECK_SHAPE_NOT_EQUAL_WITH_EXPECTED_SIZE(sumDyXmu, expectShape, return false);
-    // counter 仅支持 0-dim 标量、[1] 或 [C]，以满足 RealDiv 逐元素除法的 shape 约束
-    if (!counter->IsEmpty()) {
-        auto counterDimNum = counter->GetViewShape().GetDimNum();
-        bool counterShapeValid = (counterDimNum == 0) ||
-                                 (counterDimNum == 1 && (counter->GetViewShape()[0] == 1 ||
-                                                         counter->GetViewShape()[0] == input->GetViewShape()[1]));
-        if (!counterShapeValid) {
-            OP_LOGE(ACLNN_ERR_PARAM_INVALID, "Counter shape should be scalar, [1] or [C].");
-            return false;
-        }
-    }
     return true;
 }
 
@@ -256,11 +246,22 @@ static op::DataType GetDivPromoteType(const aclTensor* self, const aclTensor* ot
 static aclnnStatus MeanByCounter(const aclTensor* sumDy, const aclTensor* sumDyXmu, const aclTensor* counter,
                                  const aclTensor** meanDy, const aclTensor** meanDyXmu, aclOpExecutor* executor)
 {
-    // 将counter转为FLOAT，用于后续逐元素除法
-    auto counterCasted = l0op::Cast(counter, op::DataType::DT_FLOAT, executor);
-    CHECK_RET(counterCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    // 各 rank 的样本数求和后，所有通道共用同一个除数。
+    auto totalCount = l0op::Cast(counter, op::DataType::DT_FLOAT, executor);
+    CHECK_RET(totalCount != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    const auto counterRank = counter->GetViewShape().GetDimNum();
+    if (counterRank > 0) {
+        int64_t reduceAxes[MAX_SUPPORT_DIMS_NUMS];
+        for (size_t axis = 0; axis < counterRank; ++axis) {
+            reduceAxes[axis] = static_cast<int64_t>(axis);
+        }
+        auto axes = executor->AllocIntArray(reduceAxes, counterRank);
+        CHECK_RET(axes != nullptr, ACLNN_ERR_INNER_NULLPTR);
+        totalCount = l0op::ReduceSumOp(totalCount, axes, false, executor);
+        CHECK_RET(totalCount != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    }
 
-    auto promoteType = GetDivPromoteType(sumDy, counterCasted);
+    auto promoteType = GetDivPromoteType(sumDy, totalCount);
 
     auto sumDyCasted = l0op::Cast(sumDy, promoteType, executor);
     CHECK_RET(sumDyCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
@@ -268,16 +269,14 @@ static aclnnStatus MeanByCounter(const aclTensor* sumDy, const aclTensor* sumDyX
     auto sumDyXmuCasted = l0op::Cast(sumDyXmu, promoteType, executor);
     CHECK_RET(sumDyXmuCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    auto counterDivCasted = l0op::Cast(counterCasted, promoteType, executor);
-    CHECK_RET(counterDivCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
+    auto totalCountCasted = l0op::Cast(totalCount, promoteType, executor);
+    CHECK_RET(totalCountCasted != nullptr, ACLNN_ERR_INNER_NULLPTR);
 
-    // 逐元素除法求均值: meanDy = sumDy / counter
-    auto meanDyResult = l0op::RealDiv(sumDyCasted, counterDivCasted, executor);
+    auto meanDyResult = l0op::RealDiv(sumDyCasted, totalCountCasted, executor);
     CHECK_RET(meanDyResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
     *meanDy = meanDyResult;
 
-    // 逐元素除法求均值: meanDyXmu = sumDyXmu / counter
-    auto meanDyXmuResult = l0op::RealDiv(sumDyXmuCasted, counterDivCasted, executor);
+    auto meanDyXmuResult = l0op::RealDiv(sumDyXmuCasted, totalCountCasted, executor);
     CHECK_RET(meanDyXmuResult != nullptr, ACLNN_ERR_INNER_NULLPTR);
     *meanDyXmu = meanDyXmuResult;
 
