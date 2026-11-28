@@ -131,7 +131,7 @@ aclnnStatus aclnnIndexPutImpl(
         <td>unsafe</td>
         <td>输入</td>
         <td>是否跳过索引越界检查的标志位。</td>
-        <td><ul><li>unsafe为True时，不检查索引是否越界；</li><li>unsafe为False时，检查索引是否越界。</li></ul></td>
+        <td>预留参数。当前版本暂不支持通过此参数控制索引越界检查。<ul><li>unsafe为True时，不检查索引是否越界；</li><li>unsafe为False时，检查索引是否越界。</li></ul></td>
         <td>-</td>
         <td>-</td>
         <td>-</td>

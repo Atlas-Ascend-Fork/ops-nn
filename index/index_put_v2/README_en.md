@@ -80,7 +80,7 @@ English | [简体中文](./README.md)
       <tr>
         <td>unsafe</td>
         <td>Input</td>
-        <td>Flag of whether to skip the out-of-range index check.<ul><li>When unsafe is True, the indices are not checked for out-of-range values;</li><li>When unsafe is False, the indices are checked for out-of-range values.</li></ul></td>
+        <td>Reserved parameter. The current version does not support using this parameter to control index out-of-bounds checks.<br>Flag of whether to skip the out-of-range index check.<ul><li>When unsafe is True, the indices are not checked for out-of-range values;</li><li>When unsafe is False, the indices are checked for out-of-range values.</li></ul></td>
         <td>-</td>
         <td>-</td>
       </tr>

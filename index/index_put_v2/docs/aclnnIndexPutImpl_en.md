@@ -133,7 +133,7 @@ aclnnStatus aclnnIndexPutImpl(
         <td>unsafe</td>
         <td>Input</td>
         <td>Flag that indicates whether to skip the index out-of-bounds check.</td>
-        <td><ul><li>If unsafe is True, the index out-of-bounds check is not performed;</li><li>If unsafe is False, the index out-of-bounds check is performed.</li></ul></td>
+        <td>Reserved parameter. The current version does not support using this parameter to control index out-of-bounds checks.<ul><li>If unsafe is True, the index out-of-bounds check is not performed;</li><li>If unsafe is False, the index out-of-bounds check is performed.</li></ul></td>
         <td>-</td>
         <td>-</td>
         <td>-</td>
