@@ -25,7 +25,7 @@
 
 ## Function
 
-Implements the backward computation of [aclnnEmbedding](../../../index/embedding/docs/aclnnEmbedding.md), accumulating rows of `grad` corresponding to the same `indices` into `out`.
+Implements the backward computation of [aclnnEmbedding](../../../index/embedding/docs/aclnnEmbedding_en.md), accumulating rows of `grad` corresponding to the same `indices` into `out`.
 
 ## Function Prototype
 
