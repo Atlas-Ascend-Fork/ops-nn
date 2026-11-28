@@ -24,9 +24,25 @@
 #include "conv/common/op_graph/fusion_pass/conv_fusion_utils_pass.h"
 #include "conv/common/op_host/conv_npu_arch_resolver.h"
 #include "ge/es_graph_builder.h"
-#include "ge/fusion/graph_rewriter.h"
 #include "platform/platform_info.h"
 #include "version/ge-compiler_version.h"
+
+namespace ge {
+namespace fusion {
+// Weak mirror of ge/fusion/graph_rewriter.h, equals the pattern of conv_fusion_base_pass.cpp:
+// only the two overloads actually used in this file are declared; the runtime libge without
+// the ctx-aware Replace still loads this plugin, the nullptr probe below falls back to the
+// ctx-free overload instead of crashing at dlopen
+class SubgraphRewriter {
+public:
+    static Status Replace(const SubgraphBoundary& subgraph, const Graph& replacement);
+#if GE_COMPILER_VERSION_NUM >= 90100000U
+    static Status Replace(const SubgraphBoundary& subgraph, const Graph& replacement, CustomPassContext& ctx)
+        __attribute__((weak));
+#endif
+};
+} // namespace fusion
+} // namespace ge
 
 namespace ops {
 using namespace Conv2DTransposeFixpipeFusion;
@@ -1519,13 +1535,22 @@ Status Conv2DTransposeFixpipeFusionPass::Run(GraphPtr& graph, CustomPassContext&
         OP_CHECK_IF(replacement == nullptr, OP_LOGE(GetNodeType().GetString(), "Construct replacement failed."),
                     return FAILED);
 
+        // equals ReplaceSubgraphWithFallback of conv_fusion_base_pass.cpp: probe the ctx-aware
+        // overload with a function pointer cast so the plugin survives a runtime without it
+        bool replaced = false;
 #if GE_COMPILER_VERSION_NUM >= 90100000U
-        OP_CHECK_IF(SubgraphRewriter::Replace(*boundary, std::move(*replacement), passContext) != SUCCESS,
-                    OP_LOGE(GetNodeType().GetString(), "Replace for conv2dtranspose failed."), return FAILED);
-#else
-        OP_CHECK_IF(SubgraphRewriter::Replace(*boundary, std::move(*replacement)) != SUCCESS,
-                    OP_LOGE(GetNodeType().GetString(), "Replace for conv2dtranspose failed."), return FAILED);
+        using ReplaceWithCtxFn = Status (*)(const SubgraphBoundary&, const Graph&, CustomPassContext&);
+        auto replaceWithCtx = static_cast<ReplaceWithCtxFn>(&ge::fusion::SubgraphRewriter::Replace);
+        if (replaceWithCtx != nullptr) {
+            OP_CHECK_IF(replaceWithCtx(*boundary, *replacement, passContext) != SUCCESS,
+                        OP_LOGE(GetNodeType().GetString(), "Replace for conv2dtranspose failed."), return FAILED);
+            replaced = true;
+        }
 #endif
+        if (!replaced) {
+            OP_CHECK_IF(SubgraphRewriter::Replace(*boundary, *replacement) != SUCCESS,
+                        OP_LOGE(GetNodeType().GetString(), "Replace for conv2dtranspose failed."), return FAILED);
+        }
 
         effectTimes++;
         OP_LOGD(GetNodeType().GetString(), "Conv2DTranspose to ExtendConvTranspose fusion success.");
