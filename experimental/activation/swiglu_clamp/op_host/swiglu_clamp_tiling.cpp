@@ -175,6 +175,7 @@ static ge::graphStatus SwigluClampTilingFunc(gert::TilingContext* context)
     size_t usrSize = 0;
     uint32_t sysWorkspaceSize = ascendcPlatform.GetLibApiWorkSpaceSize();
     size_t* currentWorkspace = context->GetWorkspaceSizes(1);
+    OP_CHECK_NULL_WITH_CONTEXT(context, currentWorkspace);
     currentWorkspace[0] = usrSize + sysWorkspaceSize;
 
     context->SetTilingKey(GET_TPL_TILING_KEY(0));
