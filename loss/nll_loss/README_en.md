@@ -84,7 +84,7 @@ English | [简体中文](./README.md)
       <tr>
         <td>y</td>
         <td>Output</td>
-        <td><ul><li>The output parameter of the nll_loss computation, L in the formula.</li><li>When reduction is none, the shape is (N,) or (N, H, W) (the same as target); when reduction is mean or sum, the shape is (1,).</li></ul></td>
+        <td><ul><li>The output parameter of the nll_loss computation, L in the formula.</li><li>When reduction is none: the shape is (N,) for (N, C) input, (N, H, W) for (N, C, H, W) input, and () (a 0-D scalar) for (C,) input; when reduction is mean or sum, the shape is (1,).</li></ul></td>
         <td>FLOAT, FLOAT16, BFLOAT16</td>
         <td>ND</td>
       </tr>

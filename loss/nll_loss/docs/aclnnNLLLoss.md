@@ -284,7 +284,7 @@ aclnnStatus aclnnNLLLoss(
 
 - 空输入场景：输入self元素个数为0时，reduction为mean输出NaN、为sum输出0，totalWeightOut为0；reduction为none时输出不写入。
 - self的类别维C为0且target非空时属非法输入，接口报161002错误。
-- target元素取值范围为[0, C - 1]；取值为ignoreIndex的元素不参与损失计算。当前实现未对越界取值做显式校验，越界取值的行为不在公开契约内。
+- target元素取值范围为[0, C - 1]，或等于ignoreIndex；取值为ignoreIndex的元素不参与损失计算。当前实现未对越界取值做显式校验，越界取值的行为不在公开契约内。
 - ignoreIndex应取[0, C - 1]之外且与target数据类型可比较的整数值。
 - 精度说明：输出精度比较参考容差为rtol=1e-4、atol=1e-4（与仓内kernel ST用例声明一致）；FLOAT16、BFLOAT16输入在极值输入下输出可能存在1 ULP（最低位）量级的舍入偏差。
 

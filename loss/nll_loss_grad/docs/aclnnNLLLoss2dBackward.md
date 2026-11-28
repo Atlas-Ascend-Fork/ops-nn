@@ -132,7 +132,7 @@ aclnnStatus aclnnNLLLoss2dBackward(
         <td>输入</td>
          <td>指定一个被忽略且不影响输入梯度的目标值。
         </td>
-        <td><ul><li>取值可为任意int64值：target中等于该值的元素不参与梯度计算（对应输出位置为0）。</li><li>当该值不在[0, C-1]范围内时，不会忽略任何target元素。</li></ul></td>
+        <td><ul><li>取值可为任意int64值：target中等于该值的元素不参与梯度计算（对应输出位置为0）。</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>

@@ -35,7 +35,7 @@ extern "C" {
  * @param [in] weight：npu device侧的aclTensor，表示各个类别的权重，shape为(C, )，数据类型支持FLOAT、FLOAT16、BFLOAT16。
  * 支持[非连续的Tensor](#)，数据格式支持ND（[参考](#)）。
  * @param [in] reduction：host侧的int64_t，指定要应用到输出的缩减。支持 0('none') | 1('mean') | 2('sum')。
- * 'none' 表示不应用减少，'mean' 表示输出的总和将除以输出中的元素数，'sum' 表示输出将被求和。
+ * 'none' 表示不应用减少，'mean' 表示输出的总和将除以权重之和totalWeight（即Σw_{y_n}），'sum' 表示输出将被求和。
  * @param [in]
  * ignoreIndex：host侧的int64_t，指定一个被忽略且不影响输入梯度的目标值，取值可为任意int64值；target中等于该值的元素不参与梯度计算。
  * @param [in] totalWeight：npu

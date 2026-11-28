@@ -82,7 +82,7 @@
       <tr>
         <td>y</td>
         <td>输出</td>
-        <td><ul><li>待进行nll_loss计算的出参，公式中的L。</li><li>reduction为none时shape为(N,)或(N, H, W)（与target一致）；reduction为mean或sum时shape为(1,)。</li></ul></td>
+        <td><ul><li>待进行nll_loss计算的出参，公式中的L。</li><li>reduction为none时：x为(N, C)时shape为(N,)，x为(N, C, H, W)时shape为(N, H, W)，x为(C,)时shape为()（0维标量）；reduction为mean或sum时shape为(1,)。</li></ul></td>
         <td>FLOAT、FLOAT16、BFLOAT16</td>
         <td>ND</td>
       </tr>

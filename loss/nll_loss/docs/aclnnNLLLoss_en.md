@@ -126,8 +126,8 @@ aclnnStatus aclnnNLLLoss(
       <td>weight (aclTensor*)</td>
       <td>Input</td>
       <td>Scaling weight for each class.</td>
-      <td>-</td>
-      <td>FLOAT, FLOAT16, BFLOAT16</td>
+      <td><ul><li>The shape is (C,).</li><li>When calling the aclnn API directly, the weight pointer must not be null; passing a null pointer returns 161001.</li></ul></td>
+      <td>FLOAT, FLOAT16, BFLOAT16 (same as self)</td>
       <td>ND</td>
       <td>(C)</td>
       <td>√</td>
@@ -147,7 +147,7 @@ aclnnStatus aclnnNLLLoss(
       <td>Input</td>
       <td>Specifies a target value that is ignored and does not affect the input gradient.
       </td>
-      <td>-</td>
+      <td><ul><li>It should take an integer outside [0, C-1] that is comparable with the target data type; if it falls within [0, C-1], the loss of the corresponding class is skipped.</li></ul></td>
       <td>INT64</td>
       <td>-</td>
       <td>-</td>
@@ -157,7 +157,7 @@ aclnnStatus aclnnNLLLoss(
       <td>out (aclTensor*)</td>
       <td>Output</td>
       <td>out in the formula.</td>
-      <td>If reduction is 0 (none) and the shape of self is 2D, the shape of out is (N,); otherwise, it is (1,).</td>
+      <td><ul><li>If reduction is 0 (none) and the shape of self is 2D, the shape of out is (N,); otherwise, it is (1,).</li><li>The data type is consistent with self.</li><li>Non-contiguous Tensor is supported; the result is written back to out through ViewCopy.</li></ul></td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
       <td>-</td>
@@ -167,7 +167,7 @@ aclnnStatus aclnnNLLLoss(
       <td>totalWeightOut (aclTensor*)</td>
       <td>Output</td>
       <td>totalWeight in the formula.</td>
-      <td>The output is valid when reduction is non-zero (not none). The shape is (1,).</td>
+      <td><ul><li>The output is valid when reduction is non-zero (not none), and the shape is (1,); the value is invalid when reduction is none.</li><li>The data type is consistent with self.</li><li>Non-contiguous Tensor is supported; the result is written back through ViewCopy.</li></ul></td>
       <td>FLOAT, FLOAT16, BFLOAT16</td>
       <td>ND</td>
       <td>-</td>
@@ -220,15 +220,18 @@ aclnnStatus aclnnNLLLoss(
       <td>The input self, target, weight, out, or totalWeightOut is a null pointer.</td>
       </tr>
       <tr>
-      <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="4">161002</td>
-      <td>The data types of self, target, and weight are not within the supported range.</td>
+      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="5">161002</td>
+      <td>The data types or data formats of self, target, and weight are not within the supported range.</td>
       </tr>
       <tr>
-      <td>The data types of self and weight are inconsistent.</td>
+      <td>The data types of self and weight are inconsistent; or the data types of out and totalWeightOut are inconsistent with self.</td>
       </tr>
        <tr>
-      <td>The shapes of self, weight, out, and totalWeightOut are incorrect.</td>
+      <td>The shapes of self, target, weight, out, and totalWeightOut are incorrect.</td>
+      </tr>
+      <tr>
+      <td>The class dimension C of self is 0 and target is non-empty.</td>
       </tr>
       <tr>
       <td>The value of reduction is not within the range 0-2.</td>
@@ -280,6 +283,12 @@ aclnnStatus aclnnNLLLoss(
   aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../docs/en/context/aclnn_return_code.md).
 
 ## Constraints
+
+- Empty input scenario: when the number of elements of self is 0, reduction mean outputs NaN, sum outputs 0, and totalWeightOut is 0; when reduction is none, the output is not written.
+- When the class dimension C of self is 0 and target is non-empty, the input is invalid and the API returns error 161002.
+- Each element of target should be in the range [0, C-1] or equal to ignoreIndex; elements equal to ignoreIndex do not participate in the loss computation. The current implementation does not explicitly validate out-of-range values, so the behavior for out-of-range values is outside the public contract.
+- ignoreIndex should take an integer outside [0, C-1] that is comparable with the target data type.
+- Precision: the reference tolerances for output comparison are rtol=1e-4 and atol=1e-4 (consistent with the kernel ST cases in the repository); for FLOAT16 and BFLOAT16 inputs, the output may have a rounding deviation of about 1 ULP for extreme inputs.
 
 - Deterministic computation
 

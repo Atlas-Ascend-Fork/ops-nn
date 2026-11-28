@@ -123,7 +123,7 @@ aclnnStatus aclnnNLLLoss2d(
         <td>weight (aclTensor*)</td>
         <td>Input</td>
         <td>Represents the scaling weight of each class.</td>
-        <td>w in the formula, with a shape of (C,).</td>
+        <td><ul><li>w in the formula, with a shape of (C,).</li><li>When calling the aclnn API directly, the weight pointer must not be null; passing a null pointer returns 161001.</li></ul></td>
         <td>The data type must remain consistent with self.</td>
         <td>ND</td>
         <td>(C,)</td>
@@ -133,7 +133,7 @@ aclnnStatus aclnnNLLLoss2d(
         <td>reduction (int64_t)</td>
         <td>Input</td>
         <td>Specifies the reduction to apply to the output.</td>
-        <td><ul>Supports 0(none)|1(mean)|2(sum).<li>'none' indicates that no reduction will be applied</li><li>'mean' indicates that the sum of the output will be divided by the number of elements in the output</li><li>'sum' indicates that the output will be summed</li></ul></td>
+        <td><ul>Supports 0(none)|1(mean)|2(sum).<li>'none' indicates that no reduction will be applied</li><li>'mean' indicates that the sum of the output will be divided by the sum of weights totalWeight</li><li>'sum' indicates that the output will be summed</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>
@@ -144,7 +144,7 @@ aclnnStatus aclnnNLLLoss2d(
         <td>Input</td>
          <td>Specifies a target value that is ignored and does not contribute to the input gradient.
         </td>
-        <td>-</td>
+        <td><ul><li>It should take an integer outside [0, C-1] that is comparable with the target data type; if it falls within [0, C-1], the loss of the corresponding class is skipped.</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>
@@ -154,7 +154,7 @@ aclnnStatus aclnnNLLLoss2d(
         <td>out (aclTensor*)</td>
         <td>Output</td>
         <td>out in the formula.</td>
-        <td>When reduction is 0 (none), the shape is the same as the shape of target; otherwise, the shape is (1,).</td>
+        <td><ul><li>When reduction is 0 (none), the shape is the same as the shape of target; otherwise, the shape is (1,).</li><li>The data type remains consistent with that of self.</li><li>Non-contiguous Tensor is supported; the result is written back to out through ViewCopy.</li></ul></td>
         <td>The data type remains consistent with that of self.</td>
         <td>ND</td>
         <td>-</td>
@@ -164,7 +164,7 @@ aclnnStatus aclnnNLLLoss2d(
         <td>totalWeightOut (aclTensor*)</td>
         <td>Output</td>
         <td>totalWeightOut in the formula.</td>
-        <td>The output value is valid when reduction is non-zero (non-none), and the shape is (1,).</td>
+        <td><ul><li>The output value is valid when reduction is non-zero (non-none), and the shape is (1,).</li><li>The data type remains consistent with self.</li><li>Non-contiguous Tensor is supported; the result is written back through ViewCopy.</li></ul></td>
         <td>The data type remains consistent with self.</td>
         <td>ND</td>
         <td>-</td>
@@ -217,8 +217,8 @@ aclnnStatus aclnnNLLLoss2d(
       <td>The input self, target, weight, out, or totalWeightOut is a null pointer.</td>
       </tr>
       <tr>
-      <td rowspan="4">ACLNN_ERR_PARAM_INVALID</td>
-      <td rowspan="4">161002</td>
+      <td rowspan="5">ACLNN_ERR_PARAM_INVALID</td>
+      <td rowspan="5">161002</td>
       <td>The data type or data format of self, target, weight, out, or totalWeightOut is not within the supported range.</td>
       </tr>
       <tr>
@@ -226,6 +226,9 @@ aclnnStatus aclnnNLLLoss2d(
       </tr>
        <tr>
       <td>The shape and format of self, target, weight, out, and totalWeightOut are incorrect.</td>
+      </tr>
+      <tr>
+      <td>The class dimension C of self is 0 and target is non-empty.</td>
       </tr>
       <tr>
       <td> The value of reduction is not within the range of 0-2.</td>
@@ -277,6 +280,12 @@ aclnnStatus aclnnNLLLoss2d(
   aclnnStatus: return status code. For details, see [aclnn Return Codes](../../../docs/en/context/aclnn_return_code.md).
 
 ## Constraints
+
+- Empty input scenario: when the number of elements of self is 0, reduction mean outputs NaN, sum outputs 0, and totalWeightOut is 0; when reduction is none, the output is not written.
+- When the class dimension C of self is 0 and target is non-empty, the input is invalid and the API returns error 161002.
+- Each element of target should be in the range [0, C-1] or equal to ignoreIndex; elements equal to ignoreIndex do not participate in the loss computation. The current implementation does not explicitly validate out-of-range values, so the behavior for out-of-range values is outside the public contract.
+- ignoreIndex should take an integer outside [0, C-1] that is comparable with the target data type.
+- Precision: the reference tolerances for output comparison are rtol=1e-4 and atol=1e-4 (consistent with the kernel ST cases in the repository); for FLOAT16 and BFLOAT16 inputs, the output may have a rounding deviation of about 1 ULP for extreme inputs.
 
 - Deterministic computation
 

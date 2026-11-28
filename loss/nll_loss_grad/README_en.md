@@ -107,7 +107,7 @@ $$
 ## Constraints
 
 - The value of reduction can only be "none", "mean" or "sum" (aclnn reduction=0/1/2); other values return an error.
-- Each element of target must be in [0, C-1] or equal to ignore_index, where C is the number of classes of x (the size of the last dimension of x).
+- Each element of target must be in [0, C-1] or equal to ignore_index, where C is the number of classes of x (the size of the last dimension of x for 1D/2D inputs, and the size of the second dimension for 4D inputs).
 - The number of elements in weight must equal C.
 - The number of elements in total_weight must be 1.
 - The shape of y_grad varies with reduction and the shape of x: when reduction is "none", y_grad is (N) if x is (N, C), () if x is (C,), and (N, H, W) if x is (N, C, H, W); when reduction is "mean" or "sum", y_grad is a single-element tensor.

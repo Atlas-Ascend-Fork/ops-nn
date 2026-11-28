@@ -161,7 +161,7 @@ aclnnStatus aclnnNLLLossBackward(
         <td>Input</td>
          <td>Specifies a target value that is ignored and does not affect the input gradient.
         </td>
-        <td><ul><li>The value can be any int64 value: elements in target equal to this value do not participate in the gradient computation (the corresponding output positions are 0).</li><li>When the value is not within [0, C-1], no target element is ignored.</li></ul></td>
+        <td><ul><li>The value can be any int64 value: elements in target equal to this value do not participate in the gradient computation (the corresponding output positions are 0).</li></ul></td>
         <td>INT64</td>
         <td>-</td>
         <td>-</td>

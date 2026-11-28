@@ -105,7 +105,7 @@ $$
 ## 约束说明
 
 - reduction取值只能为"none"、"mean"或"sum"（对应aclnn接口的reduction=0/1/2），其它取值返回错误。
-- target每个元素的取值范围为[0, C-1]或等于ignore_index，其中C为x的类别数（x最后一维大小）。
+- target每个元素的取值范围为[0, C-1]或等于ignore_index，其中C为x的类别数（x为1D/2D时为最后一维大小，x为4D时为第2维大小）。
 - weight的元素个数必须等于C。
 - total_weight的元素个数必须为1。
 - y_grad的形状随reduction与x的形状变化：reduction为"none"时，x为(N, C)则y_grad为(N)，x为(C,)则为()，x为(N, C, H, W)则为(N, H, W)；reduction为"mean"或"sum"时，y_grad为单元素tensor。
