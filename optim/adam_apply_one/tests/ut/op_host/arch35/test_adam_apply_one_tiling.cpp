@@ -626,3 +626,10 @@ TEST_F(AdamApplyOneTilingTest, AdamApplyOne_tiling_test_6)
 
     EXPECT_EQ(tiling_func(tiling_context), ge::GRAPH_SUCCESS);
 }
+// 判空防御分支直测：TilingForAdamApplyOne 入口 context 为空（EZ1008）
+TEST_F(AdamApplyOneTilingTest, tiling_func_null_context)
+{
+    std::string op_type("AdamApplyOne");
+    auto tiling_func = gert::OpImplRegistry::GetInstance().GetOpImpl(op_type.c_str())->tiling;
+    EXPECT_EQ(tiling_func(nullptr), ge::GRAPH_FAILED);
+}

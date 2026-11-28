@@ -297,6 +297,151 @@ TEST_F(AdamApplyOneProtoTest, infer_axis_type_case4)
     ASSERT_EQ(Ops::Base::ToString(*output_desc_2), Ops::Base::ToString(expected_output_shape_2));
 }
 
+TEST_F(AdamApplyOneProtoTest, infer_shape_broadcast_full_domain)
+{
+    fe::PlatformInfo platformInfo;
+    fe::OptionalInfo optiCompilationInfo;
+    platformInfo.soc_info.ai_core_cnt = 64;
+    platformInfo.str_info.short_soc_version = "Ascend950";
+    optiCompilationInfo.soc_version = "Ascend950";
+    fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
+
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("AdamApplyOne")->infer_shape;
+
+    gert::Shape inputShapeNarrow = {2, 1};
+    gert::Shape inputShapeFull = {2, 3};
+    gert::Shape scalarShape = {};
+
+    gert::Shape output_shape_0 = {};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(10, 3)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&inputShapeNarrow, &inputShapeFull, &inputShapeNarrow, &inputShapeFull,
+                                    &inputShapeNarrow, &scalarShape, &scalarShape, &scalarShape, &scalarShape,
+                                    &scalarShape})
+                      .OutputShapes({&output_shape_0, &output_shape_0, &output_shape_0})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(6, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(7, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(8, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(9, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+
+    gert::Shape expectedOutputShape = {2, 3};
+    auto output_desc_0 = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
+    ASSERT_EQ(Ops::Base::ToString(*output_desc_0), Ops::Base::ToString(expectedOutputShape));
+    auto output_desc_1 = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(1);
+    ASSERT_EQ(Ops::Base::ToString(*output_desc_1), Ops::Base::ToString(expectedOutputShape));
+    auto output_desc_2 = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(2);
+    ASSERT_EQ(Ops::Base::ToString(*output_desc_2), Ops::Base::ToString(expectedOutputShape));
+}
+
+TEST_F(AdamApplyOneProtoTest, infer_shape_broadcast_reject)
+{
+    fe::PlatformInfo platformInfo;
+    fe::OptionalInfo optiCompilationInfo;
+    platformInfo.soc_info.ai_core_cnt = 64;
+    platformInfo.str_info.short_soc_version = "Ascend950";
+    optiCompilationInfo.soc_version = "Ascend950";
+    fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
+
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("AdamApplyOne")->infer_shape;
+
+    gert::Shape inputShapeCommon = {2};
+    gert::Shape inputShapeConflict = {3};
+    gert::Shape scalarShape = {};
+
+    gert::Shape output_shape_0 = {};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(10, 3)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&inputShapeCommon, &inputShapeCommon, &inputShapeCommon, &inputShapeCommon,
+                                    &inputShapeConflict, &scalarShape, &scalarShape, &scalarShape, &scalarShape,
+                                    &scalarShape})
+                      .OutputShapes({&output_shape_0, &output_shape_0, &output_shape_0})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(6, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(7, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(8, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(9, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_FAILED);
+}
+
+TEST_F(AdamApplyOneProtoTest, infer_shape_outputs_same_shape)
+{
+    fe::PlatformInfo platformInfo;
+    fe::OptionalInfo optiCompilationInfo;
+    platformInfo.soc_info.ai_core_cnt = 64;
+    platformInfo.str_info.short_soc_version = "Ascend950";
+    optiCompilationInfo.soc_version = "Ascend950";
+    fe::PlatformInfoManager::Instance().platform_info_map_["Ascend950"] = platformInfo;
+    fe::PlatformInfoManager::Instance().SetOptionalCompilationInfo(optiCompilationInfo);
+
+    auto inferShapeFunc = gert::OpImplRegistry::GetInstance().GetOpImpl("AdamApplyOne")->infer_shape;
+
+    gert::Shape inputShapeNarrow = {1};
+    gert::Shape inputShapeFull = {3};
+    gert::Shape scalarShape = {};
+
+    gert::Shape output_shape_0 = {};
+
+    auto holder = gert::InferShapeContextFaker()
+                      .NodeIoNum(10, 3)
+                      .IrInstanceNum({1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
+                      .InputShapes({&inputShapeNarrow, &inputShapeFull, &inputShapeNarrow, &inputShapeFull,
+                                    &inputShapeNarrow, &scalarShape, &scalarShape, &scalarShape, &scalarShape,
+                                    &scalarShape})
+                      .OutputShapes({&output_shape_0, &output_shape_0, &output_shape_0})
+                      .NodeInputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(3, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(4, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(5, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(6, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(7, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(8, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeInputTd(9, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(0, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(1, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .NodeOutputTd(2, ge::DT_FLOAT, ge::FORMAT_ND, ge::FORMAT_ND)
+                      .Build();
+
+    ASSERT_EQ(inferShapeFunc(holder.GetContext<gert::InferShapeContext>()), ge::GRAPH_SUCCESS);
+
+    auto output_desc_0 = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(0);
+    auto output_desc_1 = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(1);
+    auto output_desc_2 = holder.GetContext<gert::InferShapeContext>()->GetOutputShape(2);
+    ASSERT_EQ(Ops::Base::ToString(*output_desc_1), Ops::Base::ToString(*output_desc_0));
+    ASSERT_EQ(Ops::Base::ToString(*output_desc_2), Ops::Base::ToString(*output_desc_0));
+    gert::Shape expectedOutputShape = {3};
+    ASSERT_EQ(Ops::Base::ToString(*output_desc_0), Ops::Base::ToString(expectedOutputShape));
+}
+
 TEST_F(AdamApplyOneProtoTest, infer_axis_type_case5)
 {
     fe::PlatformInfo platformInfo;

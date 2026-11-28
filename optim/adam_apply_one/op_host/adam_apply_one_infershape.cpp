@@ -21,23 +21,15 @@ using namespace Ops::Base;
 using namespace ge;
 namespace ops {
 constexpr size_t INPUT0_IDX = 0;
-constexpr size_t INPUT1_IDX = 1;
-constexpr size_t INPUT2_IDX = 2;
-constexpr size_t INPUT3_IDX = 3;
 constexpr size_t OUTPUT0_IDX = 0;
 constexpr size_t OUTPUT1_IDX = 1;
 constexpr size_t OUTPUT2_IDX = 2;
+constexpr size_t INPUT_NUM = 10;
+constexpr const char* kInputNames[INPUT_NUM] = {"input0", "input1", "input2", "input3", "input4",
+                                                "mul0_x", "mul1_x", "mul2_x", "mul3_x", "add2_y"};
 
 static ge::graphStatus InferShape4AdamApplyOne(gert::InferShapeContext* context)
 {
-    auto input0_shape = context->GetInputShape(INPUT0_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, input0_shape);
-    auto input1_shape = context->GetInputShape(INPUT1_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, input1_shape);
-    auto input2_shape = context->GetInputShape(INPUT2_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, input2_shape);
-    auto input3_shape = context->GetInputShape(INPUT3_IDX);
-    OP_CHECK_NULL_WITH_CONTEXT(context, input3_shape);
     auto output0_shape = context->GetOutputShape(OUTPUT0_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, output0_shape);
     auto output1_shape = context->GetOutputShape(OUTPUT1_IDX);
@@ -45,20 +37,25 @@ static ge::graphStatus InferShape4AdamApplyOne(gert::InferShapeContext* context)
     auto output2_shape = context->GetOutputShape(OUTPUT2_IDX);
     OP_CHECK_NULL_WITH_CONTEXT(context, output2_shape);
 
-    OP_CHECK_IF(!BroadcastShape(input0_shape, input1_shape, output0_shape),
-                OP_LOGE(context->GetNodeName(), "shape %s and %s cannot broadcast!", ToString(*input0_shape).c_str(),
-                        ToString(*input1_shape).c_str()),
-                return ge::GRAPH_FAILED);
+    auto input0_shape = context->GetInputShape(INPUT0_IDX);
+    OP_CHECK_NULL_WITH_CONTEXT(context, input0_shape);
+    gert::Shape broadcastShape = *input0_shape;
+    for (size_t idx = 1; idx < INPUT_NUM; idx++) {
+        auto curShape = context->GetInputShape(idx);
+        OP_CHECK_NULL_WITH_CONTEXT(context, curShape);
+        gert::Shape tmpShape;
+        OP_CHECK_IF(!BroadcastShape(&broadcastShape, curShape, &tmpShape),
+                    OP_LOGE_FOR_INVALID_SHAPES_WITH_REASON(
+                        context->GetNodeName(), kInputNames[idx],
+                        (Ops::Base::ToString(*curShape) + " and " + Ops::Base::ToString(broadcastShape)).c_str(),
+                        "The shape of this input should be broadcastable with previous inputs"),
+                    return ge::GRAPH_FAILED);
+        broadcastShape = tmpShape;
+    }
 
-    OP_CHECK_IF(!BroadcastShape(input0_shape, input2_shape, output1_shape),
-                OP_LOGE(context->GetNodeName(), "shape %s and %s cannot broadcast!", ToString(*input0_shape).c_str(),
-                        ToString(*input2_shape).c_str()),
-                return ge::GRAPH_FAILED);
-
-    OP_CHECK_IF(!BroadcastShape(input2_shape, input3_shape, output2_shape),
-                OP_LOGE(context->GetNodeName(), "shape %s and %s cannot broadcast!", ToString(*input2_shape).c_str(),
-                        ToString(*input3_shape).c_str()),
-                return ge::GRAPH_FAILED);
+    *output0_shape = broadcastShape;
+    *output1_shape = broadcastShape;
+    *output2_shape = broadcastShape;
 
     return GRAPH_SUCCESS;
 }
